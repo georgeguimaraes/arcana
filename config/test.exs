@@ -8,6 +8,7 @@ config :arcana, Arcana.TestRepo,
   database: "arcana_test",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: 10,
-  priv: "priv/test_repo"
+  priv: "priv/test_repo",
+  types: Arcana.PostgrexTypes
 
 config :logger, level: :warning
