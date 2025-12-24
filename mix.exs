@@ -32,7 +32,13 @@ defmodule Arcana.MixProject do
       {:nx, "~> 0.9"},
       {:exla, "~> 0.9"},
       {:jason, "~> 1.4"},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+
+      # Optional: Dashboard UI
+      {:phoenix_live_view, "~> 1.0", optional: true},
+      {:phoenix_html, "~> 4.1", optional: true},
+      {:floki, "~> 0.36", only: :test},
+      {:lazy_html, "~> 0.1", only: :test}
     ]
   end
 end

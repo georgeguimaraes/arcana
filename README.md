@@ -11,6 +11,7 @@ Similar to how Oban works - add the dependency, configure it, and embed it in yo
 - **Simple API** - `ingest/2`, `search/2`, `delete/2`
 - **Source scoping** - Filter searches by `source_id` for multi-tenant apps
 - **Embeddable** - Uses your existing Repo, no separate database
+- **LiveView Dashboard** - Optional web UI for managing documents and searching
 
 ## Installation
 

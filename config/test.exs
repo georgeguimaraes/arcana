@@ -11,4 +11,12 @@ config :arcana, Arcana.TestRepo,
   priv: "priv/test_repo",
   types: Arcana.PostgrexTypes
 
+config :arcana, ArcanaWeb.Endpoint,
+  http: [ip: {127, 0, 0, 1}, port: 4002],
+  secret_key_base:
+    "test_secret_key_base_that_is_at_least_64_bytes_long_for_testing_purposes_only",
+  server: false,
+  render_errors: [view: ArcanaWeb.ErrorView, accepts: ~w(html json), layout: false],
+  live_view: [signing_salt: "test_live_view_salt"]
+
 config :logger, level: :warning
