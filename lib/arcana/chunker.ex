@@ -60,22 +60,20 @@ defmodule Arcana.Chunker do
 
   defp merge_small_chunks(chunks, chunk_size, sep) do
     chunks
-    |> Enum.reduce([], fn chunk, acc ->
-      case acc do
-        [] ->
-          [chunk]
-
-        [last | rest] ->
-          merged = last <> sep <> chunk
-
-          if String.length(merged) <= chunk_size do
-            [merged | rest]
-          else
-            [chunk | acc]
-          end
-      end
-    end)
+    |> Enum.reduce([], &merge_chunk(&1, &2, chunk_size, sep))
     |> Enum.reverse()
+  end
+
+  defp merge_chunk(chunk, [], _chunk_size, _sep), do: [chunk]
+
+  defp merge_chunk(chunk, [last | rest] = acc, chunk_size, sep) do
+    merged = last <> sep <> chunk
+
+    if String.length(merged) <= chunk_size do
+      [merged | rest]
+    else
+      [chunk | acc]
+    end
   end
 
   defp estimate_tokens(text) do

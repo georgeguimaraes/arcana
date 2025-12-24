@@ -1,7 +1,7 @@
 defmodule Arcana.ChunkTest do
   use Arcana.DataCase, async: true
 
-  alias Arcana.{Document, Chunk}
+  alias Arcana.{Chunk, Document}
   alias Arcana.Embeddings.Serving
 
   describe "changeset/2" do

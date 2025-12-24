@@ -1,10 +1,10 @@
 import Config
 
 config :arcana, Arcana.TestRepo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
-  port: 5433,
+  username: System.get_env("POSTGRES_USER", "postgres"),
+  password: System.get_env("POSTGRES_PASSWORD", "postgres"),
+  hostname: System.get_env("POSTGRES_HOST", "localhost"),
+  port: String.to_integer(System.get_env("POSTGRES_PORT", "5433")),
   database: "arcana_test",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: 10,

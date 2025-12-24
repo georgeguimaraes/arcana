@@ -1,0 +1,25 @@
+{
+  "pull-request-header": ":rocket: Want to release this?",
+  "pull-request-title-pattern": "chore: release ${version}",
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
+  "packages": {
+    ".": {
+      "release-type": "elixir",
+      "changelog-sections": [
+        {"type": "feat", "section": "Features", "hidden": false},
+        {"type": "fix", "section": "Bug Fixes", "hidden": false},
+        {"type": "chore", "section": "Miscellaneous", "hidden": false},
+        {"type": "docs", "section": "Documentation", "hidden": false},
+        {"type": "refactor", "section": "Code Refactoring", "hidden": false},
+        {"type": "test", "section": "Tests", "hidden": false},
+        {"type": "build", "section": "Build System", "hidden": false},
+        {"type": "ci", "section": "Continuous Integration", "hidden": false},
+        {"type": "perf", "section": "Performance Improvements", "hidden": false},
+        {"type": "style", "section": "Styles", "hidden": true},
+        {"type": "revert", "section": "Reverts", "hidden": false}
+      ]
+    }
+  },
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json"
+}

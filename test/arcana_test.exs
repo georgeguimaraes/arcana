@@ -45,7 +45,7 @@ defmodule ArcanaTest do
     test "finds relevant chunks", %{doc1: doc1} do
       results = Arcana.search("functional programming", repo: Repo)
 
-      assert length(results) > 0
+      refute Enum.empty?(results)
       # First result should be from the Elixir document
       first = hd(results)
       assert first.document_id == doc1.id
@@ -59,15 +59,17 @@ defmodule ArcanaTest do
     end
 
     test "filters by source_id" do
-      {:ok, _scoped_doc} = Arcana.ingest("Ruby programming language", repo: Repo, source_id: "scope-a")
+      {:ok, _scoped_doc} =
+        Arcana.ingest("Ruby programming language", repo: Repo, source_id: "scope-a")
 
       results = Arcana.search("programming", repo: Repo, source_id: "scope-a")
 
-      assert length(results) > 0
+      refute Enum.empty?(results)
+
       assert Enum.all?(results, fn r ->
-        doc = Repo.get!(Arcana.Document, r.document_id)
-        doc.source_id == "scope-a"
-      end)
+               doc = Repo.get!(Arcana.Document, r.document_id)
+               doc.source_id == "scope-a"
+             end)
     end
   end
 

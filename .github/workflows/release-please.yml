@@ -1,0 +1,63 @@
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+name: Release Please
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: arcana_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          release-type: elixir
+
+      - uses: actions/checkout@v4
+        if: ${{ steps.release.outputs.release_created }}
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        if: ${{ steps.release.outputs.release_created }}
+        with:
+          otp-version: "27"
+          elixir-version: "1.18"
+      - name: Restore dependencies cache
+        uses: actions/cache@v3
+        if: ${{ steps.release.outputs.release_created }}
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+      - name: Install dependencies
+        if: ${{ steps.release.outputs.release_created }}
+        run: mix deps.get
+      - name: Run tests
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          POSTGRES_PORT: "5432"
+        run: |
+          mix ecto.create -r Arcana.TestRepo
+          mix ecto.migrate -r Arcana.TestRepo
+          mix test
+      - name: Publish to Hex.pm
+        if: ${{ steps.release.outputs.release_created }}
+        run: HEX_API_KEY=${{secrets.HEX_API_KEY}} mix hex.publish --yes

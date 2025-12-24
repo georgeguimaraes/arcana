@@ -5,7 +5,8 @@ defmodule Arcana.ChunkerTest do
 
   describe "chunk/2" do
     test "splits text into chunks of specified size" do
-      text = String.duplicate("word ", 500)  # ~2500 chars
+      # ~2500 chars
+      text = String.duplicate("word ", 500)
 
       chunks = Chunker.chunk(text, chunk_size: 1024)
 

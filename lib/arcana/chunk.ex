@@ -13,13 +13,13 @@ defmodule Arcana.Chunk do
   @foreign_key_type :binary_id
 
   schema "arcana_chunks" do
-    field :text, :string
-    field :embedding, Pgvector.Ecto.Vector
-    field :chunk_index, :integer, default: 0
-    field :token_count, :integer
-    field :metadata, :map, default: %{}
+    field(:text, :string)
+    field(:embedding, Pgvector.Ecto.Vector)
+    field(:chunk_index, :integer, default: 0)
+    field(:token_count, :integer)
+    field(:metadata, :map, default: %{})
 
-    belongs_to :document, Arcana.Document
+    belongs_to(:document, Arcana.Document)
 
     timestamps()
   end

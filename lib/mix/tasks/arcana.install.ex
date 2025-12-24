@@ -117,7 +117,9 @@ defmodule Mix.Tasks.Arcana.Install do
 
   defp infer_repo do
     case Mix.Project.config()[:app] do
-      nil -> "MyApp.Repo"
+      nil ->
+        "MyApp.Repo"
+
       app ->
         app
         |> to_string()

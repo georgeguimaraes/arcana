@@ -18,7 +18,7 @@ defmodule Arcana do
 
   """
 
-  alias Arcana.{Document, Chunk, Chunker}
+  alias Arcana.{Chunk, Chunker, Document}
   alias Arcana.Embeddings.Serving
 
   import Ecto.Query
@@ -113,7 +113,7 @@ defmodule Arcana do
     query_embedding = Serving.embed(query)
 
     base_query =
-      from c in Chunk,
+      from(c in Chunk,
         join: d in Document,
         on: c.document_id == d.id,
         select: %{
@@ -126,10 +126,11 @@ defmodule Arcana do
         where: fragment("1 - (? <=> ?) > ?", c.embedding, ^query_embedding, ^threshold),
         order_by: fragment("? <=> ?", c.embedding, ^query_embedding),
         limit: ^limit
+      )
 
     final_query =
       if source_id do
-        from [c, d] in base_query, where: d.source_id == ^source_id
+        from([c, d] in base_query, where: d.source_id == ^source_id)
       else
         base_query
       end

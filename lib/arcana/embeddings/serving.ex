@@ -5,6 +5,8 @@ defmodule Arcana.Embeddings.Serving do
   Uses BAAI/bge-small-en-v1.5 which produces 384-dimensional embeddings.
   """
 
+  alias Bumblebee.Text.TextEmbedding
+
   @model_id "BAAI/bge-small-en-v1.5"
 
   @doc """
@@ -24,7 +26,7 @@ defmodule Arcana.Embeddings.Serving do
     {:ok, tokenizer} = Bumblebee.load_tokenizer({:hf, @model_id})
 
     serving =
-      Bumblebee.Text.TextEmbedding.text_embedding(model_info, tokenizer,
+      TextEmbedding.text_embedding(model_info, tokenizer,
         compile: [batch_size: 32, sequence_length: 512],
         defn_options: [compiler: EXLA]
       )
