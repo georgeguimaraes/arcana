@@ -20,7 +20,9 @@ Add `arcana` to your dependencies:
 ```elixir
 def deps do
   [
-    {:arcana, "~> 0.1.0"}
+    {:arcana, "~> 0.1.0"},
+    # Optional: for automatic setup (recommended)
+    {:igniter, "~> 0.5"}
   ]
 end
 ```
@@ -42,16 +44,36 @@ services:
       POSTGRES_DB: myapp_dev
 ```
 
-### 2. Generate the migration
+### 2. Run the installer
+
+**With Igniter (recommended):**
+
+```bash
+mix arcana.install
+```
+
+This automatically:
+- Creates the database migration
+- Adds the dashboard route to your router
+- Creates the Postgrex types module
+- Configures your repo
+
+Then run:
+
+```bash
+mix ecto.migrate
+```
+
+**Without Igniter:**
 
 ```bash
 mix arcana.install
 mix ecto.migrate
 ```
 
-### 3. Configure pgvector types
+Then follow the manual steps printed by the installer:
 
-Create the Postgrex types module:
+1. Create the Postgrex types module:
 
 ```elixir
 # lib/my_app/postgrex_types.ex
@@ -62,7 +84,7 @@ Postgrex.Types.define(
 )
 ```
 
-Add to your repo config:
+2. Add to your repo config:
 
 ```elixir
 # config/config.exs
@@ -70,7 +92,17 @@ config :my_app, MyApp.Repo,
   types: MyApp.PostgrexTypes
 ```
 
-### 4. Add to supervision tree
+3. (Optional) Mount the dashboard:
+
+```elixir
+# lib/my_app_web/router.ex
+scope "/arcana" do
+  pipe_through [:browser]
+  forward "/", ArcanaWeb.Router
+end
+```
+
+### 3. Add to supervision tree
 
 ```elixir
 # lib/my_app/application.ex
@@ -175,7 +207,7 @@ config :nx, default_backend: EXLA.Backend
 
 ## Roadmap
 
-- [ ] LiveView dashboard (`ArcanaWeb.Router`)
+- [x] LiveView dashboard (`ArcanaWeb.Router`)
 - [ ] File ingestion (PDF, DOCX)
 - [ ] Hybrid search (vector + full-text with RRF)
 - [ ] RAG pipeline with LLM providers

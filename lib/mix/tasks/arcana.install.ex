@@ -1,130 +1,332 @@
-defmodule Mix.Tasks.Arcana.Install do
-  @shortdoc "Generates Arcana migrations for your application"
-  @moduledoc """
-  Generates the migration file needed for Arcana.
+if Code.ensure_loaded?(Igniter) do
+  defmodule Mix.Tasks.Arcana.Install do
+    @shortdoc "Installs Arcana in your Phoenix application"
+    @moduledoc """
+    Installs Arcana in your Phoenix application.
 
-      $ mix arcana.install
+        $ mix arcana.install
 
-  This will create a migration in your priv/repo/migrations directory
-  that sets up the arcana_documents and arcana_chunks tables with
-  pgvector support.
+    This will:
+    - Generate the migration for arcana_documents and arcana_chunks tables
+    - Add the dashboard route to your Phoenix router
+    - Create the Postgrex types module for pgvector
+    - Configure your repo to use the types module
 
-  ## Options
+    ## Options
 
-    * `--repo` - The repo to generate migrations for (defaults to YourApp.Repo)
-  """
+      * `--no-dashboard` - Skip adding the dashboard route
+      * `--repo` - The repo to use (defaults to YourApp.Repo)
+    """
 
-  use Mix.Task
+    use Igniter.Mix.Task
 
-  import Mix.Generator
+    alias Igniter.Libs.Phoenix
+    alias Igniter.Project.Config
 
-  @migration_template """
-  defmodule <%= @repo %>.Migrations.CreateArcanaTables do
-    use Ecto.Migration
-
-    def up do
-      execute "CREATE EXTENSION IF NOT EXISTS vector"
-
-      create table(:arcana_documents, primary_key: false) do
-        add :id, :binary_id, primary_key: true
-        add :content, :text
-        add :content_type, :string, default: "text/plain"
-        add :source_id, :string
-        add :file_path, :string
-        add :metadata, :map, default: %{}
-        add :status, :string, default: "pending"
-        add :error, :text
-        add :chunk_count, :integer, default: 0
-
-        timestamps()
-      end
-
-      create table(:arcana_chunks, primary_key: false) do
-        add :id, :binary_id, primary_key: true
-        add :text, :text, null: false
-        add :embedding, :vector, size: 384, null: false
-        add :chunk_index, :integer, default: 0
-        add :token_count, :integer
-        add :metadata, :map, default: %{}
-        add :document_id, references(:arcana_documents, type: :binary_id, on_delete: :delete_all)
-
-        timestamps()
-      end
-
-      create index(:arcana_chunks, [:document_id])
-      create index(:arcana_documents, [:source_id])
-
-      execute \"\"\"
-      CREATE INDEX arcana_chunks_embedding_idx ON arcana_chunks
-      USING hnsw (embedding vector_cosine_ops)
-      \"\"\"
+    @impl Igniter.Mix.Task
+    def info(_argv, _composing_task) do
+      %Igniter.Mix.Task.Info{
+        group: :arcana,
+        example: "mix arcana.install",
+        schema: [
+          dashboard: :boolean,
+          repo: :string
+        ],
+        defaults: [dashboard: true],
+        aliases: []
+      }
     end
 
-    def down do
-      drop table(:arcana_chunks)
-      drop table(:arcana_documents)
-      execute "DROP EXTENSION IF EXISTS vector"
+    @impl Igniter.Mix.Task
+    def igniter(igniter) do
+      opts = igniter.args.options
+      app_name = Igniter.Project.Application.app_name(igniter)
+      app_module = app_name |> to_string() |> Macro.camelize()
+
+      repo_module =
+        if opts[:repo] do
+          Module.concat([opts[:repo]])
+        else
+          Module.concat([app_module, "Repo"])
+        end
+
+      web_module = Module.concat([app_module <> "Web"])
+      types_module = Module.concat([app_module, "PostgrexTypes"])
+
+      igniter
+      |> create_migration(repo_module)
+      |> create_postgrex_types_module(types_module)
+      |> configure_repo_types(app_name, repo_module, types_module)
+      |> maybe_add_dashboard_route(opts[:dashboard], web_module)
+      |> Igniter.add_notice("""
+
+      Arcana installed successfully!
+
+      Next steps:
+      1. Run the migration: mix ecto.migrate
+      2. Add Arcana.Embeddings.Serving to your supervision tree:
+
+          children = [
+            #{inspect(repo_module)},
+            {Arcana.Embeddings.Serving, []}
+          ]
+
+      3. Start using Arcana:
+
+          Arcana.ingest("Your content", repo: #{inspect(repo_module)})
+          Arcana.search("query", repo: #{inspect(repo_module)})
+      """)
+    end
+
+    defp create_migration(igniter, repo_module) do
+      repo_underscore =
+        repo_module
+        |> Module.split()
+        |> Enum.join(".")
+        |> Macro.underscore()
+        |> String.replace("/", "_")
+
+      migrations_path = Path.join(["priv", repo_underscore, "migrations"])
+      timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
+      filename = "#{timestamp}_create_arcana_tables.exs"
+      path = Path.join(migrations_path, filename)
+
+      migration_content = """
+      defmodule #{inspect(repo_module)}.Migrations.CreateArcanaTables do
+        use Ecto.Migration
+
+        def up do
+          execute "CREATE EXTENSION IF NOT EXISTS vector"
+
+          create table(:arcana_documents, primary_key: false) do
+            add :id, :binary_id, primary_key: true
+            add :content, :text
+            add :content_type, :string, default: "text/plain"
+            add :source_id, :string
+            add :file_path, :string
+            add :metadata, :map, default: %{}
+            add :status, :string, default: "pending"
+            add :error, :text
+            add :chunk_count, :integer, default: 0
+
+            timestamps()
+          end
+
+          create table(:arcana_chunks, primary_key: false) do
+            add :id, :binary_id, primary_key: true
+            add :text, :text, null: false
+            add :embedding, :vector, size: 384, null: false
+            add :chunk_index, :integer, default: 0
+            add :token_count, :integer
+            add :metadata, :map, default: %{}
+            add :document_id, references(:arcana_documents, type: :binary_id, on_delete: :delete_all)
+
+            timestamps()
+          end
+
+          create index(:arcana_chunks, [:document_id])
+          create index(:arcana_documents, [:source_id])
+
+          execute \"\"\"
+          CREATE INDEX arcana_chunks_embedding_idx ON arcana_chunks
+          USING hnsw (embedding vector_cosine_ops)
+          \"\"\"
+        end
+
+        def down do
+          drop table(:arcana_chunks)
+          drop table(:arcana_documents)
+          execute "DROP EXTENSION IF EXISTS vector"
+        end
+      end
+      """
+
+      Igniter.create_new_file(igniter, path, migration_content)
+    end
+
+    defp create_postgrex_types_module(igniter, types_module) do
+      types_content = """
+      Postgrex.Types.define(
+        #{inspect(types_module)},
+        [Pgvector.Extensions.Vector] ++ Ecto.Adapters.Postgres.extensions(),
+        []
+      )
+      """
+
+      path =
+        types_module
+        |> Module.split()
+        |> Enum.map_join("/", &Macro.underscore/1)
+        |> then(&"lib/#{&1}.ex")
+
+      Igniter.create_new_file(igniter, path, types_content, on_exists: :skip)
+    end
+
+    defp configure_repo_types(igniter, app_name, repo_module, types_module) do
+      Config.configure(
+        igniter,
+        "config.exs",
+        app_name,
+        [repo_module, :types],
+        {:code, Sourceror.parse_string!(inspect(types_module))}
+      )
+    end
+
+    defp maybe_add_dashboard_route(igniter, false, _web_module), do: igniter
+
+    defp maybe_add_dashboard_route(igniter, _add_dashboard, web_module) do
+      router_module = Module.concat([web_module, "Router"])
+
+      scope_code = """
+        pipe_through [:browser]
+        forward "/", ArcanaWeb.Router
+      """
+
+      Phoenix.add_scope(igniter, "/arcana", scope_code, router: router_module)
     end
   end
-  """
+else
+  defmodule Mix.Tasks.Arcana.Install do
+    @shortdoc "Generates Arcana migrations for your application"
+    @moduledoc """
+    Generates the migration file needed for Arcana.
 
-  @impl Mix.Task
-  def run(args) do
-    {opts, _, _} = OptionParser.parse(args, strict: [repo: :string])
+        $ mix arcana.install
 
-    repo = opts[:repo] || infer_repo()
-    repo_underscore = Macro.underscore(repo) |> String.replace("/", "_")
+    This will create a migration in your priv/repo/migrations directory
+    that sets up the arcana_documents and arcana_chunks tables with
+    pgvector support.
 
-    migrations_path = Path.join(["priv", repo_underscore, "migrations"])
-    File.mkdir_p!(migrations_path)
+    For automatic router and config setup, add `{:igniter, "~> 0.5"}` to
+    your dependencies and re-run this task.
 
-    timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
-    filename = "#{timestamp}_create_arcana_tables.exs"
-    path = Path.join(migrations_path, filename)
+    ## Options
 
-    content = EEx.eval_string(@migration_template, assigns: [repo: repo])
+      * `--repo` - The repo to generate migrations for (defaults to YourApp.Repo)
+    """
 
-    create_file(path, content)
+    use Mix.Task
 
-    Mix.shell().info("""
+    import Mix.Generator
 
-    Arcana migration created!
+    @migration_template """
+    defmodule <%= @repo %>.Migrations.CreateArcanaTables do
+      use Ecto.Migration
 
-    Next steps:
-    1. Run the migration: mix ecto.migrate
-    2. Add Arcana to your supervision tree:
+      def up do
+        execute "CREATE EXTENSION IF NOT EXISTS vector"
 
-        children = [
-          MyApp.Repo,
-          {Arcana, repo: MyApp.Repo}
-        ]
+        create table(:arcana_documents, primary_key: false) do
+          add :id, :binary_id, primary_key: true
+          add :content, :text
+          add :content_type, :string, default: "text/plain"
+          add :source_id, :string
+          add :file_path, :string
+          add :metadata, :map, default: %{}
+          add :status, :string, default: "pending"
+          add :error, :text
+          add :chunk_count, :integer, default: 0
 
-    3. Configure pgvector types in your repo config:
+          timestamps()
+        end
 
-        config :my_app, MyApp.Repo,
-          types: MyApp.PostgrexTypes
+        create table(:arcana_chunks, primary_key: false) do
+          add :id, :binary_id, primary_key: true
+          add :text, :text, null: false
+          add :embedding, :vector, size: 384, null: false
+          add :chunk_index, :integer, default: 0
+          add :token_count, :integer
+          add :metadata, :map, default: %{}
+          add :document_id, references(:arcana_documents, type: :binary_id, on_delete: :delete_all)
 
-    4. Create the types module:
+          timestamps()
+        end
 
-        # lib/my_app/postgrex_types.ex
-        Postgrex.Types.define(
-          MyApp.PostgrexTypes,
-          [Pgvector.Extensions.Vector] ++ Ecto.Adapters.Postgres.extensions(),
-          []
-        )
-    """)
-  end
+        create index(:arcana_chunks, [:document_id])
+        create index(:arcana_documents, [:source_id])
 
-  defp infer_repo do
-    case Mix.Project.config()[:app] do
-      nil ->
-        "MyApp.Repo"
+        execute \"\"\"
+        CREATE INDEX arcana_chunks_embedding_idx ON arcana_chunks
+        USING hnsw (embedding vector_cosine_ops)
+        \"\"\"
+      end
 
-      app ->
-        app
-        |> to_string()
-        |> Macro.camelize()
-        |> Kernel.<>(".Repo")
+      def down do
+        drop table(:arcana_chunks)
+        drop table(:arcana_documents)
+        execute "DROP EXTENSION IF EXISTS vector"
+      end
+    end
+    """
+
+    @impl Mix.Task
+    def run(args) do
+      {opts, _, _} = OptionParser.parse(args, strict: [repo: :string])
+
+      repo = opts[:repo] || infer_repo()
+      repo_underscore = Macro.underscore(repo) |> String.replace("/", "_")
+
+      migrations_path = Path.join(["priv", repo_underscore, "migrations"])
+      File.mkdir_p!(migrations_path)
+
+      timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
+      filename = "#{timestamp}_create_arcana_tables.exs"
+      path = Path.join(migrations_path, filename)
+
+      content = EEx.eval_string(@migration_template, assigns: [repo: repo])
+
+      create_file(path, content)
+
+      Mix.shell().info("""
+
+      Arcana migration created!
+
+      Next steps:
+      1. Run the migration: mix ecto.migrate
+      2. Add Arcana to your supervision tree:
+
+          children = [
+            MyApp.Repo,
+            {Arcana.Embeddings.Serving, []}
+          ]
+
+      3. Configure pgvector types in your repo config:
+
+          config :my_app, MyApp.Repo,
+            types: MyApp.PostgrexTypes
+
+      4. Create the types module:
+
+          # lib/my_app/postgrex_types.ex
+          Postgrex.Types.define(
+            MyApp.PostgrexTypes,
+            [Pgvector.Extensions.Vector] ++ Ecto.Adapters.Postgres.extensions(),
+            []
+          )
+
+      5. (Optional) Mount the dashboard in your router:
+
+          scope "/arcana" do
+            pipe_through [:browser]
+            forward "/", ArcanaWeb.Router
+          end
+
+      TIP: For automatic setup, add {:igniter, "~> 0.5"} to your deps
+           and re-run mix arcana.install
+      """)
+    end
+
+    defp infer_repo do
+      case Mix.Project.config()[:app] do
+        nil ->
+          "MyApp.Repo"
+
+        app ->
+          app
+          |> to_string()
+          |> Macro.camelize()
+          |> Kernel.<>(".Repo")
+      end
     end
   end
 end
