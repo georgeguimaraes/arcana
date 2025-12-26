@@ -116,4 +116,24 @@ defmodule Arcana.RewritersTest do
       assert {:ok, "expanded query"} = rewriter.("original query")
     end
   end
+
+  describe "protocol support" do
+    test "accepts any type implementing Arcana.LLM protocol" do
+      # Arity-2 functions also work (context is passed as empty list)
+      llm = fn prompt, _context ->
+        {:ok, "expanded: #{prompt}"}
+      end
+
+      {:ok, result} = Rewriters.expand("test query", llm: llm)
+
+      assert result =~ "test query"
+    end
+
+    test "LangChain model structs are accepted" do
+      # Verify the protocol is implemented for LangChain models
+      chat = %LangChain.ChatModels.ChatOpenAI{model: "gpt-4o-mini"}
+
+      assert Arcana.LLM.impl_for(chat) != nil
+    end
+  end
 end

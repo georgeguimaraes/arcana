@@ -72,7 +72,10 @@ defmodule Arcana.MixProject do
       {:lazy_html, "~> 0.1", only: :test},
 
       # Optional: Enhanced installer
-      {:igniter, "~> 0.5", optional: true}
+      {:igniter, "~> 0.5", optional: true},
+
+      # Optional: LangChain integration
+      {:langchain, "~> 0.3", optional: true}
     ]
   end
 end

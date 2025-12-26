@@ -11,9 +11,14 @@ defmodule Arcana.Rewriters do
       rewriter = Rewriters.expand(llm: my_llm_fn)
       Arcana.search("ML models", repo: Repo, rewriter: rewriter)
 
+  The `:llm` option accepts any type implementing the `Arcana.LLM` protocol,
+  including anonymous functions and LangChain chat models.
+
   All helpers accept a `:prompt` option to customize the prompt template.
   Use `{query}` as a placeholder for the original query.
   """
+
+  alias Arcana.LLM
 
   @default_expand_prompt """
   Expand this search query with synonyms and related terms to improve retrieval.
@@ -59,7 +64,7 @@ defmodule Arcana.Rewriters do
     prompt_template = Keyword.get(opts, :prompt, @default_expand_prompt)
 
     prompt = String.replace(prompt_template, "{query}", query)
-    llm.(prompt)
+    LLM.complete(llm, prompt, [])
   end
 
   def expand(opts) when is_list(opts) do
@@ -84,7 +89,7 @@ defmodule Arcana.Rewriters do
     prompt_template = Keyword.get(opts, :prompt, @default_keywords_prompt)
 
     prompt = String.replace(prompt_template, "{query}", query)
-    llm.(prompt)
+    LLM.complete(llm, prompt, [])
   end
 
   def keywords(opts) when is_list(opts) do
@@ -109,7 +114,7 @@ defmodule Arcana.Rewriters do
     prompt_template = Keyword.get(opts, :prompt, @default_decompose_prompt)
 
     prompt = String.replace(prompt_template, "{query}", query)
-    llm.(prompt)
+    LLM.complete(llm, prompt, [])
   end
 
   def decompose(opts) when is_list(opts) do

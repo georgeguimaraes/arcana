@@ -1,5 +1,5 @@
 defmodule ArcanaTest do
-  use Arcana.DataCase, async: false
+  use Arcana.DataCase, async: true
 
   describe "ingest/2" do
     test "creates document and chunks from text" do
@@ -120,16 +120,38 @@ defmodule ArcanaTest do
       :ok
     end
 
+    test "works with any type implementing Arcana.LLM protocol" do
+      # Anonymous function implements the protocol via Function
+      llm = fn prompt, context ->
+        {:ok, "Answer to: #{prompt} with #{length(context)} chunks"}
+      end
+
+      {:ok, answer} = Arcana.ask("What is the capital?", repo: Repo, llm: llm)
+
+      assert answer =~ "What is the capital?"
+      assert answer =~ "chunks"
+    end
+
+    test "accepts LangChain model structs via protocol" do
+      # Verify that a LangChain model struct is accepted (protocol is implemented)
+      # We can't actually call the API, but we can verify it's not rejected
+      chat = %LangChain.ChatModels.ChatOpenAI{model: "gpt-4o-mini"}
+
+      # This should not raise - the protocol implementation exists
+      assert Arcana.LLM.impl_for(chat) != nil
+    end
+
     test "returns answer using retrieved context" do
       # Use a test LLM that echoes the context
       test_llm = fn prompt, _context ->
         {:ok, "Answer based on: #{prompt}"}
       end
 
-      {:ok, answer} = Arcana.ask("What is the capital of France?",
-        repo: Repo,
-        llm: test_llm
-      )
+      {:ok, answer} =
+        Arcana.ask("What is the capital of France?",
+          repo: Repo,
+          llm: test_llm
+        )
 
       assert answer =~ "capital of France"
     end
@@ -143,10 +165,11 @@ defmodule ArcanaTest do
         {:ok, "Test answer"}
       end
 
-      {:ok, _answer} = Arcana.ask("Tell me about Paris",
-        repo: Repo,
-        llm: test_llm
-      )
+      {:ok, _answer} =
+        Arcana.ask("Tell me about Paris",
+          repo: Repo,
+          llm: test_llm
+        )
 
       assert_receive {:llm_called, prompt, context}
       assert prompt =~ "Paris"
@@ -168,11 +191,12 @@ defmodule ArcanaTest do
         {:ok, "Answer"}
       end
 
-      {:ok, _} = Arcana.ask("Paris",
-        repo: Repo,
-        llm: test_llm,
-        limit: 1
-      )
+      {:ok, _} =
+        Arcana.ask("Paris",
+          repo: Repo,
+          llm: test_llm,
+          limit: 1
+        )
 
       assert_receive {:context_size, 1}
     end

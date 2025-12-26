@@ -18,7 +18,7 @@ defmodule Arcana do
 
   """
 
-  alias Arcana.{Chunk, Chunker, Document}
+  alias Arcana.{Chunk, Chunker, Document, LLM}
   alias Arcana.Embeddings.Serving
 
   import Ecto.Query
@@ -41,6 +41,7 @@ defmodule Arcana do
 
   """
   def ingest(text, opts) when is_binary(text) do
+    opts = merge_defaults(opts)
     repo = Keyword.fetch!(opts, :repo)
     source_id = Keyword.get(opts, :source_id)
     metadata = Keyword.get(opts, :metadata, %{})
@@ -109,6 +110,7 @@ defmodule Arcana do
 
   """
   def search(query, opts) when is_binary(query) do
+    opts = merge_defaults(opts)
     repo = Keyword.fetch!(opts, :repo)
     limit = Keyword.get(opts, :limit, 10)
     source_id = Keyword.get(opts, :source_id)
@@ -117,7 +119,8 @@ defmodule Arcana do
     rewriter = Keyword.get(opts, :rewriter)
 
     unless mode in @valid_modes do
-      raise ArgumentError, "invalid search mode: #{inspect(mode)}. Must be one of #{inspect(@valid_modes)}"
+      raise ArgumentError,
+            "invalid search mode: #{inspect(mode)}. Must be one of #{inspect(@valid_modes)}"
     end
 
     # Apply query rewriting if configured
@@ -170,15 +173,28 @@ defmodule Arcana do
       from(c in Chunk,
         join: d in Document,
         on: c.document_id == d.id,
-        where: fragment("to_tsvector('english', ?) @@ to_tsquery('english', ?)", c.text, ^tsquery),
+        where:
+          fragment("to_tsvector('english', ?) @@ to_tsquery('english', ?)", c.text, ^tsquery),
         select: %{
           id: c.id,
           text: c.text,
           document_id: c.document_id,
           chunk_index: c.chunk_index,
-          score: fragment("ts_rank(to_tsvector('english', ?), to_tsquery('english', ?))", c.text, ^tsquery)
+          score:
+            fragment(
+              "ts_rank(to_tsvector('english', ?), to_tsquery('english', ?))",
+              c.text,
+              ^tsquery
+            )
         },
-        order_by: [desc: fragment("ts_rank(to_tsvector('english', ?), to_tsquery('english', ?))", c.text, ^tsquery)],
+        order_by: [
+          desc:
+            fragment(
+              "ts_rank(to_tsvector('english', ?), to_tsquery('english', ?))",
+              c.text,
+              ^tsquery
+            )
+        ],
         limit: ^limit
       )
 
@@ -209,8 +225,11 @@ defmodule Arcana do
 
   defp rrf_combine(list1, list2, limit, k \\ 60) do
     # RRF formula: score = sum(1 / (k + rank))
-    scores1 = list1 |> Enum.with_index(1) |> Map.new(fn {item, rank} -> {item.id, 1 / (k + rank)} end)
-    scores2 = list2 |> Enum.with_index(1) |> Map.new(fn {item, rank} -> {item.id, 1 / (k + rank)} end)
+    scores1 =
+      list1 |> Enum.with_index(1) |> Map.new(fn {item, rank} -> {item.id, 1 / (k + rank)} end)
+
+    scores2 =
+      list2 |> Enum.with_index(1) |> Map.new(fn {item, rank} -> {item.id, 1 / (k + rank)} end)
 
     # Build a map of all items by id
     all_items =
@@ -263,7 +282,8 @@ defmodule Arcana do
   ## Options
 
     * `:repo` - The Ecto repo to use (required)
-    * `:llm` - A function that takes (prompt, context) and returns {:ok, answer} (required)
+    * `:llm` - Any type implementing the `Arcana.LLM` protocol (required).
+      This includes anonymous functions, LangChain chat models, or custom implementations.
     * `:limit` - Maximum number of context chunks to retrieve (default: 5)
     * `:source_id` - Filter context to a specific source
     * `:threshold` - Minimum similarity score for context (default: 0.0)
@@ -271,23 +291,30 @@ defmodule Arcana do
 
   ## Examples
 
-      llm_fn = fn prompt, context -> {:ok, "Generated answer"} end
-      {:ok, answer} = Arcana.ask("What is the capital?", repo: MyApp.Repo, llm: llm_fn)
+      # Using an anonymous function
+      llm = fn prompt, context -> {:ok, "Generated answer"} end
+      {:ok, answer} = Arcana.ask("What is the capital?", repo: MyApp.Repo, llm: llm)
+
+      # Using a LangChain model (when langchain is installed)
+      llm = LangChain.ChatModels.ChatOpenAI.new!(%{model: "gpt-4o-mini"})
+      {:ok, answer} = Arcana.ask("What is the capital?", repo: MyApp.Repo, llm: llm)
 
   """
   def ask(question, opts) when is_binary(question) do
+    opts = merge_defaults(opts)
+
     case Keyword.get(opts, :llm) do
       nil ->
         {:error, :no_llm_configured}
 
-      llm_fn when is_function(llm_fn, 2) ->
+      llm ->
         search_opts =
           opts
           |> Keyword.take([:repo, :limit, :source_id, :threshold, :mode])
           |> Keyword.put_new(:limit, 5)
 
         context = search(question, search_opts)
-        llm_fn.(question, context)
+        LLM.complete(llm, question, context)
     end
   end
 
@@ -305,6 +332,7 @@ defmodule Arcana do
 
   """
   def delete(document_id, opts) do
+    opts = merge_defaults(opts)
     repo = Keyword.fetch!(opts, :repo)
 
     case repo.get(Document, document_id) do
@@ -315,5 +343,16 @@ defmodule Arcana do
         repo.delete!(document)
         :ok
     end
+  end
+
+  # Merges application config defaults with provided options.
+  # Options passed explicitly take precedence over config.
+  defp merge_defaults(opts) do
+    defaults =
+      [:repo, :llm]
+      |> Enum.map(fn key -> {key, Application.get_env(:arcana, key)} end)
+      |> Enum.reject(fn {_, v} -> is_nil(v) end)
+
+    Keyword.merge(defaults, opts)
   end
 end
