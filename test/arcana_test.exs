@@ -109,6 +109,75 @@ defmodule ArcanaTest do
     end
   end
 
+  describe "ask/2" do
+    setup do
+      {:ok, _doc} =
+        Arcana.ingest(
+          "The capital of France is Paris. Paris is known for the Eiffel Tower.",
+          repo: Repo
+        )
+
+      :ok
+    end
+
+    test "returns answer using retrieved context" do
+      # Use a test LLM that echoes the context
+      test_llm = fn prompt, _context ->
+        {:ok, "Answer based on: #{prompt}"}
+      end
+
+      {:ok, answer} = Arcana.ask("What is the capital of France?",
+        repo: Repo,
+        llm: test_llm
+      )
+
+      assert answer =~ "capital of France"
+    end
+
+    test "passes retrieved chunks as context to LLM" do
+      # Track what context was passed to the LLM
+      test_pid = self()
+
+      test_llm = fn prompt, context ->
+        send(test_pid, {:llm_called, prompt, context})
+        {:ok, "Test answer"}
+      end
+
+      {:ok, _answer} = Arcana.ask("Tell me about Paris",
+        repo: Repo,
+        llm: test_llm
+      )
+
+      assert_receive {:llm_called, prompt, context}
+      assert prompt =~ "Paris"
+      assert is_list(context)
+      assert length(context) > 0
+      # Context should contain the ingested document chunks
+      assert Enum.any?(context, fn chunk -> chunk.text =~ "Paris" end)
+    end
+
+    test "returns error when no LLM configured" do
+      assert {:error, :no_llm_configured} = Arcana.ask("test", repo: Repo)
+    end
+
+    test "respects search options like limit and threshold" do
+      test_pid = self()
+
+      test_llm = fn _prompt, context ->
+        send(test_pid, {:context_size, length(context)})
+        {:ok, "Answer"}
+      end
+
+      {:ok, _} = Arcana.ask("Paris",
+        repo: Repo,
+        llm: test_llm,
+        limit: 1
+      )
+
+      assert_receive {:context_size, 1}
+    end
+  end
+
   describe "delete/1" do
     test "deletes document and its chunks" do
       {:ok, document} = Arcana.ingest("Test document to delete", repo: Repo)

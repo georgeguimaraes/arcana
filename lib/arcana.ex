@@ -217,6 +217,43 @@ defmodule Arcana do
   end
 
   @doc """
+  Asks a question using retrieved context from the knowledge base.
+
+  Performs a search to find relevant chunks, then passes them along with
+  the question to an LLM for answer generation.
+
+  ## Options
+
+    * `:repo` - The Ecto repo to use (required)
+    * `:llm` - A function that takes (prompt, context) and returns {:ok, answer} (required)
+    * `:limit` - Maximum number of context chunks to retrieve (default: 5)
+    * `:source_id` - Filter context to a specific source
+    * `:threshold` - Minimum similarity score for context (default: 0.0)
+    * `:mode` - Search mode: `:semantic` (default), `:fulltext`, or `:hybrid`
+
+  ## Examples
+
+      llm_fn = fn prompt, context -> {:ok, "Generated answer"} end
+      {:ok, answer} = Arcana.ask("What is the capital?", repo: MyApp.Repo, llm: llm_fn)
+
+  """
+  def ask(question, opts) when is_binary(question) do
+    case Keyword.get(opts, :llm) do
+      nil ->
+        {:error, :no_llm_configured}
+
+      llm_fn when is_function(llm_fn, 2) ->
+        search_opts =
+          opts
+          |> Keyword.take([:repo, :limit, :source_id, :threshold, :mode])
+          |> Keyword.put_new(:limit, 5)
+
+        context = search(question, search_opts)
+        llm_fn.(question, context)
+    end
+  end
+
+  @doc """
   Deletes a document and all its chunks.
 
   ## Options
