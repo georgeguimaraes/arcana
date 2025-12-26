@@ -6,7 +6,7 @@ defmodule Arcana.Chunker do
   by characters or tokens.
   """
 
-  @default_chunk_size 512
+  @default_chunk_size 450  # Safe buffer under 512 model max
   @default_chunk_overlap 50
   @default_format :plaintext
   @default_size_unit :tokens

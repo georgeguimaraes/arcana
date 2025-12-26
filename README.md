@@ -157,7 +157,7 @@ end
 | Option | Default | Description |
 |--------|---------|-------------|
 | `:format` | `:plaintext` | Text format: `:plaintext`, `:markdown`, `:elixir`, etc. |
-| `:chunk_size` | `512` | Maximum chunk size in tokens |
+| `:chunk_size` | `450` | Maximum chunk size in tokens |
 | `:chunk_overlap` | `50` | Overlap between chunks in tokens |
 | `:size_unit` | `:tokens` | Size measurement: `:tokens` or `:characters` |
 
@@ -226,7 +226,7 @@ config :nx, default_backend: EXLA.Backend
 
 ## How it works
 
-1. **Ingest**: Text is split into overlapping chunks (default 512 tokens, 50 overlap)
+1. **Ingest**: Text is split into overlapping chunks (default 450 tokens, 50 overlap)
 2. **Embed**: Each chunk is embedded using `bge-small-en-v1.5` (384 dimensions)
 3. **Store**: Chunks are stored in PostgreSQL with pgvector
 4. **Search**: Query is embedded and compared using cosine similarity via HNSW index
