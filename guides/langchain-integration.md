@@ -26,12 +26,72 @@ config :langchain, anthropic_key: System.get_env("ANTHROPIC_API_KEY")
 
 ## Basic RAG with Arcana.ask/2
 
-The simplest integration wraps a LangChain chat model:
+Arcana natively supports LangChain chat models through the `Arcana.LLM` protocol:
+
+```elixir
+alias LangChain.ChatModels.ChatOpenAI
+
+# Create a LangChain model
+llm = ChatOpenAI.new!(%{model: "gpt-4o-mini"})
+
+# Pass it directly to Arcana.ask/2
+{:ok, answer} = Arcana.ask("What is Elixir?", repo: MyApp.Repo, llm: llm)
+```
+
+This works with any LangChain chat model:
+
+```elixir
+# OpenAI
+llm = LangChain.ChatModels.ChatOpenAI.new!(%{model: "gpt-4o"})
+
+# Anthropic Claude
+llm = LangChain.ChatModels.ChatAnthropic.new!(%{model: "claude-3-5-sonnet-latest"})
+
+# Both work identically with Arcana
+{:ok, answer} = Arcana.ask("Your question", repo: MyApp.Repo, llm: llm)
+```
+
+## App Configuration
+
+You can configure defaults to avoid repeating options:
+
+```elixir
+# config/config.exs
+config :arcana,
+  repo: MyApp.Repo,
+  llm: LangChain.ChatModels.ChatOpenAI.new!(%{model: "gpt-4o-mini"})
+```
+
+Then simply call:
+
+```elixir
+{:ok, answer} = Arcana.ask("What is Elixir?", [])
+```
+
+## Custom RAG Module
+
+For more control, wrap Arcana in a module:
+
+```elixir
+alias LangChain.ChatModels.ChatOpenAI
+
+defmodule MyApp.RAG do
+  def ask(question, opts \\ []) do
+    repo = Keyword.get(opts, :repo, MyApp.Repo)
+    llm = ChatOpenAI.new!(%{model: "gpt-4o-mini"})
+
+    Arcana.ask(question, repo: repo, llm: llm, limit: 5)
+  end
+end
+```
+
+Or use an anonymous function for custom prompting:
 
 ```elixir
 alias LangChain.ChatModels.ChatOpenAI
 alias LangChain.Chains.LLMChain
 alias LangChain.Message
+alias LangChain.Message.ContentPart
 
 defmodule MyApp.RAG do
   def ask(question, opts \\ []) do
@@ -50,14 +110,14 @@ defmodule MyApp.RAG do
 
       chat = ChatOpenAI.new!(%{model: "gpt-4o-mini"})
 
-      {:ok, chain} =
+      {:ok, updated_chain} =
         %{llm: chat}
         |> LLMChain.new!()
         |> LLMChain.add_message(Message.new_system!(system_prompt))
         |> LLMChain.add_message(Message.new_user!(prompt))
         |> LLMChain.run()
 
-      {:ok, LLMChain.last_message(chain).content}
+      {:ok, ContentPart.content_to_string(updated_chain.last_message.content)}
     end
 
     Arcana.ask(question, repo: repo, llm: llm_fn, limit: 5)
@@ -65,80 +125,29 @@ defmodule MyApp.RAG do
 end
 ```
 
-## Using Anthropic Claude
-
-```elixir
-alias LangChain.ChatModels.ChatAnthropic
-
-defmodule MyApp.RAG do
-  def ask(question, opts \\ []) do
-    repo = Keyword.get(opts, :repo, MyApp.Repo)
-
-    llm_fn = fn prompt, context ->
-      context_text = Enum.map_join(context, "\n\n", & &1.text)
-
-      chat = ChatAnthropic.new!(%{model: "claude-3-5-sonnet-latest"})
-
-      {:ok, chain} =
-        %{llm: chat}
-        |> LLMChain.new!()
-        |> LLMChain.add_message(Message.new_system!("""
-          You are a helpful assistant. Answer based on the provided context.
-
-          Context:
-          #{context_text}
-        """))
-        |> LLMChain.add_message(Message.new_user!(prompt))
-        |> LLMChain.run()
-
-      {:ok, LLMChain.last_message(chain).content}
-    end
-
-    Arcana.ask(question, repo: repo, llm: llm_fn)
-  end
-end
-```
-
 ## Query Rewriting with LangChain
 
-Use LangChain to power Arcana's query rewriting:
+The `Arcana.Rewriters` module also supports LangChain models via the protocol:
 
 ```elixir
 alias LangChain.ChatModels.ChatOpenAI
-alias LangChain.Chains.LLMChain
-alias LangChain.Message
 alias Arcana.Rewriters
 
-defmodule MyApp.Search do
-  def search(query, opts \\ []) do
-    repo = Keyword.get(opts, :repo, MyApp.Repo)
+# LangChain models work directly with rewriters
+llm = ChatOpenAI.new!(%{model: "gpt-4o-mini", temperature: 0})
+rewriter = Rewriters.expand(llm: llm)
 
-    # Create a LangChain-powered rewriter
-    rewriter = Rewriters.expand(llm: &langchain_rewrite/1)
-
-    Arcana.search(query, repo: repo, rewriter: rewriter, mode: :hybrid)
-  end
-
-  defp langchain_rewrite(prompt) do
-    chat = ChatOpenAI.new!(%{model: "gpt-4o-mini", temperature: 0})
-
-    {:ok, chain} =
-      %{llm: chat}
-      |> LLMChain.new!()
-      |> LLMChain.add_message(Message.new_user!(prompt))
-      |> LLMChain.run()
-
-    {:ok, LLMChain.last_message(chain).content}
-  end
-end
+Arcana.search("ML models", repo: MyApp.Repo, rewriter: rewriter, mode: :hybrid)
 ```
 
-Or with custom prompts:
+With custom prompts:
 
 ```elixir
 # Keyword extraction for precise search
+llm = ChatOpenAI.new!(%{model: "gpt-4o-mini", temperature: 0})
+
 rewriter = Rewriters.keywords(
-  llm: &langchain_rewrite/1,
+  llm: llm,
   prompt: """
   Extract 3-5 key search terms from this query.
   Return only the terms, space-separated.
@@ -149,7 +158,7 @@ rewriter = Rewriters.keywords(
 
 # Query expansion for better recall
 rewriter = Rewriters.expand(
-  llm: &langchain_rewrite/1,
+  llm: llm,
   prompt: """
   Expand this search query with synonyms and related terms.
   Keep it concise - return a single enhanced query.
@@ -225,7 +234,7 @@ end
 
 ## Complete RAG Module
 
-Here's a complete, production-ready RAG module:
+Here's a production-ready RAG module using the simplified protocol-based approach:
 
 ```elixir
 defmodule MyApp.RAG do
@@ -234,8 +243,6 @@ defmodule MyApp.RAG do
   """
 
   alias LangChain.ChatModels.ChatOpenAI
-  alias LangChain.Chains.LLMChain
-  alias LangChain.Message
   alias Arcana.Rewriters
 
   @default_model "gpt-4o-mini"
@@ -265,8 +272,12 @@ defmodule MyApp.RAG do
     source_id = Keyword.get(opts, :source_id)
     rewrite? = Keyword.get(opts, :rewrite, false)
 
+    # Create the LLM - Arcana uses it directly via protocol
+    llm = ChatOpenAI.new!(%{model: model})
+
     search_opts = [
       repo: repo,
+      llm: llm,
       limit: limit,
       mode: :hybrid
     ]
@@ -277,11 +288,7 @@ defmodule MyApp.RAG do
     search_opts =
       if rewrite?, do: Keyword.put(search_opts, :rewriter, query_rewriter(model)), else: search_opts
 
-    llm_fn = fn prompt, context ->
-      generate_answer(prompt, context, model)
-    end
-
-    Arcana.ask(question, Keyword.put(search_opts, :llm, llm_fn))
+    Arcana.ask(question, search_opts)
   end
 
   @doc """
@@ -289,6 +296,7 @@ defmodule MyApp.RAG do
   """
   def search(query, opts \\ []) do
     repo = Keyword.get(opts, :repo, MyApp.Repo)
+    model = Keyword.get(opts, :model, @default_model)
     limit = Keyword.get(opts, :limit, @default_limit)
     rewrite? = Keyword.get(opts, :rewrite, false)
 
@@ -296,7 +304,7 @@ defmodule MyApp.RAG do
 
     search_opts =
       if rewrite? do
-        Keyword.put(search_opts, :rewriter, query_rewriter(@default_model))
+        Keyword.put(search_opts, :rewriter, query_rewriter(model))
       else
         search_opts
       end
@@ -305,43 +313,8 @@ defmodule MyApp.RAG do
   end
 
   defp query_rewriter(model) do
-    Rewriters.expand(llm: fn prompt ->
-      chat = ChatOpenAI.new!(%{model: model, temperature: 0})
-
-      {:ok, chain} =
-        %{llm: chat}
-        |> LLMChain.new!()
-        |> LLMChain.add_message(Message.new_user!(prompt))
-        |> LLMChain.run()
-
-      {:ok, LLMChain.last_message(chain).content}
-    end)
-  end
-
-  defp generate_answer(question, context, model) do
-    context_text = Enum.map_join(context, "\n\n---\n\n", & &1.text)
-
-    system_prompt = """
-    You are a helpful assistant. Answer the user's question based ONLY on the
-    provided context. If the answer is not in the context, say "I don't have
-    enough information to answer that question."
-
-    Be concise and direct. Cite specific parts of the context when relevant.
-
-    Context:
-    #{context_text}
-    """
-
-    chat = ChatOpenAI.new!(%{model: model})
-
-    {:ok, chain} =
-      %{llm: chat}
-      |> LLMChain.new!()
-      |> LLMChain.add_message(Message.new_system!(system_prompt))
-      |> LLMChain.add_message(Message.new_user!(question))
-      |> LLMChain.run()
-
-    {:ok, LLMChain.last_message(chain).content}
+    llm = ChatOpenAI.new!(%{model: model, temperature: 0})
+    Rewriters.expand(llm: llm)
   end
 end
 ```
