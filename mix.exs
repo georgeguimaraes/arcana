@@ -32,6 +32,7 @@ defmodule Arcana.MixProject do
       {:nx, "~> 0.9"},
       {:exla, "~> 0.9"},
       {:jason, "~> 1.4"},
+      {:text_chunker, "~> 0.3"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
 
       # Optional: Dashboard UI

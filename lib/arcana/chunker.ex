@@ -1,11 +1,15 @@
 defmodule Arcana.Chunker do
   @moduledoc """
-  Splits text into overlapping chunks using recursive character splitting.
+  Splits text into overlapping chunks using text_chunker library.
+
+  Supports multiple formats (plaintext, markdown, etc.) and can size chunks
+  by characters or tokens.
   """
 
-  @default_chunk_size 1024
-  @default_chunk_overlap 200
-  @separators ["\n\n", "\n", ". ", " ", ""]
+  @default_chunk_size 512
+  @default_chunk_overlap 50
+  @default_format :plaintext
+  @default_size_unit :tokens
 
   @doc """
   Splits text into chunks.
@@ -14,8 +18,16 @@ defmodule Arcana.Chunker do
 
   ## Options
 
-    * `:chunk_size` - Maximum chunk size in characters (default: 1024)
-    * `:chunk_overlap` - Overlap between chunks (default: 200)
+    * `:chunk_size` - Maximum chunk size (default: 512)
+    * `:chunk_overlap` - Overlap between chunks (default: 50)
+    * `:format` - Text format: `:plaintext`, `:markdown`, `:elixir`, etc. (default: :plaintext)
+    * `:size_unit` - How to measure size: `:characters` or `:tokens` (default: :tokens)
+
+  ## Examples
+
+      Chunker.chunk("Hello world", chunk_size: 100)
+      Chunker.chunk(markdown_text, format: :markdown, chunk_size: 512)
+      Chunker.chunk(text, size_unit: :tokens, chunk_size: 256)
 
   """
   def chunk(text, opts \\ [])
@@ -24,60 +36,39 @@ defmodule Arcana.Chunker do
 
   def chunk(text, opts) do
     chunk_size = Keyword.get(opts, :chunk_size, @default_chunk_size)
-    _chunk_overlap = Keyword.get(opts, :chunk_overlap, @default_chunk_overlap)
+    chunk_overlap = Keyword.get(opts, :chunk_overlap, @default_chunk_overlap)
+    format = Keyword.get(opts, :format, @default_format)
+    size_unit = Keyword.get(opts, :size_unit, @default_size_unit)
+
+    # Convert token-based sizes to character-based for text_chunker
+    # (text_chunker's merge logic doesn't use get_chunk_size properly)
+    {effective_chunk_size, effective_overlap} =
+      case size_unit do
+        :tokens -> {chunk_size * 4, chunk_overlap * 4}
+        :characters -> {chunk_size, chunk_overlap}
+      end
+
+    text_chunker_opts = [
+      chunk_size: effective_chunk_size,
+      chunk_overlap: effective_overlap,
+      format: format
+    ]
 
     text
-    |> recursive_split(@separators, chunk_size)
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
+    |> TextChunker.split(text_chunker_opts)
     |> Enum.with_index()
-    |> Enum.map(fn {text, index} ->
+    |> Enum.map(fn {chunk, index} ->
       %{
-        text: text,
+        text: chunk.text,
         chunk_index: index,
-        token_count: estimate_tokens(text)
+        token_count: estimate_tokens(chunk.text)
       }
     end)
   end
 
-  defp recursive_split(text, [], _chunk_size), do: [text]
-
-  defp recursive_split(text, _separators, chunk_size) when byte_size(text) <= chunk_size do
-    [text]
-  end
-
-  defp recursive_split(text, [sep | rest_seps], chunk_size) do
-    parts = String.split(text, sep, trim: true)
-
-    if length(parts) > 1 do
-      parts
-      |> Enum.flat_map(&recursive_split(&1, rest_seps, chunk_size))
-      |> merge_small_chunks(chunk_size, sep)
-    else
-      recursive_split(text, rest_seps, chunk_size)
-    end
-  end
-
-  defp merge_small_chunks(chunks, chunk_size, sep) do
-    chunks
-    |> Enum.reduce([], &merge_chunk(&1, &2, chunk_size, sep))
-    |> Enum.reverse()
-  end
-
-  defp merge_chunk(chunk, [], _chunk_size, _sep), do: [chunk]
-
-  defp merge_chunk(chunk, [last | rest] = acc, chunk_size, sep) do
-    merged = last <> sep <> chunk
-
-    if String.length(merged) <= chunk_size do
-      [merged | rest]
-    else
-      [chunk | acc]
-    end
-  end
-
   defp estimate_tokens(text) do
     # Rough estimate: ~4 chars per token for English
-    div(String.length(text), 4)
+    # This matches typical BPE tokenizer behavior
+    max(1, div(String.length(text), 4))
   end
 end
