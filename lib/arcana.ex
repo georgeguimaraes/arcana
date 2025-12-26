@@ -18,7 +18,7 @@ defmodule Arcana do
 
   """
 
-  alias Arcana.{Chunk, Chunker, Document, LLM}
+  alias Arcana.{Chunk, Chunker, Document, LLM, Parser}
   alias Arcana.Embeddings.Serving
 
   import Ecto.Query
@@ -85,6 +85,104 @@ defmodule Arcana do
       |> repo.update()
 
     {:ok, document}
+  end
+
+  @doc """
+  Ingests a file, parsing its content and creating a document with embedded chunks.
+
+  Supports multiple file formats including plain text, markdown, and PDF.
+  Use `Arcana.Parser.supported_formats/0` to see all supported extensions.
+
+  ## Options
+
+    * `:repo` - The Ecto repo to use (required)
+    * `:source_id` - An optional identifier for grouping/filtering
+    * `:metadata` - Optional map of metadata to store with the document
+    * `:chunk_size` - Maximum chunk size in characters (default: 1024)
+    * `:chunk_overlap` - Overlap between chunks (default: 200)
+
+  ## Examples
+
+      {:ok, doc} = Arcana.ingest_file("/path/to/file.pdf", repo: MyApp.Repo)
+      {:ok, doc} = Arcana.ingest_file("/path/to/doc.txt", repo: MyApp.Repo, source_id: "docs")
+
+  """
+  def ingest_file(path, opts) when is_binary(path) do
+    case Parser.parse(path) do
+      {:ok, text} ->
+        content_type = content_type_for_path(path)
+
+        opts =
+          opts
+          |> Keyword.put(:file_path, path)
+          |> Keyword.put(:content_type, content_type)
+
+        ingest_with_attrs(text, opts)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp ingest_with_attrs(text, opts) do
+    opts = merge_defaults(opts)
+    repo = Keyword.fetch!(opts, :repo)
+    source_id = Keyword.get(opts, :source_id)
+    metadata = Keyword.get(opts, :metadata, %{})
+    file_path = Keyword.get(opts, :file_path)
+    content_type = Keyword.get(opts, :content_type, "text/plain")
+    chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap])
+
+    # Create document
+    {:ok, document} =
+      %Document{}
+      |> Document.changeset(%{
+        content: text,
+        source_id: source_id,
+        metadata: metadata,
+        file_path: file_path,
+        content_type: content_type,
+        status: :processing
+      })
+      |> repo.insert()
+
+    # Chunk the text
+    chunks = Chunker.chunk(text, chunk_opts)
+
+    # Embed and store chunks
+    chunk_records =
+      chunks
+      |> Enum.map(fn chunk ->
+        embedding = Serving.embed(chunk.text)
+
+        %Chunk{}
+        |> Chunk.changeset(%{
+          text: chunk.text,
+          embedding: embedding,
+          chunk_index: chunk.chunk_index,
+          token_count: chunk.token_count,
+          document_id: document.id
+        })
+        |> repo.insert!()
+      end)
+
+    # Update document status
+    {:ok, document} =
+      document
+      |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
+      |> repo.update()
+
+    {:ok, document}
+  end
+
+  defp content_type_for_path(path) do
+    case Path.extname(path) |> String.downcase() do
+      ".txt" -> "text/plain"
+      ".md" -> "text/markdown"
+      ".markdown" -> "text/markdown"
+      ".pdf" -> "application/pdf"
+      _ -> "application/octet-stream"
+    end
   end
 
   @valid_modes [:semantic, :fulltext, :hybrid]
