@@ -114,12 +114,24 @@ defmodule Arcana do
     source_id = Keyword.get(opts, :source_id)
     threshold = Keyword.get(opts, :threshold, 0.0)
     mode = Keyword.get(opts, :mode, :semantic)
+    rewriter = Keyword.get(opts, :rewriter)
 
     unless mode in @valid_modes do
       raise ArgumentError, "invalid search mode: #{inspect(mode)}. Must be one of #{inspect(@valid_modes)}"
     end
 
-    do_search(mode, query, repo, limit, source_id, threshold)
+    # Apply query rewriting if configured
+    search_query =
+      if rewriter do
+        case rewrite_query(query, rewriter: rewriter) do
+          {:ok, rewritten} -> rewritten
+          {:error, _} -> query
+        end
+      else
+        query
+      end
+
+    do_search(mode, search_query, repo, limit, source_id, threshold)
   end
 
   defp do_search(:semantic, query, repo, limit, source_id, threshold) do
@@ -214,6 +226,32 @@ defmodule Arcana do
     end)
     |> Enum.sort_by(& &1.score, :desc)
     |> Enum.take(limit)
+  end
+
+  @doc """
+  Rewrites a query using a provided rewriter function.
+
+  Query rewriting can improve retrieval by expanding abbreviations,
+  adding synonyms, or reformulating the query for better matching.
+
+  ## Options
+
+    * `:rewriter` - A function that takes a query and returns {:ok, rewritten} or {:error, reason}
+
+  ## Examples
+
+      rewriter = fn query -> {:ok, "expanded: \#{query}"} end
+      {:ok, rewritten} = Arcana.rewrite_query("ML", rewriter: rewriter)
+
+  """
+  def rewrite_query(query, opts \\ []) when is_binary(query) do
+    case Keyword.get(opts, :rewriter) do
+      nil ->
+        {:error, :no_rewriter_configured}
+
+      rewriter_fn when is_function(rewriter_fn, 1) ->
+        rewriter_fn.(query)
+    end
   end
 
   @doc """

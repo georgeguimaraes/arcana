@@ -178,6 +178,67 @@ defmodule ArcanaTest do
     end
   end
 
+  describe "rewrite_query/2" do
+    test "rewrites query using provided function" do
+      rewriter = fn query ->
+        {:ok, "expanded: #{query} programming language"}
+      end
+
+      {:ok, rewritten} = Arcana.rewrite_query("Elixir", rewriter: rewriter)
+
+      assert rewritten == "expanded: Elixir programming language"
+    end
+
+    test "returns error when no rewriter configured" do
+      assert {:error, :no_rewriter_configured} = Arcana.rewrite_query("test")
+    end
+
+    test "passes through rewriter errors" do
+      rewriter = fn _query ->
+        {:error, :llm_unavailable}
+      end
+
+      assert {:error, :llm_unavailable} = Arcana.rewrite_query("test", rewriter: rewriter)
+    end
+  end
+
+  describe "search/2 with rewriter" do
+    setup do
+      {:ok, doc} = Arcana.ingest("Elixir is a functional programming language.", repo: Repo)
+      {:ok, weather_doc} = Arcana.ingest("The weather today is sunny and warm.", repo: Repo)
+      %{doc: doc, weather_doc: weather_doc}
+    end
+
+    test "applies rewriter before searching", %{doc: doc} do
+      test_pid = self()
+
+      # Rewriter expands query and reports what it received
+      rewriter = fn query ->
+        send(test_pid, {:rewriter_called, query})
+        {:ok, "functional programming language"}
+      end
+
+      results = Arcana.search("xyz123", repo: Repo, rewriter: rewriter)
+
+      # Verify rewriter was called with original query
+      assert_receive {:rewriter_called, "xyz123"}
+      # Verify search used rewritten query to find functional programming doc
+      refute Enum.empty?(results)
+      assert hd(results).document_id == doc.id
+    end
+
+    test "uses original query when rewriter returns error" do
+      rewriter = fn _query ->
+        {:error, :failed}
+      end
+
+      # Should fall back to original query, still find results
+      results = Arcana.search("Elixir", repo: Repo, rewriter: rewriter)
+
+      refute Enum.empty?(results)
+    end
+  end
+
   describe "delete/1" do
     test "deletes document and its chunks" do
       {:ok, document} = Arcana.ingest("Test document to delete", repo: Repo)
