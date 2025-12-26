@@ -71,6 +71,42 @@ defmodule ArcanaTest do
                doc.source_id == "scope-a"
              end)
     end
+
+    test "fulltext mode finds exact keyword matches" do
+      # Search for exact word "Elixir" - fulltext should find it
+      results = Arcana.search("Elixir", repo: Repo, mode: :fulltext)
+
+      refute Enum.empty?(results)
+      # Verify the result contains the exact word
+      assert String.contains?(hd(results).text, "Elixir")
+    end
+
+    test "fulltext mode uses ts_rank scoring" do
+      # Fulltext should return results with rank-based scoring
+      results = Arcana.search("functional programming language", repo: Repo, mode: :fulltext)
+
+      refute Enum.empty?(results)
+      # ts_rank scores are typically small positive numbers
+      first = hd(results)
+      assert first.score > 0
+      assert first.score < 1.0
+    end
+
+    test "hybrid mode combines vector and fulltext with RRF" do
+      results = Arcana.search("Elixir functional", repo: Repo, mode: :hybrid)
+
+      refute Enum.empty?(results)
+      # RRF scores are in range 0-1
+      first = hd(results)
+      assert first.score > 0
+      assert first.score <= 1.0
+    end
+
+    test "raises error for invalid mode" do
+      assert_raise ArgumentError, ~r/invalid search mode/, fn ->
+        Arcana.search("test", repo: Repo, mode: :invalid_mode)
+      end
+    end
   end
 
   describe "delete/1" do

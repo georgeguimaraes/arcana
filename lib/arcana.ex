@@ -86,6 +86,8 @@ defmodule Arcana do
     {:ok, document}
   end
 
+  @valid_modes [:semantic, :fulltext, :hybrid]
+
   @doc """
   Searches for chunks similar to the query.
 
@@ -97,11 +99,13 @@ defmodule Arcana do
     * `:limit` - Maximum number of results (default: 10)
     * `:source_id` - Filter results to a specific source
     * `:threshold` - Minimum similarity score (default: 0.0)
+    * `:mode` - Search mode: `:semantic` (default), `:fulltext`, or `:hybrid`
 
   ## Examples
 
       results = Arcana.search("functional programming", repo: MyApp.Repo)
       results = Arcana.search("query", repo: MyApp.Repo, limit: 5, source_id: "doc-123")
+      results = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)
 
   """
   def search(query, opts) when is_binary(query) do
@@ -109,7 +113,16 @@ defmodule Arcana do
     limit = Keyword.get(opts, :limit, 10)
     source_id = Keyword.get(opts, :source_id)
     threshold = Keyword.get(opts, :threshold, 0.0)
+    mode = Keyword.get(opts, :mode, :semantic)
 
+    unless mode in @valid_modes do
+      raise ArgumentError, "invalid search mode: #{inspect(mode)}. Must be one of #{inspect(@valid_modes)}"
+    end
+
+    do_search(mode, query, repo, limit, source_id, threshold)
+  end
+
+  defp do_search(:semantic, query, repo, limit, source_id, threshold) do
     query_embedding = Serving.embed(query)
 
     base_query =
@@ -136,6 +149,71 @@ defmodule Arcana do
       end
 
     repo.all(final_query)
+  end
+
+  defp do_search(:fulltext, query, repo, limit, source_id, _threshold) do
+    tsquery = to_tsquery(query)
+
+    base_query =
+      from(c in Chunk,
+        join: d in Document,
+        on: c.document_id == d.id,
+        where: fragment("to_tsvector('english', ?) @@ to_tsquery('english', ?)", c.text, ^tsquery),
+        select: %{
+          id: c.id,
+          text: c.text,
+          document_id: c.document_id,
+          chunk_index: c.chunk_index,
+          score: fragment("ts_rank(to_tsvector('english', ?), to_tsquery('english', ?))", c.text, ^tsquery)
+        },
+        order_by: [desc: fragment("ts_rank(to_tsvector('english', ?), to_tsquery('english', ?))", c.text, ^tsquery)],
+        limit: ^limit
+      )
+
+    final_query =
+      if source_id do
+        from([c, d] in base_query, where: d.source_id == ^source_id)
+      else
+        base_query
+      end
+
+    repo.all(final_query)
+  end
+
+  defp do_search(:hybrid, query, repo, limit, source_id, threshold) do
+    # Get results from both methods
+    semantic_results = do_search(:semantic, query, repo, limit * 2, source_id, threshold)
+    fulltext_results = do_search(:fulltext, query, repo, limit * 2, source_id, threshold)
+
+    # Combine using Reciprocal Rank Fusion (RRF)
+    rrf_combine(semantic_results, fulltext_results, limit)
+  end
+
+  defp to_tsquery(query) do
+    query
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.join(" & ")
+  end
+
+  defp rrf_combine(list1, list2, limit, k \\ 60) do
+    # RRF formula: score = sum(1 / (k + rank))
+    scores1 = list1 |> Enum.with_index(1) |> Map.new(fn {item, rank} -> {item.id, 1 / (k + rank)} end)
+    scores2 = list2 |> Enum.with_index(1) |> Map.new(fn {item, rank} -> {item.id, 1 / (k + rank)} end)
+
+    # Build a map of all items by id
+    all_items =
+      (list1 ++ list2)
+      |> Enum.uniq_by(& &1.id)
+      |> Map.new(fn item -> {item.id, item} end)
+
+    # Combine scores
+    all_items
+    |> Enum.map(fn {id, item} ->
+      rrf_score = Map.get(scores1, id, 0) + Map.get(scores2, id, 0)
+      Map.put(item, :score, rrf_score)
+    end)
+    |> Enum.sort_by(& &1.score, :desc)
+    |> Enum.take(limit)
   end
 
   @doc """
