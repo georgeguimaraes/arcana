@@ -11,7 +11,9 @@ defmodule ArcanaWeb.DashboardLive do
 
   @impl true
   def mount(_params, session, socket) do
-    repo = session["repo"] || Arcana.TestRepo
+    repo =
+      session["repo"] || Application.get_env(:arcana, :repo) ||
+        raise "Missing :arcana, :repo config"
 
     socket =
       socket

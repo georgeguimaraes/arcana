@@ -131,12 +131,45 @@ if Code.ensure_loaded?(Igniter) do
           CREATE INDEX arcana_chunks_embedding_idx ON arcana_chunks
           USING hnsw (embedding vector_cosine_ops)
           \"\"\"
+
+          # Evaluation tables
+          create table(:arcana_evaluation_test_cases, primary_key: false) do
+            add :id, :uuid, primary_key: true, default: fragment("gen_random_uuid()")
+            add :question, :text, null: false
+            add :source, :string, null: false, default: "synthetic"
+            add :source_chunk_id, references(:arcana_chunks, type: :uuid, on_delete: :nilify_all)
+
+            timestamps()
+          end
+
+          create table(:arcana_evaluation_test_case_chunks, primary_key: false) do
+            add :test_case_id, references(:arcana_evaluation_test_cases, type: :uuid, on_delete: :delete_all), null: false
+            add :chunk_id, references(:arcana_chunks, type: :uuid, on_delete: :delete_all), null: false
+          end
+
+          create unique_index(:arcana_evaluation_test_case_chunks, [:test_case_id, :chunk_id])
+
+          create table(:arcana_evaluation_runs, primary_key: false) do
+            add :id, :uuid, primary_key: true, default: fragment("gen_random_uuid()")
+            add :status, :string, null: false, default: "running"
+            add :metrics, :map, default: %{}
+            add :results, :map, default: %{}
+            add :config, :map, default: %{}
+            add :test_case_count, :integer, default: 0
+
+            timestamps()
+          end
+
+          create index(:arcana_evaluation_runs, [:inserted_at])
         end
 
         def down do
+          drop table(:arcana_evaluation_runs)
+          drop table(:arcana_evaluation_test_case_chunks)
+          drop table(:arcana_evaluation_test_cases)
           drop table(:arcana_chunks)
           drop table(:arcana_documents)
-          execute "DROP EXTENSION IF EXISTS vector"
+          # Note: We don't drop the vector extension as it may be used by other tables
         end
       end
       """
@@ -177,12 +210,22 @@ if Code.ensure_loaded?(Igniter) do
     defp maybe_add_dashboard_route(igniter, _add_dashboard, web_module) do
       router_module = Module.concat([web_module, "Router"])
 
+      # Add the arcana_dashboard macro call in a scope
       scope_code = """
         pipe_through [:browser]
-        forward "/", ArcanaWeb.Router
+
+        arcana_dashboard "/arcana"
       """
 
-      Phoenix.add_scope(igniter, "/arcana", scope_code, router: router_module)
+      igniter
+      |> Phoenix.add_scope("/", scope_code, router: router_module)
+      |> Igniter.add_notice("""
+
+      IMPORTANT: Add this import to the top of your router (#{inspect(router_module)}):
+
+          import ArcanaWeb.Router
+
+      """)
     end
   end
 else
@@ -249,12 +292,45 @@ else
         CREATE INDEX arcana_chunks_embedding_idx ON arcana_chunks
         USING hnsw (embedding vector_cosine_ops)
         \"\"\"
+
+        # Evaluation tables
+        create table(:arcana_evaluation_test_cases, primary_key: false) do
+          add :id, :uuid, primary_key: true, default: fragment("gen_random_uuid()")
+          add :question, :text, null: false
+          add :source, :string, null: false, default: "synthetic"
+          add :source_chunk_id, references(:arcana_chunks, type: :uuid, on_delete: :nilify_all)
+
+          timestamps()
+        end
+
+        create table(:arcana_evaluation_test_case_chunks, primary_key: false) do
+          add :test_case_id, references(:arcana_evaluation_test_cases, type: :uuid, on_delete: :delete_all), null: false
+          add :chunk_id, references(:arcana_chunks, type: :uuid, on_delete: :delete_all), null: false
+        end
+
+        create unique_index(:arcana_evaluation_test_case_chunks, [:test_case_id, :chunk_id])
+
+        create table(:arcana_evaluation_runs, primary_key: false) do
+          add :id, :uuid, primary_key: true, default: fragment("gen_random_uuid()")
+          add :status, :string, null: false, default: "running"
+          add :metrics, :map, default: %{}
+          add :results, :map, default: %{}
+          add :config, :map, default: %{}
+          add :test_case_count, :integer, default: 0
+
+          timestamps()
+        end
+
+        create index(:arcana_evaluation_runs, [:inserted_at])
       end
 
       def down do
+        drop table(:arcana_evaluation_runs)
+        drop table(:arcana_evaluation_test_case_chunks)
+        drop table(:arcana_evaluation_test_cases)
         drop table(:arcana_chunks)
         drop table(:arcana_documents)
-        execute "DROP EXTENSION IF EXISTS vector"
+        # Note: We don't drop the vector extension as it may be used by other tables
       end
     end
     """
@@ -306,9 +382,14 @@ else
 
       5. (Optional) Mount the dashboard in your router:
 
-          scope "/arcana" do
+          # At the top of your router
+          import ArcanaWeb.Router
+
+          # In a scope with the :browser pipeline
+          scope "/" do
             pipe_through [:browser]
-            forward "/", ArcanaWeb.Router
+
+            arcana_dashboard "/arcana"
           end
 
       TIP: For automatic setup, add {:igniter, "~> 0.5"} to your deps

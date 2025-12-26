@@ -1,5 +1,7 @@
 import Config
 
+config :arcana, repo: Arcana.TestRepo
+
 config :arcana, Arcana.TestRepo,
   username: System.get_env("POSTGRES_USER", "postgres"),
   password: System.get_env("POSTGRES_PASSWORD", "postgres"),
