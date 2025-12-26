@@ -21,7 +21,12 @@ defmodule ArcanaWeb.DashboardLive do
       |> assign(search_results: [], search_query: "")
       |> assign(page: 1, per_page: 10)
       |> assign(viewing_document: nil)
-      |> assign(eval_view: :test_cases, eval_running: false, eval_message: nil)
+      |> assign(
+        eval_view: :test_cases,
+        eval_running: false,
+        eval_generating: false,
+        eval_message: nil
+      )
       |> load_documents()
       |> load_source_ids()
       |> load_stats()
@@ -131,6 +136,32 @@ defmodule ArcanaWeb.DashboardLive do
     end
   end
 
+  def handle_event("eval_generate", params, socket) do
+    repo = socket.assigns.repo
+    sample_size = parse_int(params["sample_size"], 10)
+
+    case Application.get_env(:arcana, :llm) do
+      nil ->
+        {:noreply,
+         assign(socket,
+           eval_message: {:error, "No LLM configured. Set :arcana, :llm in your config."}
+         )}
+
+      llm ->
+        socket = assign(socket, eval_generating: true, eval_message: nil)
+
+        # Run generation in a Task to avoid blocking
+        parent = self()
+
+        Task.start(fn ->
+          result = Evaluation.generate_test_cases(repo: repo, llm: llm, sample_size: sample_size)
+          send(parent, {:eval_generate_complete, result})
+        end)
+
+        {:noreply, socket}
+    end
+  end
+
   def handle_event("eval_delete_test_case", %{"id" => id}, socket) do
     repo = socket.assigns.repo
 
@@ -147,6 +178,28 @@ defmodule ArcanaWeb.DashboardLive do
       {:ok, _} -> {:noreply, load_evaluation_data(socket)}
       {:error, _} -> {:noreply, socket}
     end
+  end
+
+  @impl true
+  def handle_info({:eval_generate_complete, result}, socket) do
+    socket =
+      case result do
+        {:ok, test_cases} ->
+          socket
+          |> assign(
+            eval_generating: false,
+            eval_message: {:success, "Generated #{length(test_cases)} test case(s)!"}
+          )
+          |> load_evaluation_data()
+
+        {:error, reason} ->
+          assign(socket,
+            eval_generating: false,
+            eval_message: {:error, "Generation failed: #{inspect(reason)}"}
+          )
+      end
+
+    {:noreply, socket}
   end
 
   defp parse_int(nil, default), do: default
@@ -934,6 +987,7 @@ defmodule ArcanaWeb.DashboardLive do
               runs={@eval_runs}
               test_case_count={@eval_test_case_count}
               running={@eval_running}
+              generating={@eval_generating}
               message={@eval_message}
             />
         <% end %>
@@ -1197,7 +1251,7 @@ defmodule ArcanaWeb.DashboardLive do
 
       <%= case @view do %>
         <% :test_cases -> %>
-          <.eval_test_cases_view test_cases={@test_cases} />
+          <.eval_test_cases_view test_cases={@test_cases} generating={@generating} />
         <% :run -> %>
           <.eval_run_view running={@running} test_case_count={@test_case_count} />
         <% :history -> %>
@@ -1210,10 +1264,30 @@ defmodule ArcanaWeb.DashboardLive do
   defp eval_test_cases_view(assigns) do
     ~H"""
     <div class="arcana-eval-test-cases">
+      <form phx-submit="eval_generate" class="arcana-run-form" style="margin-bottom: 1.5rem;">
+        <label>
+          Sample Size
+          <select name="sample_size">
+            <option value="5">5</option>
+            <option value="10" selected>10</option>
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </label>
+
+        <button type="submit" disabled={@generating}>
+          <%= if @generating, do: "Generating...", else: "Generate Test Cases" %>
+        </button>
+
+        <span style="font-size: 0.75rem; color: #6b7280; align-self: center;">
+          Samples random chunks and uses the configured LLM to generate questions
+        </span>
+      </form>
+
       <%= if Enum.empty?(@test_cases) do %>
         <p class="arcana-empty">
-          No test cases yet. Use <code>mix arcana.eval.generate</code> to generate synthetic test cases,
-          or create them via the API.
+          No test cases yet. Click "Generate Test Cases" above or use the API.
         </p>
       <% else %>
         <%= for tc <- @test_cases do %>
