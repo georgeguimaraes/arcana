@@ -8,6 +8,7 @@ Similar to how Oban works - add the dependency, configure it, and embed it in yo
 
 - **Local embeddings** - Uses Bumblebee with `bge-small-en-v1.5` (no API keys needed)
 - **pgvector storage** - HNSW index for fast similarity search
+- **Hybrid search** - Vector, full-text, or combined with Reciprocal Rank Fusion
 - **Simple API** - `ingest/2`, `search/2`, `delete/2`
 - **Source scoping** - Filter searches by `source_id` for multi-tenant apps
 - **Embeddable** - Uses your existing Repo, no separate database
@@ -141,7 +142,7 @@ end
 ### Search
 
 ```elixir
-# Basic search
+# Basic search (semantic by default)
 results = Arcana.search("your query", repo: MyApp.Repo)
 
 # Returns list of:
@@ -160,12 +161,30 @@ results = Arcana.search("query",
   source_id: "user-123",
   threshold: 0.5
 )
-
-# Search modes
-results = Arcana.search("query", repo: MyApp.Repo, mode: :semantic)  # default
-results = Arcana.search("query", repo: MyApp.Repo, mode: :fulltext)  # keyword matching
-results = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)    # vector + fulltext with RRF
 ```
+
+#### Search Modes
+
+Arcana supports three search modes:
+
+```elixir
+# Semantic search (default) - finds similar meaning
+results = Arcana.search("query", repo: MyApp.Repo, mode: :semantic)
+
+# Full-text search - finds exact keyword matches
+results = Arcana.search("query", repo: MyApp.Repo, mode: :fulltext)
+
+# Hybrid search - combines both with RRF fusion
+results = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)
+```
+
+| Mode | Best for | How it works |
+|------|----------|--------------|
+| `:semantic` | Conceptual queries | Vector similarity via pgvector |
+| `:fulltext` | Exact terms, names | PostgreSQL tsvector/tsquery |
+| `:hybrid` | General purpose | Reciprocal Rank Fusion of both |
+
+**Hybrid search** uses [Reciprocal Rank Fusion (RRF)](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf) to combine results. RRF scores by rank position (`1/(k + rank)`) rather than raw scores, making it robust when combining different scoring scales.
 
 ### Delete
 
@@ -212,11 +231,13 @@ config :nx, default_backend: EXLA.Backend
 
 ## Roadmap
 
-- [x] LiveView dashboard (`ArcanaWeb.Router`)
-- [ ] File ingestion (PDF, DOCX)
+- [x] LiveView dashboard
 - [x] Hybrid search (vector + full-text with RRF)
-- [ ] RAG pipeline with LLM providers
+- [ ] File ingestion (PDF, DOCX)
+- [ ] RAG pipeline with LLM integration
 - [ ] Async ingestion with Oban
+- [ ] Query rewriting
+- [ ] Agentic RAG patterns
 
 ## Development
 
