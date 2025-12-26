@@ -27,9 +27,12 @@ defmodule ArcanaWeb.DashboardLive do
     {:noreply, assign(socket, tab: String.to_existing_atom(tab))}
   end
 
-  def handle_event("ingest", %{"content" => content}, socket) do
+  def handle_event("ingest", params, socket) do
     repo = socket.assigns.repo
-    {:ok, _doc} = Arcana.ingest(content, repo: repo)
+    content = params["content"] || ""
+    format = parse_format(params["format"])
+
+    {:ok, _doc} = Arcana.ingest(content, repo: repo, format: format)
     {:noreply, load_documents(socket)}
   end
 
@@ -51,10 +54,11 @@ defmodule ArcanaWeb.DashboardLive do
     limit = parse_int(params["limit"], 10)
     threshold = parse_float(params["threshold"], 0.0)
     source_id = if params["source_id"] in [nil, ""], do: nil, else: params["source_id"]
+    mode = parse_mode(params["mode"])
 
     results =
       if query != "" do
-        opts = [repo: repo, limit: limit, threshold: threshold]
+        opts = [repo: repo, limit: limit, threshold: threshold, mode: mode]
         opts = if source_id, do: Keyword.put(opts, :source_id, source_id), else: opts
         Arcana.search(query, opts)
       else
@@ -82,6 +86,25 @@ defmodule ArcanaWeb.DashboardLive do
       {num, _} -> num
       :error -> default
     end
+  end
+
+  defp parse_mode("semantic"), do: :semantic
+  defp parse_mode("fulltext"), do: :fulltext
+  defp parse_mode("hybrid"), do: :hybrid
+  defp parse_mode(_), do: :semantic
+
+  defp parse_format("plaintext"), do: :plaintext
+  defp parse_format("markdown"), do: :markdown
+  defp parse_format("elixir"), do: :elixir
+  defp parse_format(_), do: :plaintext
+
+  defp format_metadata(nil), do: "-"
+  defp format_metadata(metadata) when metadata == %{}, do: "-"
+
+  defp format_metadata(metadata) when is_map(metadata) do
+    metadata
+    |> Enum.map(fn {k, v} -> "#{k}: #{v}" end)
+    |> Enum.join(", ")
   end
 
   defp load_documents(socket) do
@@ -225,6 +248,35 @@ defmodule ArcanaWeb.DashboardLive do
         background: #6d28d9;
       }
 
+      .arcana-ingest-options {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 0.75rem;
+      }
+
+      .arcana-ingest-options label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        font-size: 0.75rem;
+        font-weight: 500;
+        color: #6b7280;
+      }
+
+      .arcana-ingest-options select {
+        padding: 0.5rem;
+        border: 1px solid #d1d5db;
+        border-radius: 0.375rem;
+        font-size: 0.875rem;
+        min-width: 120px;
+      }
+
+      .arcana-ingest-options select:focus {
+        outline: none;
+        border-color: #7c3aed;
+        box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+      }
+
       .arcana-empty {
         color: #6b7280;
         font-style: italic;
@@ -288,6 +340,15 @@ defmodule ArcanaWeb.DashboardLive do
         background: #dc2626;
         color: white;
       }
+
+      .arcana-metadata {
+        font-size: 0.75rem;
+        color: #6b7280;
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
     </style>
     <div class="arcana-dashboard">
       <nav class="arcana-tabs">
@@ -328,6 +389,16 @@ defmodule ArcanaWeb.DashboardLive do
 
       <form id="ingest-form" phx-submit="ingest" class="arcana-ingest-form">
         <textarea name="content" placeholder="Paste text to ingest..." rows="4"></textarea>
+        <div class="arcana-ingest-options">
+          <label>
+            Format
+            <select name="format">
+              <option value="plaintext">Plaintext</option>
+              <option value="markdown">Markdown</option>
+              <option value="elixir">Elixir</option>
+            </select>
+          </label>
+        </div>
         <button type="submit">Ingest</button>
       </form>
 
@@ -340,6 +411,7 @@ defmodule ArcanaWeb.DashboardLive do
               <th>ID</th>
               <th>Content</th>
               <th>Source</th>
+              <th>Metadata</th>
               <th>Chunks</th>
               <th>Created</th>
               <th>Actions</th>
@@ -351,6 +423,7 @@ defmodule ArcanaWeb.DashboardLive do
                 <td><code><%= doc.id %></code></td>
                 <td><%= String.slice(doc.content || "", 0, 100) %>...</td>
                 <td><%= doc.source_id || "-" %></td>
+                <td class="arcana-metadata"><%= format_metadata(doc.metadata) %></td>
                 <td><%= doc.chunk_count %></td>
                 <td><%= doc.inserted_at %></td>
                 <td>
@@ -381,6 +454,15 @@ defmodule ArcanaWeb.DashboardLive do
           <input type="text" name="query" placeholder="Enter search query..." value={@query} />
 
           <div class="arcana-search-options">
+            <label>
+              Mode
+              <select name="mode">
+                <option value="semantic">Semantic</option>
+                <option value="fulltext">Full-text</option>
+                <option value="hybrid">Hybrid</option>
+              </select>
+            </label>
+
             <label>
               Limit
               <select name="limit">

@@ -25,5 +25,20 @@ defmodule ArcanaWeb.DashboardLiveTest do
 
       assert html =~ "Search"
     end
+
+    test "search tab has mode selector with semantic, fulltext, and hybrid options", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      # Switch to search tab
+      view |> element("[data-tab='search']") |> render_click()
+
+      # Should have a mode select
+      assert has_element?(view, "select[name='mode']")
+
+      # Should have all three options
+      assert has_element?(view, "select[name='mode'] option[value='semantic']")
+      assert has_element?(view, "select[name='mode'] option[value='fulltext']")
+      assert has_element?(view, "select[name='mode'] option[value='hybrid']")
+    end
   end
 end

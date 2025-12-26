@@ -56,6 +56,20 @@ defmodule ArcanaWeb.DocumentsTest do
 
       assert html =~ "my-source"
       assert html =~ doc.id
+      # Metadata column should display key-value pairs
+      assert html =~ "author: Jane"
+    end
+
+    test "ingest form has format selector with plaintext, markdown, and elixir options", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      # Should have a format select in the ingest form
+      assert has_element?(view, "#ingest-form select[name='format']")
+
+      # Should have format options
+      assert has_element?(view, "#ingest-form select[name='format'] option[value='plaintext']")
+      assert has_element?(view, "#ingest-form select[name='format'] option[value='markdown']")
+      assert has_element?(view, "#ingest-form select[name='format'] option[value='elixir']")
     end
   end
 end
