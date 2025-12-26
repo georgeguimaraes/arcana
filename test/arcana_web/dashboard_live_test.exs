@@ -40,5 +40,18 @@ defmodule ArcanaWeb.DashboardLiveTest do
       assert has_element?(view, "select[name='mode'] option[value='fulltext']")
       assert has_element?(view, "select[name='mode'] option[value='hybrid']")
     end
+
+    test "displays stats with document and chunk counts", %{conn: conn} do
+      # Ingest a document to have some stats
+      {:ok, _doc} = Arcana.ingest("Test content for stats", repo: Arcana.TestRepo)
+
+      {:ok, _view, html} = live(conn, "/")
+
+      # Should show stats section
+      assert html =~ "Documents"
+      assert html =~ "Chunks"
+      # Should have the stats container
+      assert html =~ "arcana-stats"
+    end
   end
 end

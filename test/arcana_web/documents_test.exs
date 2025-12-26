@@ -71,5 +71,33 @@ defmodule ArcanaWeb.DocumentsTest do
       assert has_element?(view, "#ingest-form select[name='format'] option[value='markdown']")
       assert has_element?(view, "#ingest-form select[name='format'] option[value='elixir']")
     end
+
+    test "document list has pagination controls", %{conn: conn} do
+      # Create 15 documents to trigger pagination (assuming 10 per page)
+      for i <- 1..15 do
+        {:ok, _doc} = Arcana.ingest("Document number #{i}", repo: Repo)
+      end
+
+      {:ok, view, html} = live(conn, "/")
+
+      # Should show pagination controls
+      assert html =~ "arcana-pagination"
+      assert has_element?(view, "[data-page]")
+    end
+
+    test "can view document details with full content and chunks", %{conn: conn} do
+      content = "This is a longer document with more content for testing the detail view."
+      {:ok, doc} = Arcana.ingest(content, repo: Repo, metadata: %{"title" => "Test Doc"})
+
+      {:ok, view, _html} = live(conn, "/")
+
+      # Click view button for the document
+      html = view |> element("[data-view-doc='#{doc.id}']") |> render_click()
+
+      # Should show document detail view
+      assert html =~ "arcana-doc-detail"
+      assert html =~ content
+      assert html =~ "Chunks"
+    end
   end
 end

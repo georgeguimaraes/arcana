@@ -16,8 +16,11 @@ defmodule ArcanaWeb.DashboardLive do
       socket
       |> assign(tab: :documents, repo: repo)
       |> assign(search_results: [], search_query: "")
+      |> assign(page: 1, per_page: 10)
+      |> assign(viewing_document: nil)
       |> load_documents()
       |> load_source_ids()
+      |> load_stats()
 
     {:ok, socket}
   end
@@ -27,13 +30,39 @@ defmodule ArcanaWeb.DashboardLive do
     {:noreply, assign(socket, tab: String.to_existing_atom(tab))}
   end
 
+  def handle_event("change_page", %{"page" => page}, socket) do
+    page = String.to_integer(page)
+    {:noreply, socket |> assign(page: page) |> load_documents()}
+  end
+
+  def handle_event("view_document", %{"id" => id}, socket) do
+    repo = socket.assigns.repo
+    import Ecto.Query
+
+    document = repo.get(Document, id)
+
+    chunks =
+      repo.all(
+        from(c in Arcana.Chunk,
+          where: c.document_id == ^id,
+          order_by: c.chunk_index
+        )
+      )
+
+    {:noreply, assign(socket, viewing_document: %{document: document, chunks: chunks})}
+  end
+
+  def handle_event("close_detail", _params, socket) do
+    {:noreply, assign(socket, viewing_document: nil)}
+  end
+
   def handle_event("ingest", params, socket) do
     repo = socket.assigns.repo
     content = params["content"] || ""
     format = parse_format(params["format"])
 
     {:ok, _doc} = Arcana.ingest(content, repo: repo, format: format)
-    {:noreply, load_documents(socket)}
+    {:noreply, socket |> load_documents() |> load_stats()}
   end
 
   def handle_event("delete", %{"id" => id}, socket) do
@@ -41,7 +70,7 @@ defmodule ArcanaWeb.DashboardLive do
 
     case Arcana.delete(id, repo: repo) do
       :ok ->
-        {:noreply, load_documents(socket)}
+        {:noreply, socket |> load_documents() |> load_stats()}
 
       {:error, _reason} ->
         {:noreply, socket}
@@ -109,8 +138,27 @@ defmodule ArcanaWeb.DashboardLive do
 
   defp load_documents(socket) do
     repo = socket.assigns.repo
-    documents = repo.all(Document)
-    assign(socket, documents: documents)
+    page = socket.assigns.page
+    per_page = socket.assigns.per_page
+    import Ecto.Query
+
+    total_count = repo.aggregate(Document, :count)
+    total_pages = max(1, ceil(total_count / per_page))
+
+    documents =
+      repo.all(
+        from(d in Document,
+          order_by: [desc: d.inserted_at],
+          offset: ^((page - 1) * per_page),
+          limit: ^per_page
+        )
+      )
+
+    assign(socket,
+      documents: documents,
+      total_pages: total_pages,
+      total_count: total_count
+    )
   end
 
   defp load_source_ids(socket) do
@@ -127,6 +175,18 @@ defmodule ArcanaWeb.DashboardLive do
       )
 
     assign(socket, source_ids: source_ids)
+  end
+
+  defp load_stats(socket) do
+    repo = socket.assigns.repo
+    import Ecto.Query
+
+    doc_count = repo.aggregate(Document, :count)
+
+    chunk_count =
+      repo.one(from(c in Arcana.Chunk, select: count(c.id))) || 0
+
+    assign(socket, stats: %{documents: doc_count, chunks: chunk_count})
   end
 
   @impl true
@@ -349,8 +409,201 @@ defmodule ArcanaWeb.DashboardLive do
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+
+      .arcana-stats {
+        display: flex;
+        gap: 1.5rem;
+        margin-bottom: 1.5rem;
+        padding: 1rem;
+        background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+        border-radius: 0.5rem;
+        color: white;
+      }
+
+      .arcana-stat {
+        text-align: center;
+      }
+
+      .arcana-stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+      }
+
+      .arcana-stat-label {
+        font-size: 0.75rem;
+        opacity: 0.9;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .arcana-pagination {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: center;
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid #e5e7eb;
+      }
+
+      .arcana-page-btn {
+        padding: 0.5rem 0.75rem;
+        border: 1px solid #d1d5db;
+        background: white;
+        border-radius: 0.375rem;
+        font-size: 0.875rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .arcana-page-btn:hover {
+        border-color: #7c3aed;
+        color: #7c3aed;
+      }
+
+      .arcana-page-btn.active {
+        background: #7c3aed;
+        border-color: #7c3aed;
+        color: white;
+      }
+
+      .arcana-actions {
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      .arcana-view-btn {
+        background: transparent;
+        color: #7c3aed;
+        border: 1px solid #7c3aed;
+      }
+
+      .arcana-view-btn:hover {
+        background: #7c3aed;
+        color: white;
+      }
+
+      .arcana-doc-detail {
+        background: white;
+      }
+
+      .arcana-doc-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+      }
+
+      .arcana-doc-header h2 {
+        margin: 0;
+      }
+
+      .arcana-close-btn {
+        background: transparent;
+        color: #6b7280;
+        border: 1px solid #d1d5db;
+        padding: 0.5rem 1rem;
+        border-radius: 0.375rem;
+        font-size: 0.875rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .arcana-close-btn:hover {
+        border-color: #7c3aed;
+        color: #7c3aed;
+      }
+
+      .arcana-doc-info {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        background: #f9fafb;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .arcana-doc-field label {
+        display: block;
+        font-size: 0.75rem;
+        font-weight: 500;
+        color: #6b7280;
+        margin-bottom: 0.25rem;
+      }
+
+      .arcana-doc-section {
+        margin-bottom: 1.5rem;
+      }
+
+      .arcana-doc-section h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #374151;
+        margin: 0 0 0.75rem 0;
+      }
+
+      .arcana-doc-content {
+        background: #f9fafb;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        font-size: 0.875rem;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        margin: 0;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+
+      .arcana-chunks-list {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .arcana-chunk {
+        border: 1px solid #e5e7eb;
+        border-radius: 0.5rem;
+        overflow: hidden;
+      }
+
+      .arcana-chunk-header {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.5rem 1rem;
+        background: #f3f4f6;
+        font-size: 0.75rem;
+        font-weight: 500;
+      }
+
+      .arcana-chunk-index {
+        color: #7c3aed;
+      }
+
+      .arcana-chunk-tokens {
+        color: #6b7280;
+      }
+
+      .arcana-chunk-text {
+        padding: 1rem;
+        margin: 0;
+        font-size: 0.875rem;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        background: white;
+      }
     </style>
     <div class="arcana-dashboard">
+      <div class="arcana-stats">
+        <div class="arcana-stat">
+          <div class="arcana-stat-value"><%= @stats.documents %></div>
+          <div class="arcana-stat-label">Documents</div>
+        </div>
+        <div class="arcana-stat">
+          <div class="arcana-stat-value"><%= @stats.chunks %></div>
+          <div class="arcana-stat-label">Chunks</div>
+        </div>
+      </div>
+
       <nav class="arcana-tabs">
         <button
           data-tab="documents"
@@ -373,7 +626,7 @@ defmodule ArcanaWeb.DashboardLive do
       <div class="arcana-content">
         <%= case @tab do %>
           <% :documents -> %>
-            <.documents_tab documents={@documents} />
+            <.documents_tab documents={@documents} page={@page} total_pages={@total_pages} viewing={@viewing_document} />
           <% :search -> %>
             <.search_tab results={@search_results} query={@search_query} source_ids={@source_ids} />
         <% end %>
@@ -385,6 +638,9 @@ defmodule ArcanaWeb.DashboardLive do
   defp documents_tab(assigns) do
     ~H"""
     <div class="arcana-documents">
+      <%= if @viewing do %>
+        <.document_detail viewing={@viewing} />
+      <% else %>
       <h2>Documents</h2>
 
       <form id="ingest-form" phx-submit="ingest" class="arcana-ingest-form">
@@ -426,7 +682,15 @@ defmodule ArcanaWeb.DashboardLive do
                 <td class="arcana-metadata"><%= format_metadata(doc.metadata) %></td>
                 <td><%= doc.chunk_count %></td>
                 <td><%= doc.inserted_at %></td>
-                <td>
+                <td class="arcana-actions">
+                  <button
+                    data-view-doc={doc.id}
+                    class="arcana-view-btn"
+                    phx-click="view_document"
+                    phx-value-id={doc.id}
+                  >
+                    View
+                  </button>
                   <button
                     data-delete-doc={doc.id}
                     phx-click="delete"
@@ -439,7 +703,73 @@ defmodule ArcanaWeb.DashboardLive do
             <% end %>
           </tbody>
         </table>
+
+        <%= if @total_pages > 1 do %>
+          <div class="arcana-pagination">
+            <%= for page <- 1..@total_pages do %>
+              <button
+                data-page={page}
+                class={"arcana-page-btn #{if page == @page, do: "active", else: ""}"}
+                phx-click="change_page"
+                phx-value-page={page}
+              >
+                <%= page %>
+              </button>
+            <% end %>
+          </div>
+        <% end %>
       <% end %>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp document_detail(assigns) do
+    ~H"""
+    <div class="arcana-doc-detail">
+      <div class="arcana-doc-header">
+        <h2>Document Details</h2>
+        <button class="arcana-close-btn" phx-click="close_detail">← Back to list</button>
+      </div>
+
+      <div class="arcana-doc-info">
+        <div class="arcana-doc-field">
+          <label>ID</label>
+          <code><%= @viewing.document.id %></code>
+        </div>
+        <div class="arcana-doc-field">
+          <label>Source</label>
+          <span><%= @viewing.document.source_id || "-" %></span>
+        </div>
+        <div class="arcana-doc-field">
+          <label>Metadata</label>
+          <span><%= format_metadata(@viewing.document.metadata) %></span>
+        </div>
+        <div class="arcana-doc-field">
+          <label>Created</label>
+          <span><%= @viewing.document.inserted_at %></span>
+        </div>
+      </div>
+
+      <div class="arcana-doc-section">
+        <h3>Full Content</h3>
+        <pre class="arcana-doc-content"><%= @viewing.document.content %></pre>
+      </div>
+
+      <div class="arcana-doc-section">
+        <h3>Chunks (<%= length(@viewing.chunks) %>)</h3>
+        <div class="arcana-chunks-list">
+          <%= for chunk <- @viewing.chunks do %>
+            <div class="arcana-chunk">
+              <div class="arcana-chunk-header">
+                <span class="arcana-chunk-index">Chunk <%= chunk.chunk_index %></span>
+                <span class="arcana-chunk-tokens"><%= chunk.token_count %> tokens</span>
+              </div>
+              <pre class="arcana-chunk-text"><%= chunk.text %></pre>
+            </div>
+          <% end %>
+        </div>
+      </div>
     </div>
     """
   end
