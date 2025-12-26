@@ -18,7 +18,7 @@ defmodule Arcana do
 
   """
 
-  alias Arcana.{Chunk, Chunker, Document, LLM, Parser}
+  alias Arcana.{Chunk, Chunker, Collection, Document, LLM, Parser}
   alias Arcana.Embeddings.Serving
 
   import Ecto.Query
@@ -33,11 +33,13 @@ defmodule Arcana do
     * `:metadata` - Optional map of metadata to store with the document
     * `:chunk_size` - Maximum chunk size in characters (default: 1024)
     * `:chunk_overlap` - Overlap between chunks (default: 200)
+    * `:collection` - Collection name to organize the document (default: "default")
 
   ## Examples
 
       {:ok, doc} = Arcana.ingest("Hello world", repo: MyApp.Repo)
       {:ok, doc} = Arcana.ingest("Hello", repo: MyApp.Repo, source_id: "doc-123")
+      {:ok, doc} = Arcana.ingest("Hello", repo: MyApp.Repo, collection: "products")
 
   """
   def ingest(text, opts) when is_binary(text) do
@@ -45,7 +47,11 @@ defmodule Arcana do
     repo = Keyword.fetch!(opts, :repo)
     source_id = Keyword.get(opts, :source_id)
     metadata = Keyword.get(opts, :metadata, %{})
+    collection_name = Keyword.get(opts, :collection, :default)
     chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap])
+
+    # Get or create collection
+    {:ok, collection} = Collection.get_or_create(collection_name, repo)
 
     # Create document
     {:ok, document} =
@@ -54,7 +60,8 @@ defmodule Arcana do
         content: text,
         source_id: source_id,
         metadata: metadata,
-        status: :processing
+        status: :processing,
+        collection_id: collection.id
       })
       |> repo.insert()
 
@@ -100,11 +107,13 @@ defmodule Arcana do
     * `:metadata` - Optional map of metadata to store with the document
     * `:chunk_size` - Maximum chunk size in characters (default: 1024)
     * `:chunk_overlap` - Overlap between chunks (default: 200)
+    * `:collection` - Collection name to organize the document (default: "default")
 
   ## Examples
 
       {:ok, doc} = Arcana.ingest_file("/path/to/file.pdf", repo: MyApp.Repo)
       {:ok, doc} = Arcana.ingest_file("/path/to/doc.txt", repo: MyApp.Repo, source_id: "docs")
+      {:ok, doc} = Arcana.ingest_file("/path/to/doc.txt", repo: MyApp.Repo, collection: "products")
 
   """
   def ingest_file(path, opts) when is_binary(path) do
@@ -131,7 +140,11 @@ defmodule Arcana do
     metadata = Keyword.get(opts, :metadata, %{})
     file_path = Keyword.get(opts, :file_path)
     content_type = Keyword.get(opts, :content_type, "text/plain")
+    collection_name = Keyword.get(opts, :collection, :default)
     chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap])
+
+    # Get or create collection
+    {:ok, collection} = Collection.get_or_create(collection_name, repo)
 
     # Create document
     {:ok, document} =
@@ -142,7 +155,8 @@ defmodule Arcana do
         metadata: metadata,
         file_path: file_path,
         content_type: content_type,
-        status: :processing
+        status: :processing,
+        collection_id: collection.id
       })
       |> repo.insert()
 
@@ -199,12 +213,14 @@ defmodule Arcana do
     * `:source_id` - Filter results to a specific source
     * `:threshold` - Minimum similarity score (default: 0.0)
     * `:mode` - Search mode: `:semantic` (default), `:fulltext`, or `:hybrid`
+    * `:collection` - Filter results to a specific collection by name
 
   ## Examples
 
       results = Arcana.search("functional programming", repo: MyApp.Repo)
       results = Arcana.search("query", repo: MyApp.Repo, limit: 5, source_id: "doc-123")
       results = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)
+      results = Arcana.search("query", repo: MyApp.Repo, collection: "products")
 
   """
   def search(query, opts) when is_binary(query) do
@@ -215,6 +231,7 @@ defmodule Arcana do
     threshold = Keyword.get(opts, :threshold, 0.0)
     mode = Keyword.get(opts, :mode, :semantic)
     rewriter = Keyword.get(opts, :rewriter)
+    collection_name = Keyword.get(opts, :collection)
 
     unless mode in @valid_modes do
       raise ArgumentError,
@@ -232,10 +249,19 @@ defmodule Arcana do
         query
       end
 
-    do_search(mode, search_query, repo, limit, source_id, threshold)
+    # Get collection_id if filtering by collection
+    collection_id =
+      if collection_name do
+        case repo.get_by(Collection, name: collection_name) do
+          nil -> nil
+          collection -> collection.id
+        end
+      end
+
+    do_search(mode, search_query, repo, limit, source_id, threshold, collection_id)
   end
 
-  defp do_search(:semantic, query, repo, limit, source_id, threshold) do
+  defp do_search(:semantic, query, repo, limit, source_id, threshold, collection_id) do
     query_embedding = Serving.embed(query)
 
     base_query =
@@ -255,16 +281,14 @@ defmodule Arcana do
       )
 
     final_query =
-      if source_id do
-        from([c, d] in base_query, where: d.source_id == ^source_id)
-      else
-        base_query
-      end
+      base_query
+      |> maybe_filter_source_id(source_id)
+      |> maybe_filter_collection_id(collection_id)
 
     repo.all(final_query)
   end
 
-  defp do_search(:fulltext, query, repo, limit, source_id, _threshold) do
+  defp do_search(:fulltext, query, repo, limit, source_id, _threshold, collection_id) do
     tsquery = to_tsquery(query)
 
     base_query =
@@ -297,19 +321,20 @@ defmodule Arcana do
       )
 
     final_query =
-      if source_id do
-        from([c, d] in base_query, where: d.source_id == ^source_id)
-      else
-        base_query
-      end
+      base_query
+      |> maybe_filter_source_id(source_id)
+      |> maybe_filter_collection_id(collection_id)
 
     repo.all(final_query)
   end
 
-  defp do_search(:hybrid, query, repo, limit, source_id, threshold) do
+  defp do_search(:hybrid, query, repo, limit, source_id, threshold, collection_id) do
     # Get results from both methods
-    semantic_results = do_search(:semantic, query, repo, limit * 2, source_id, threshold)
-    fulltext_results = do_search(:fulltext, query, repo, limit * 2, source_id, threshold)
+    semantic_results =
+      do_search(:semantic, query, repo, limit * 2, source_id, threshold, collection_id)
+
+    fulltext_results =
+      do_search(:fulltext, query, repo, limit * 2, source_id, threshold, collection_id)
 
     # Combine using Reciprocal Rank Fusion (RRF)
     rrf_combine(semantic_results, fulltext_results, limit)
@@ -319,6 +344,18 @@ defmodule Arcana do
     query
     |> String.split(~r/\s+/, trim: true)
     |> Enum.join(" & ")
+  end
+
+  defp maybe_filter_source_id(query, nil), do: query
+
+  defp maybe_filter_source_id(query, source_id) do
+    from([c, d] in query, where: d.source_id == ^source_id)
+  end
+
+  defp maybe_filter_collection_id(query, nil), do: query
+
+  defp maybe_filter_collection_id(query, collection_id) do
+    from([c, d] in query, where: d.collection_id == ^collection_id)
   end
 
   defp rrf_combine(list1, list2, limit, k \\ 60) do

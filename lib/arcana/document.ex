@@ -27,6 +27,7 @@ defmodule Arcana.Document do
     field(:error, :string)
     field(:chunk_count, :integer, default: 0)
 
+    belongs_to(:collection, Arcana.Collection)
     has_many(:chunks, Arcana.Chunk)
 
     timestamps()
@@ -40,7 +41,8 @@ defmodule Arcana.Document do
     :metadata,
     :status,
     :error,
-    :chunk_count
+    :chunk_count,
+    :collection_id
   ]
 
   def changeset(document, attrs) do

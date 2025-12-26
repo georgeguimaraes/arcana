@@ -70,8 +70,4 @@ defmodule Arcana.ChunkTest do
       assert Repo.all(Chunk) == []
     end
   end
-
-  defp errors_on(changeset) do
-    Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
-  end
 end

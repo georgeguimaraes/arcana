@@ -6,7 +6,7 @@ defmodule ArcanaWeb.DashboardLive do
   """
   use Phoenix.LiveView
 
-  alias Arcana.Document
+  alias Arcana.{Collection, Document}
   alias Arcana.Evaluation
 
   @impl true
@@ -21,12 +21,20 @@ defmodule ArcanaWeb.DashboardLive do
       |> assign(search_results: [], search_query: "")
       |> assign(page: 1, per_page: 10)
       |> assign(viewing_document: nil)
+      |> assign(upload_error: nil)
       |> assign(
         eval_view: :test_cases,
         eval_running: false,
         eval_generating: false,
         eval_message: nil
       )
+      |> allow_upload(:files,
+        accept: ~w(.txt .md .markdown .pdf),
+        max_entries: 10,
+        max_file_size: 10_000_000
+      )
+      |> assign(selected_collection: nil)
+      |> load_collections()
       |> load_documents()
       |> load_source_ids()
       |> load_stats()
@@ -70,9 +78,56 @@ defmodule ArcanaWeb.DashboardLive do
     repo = socket.assigns.repo
     content = params["content"] || ""
     format = parse_format(params["format"])
+    collection = normalize_collection(params["collection"])
 
-    {:ok, _doc} = Arcana.ingest(content, repo: repo, format: format)
-    {:noreply, socket |> load_documents() |> load_stats()}
+    {:ok, _doc} = Arcana.ingest(content, repo: repo, format: format, collection: collection)
+    {:noreply, socket |> load_documents() |> load_collections() |> load_stats()}
+  end
+
+  def handle_event("upload_files", params, socket) do
+    repo = socket.assigns.repo
+    collection = normalize_collection(params["collection"])
+
+    uploaded_files =
+      consume_uploaded_entries(socket, :files, fn %{path: path}, entry ->
+        # Copy to a permanent location since the temp file will be deleted
+        dest = Path.join(System.tmp_dir!(), "arcana_#{entry.uuid}_#{entry.client_name}")
+        File.cp!(path, dest)
+        {:ok, dest}
+      end)
+
+    # Ingest each uploaded file
+    results =
+      Enum.map(uploaded_files, fn path ->
+        result = Arcana.ingest_file(path, repo: repo, collection: collection)
+        # Clean up the temp file
+        File.rm(path)
+        result
+      end)
+
+    errors = Enum.filter(results, &match?({:error, _}, &1))
+
+    socket =
+      if Enum.empty?(errors) do
+        assign(socket, upload_error: nil)
+      else
+        error_msg =
+          errors
+          |> Enum.map(fn {:error, reason} -> inspect(reason) end)
+          |> Enum.join(", ")
+
+        assign(socket, upload_error: "Some files failed: #{error_msg}")
+      end
+
+    {:noreply, socket |> load_documents() |> load_collections() |> load_stats()}
+  end
+
+  def handle_event("cancel_upload", %{"ref" => ref}, socket) do
+    {:noreply, cancel_upload(socket, :files, ref)}
+  end
+
+  def handle_event("validate_upload", _params, socket) do
+    {:noreply, socket}
   end
 
   def handle_event("delete", %{"id" => id}, socket) do
@@ -93,12 +148,14 @@ defmodule ArcanaWeb.DashboardLive do
     limit = parse_int(params["limit"], 10)
     threshold = parse_float(params["threshold"], 0.0)
     source_id = if params["source_id"] in [nil, ""], do: nil, else: params["source_id"]
+    collection = if params["collection"] in [nil, ""], do: nil, else: params["collection"]
     mode = parse_mode(params["mode"])
 
     results =
       if query != "" do
         opts = [repo: repo, limit: limit, threshold: threshold, mode: mode]
         opts = if source_id, do: Keyword.put(opts, :source_id, source_id), else: opts
+        opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
         Arcana.search(query, opts)
       else
         []
@@ -232,6 +289,10 @@ defmodule ArcanaWeb.DashboardLive do
   defp parse_format("elixir"), do: :elixir
   defp parse_format(_), do: :plaintext
 
+  defp normalize_collection(""), do: :default
+  defp normalize_collection(nil), do: :default
+  defp normalize_collection(name) when is_binary(name), do: name
+
   defp format_metadata(nil), do: "-"
   defp format_metadata(metadata) when metadata == %{}, do: "-"
 
@@ -240,6 +301,11 @@ defmodule ArcanaWeb.DashboardLive do
     |> Enum.map(fn {k, v} -> "#{k}: #{v}" end)
     |> Enum.join(", ")
   end
+
+  defp error_to_string(:too_large), do: "File too large (max 10MB)"
+  defp error_to_string(:too_many_files), do: "Too many files (max 10)"
+  defp error_to_string(:not_accepted), do: "File type not supported"
+  defp error_to_string(err), do: "Error: #{inspect(err)}"
 
   defp load_documents(socket) do
     repo = socket.assigns.repo
@@ -255,7 +321,8 @@ defmodule ArcanaWeb.DashboardLive do
         from(d in Document,
           order_by: [desc: d.inserted_at],
           offset: ^((page - 1) * per_page),
-          limit: ^per_page
+          limit: ^per_page,
+          preload: [:collection]
         )
       )
 
@@ -280,6 +347,21 @@ defmodule ArcanaWeb.DashboardLive do
       )
 
     assign(socket, source_ids: source_ids)
+  end
+
+  defp load_collections(socket) do
+    repo = socket.assigns.repo
+    import Ecto.Query
+
+    collections =
+      repo.all(
+        from(c in Collection,
+          order_by: c.name,
+          select: %{id: c.id, name: c.name}
+        )
+      )
+
+    assign(socket, collections: collections)
   end
 
   defp load_stats(socket) do
@@ -977,9 +1059,17 @@ defmodule ArcanaWeb.DashboardLive do
       <div class="arcana-content">
         <%= case @tab do %>
           <% :documents -> %>
-            <.documents_tab documents={@documents} page={@page} total_pages={@total_pages} viewing={@viewing_document} />
+            <.documents_tab
+              documents={@documents}
+              page={@page}
+              total_pages={@total_pages}
+              viewing={@viewing_document}
+              uploads={@uploads}
+              upload_error={@upload_error}
+              collections={@collections}
+            />
           <% :search -> %>
-            <.search_tab results={@search_results} query={@search_query} source_ids={@source_ids} />
+            <.search_tab results={@search_results} query={@search_query} source_ids={@source_ids} collections={@collections} />
           <% :evaluation -> %>
             <.evaluation_tab
               view={@eval_view}
@@ -1004,6 +1094,49 @@ defmodule ArcanaWeb.DashboardLive do
       <% else %>
       <h2>Documents</h2>
 
+      <div class="arcana-upload-section">
+        <form id="upload-form" phx-submit="upload_files" phx-change="validate_upload">
+          <div class="arcana-dropzone" phx-drop-target={@uploads.files.ref}>
+            <.live_file_input upload={@uploads.files} class="arcana-file-input" />
+            <p>Drag & drop files here or click to browse</p>
+            <p class="arcana-upload-hint">Supported: .txt, .md, .pdf (max 10MB each)</p>
+          </div>
+
+          <%= if @upload_error do %>
+            <p class="arcana-upload-error"><%= @upload_error %></p>
+          <% end %>
+
+          <%= for entry <- @uploads.files.entries do %>
+            <div class="arcana-upload-entry">
+              <span><%= entry.client_name %></span>
+              <progress value={entry.progress} max="100"><%= entry.progress %>%</progress>
+              <button type="button" phx-click="cancel_upload" phx-value-ref={entry.ref}>&times;</button>
+
+              <%= for err <- upload_errors(@uploads.files, entry) do %>
+                <span class="arcana-upload-error"><%= error_to_string(err) %></span>
+              <% end %>
+            </div>
+          <% end %>
+
+          <%= if length(@uploads.files.entries) > 0 do %>
+            <div class="arcana-ingest-options">
+              <label>
+                Collection
+                <select name="collection">
+                  <option value="">default</option>
+                  <%= for collection <- @collections do %>
+                    <option value={collection.name}><%= collection.name %></option>
+                  <% end %>
+                </select>
+              </label>
+            </div>
+            <button type="submit" class="arcana-upload-btn">Upload Files</button>
+          <% end %>
+        </form>
+      </div>
+
+      <div class="arcana-divider">or paste text directly</div>
+
       <form id="ingest-form" phx-submit="ingest" class="arcana-ingest-form">
         <textarea name="content" placeholder="Paste text to ingest..." rows="4"></textarea>
         <div class="arcana-ingest-options">
@@ -1013,6 +1146,15 @@ defmodule ArcanaWeb.DashboardLive do
               <option value="plaintext">Plaintext</option>
               <option value="markdown">Markdown</option>
               <option value="elixir">Elixir</option>
+            </select>
+          </label>
+          <label>
+            Collection
+            <select name="collection">
+              <option value="">default</option>
+              <%= for collection <- @collections do %>
+                <option value={collection.name}><%= collection.name %></option>
+              <% end %>
             </select>
           </label>
         </div>
@@ -1027,8 +1169,8 @@ defmodule ArcanaWeb.DashboardLive do
             <tr>
               <th>ID</th>
               <th>Content</th>
+              <th>Collection</th>
               <th>Source</th>
-              <th>Metadata</th>
               <th>Chunks</th>
               <th>Created</th>
               <th>Actions</th>
@@ -1039,8 +1181,8 @@ defmodule ArcanaWeb.DashboardLive do
               <tr>
                 <td><code><%= doc.id %></code></td>
                 <td><%= String.slice(doc.content || "", 0, 100) %>...</td>
+                <td><%= if doc.collection, do: doc.collection.name, else: "-" %></td>
                 <td><%= doc.source_id || "-" %></td>
-                <td class="arcana-metadata"><%= format_metadata(doc.metadata) %></td>
                 <td><%= doc.chunk_count %></td>
                 <td><%= doc.inserted_at %></td>
                 <td class="arcana-actions">
@@ -1175,6 +1317,16 @@ defmodule ArcanaWeb.DashboardLive do
                 <option value="">All sources</option>
                 <%= for source_id <- @source_ids do %>
                   <option value={source_id}><%= source_id %></option>
+                <% end %>
+              </select>
+            </label>
+
+            <label>
+              Collection
+              <select name="collection">
+                <option value="">All collections</option>
+                <%= for collection <- @collections do %>
+                  <option value={collection.name}><%= collection.name %></option>
                 <% end %>
               </select>
             </label>
