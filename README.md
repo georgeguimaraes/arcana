@@ -137,7 +137,29 @@ end
   repo: MyApp.Repo,
   metadata: %{"title" => "My Doc", "author" => "Jane"}
 )
+
+# Markdown-aware chunking
+{:ok, document} = Arcana.ingest(markdown_content,
+  repo: MyApp.Repo,
+  format: :markdown
+)
+
+# Custom chunk size (in tokens, default: 512)
+{:ok, document} = Arcana.ingest(content,
+  repo: MyApp.Repo,
+  chunk_size: 256,
+  chunk_overlap: 25
+)
 ```
+
+#### Chunking Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:format` | `:plaintext` | Text format: `:plaintext`, `:markdown`, `:elixir`, etc. |
+| `:chunk_size` | `512` | Maximum chunk size in tokens |
+| `:chunk_overlap` | `50` | Overlap between chunks in tokens |
+| `:size_unit` | `:tokens` | Size measurement: `:tokens` or `:characters` |
 
 ### Search
 
@@ -204,7 +226,7 @@ config :nx, default_backend: EXLA.Backend
 
 ## How it works
 
-1. **Ingest**: Text is split into overlapping chunks (default 1024 chars, 200 overlap)
+1. **Ingest**: Text is split into overlapping chunks (default 512 tokens, 50 overlap)
 2. **Embed**: Each chunk is embedded using `bge-small-en-v1.5` (384 dimensions)
 3. **Store**: Chunks are stored in PostgreSQL with pgvector
 4. **Search**: Query is embedded and compared using cosine similarity via HNSW index
