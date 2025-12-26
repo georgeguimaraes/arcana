@@ -160,6 +160,11 @@ results = Arcana.search("query",
   source_id: "user-123",
   threshold: 0.5
 )
+
+# Search modes
+results = Arcana.search("query", repo: MyApp.Repo, mode: :semantic)  # default
+results = Arcana.search("query", repo: MyApp.Repo, mode: :fulltext)  # keyword matching
+results = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)    # vector + fulltext with RRF
 ```
 
 ### Delete
@@ -209,7 +214,7 @@ config :nx, default_backend: EXLA.Backend
 
 - [x] LiveView dashboard (`ArcanaWeb.Router`)
 - [ ] File ingestion (PDF, DOCX)
-- [ ] Hybrid search (vector + full-text with RRF)
+- [x] Hybrid search (vector + full-text with RRF)
 - [ ] RAG pipeline with LLM providers
 - [ ] Async ingestion with Oban
 
