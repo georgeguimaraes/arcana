@@ -7,6 +7,7 @@ defmodule ArcanaWeb.DashboardLive do
   use Phoenix.LiveView
 
   alias Arcana.Document
+  alias Arcana.Evaluation
 
   @impl true
   def mount(_params, session, socket) do
@@ -18,9 +19,11 @@ defmodule ArcanaWeb.DashboardLive do
       |> assign(search_results: [], search_query: "")
       |> assign(page: 1, per_page: 10)
       |> assign(viewing_document: nil)
+      |> assign(eval_view: :test_cases, eval_running: false, eval_message: nil)
       |> load_documents()
       |> load_source_ids()
       |> load_stats()
+      |> load_evaluation_data()
 
     {:ok, socket}
   end
@@ -95,6 +98,53 @@ defmodule ArcanaWeb.DashboardLive do
       end
 
     {:noreply, assign(socket, search_results: results, search_query: query)}
+  end
+
+  def handle_event("eval_switch_view", %{"view" => view}, socket) do
+    {:noreply, assign(socket, eval_view: String.to_existing_atom(view))}
+  end
+
+  def handle_event("eval_run", params, socket) do
+    repo = socket.assigns.repo
+    mode = parse_mode(params["mode"])
+
+    socket = assign(socket, eval_running: true, eval_message: nil)
+
+    case Evaluation.run(repo: repo, mode: mode) do
+      {:ok, _run} ->
+        socket =
+          socket
+          |> assign(eval_running: false, eval_message: {:success, "Evaluation completed!"})
+          |> load_evaluation_data()
+          |> assign(eval_view: :history)
+
+        {:noreply, socket}
+
+      {:error, :no_test_cases} ->
+        {:noreply,
+         assign(socket,
+           eval_running: false,
+           eval_message: {:error, "No test cases. Generate some first."}
+         )}
+    end
+  end
+
+  def handle_event("eval_delete_test_case", %{"id" => id}, socket) do
+    repo = socket.assigns.repo
+
+    case Evaluation.delete_test_case(id, repo: repo) do
+      {:ok, _} -> {:noreply, load_evaluation_data(socket)}
+      {:error, _} -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("eval_delete_run", %{"id" => id}, socket) do
+    repo = socket.assigns.repo
+
+    case Evaluation.delete_run(id, repo: repo) do
+      {:ok, _} -> {:noreply, load_evaluation_data(socket)}
+      {:error, _} -> {:noreply, socket}
+    end
   end
 
   defp parse_int(nil, default), do: default
@@ -187,6 +237,20 @@ defmodule ArcanaWeb.DashboardLive do
       repo.one(from(c in Arcana.Chunk, select: count(c.id))) || 0
 
     assign(socket, stats: %{documents: doc_count, chunks: chunk_count})
+  end
+
+  defp load_evaluation_data(socket) do
+    repo = socket.assigns.repo
+
+    test_cases = Evaluation.list_test_cases(repo: repo)
+    runs = Evaluation.list_runs(repo: repo, limit: 10)
+    test_case_count = Evaluation.count_test_cases(repo: repo)
+
+    assign(socket,
+      eval_test_cases: test_cases,
+      eval_runs: runs,
+      eval_test_case_count: test_case_count
+    )
   end
 
   @impl true
@@ -591,6 +655,230 @@ defmodule ArcanaWeb.DashboardLive do
         word-wrap: break-word;
         background: white;
       }
+
+      /* Evaluation tab styles */
+      .arcana-eval-nav {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .arcana-eval-nav-btn {
+        padding: 0.5rem 1rem;
+        border: 1px solid #d1d5db;
+        background: white;
+        border-radius: 0.375rem;
+        font-size: 0.875rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .arcana-eval-nav-btn:hover {
+        border-color: #7c3aed;
+        color: #7c3aed;
+      }
+
+      .arcana-eval-nav-btn.active {
+        background: #7c3aed;
+        border-color: #7c3aed;
+        color: white;
+      }
+
+      .arcana-eval-message {
+        padding: 0.75rem 1rem;
+        border-radius: 0.375rem;
+        margin-bottom: 1rem;
+        font-size: 0.875rem;
+      }
+
+      .arcana-eval-message.success {
+        background: #d1fae5;
+        color: #065f46;
+        border: 1px solid #a7f3d0;
+      }
+
+      .arcana-eval-message.error {
+        background: #fee2e2;
+        color: #991b1b;
+        border: 1px solid #fecaca;
+      }
+
+      .arcana-run-form {
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+        display: flex;
+        gap: 1rem;
+        align-items: flex-end;
+      }
+
+      .arcana-run-form label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        font-size: 0.75rem;
+        font-weight: 500;
+        color: #6b7280;
+      }
+
+      .arcana-run-form select {
+        padding: 0.5rem;
+        border: 1px solid #d1d5db;
+        border-radius: 0.375rem;
+        font-size: 0.875rem;
+        min-width: 120px;
+      }
+
+      .arcana-run-form button {
+        background: #7c3aed;
+        color: white;
+        padding: 0.625rem 1.25rem;
+        border: none;
+        border-radius: 0.375rem;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background-color 0.15s ease;
+      }
+
+      .arcana-run-form button:hover {
+        background: #6d28d9;
+      }
+
+      .arcana-run-form button:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+      }
+
+      .arcana-metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .arcana-metric-card {
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        text-align: center;
+      }
+
+      .arcana-metric-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #7c3aed;
+      }
+
+      .arcana-metric-label {
+        font-size: 0.75rem;
+        color: #6b7280;
+        margin-top: 0.25rem;
+      }
+
+      .arcana-test-case {
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+      }
+
+      .arcana-test-case-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 0.5rem;
+      }
+
+      .arcana-test-case-question {
+        font-weight: 500;
+        color: #111827;
+      }
+
+      .arcana-test-case-meta {
+        display: flex;
+        gap: 1rem;
+        font-size: 0.75rem;
+        color: #6b7280;
+      }
+
+      .arcana-test-case-badge {
+        display: inline-block;
+        padding: 0.125rem 0.5rem;
+        border-radius: 9999px;
+        font-size: 0.625rem;
+        font-weight: 500;
+        text-transform: uppercase;
+      }
+
+      .arcana-test-case-badge.synthetic {
+        background: #ddd6fe;
+        color: #5b21b6;
+      }
+
+      .arcana-test-case-badge.manual {
+        background: #bfdbfe;
+        color: #1e40af;
+      }
+
+      .arcana-run-card {
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+        overflow: hidden;
+      }
+
+      .arcana-run-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        background: #f3f4f6;
+        border-bottom: 1px solid #e5e7eb;
+      }
+
+      .arcana-run-header-left {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .arcana-run-status {
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 500;
+      }
+
+      .arcana-run-status.completed {
+        background: #d1fae5;
+        color: #065f46;
+      }
+
+      .arcana-run-status.running {
+        background: #fef3c7;
+        color: #92400e;
+      }
+
+      .arcana-run-status.failed {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+
+      .arcana-run-body {
+        padding: 1rem;
+      }
+
+      .arcana-run-config {
+        font-size: 0.75rem;
+        color: #6b7280;
+        margin-bottom: 0.75rem;
+      }
     </style>
     <div class="arcana-dashboard">
       <div class="arcana-stats">
@@ -621,6 +909,14 @@ defmodule ArcanaWeb.DashboardLive do
         >
           Search
         </button>
+        <button
+          data-tab="evaluation"
+          class={"arcana-tab #{if @tab == :evaluation, do: "active", else: ""}"}
+          phx-click="switch_tab"
+          phx-value-tab="evaluation"
+        >
+          Evaluation
+        </button>
       </nav>
 
       <div class="arcana-content">
@@ -629,6 +925,15 @@ defmodule ArcanaWeb.DashboardLive do
             <.documents_tab documents={@documents} page={@page} total_pages={@total_pages} viewing={@viewing_document} />
           <% :search -> %>
             <.search_tab results={@search_results} query={@search_query} source_ids={@source_ids} />
+          <% :evaluation -> %>
+            <.evaluation_tab
+              view={@eval_view}
+              test_cases={@eval_test_cases}
+              runs={@eval_runs}
+              test_case_count={@eval_test_case_count}
+              running={@eval_running}
+              message={@eval_message}
+            />
         <% end %>
       </div>
     </div>
@@ -852,4 +1157,178 @@ defmodule ArcanaWeb.DashboardLive do
     </div>
     """
   end
+
+  defp evaluation_tab(assigns) do
+    ~H"""
+    <div class="arcana-evaluation">
+      <h2>Retrieval Evaluation</h2>
+
+      <div class="arcana-eval-nav">
+        <button
+          class={"arcana-eval-nav-btn #{if @view == :test_cases, do: "active", else: ""}"}
+          phx-click="eval_switch_view"
+          phx-value-view="test_cases"
+        >
+          Test Cases (<%= @test_case_count %>)
+        </button>
+        <button
+          class={"arcana-eval-nav-btn #{if @view == :run, do: "active", else: ""}"}
+          phx-click="eval_switch_view"
+          phx-value-view="run"
+        >
+          Run Evaluation
+        </button>
+        <button
+          class={"arcana-eval-nav-btn #{if @view == :history, do: "active", else: ""}"}
+          phx-click="eval_switch_view"
+          phx-value-view="history"
+        >
+          History (<%= length(@runs) %>)
+        </button>
+      </div>
+
+      <%= if @message do %>
+        <div class={"arcana-eval-message #{elem(@message, 0)}"}>
+          <%= elem(@message, 1) %>
+        </div>
+      <% end %>
+
+      <%= case @view do %>
+        <% :test_cases -> %>
+          <.eval_test_cases_view test_cases={@test_cases} />
+        <% :run -> %>
+          <.eval_run_view running={@running} test_case_count={@test_case_count} />
+        <% :history -> %>
+          <.eval_history_view runs={@runs} />
+      <% end %>
+    </div>
+    """
+  end
+
+  defp eval_test_cases_view(assigns) do
+    ~H"""
+    <div class="arcana-eval-test-cases">
+      <%= if Enum.empty?(@test_cases) do %>
+        <p class="arcana-empty">
+          No test cases yet. Use <code>mix arcana.eval.generate</code> to generate synthetic test cases,
+          or create them via the API.
+        </p>
+      <% else %>
+        <%= for tc <- @test_cases do %>
+          <div class="arcana-test-case">
+            <div class="arcana-test-case-header">
+              <span class="arcana-test-case-question"><%= tc.question %></span>
+              <button
+                class="arcana-documents-table button"
+                phx-click="eval_delete_test_case"
+                phx-value-id={tc.id}
+                style="padding: 0.25rem 0.5rem; font-size: 0.75rem;"
+              >
+                Delete
+              </button>
+            </div>
+            <div class="arcana-test-case-meta">
+              <span class={"arcana-test-case-badge #{tc.source}"}><%= tc.source %></span>
+              <span><%= length(tc.relevant_chunks) %> relevant chunk(s)</span>
+              <span><%= tc.inserted_at %></span>
+            </div>
+          </div>
+        <% end %>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp eval_run_view(assigns) do
+    ~H"""
+    <div class="arcana-eval-run">
+      <p style="margin-bottom: 1rem; color: #6b7280;">
+        Run evaluation against your <%= @test_case_count %> test case(s) to measure retrieval quality.
+      </p>
+
+      <form phx-submit="eval_run" class="arcana-run-form">
+        <label>
+          Search Mode
+          <select name="mode">
+            <option value="semantic">Semantic</option>
+            <option value="fulltext">Full-text</option>
+            <option value="hybrid">Hybrid</option>
+          </select>
+        </label>
+
+        <button type="submit" disabled={@running or @test_case_count == 0}>
+          <%= if @running, do: "Running...", else: "Run Evaluation" %>
+        </button>
+      </form>
+
+      <%= if @test_case_count == 0 do %>
+        <p class="arcana-empty">
+          No test cases available. Generate some first using <code>mix arcana.eval.generate</code>.
+        </p>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp eval_history_view(assigns) do
+    ~H"""
+    <div class="arcana-eval-history">
+      <%= if Enum.empty?(@runs) do %>
+        <p class="arcana-empty">No evaluation runs yet. Run an evaluation to see results here.</p>
+      <% else %>
+        <%= for run <- @runs do %>
+          <div class="arcana-run-card">
+            <div class="arcana-run-header">
+              <div class="arcana-run-header-left">
+                <span class={"arcana-run-status #{run.status}"}><%= run.status %></span>
+                <span style="font-size: 0.875rem; color: #374151;">
+                  <%= run.test_case_count %> test cases
+                </span>
+              </div>
+              <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <span style="font-size: 0.75rem; color: #6b7280;"><%= run.inserted_at %></span>
+                <button
+                  style="background: transparent; color: #dc2626; border: 1px solid #dc2626; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem; cursor: pointer;"
+                  phx-click="eval_delete_run"
+                  phx-value-id={run.id}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+            <div class="arcana-run-body">
+              <div class="arcana-run-config">
+                Mode: <strong><%= run.config["mode"] || run.config[:mode] || "semantic" %></strong>
+              </div>
+              <%= if run.status == :completed and run.metrics do %>
+                <div class="arcana-metrics-grid">
+                  <div class="arcana-metric-card">
+                    <div class="arcana-metric-value"><%= format_pct(run.metrics["recall_at_5"] || run.metrics[:recall_at_5]) %></div>
+                    <div class="arcana-metric-label">Recall@5</div>
+                  </div>
+                  <div class="arcana-metric-card">
+                    <div class="arcana-metric-value"><%= format_pct(run.metrics["precision_at_5"] || run.metrics[:precision_at_5]) %></div>
+                    <div class="arcana-metric-label">Precision@5</div>
+                  </div>
+                  <div class="arcana-metric-card">
+                    <div class="arcana-metric-value"><%= format_pct(run.metrics["mrr"] || run.metrics[:mrr]) %></div>
+                    <div class="arcana-metric-label">MRR</div>
+                  </div>
+                  <div class="arcana-metric-card">
+                    <div class="arcana-metric-value"><%= format_pct(run.metrics["hit_rate_at_5"] || run.metrics[:hit_rate_at_5]) %></div>
+                    <div class="arcana-metric-label">Hit Rate@5</div>
+                  </div>
+                </div>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp format_pct(nil), do: "-"
+  defp format_pct(value) when is_float(value), do: "#{Float.round(value * 100, 1)}%"
+  defp format_pct(value) when is_integer(value), do: "#{value}%"
 end
