@@ -1,5 +1,5 @@
 defmodule ArcanaWeb.DocumentsTest do
-  use ArcanaWeb.ConnCase, async: false
+  use ArcanaWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
 
@@ -60,7 +60,9 @@ defmodule ArcanaWeb.DocumentsTest do
       assert html =~ "author: Jane"
     end
 
-    test "ingest form has format selector with plaintext, markdown, and elixir options", %{conn: conn} do
+    test "ingest form has format selector with plaintext, markdown, and elixir options", %{
+      conn: conn
+    } do
       {:ok, view, _html} = live(conn, "/")
 
       # Should have a format select in the ingest form

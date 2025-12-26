@@ -1,5 +1,5 @@
 defmodule ArcanaWeb.StylesTest do
-  use ArcanaWeb.ConnCase, async: false
+  use ArcanaWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
 
