@@ -2,17 +2,13 @@ defmodule Arcana.Embedding.Custom do
   @moduledoc """
   Custom embedding provider using user-provided functions.
 
-  Allows users to provide their own embedding function for maximum flexibility.
+  This module wraps a user-provided function to implement the `Arcana.Embedding`
+  behaviour. It's used internally when configuring a function as the embedder.
 
   ## Configuration
 
-      # Arity-1 function (text -> embedding)
-      config :arcana, embedding: {:custom, fn text -> YourModule.embed(text) end}
-
-      # With explicit dimensions
-      config :arcana, embedding: {:custom, fn text -> YourModule.embed(text) end, dimensions: 768}
-
-  ## Requirements
+      # Function that returns {:ok, embedding}
+      config :arcana, embedding: fn text -> {:ok, List.duplicate(0.1, 384)} end
 
   The function must:
   - Accept a single text string
@@ -20,42 +16,12 @@ defmodule Arcana.Embedding.Custom do
 
   """
 
-  defstruct [:fun, :dimensions]
+  @behaviour Arcana.Embedding
 
-  @doc """
-  Creates a new Custom embedder.
-
-  ## Options
-
-    * `:fun` - Required. Embedding function `(String.t() -> {:ok, [float()]} | {:error, term()})`
-    * `:dimensions` - Optional. If not provided, will be auto-detected.
-
-  """
-  def new(opts) do
+  @impl Arcana.Embedding
+  def embed(text, opts) do
     fun = Keyword.fetch!(opts, :fun)
 
-    unless is_function(fun, 1) do
-      raise ArgumentError, "expected :fun to be a function with arity 1, got: #{inspect(fun)}"
-    end
-
-    %__MODULE__{
-      fun: fun,
-      dimensions: Keyword.get(opts, :dimensions)
-    }
-  end
-
-  @doc """
-  Detects the embedding dimensions by running a test embedding.
-  """
-  def detect_dimensions(%__MODULE__{} = embedder) do
-    case do_embed(embedder, "test") do
-      {:ok, embedding} -> {:ok, length(embedding)}
-      error -> error
-    end
-  end
-
-  @doc false
-  def do_embed(%__MODULE__{fun: fun}, text) do
     start_metadata = %{text: text}
 
     :telemetry.span([:arcana, :embed], start_metadata, fn ->
@@ -73,28 +39,18 @@ defmodule Arcana.Embedding.Custom do
     end)
   end
 
-  defimpl Arcana.Embedding do
-    def embed(embedder, text) do
-      Arcana.Embedding.Custom.do_embed(embedder, text)
+  @impl Arcana.Embedding
+  def dimensions(opts) do
+    case Keyword.get(opts, :dimensions) do
+      nil -> detect_dimensions(opts)
+      dims -> dims
     end
+  end
 
-    def embed_batch(embedder, texts) do
-      results = Enum.map(texts, fn text -> Arcana.Embedding.Custom.do_embed(embedder, text) end)
-
-      if Enum.all?(results, &match?({:ok, _}, &1)) do
-        {:ok, Enum.map(results, fn {:ok, emb} -> emb end)}
-      else
-        {:error, :batch_failed}
-      end
-    end
-
-    def dimensions(%{dimensions: dims}) when is_integer(dims), do: dims
-
-    def dimensions(embedder) do
-      case Arcana.Embedding.Custom.detect_dimensions(embedder) do
-        {:ok, dims} -> dims
-        _ -> raise "Could not detect dimensions from custom embedding function"
-      end
+  defp detect_dimensions(opts) do
+    case embed("test", opts) do
+      {:ok, embedding} -> length(embedding)
+      _ -> raise "Could not detect dimensions from custom embedding function"
     end
   end
 end

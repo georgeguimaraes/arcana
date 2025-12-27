@@ -1,12 +1,16 @@
-# Test module for config loading - defined before test module
+# Test module implementing the Arcana.Embedding behaviour
 defmodule Arcana.EmbeddingTest.MockEmbedder do
-  defstruct [:dimensions, :api_key]
+  @behaviour Arcana.Embedding
 
-  def new(opts \\ []) do
-    %__MODULE__{
-      dimensions: Keyword.get(opts, :dimensions, 384),
-      api_key: Keyword.get(opts, :api_key)
-    }
+  @impl Arcana.Embedding
+  def embed(text, opts) do
+    dims = Keyword.get(opts, :dimensions, 384)
+    {:ok, List.duplicate(String.length(text) / 10, dims)}
+  end
+
+  @impl Arcana.Embedding
+  def dimensions(opts) do
+    Keyword.get(opts, :dimensions, 384)
   end
 end
 
@@ -15,14 +19,9 @@ defmodule Arcana.EmbeddingTest do
 
   alias Arcana.Embedding
 
-  describe "Arcana.Embedding protocol" do
+  describe "Arcana.Embedding behaviour with Custom (function wrapper)" do
     test "Custom embedder works with function" do
-      embedder =
-        Arcana.Embedding.Custom.new(
-          fun: fn _text ->
-            {:ok, List.duplicate(0.5, 10)}
-          end
-        )
+      embedder = {Arcana.Embedding.Custom, [fun: fn _text -> {:ok, List.duplicate(0.5, 10)} end]}
 
       {:ok, embedding} = Embedding.embed(embedder, "test")
 
@@ -32,11 +31,12 @@ defmodule Arcana.EmbeddingTest do
 
     test "Custom embedder batch embeds multiple texts" do
       embedder =
-        Arcana.Embedding.Custom.new(
-          fun: fn text ->
-            {:ok, List.duplicate(String.length(text) / 10, 10)}
-          end
-        )
+        {Arcana.Embedding.Custom,
+         [
+           fun: fn text ->
+             {:ok, List.duplicate(String.length(text) / 10, 10)}
+           end
+         ]}
 
       {:ok, embeddings} = Embedding.embed_batch(embedder, ["hello", "world!"])
 
@@ -46,69 +46,50 @@ defmodule Arcana.EmbeddingTest do
 
     test "Custom embedder dimensions are auto-detected" do
       embedder =
-        Arcana.Embedding.Custom.new(fun: fn _text -> {:ok, List.duplicate(0.1, 384)} end)
+        {Arcana.Embedding.Custom, [fun: fn _text -> {:ok, List.duplicate(0.1, 384)} end]}
 
       assert Embedding.dimensions(embedder) == 384
     end
 
     test "Custom embedder uses explicit dimensions when provided" do
       embedder =
-        Arcana.Embedding.Custom.new(
-          fun: fn _text -> {:ok, List.duplicate(0.1, 768)} end,
-          dimensions: 768
-        )
+        {Arcana.Embedding.Custom,
+         [fun: fn _text -> {:ok, List.duplicate(0.1, 768)} end, dimensions: 768]}
 
       assert Embedding.dimensions(embedder) == 768
     end
 
     test "Custom embedder passes through errors" do
-      embedder =
-        Arcana.Embedding.Custom.new(fun: fn _text -> {:error, :embedding_failed} end)
+      embedder = {Arcana.Embedding.Custom, [fun: fn _text -> {:error, :embedding_failed} end]}
 
       assert {:error, :embedding_failed} = Embedding.embed(embedder, "test")
-    end
-
-    test "Custom embedder requires arity-1 function" do
-      assert_raise ArgumentError, fn ->
-        Arcana.Embedding.Custom.new(fun: fn a, b -> {:ok, [a, b]} end)
-      end
     end
   end
 
   describe "Arcana.Embedding.Local" do
-    test "creates embedder with default model" do
-      embedder = Arcana.Embedding.Local.new()
-
-      assert embedder.model == "BAAI/bge-small-en-v1.5"
-      assert embedder.serving_name == :"Elixir.Arcana.Embedding.Local.BAAI/bge-small-en-v1.5"
-    end
-
-    test "creates embedder with custom model" do
-      embedder = Arcana.Embedding.Local.new(model: "BAAI/bge-large-en-v1.5")
-
-      assert embedder.model == "BAAI/bge-large-en-v1.5"
+    test "returns correct dimensions for known models" do
+      assert Arcana.Embedding.Local.dimensions([]) == 384
+      assert Arcana.Embedding.Local.dimensions(model: "BAAI/bge-small-en-v1.5") == 384
+      assert Arcana.Embedding.Local.dimensions(model: "BAAI/bge-base-en-v1.5") == 768
+      assert Arcana.Embedding.Local.dimensions(model: "BAAI/bge-large-en-v1.5") == 1024
     end
   end
 
   describe "Arcana.Embedding.OpenAI" do
-    test "creates embedder with default model" do
-      embedder = Arcana.Embedding.OpenAI.new()
-
-      assert embedder.model == "text-embedding-3-small"
-    end
-
-    test "creates embedder with custom model" do
-      embedder = Arcana.Embedding.OpenAI.new(model: "text-embedding-3-large")
-
-      assert embedder.model == "text-embedding-3-large"
+    test "returns correct dimensions for known models" do
+      assert Arcana.Embedding.OpenAI.dimensions([]) == 1536
+      assert Arcana.Embedding.OpenAI.dimensions(model: "text-embedding-3-small") == 1536
+      assert Arcana.Embedding.OpenAI.dimensions(model: "text-embedding-3-large") == 3072
+      assert Arcana.Embedding.OpenAI.dimensions(model: "text-embedding-ada-002") == 1536
     end
   end
 
   describe "Arcana.embedder/0" do
-    test "returns Local embedder by default" do
-      # The test config sets a custom embedder, but we can verify the function works
+    test "returns {module, opts} tuple" do
       embedder = Arcana.embedder()
-      assert embedder != nil
+      assert {module, opts} = embedder
+      assert is_atom(module)
+      assert is_list(opts)
     end
   end
 
@@ -125,9 +106,9 @@ defmodule Arcana.EmbeddingTest do
       try do
         embedder = Arcana.embedder()
 
-        assert %Arcana.EmbeddingTest.MockEmbedder{} = embedder
-        assert embedder.dimensions == 128
-        assert embedder.api_key == "test-key"
+        assert {Arcana.EmbeddingTest.MockEmbedder, opts} = embedder
+        assert Keyword.get(opts, :dimensions) == 128
+        assert Keyword.get(opts, :api_key) == "test-key"
       after
         Application.put_env(:arcana, :embedding, original)
       end
@@ -141,11 +122,19 @@ defmodule Arcana.EmbeddingTest do
       try do
         embedder = Arcana.embedder()
 
-        assert %Arcana.EmbeddingTest.MockEmbedder{} = embedder
-        assert embedder.dimensions == 384
+        assert {Arcana.EmbeddingTest.MockEmbedder, []} = embedder
       after
         Application.put_env(:arcana, :embedding, original)
       end
+    end
+
+    test "custom module implementing behaviour works with Embedding functions" do
+      embedder = {Arcana.EmbeddingTest.MockEmbedder, dimensions: 256}
+
+      {:ok, embedding} = Embedding.embed(embedder, "hello world")
+      assert length(embedding) == 256
+
+      assert Embedding.dimensions(embedder) == 256
     end
   end
 end

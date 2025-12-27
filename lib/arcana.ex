@@ -23,7 +23,7 @@ defmodule Arcana do
   import Ecto.Query
 
   @doc """
-  Returns the configured embedder.
+  Returns the configured embedder as a `{module, opts}` tuple.
 
   The embedder is configured via application config:
 
@@ -38,66 +38,53 @@ defmodule Arcana do
       config :arcana, embedding: {:openai, model: "text-embedding-3-large"}
 
       # Custom function
-      config :arcana, embedding: {:custom, fn text -> {:ok, embedding} end}
+      config :arcana, embedding: fn text -> {:ok, embedding} end
 
-      # Custom module implementing Arcana.Embedding protocol
-      config :arcana, embedding: MyApp.CohereEmbedding
-      config :arcana, embedding: {MyApp.CohereEmbedding, api_key: "..."}
+      # Custom module implementing Arcana.Embedding behaviour
+      config :arcana, embedding: MyApp.CohereEmbedder
+      config :arcana, embedding: {MyApp.CohereEmbedder, api_key: "..."}
 
   ## Custom Embedding Modules
 
-  You can implement your own embedding module by defining a struct and
-  implementing the `Arcana.Embedding` protocol:
+  Implement the `Arcana.Embedding` behaviour:
 
-      defmodule MyApp.CohereEmbedding do
-        defstruct [:api_key, :model]
+      defmodule MyApp.CohereEmbedder do
+        @behaviour Arcana.Embedding
 
-        def new(opts \\\\ []) do
-          %__MODULE__{
-            api_key: opts[:api_key] || System.get_env("COHERE_API_KEY"),
-            model: opts[:model] || "embed-english-v3.0"
-          }
-        end
-      end
-
-      defimpl Arcana.Embedding, for: MyApp.CohereEmbedding do
-        def embed(embedder, text) do
-          # Call Cohere API and return {:ok, embedding} or {:error, reason}
+        @impl true
+        def embed(text, opts) do
+          api_key = opts[:api_key] || System.get_env("COHERE_API_KEY")
+          # Call Cohere API...
+          {:ok, embedding}
         end
 
-        def embed_batch(embedder, texts) do
-          {:ok, Enum.map(texts, fn t -> elem(embed(embedder, t), 1) end)}
-        end
-
-        def dimensions(_embedder), do: 1024
+        @impl true
+        def dimensions(_opts), do: 1024
       end
 
   """
   def embedder do
     case Application.get_env(:arcana, :embedding, :local) do
       :local ->
-        Arcana.Embedding.Local.new()
+        {Arcana.Embedding.Local, []}
 
       {:local, opts} ->
-        Arcana.Embedding.Local.new(opts)
+        {Arcana.Embedding.Local, opts}
 
       :openai ->
-        Arcana.Embedding.OpenAI.new()
+        {Arcana.Embedding.OpenAI, []}
 
       {:openai, opts} ->
-        Arcana.Embedding.OpenAI.new(opts)
+        {Arcana.Embedding.OpenAI, opts}
 
-      {:custom, fun} when is_function(fun, 1) ->
-        Arcana.Embedding.Custom.new(fun: fun)
-
-      {:custom, fun, opts} when is_function(fun, 1) ->
-        Arcana.Embedding.Custom.new([fun: fun] ++ opts)
+      fun when is_function(fun, 1) ->
+        {Arcana.Embedding.Custom, [fun: fun]}
 
       {module, opts} when is_atom(module) and is_list(opts) ->
-        module.new(opts)
+        {module, opts}
 
       module when is_atom(module) ->
-        module.new()
+        {module, []}
 
       other ->
         raise ArgumentError, "invalid embedding config: #{inspect(other)}"

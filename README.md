@@ -103,20 +103,24 @@ scope "/arcana" do
 end
 ```
 
-### 3. Add to supervision tree
+### 3. Add to supervision tree (for local embeddings)
+
+If using local Bumblebee embeddings (the default), add the serving to your supervision tree:
 
 ```elixir
 # lib/my_app/application.ex
 def start(_type, _args) do
   children = [
     MyApp.Repo,
-    {Arcana.Embeddings.Serving, []}  # Starts the embedding model
+    Arcana.Embedding.Local  # Starts the local embedding model
   ]
 
   opts = [strategy: :one_for_one, name: MyApp.Supervisor]
   Supervisor.start_link(children, opts)
 end
 ```
+
+For OpenAI embeddings or custom providers, skip this step.
 
 ## Usage
 
@@ -371,6 +375,69 @@ end
 See `Arcana.Telemetry` module docs for complete event documentation.
 
 ## Configuration
+
+### Embedding Providers
+
+Arcana supports multiple embedding providers:
+
+```elixir
+# config/config.exs
+
+# Local Bumblebee (default) - no API keys needed
+config :arcana, embedding: :local
+config :arcana, embedding: {:local, model: "BAAI/bge-large-en-v1.5"}
+
+# OpenAI (requires req_llm and OPENAI_API_KEY)
+config :arcana, embedding: :openai
+config :arcana, embedding: {:openai, model: "text-embedding-3-large"}
+
+# Custom function
+config :arcana, embedding: fn text ->
+  # Your embedding logic
+  {:ok, embedding_vector}
+end
+
+# Custom module implementing Arcana.Embedding behaviour
+config :arcana, embedding: MyApp.CohereEmbedder
+config :arcana, embedding: {MyApp.CohereEmbedder, api_key: "..."}
+```
+
+#### Built-in Providers
+
+| Provider | Dimensions | Notes |
+|----------|------------|-------|
+| `:local` (default) | 384 | `bge-small-en-v1.5`, no API key needed |
+| `{:local, model: "BAAI/bge-large-en-v1.5"}` | 1024 | Larger local model |
+| `:openai` | 1536 | `text-embedding-3-small` |
+| `{:openai, model: "text-embedding-3-large"}` | 3072 | Higher quality |
+
+#### Custom Embedding Module
+
+Implement the `Arcana.Embedding` behaviour:
+
+```elixir
+defmodule MyApp.CohereEmbedder do
+  @behaviour Arcana.Embedding
+
+  @impl true
+  def embed(text, opts) do
+    api_key = opts[:api_key] || System.get_env("COHERE_API_KEY")
+    # Call Cohere API...
+    {:ok, embedding}
+  end
+
+  @impl true
+  def dimensions(_opts), do: 1024
+end
+```
+
+Then configure:
+
+```elixir
+config :arcana, embedding: {MyApp.CohereEmbedder, api_key: "..."}
+```
+
+### Other Settings
 
 ```elixir
 # config/config.exs

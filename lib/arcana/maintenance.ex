@@ -121,17 +121,19 @@ defmodule Arcana.Maintenance do
     dimensions = Embedding.dimensions(embedder)
 
     case embedder do
-      %Arcana.Embedding.Local{model: model} ->
+      {Arcana.Embedding.Local, opts} ->
+        model = Keyword.get(opts, :model, "BAAI/bge-small-en-v1.5")
         %{type: :local, model: model, dimensions: dimensions}
 
-      %Arcana.Embedding.OpenAI{model: model} ->
+      {Arcana.Embedding.OpenAI, opts} ->
+        model = Keyword.get(opts, :model, "text-embedding-3-small")
         %{type: :openai, model: model, dimensions: dimensions}
 
-      %Arcana.Embedding.Custom{} ->
+      {Arcana.Embedding.Custom, _opts} ->
         %{type: :custom, dimensions: dimensions}
 
-      _ ->
-        %{type: :unknown, dimensions: dimensions}
+      {module, _opts} ->
+        %{type: :custom, module: module, dimensions: dimensions}
     end
   end
 end
