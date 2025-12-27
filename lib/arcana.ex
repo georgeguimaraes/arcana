@@ -18,9 +18,7 @@ defmodule Arcana do
 
   """
 
-  alias Arcana.{Chunk, Chunker, Collection, Document, Embedding, LLM, Parser}
-
-  import Ecto.Query
+  alias Arcana.{Chunk, Chunker, Collection, Document, Embedding, LLM, Parser, VectorStore}
 
   @doc """
   Returns the configured embedder as a `{module, opts}` tuple.
@@ -293,12 +291,30 @@ defmodule Arcana do
 
   ## Options
 
-    * `:repo` - The Ecto repo to use (required)
+    * `:repo` - The Ecto repo to use (required for pgvector backend)
     * `:limit` - Maximum number of results (default: 10)
     * `:source_id` - Filter results to a specific source
     * `:threshold` - Minimum similarity score (default: 0.0)
     * `:mode` - Search mode: `:semantic` (default), `:fulltext`, or `:hybrid`
     * `:collection` - Filter results to a specific collection by name
+    * `:vector_store` - Override the configured vector store backend. See `Arcana.VectorStore`
+
+  ## Vector Store Backend
+
+  For `:semantic` mode, search uses the globally configured vector store
+  (`config :arcana, vector_store: :pgvector | :memory`). This allows using
+  the in-memory backend for testing or smaller RAG applications.
+
+  For `:fulltext` and `:hybrid` modes, pgvector is always used since these
+  require PostgreSQL full-text search capabilities.
+
+  You can override the vector store per-call:
+
+      # Use a specific memory server
+      Arcana.search("query", vector_store: {:memory, pid: memory_pid})
+
+      # Use a specific repo with pgvector
+      Arcana.search("query", vector_store: {:pgvector, repo: OtherRepo})
 
   ## Examples
 
@@ -310,18 +326,21 @@ defmodule Arcana do
   """
   def search(query, opts) when is_binary(query) do
     opts = merge_defaults(opts)
-    repo = Keyword.fetch!(opts, :repo)
+    repo = Keyword.get(opts, :repo)
     limit = Keyword.get(opts, :limit, 10)
     source_id = Keyword.get(opts, :source_id)
     threshold = Keyword.get(opts, :threshold, 0.0)
     mode = Keyword.get(opts, :mode, :semantic)
     rewriter = Keyword.get(opts, :rewriter)
     collection_name = Keyword.get(opts, :collection)
+    vector_store_opt = Keyword.get(opts, :vector_store)
 
     unless mode in @valid_modes do
       raise ArgumentError,
             "invalid search mode: #{inspect(mode)}. Must be one of #{inspect(@valid_modes)}"
     end
+
+    # All modes now work with both memory and pgvector backends
 
     start_metadata = %{
       query: query,
@@ -342,16 +361,15 @@ defmodule Arcana do
           query
         end
 
-      # Get collection_id if filtering by collection
-      collection_id =
-        if collection_name do
-          case repo.get_by(Collection, name: collection_name) do
-            nil -> nil
-            collection -> collection.id
-          end
-        end
-
-      results = do_search(mode, search_query, repo, limit, source_id, threshold, collection_id)
+      results =
+        do_search(mode, search_query, %{
+          repo: repo,
+          limit: limit,
+          source_id: source_id,
+          threshold: threshold,
+          collection: collection_name,
+          vector_store: vector_store_opt
+        })
 
       stop_metadata = %{
         results: results,
@@ -362,102 +380,82 @@ defmodule Arcana do
     end)
   end
 
-  defp do_search(:semantic, query, repo, limit, source_id, threshold, collection_id) do
+  defp do_search(:semantic, query, params) do
     {:ok, query_embedding} = Embedding.embed(embedder(), query)
 
-    base_query =
-      from(c in Chunk,
-        join: d in Document,
-        on: c.document_id == d.id,
-        select: %{
-          id: c.id,
-          text: c.text,
-          document_id: c.document_id,
-          chunk_index: c.chunk_index,
-          score: fragment("1 - (? <=> ?)", c.embedding, ^query_embedding)
-        },
-        where: fragment("1 - (? <=> ?) > ?", c.embedding, ^query_embedding, ^threshold),
-        order_by: fragment("? <=> ?", c.embedding, ^query_embedding),
-        limit: ^limit
-      )
+    # Build VectorStore options
+    vector_store_opts =
+      [
+        limit: params.limit,
+        threshold: params.threshold,
+        source_id: params.source_id
+      ]
+      |> maybe_add_repo(params.repo)
+      |> maybe_add_vector_store(params.vector_store)
 
-    final_query =
-      base_query
-      |> maybe_filter_source_id(source_id)
-      |> maybe_filter_collection_id(collection_id)
+    # Use VectorStore for semantic search (supports memory and pgvector)
+    results = VectorStore.search(params.collection, query_embedding, vector_store_opts)
 
-    repo.all(final_query)
+    # Transform VectorStore result format to Arcana.search format
+    Enum.map(results, fn result ->
+      metadata = result.metadata || %{}
+
+      %{
+        id: result.id,
+        text: metadata[:text] || "",
+        document_id: metadata[:document_id],
+        chunk_index: metadata[:chunk_index],
+        score: result.score
+      }
+    end)
   end
 
-  defp do_search(:fulltext, query, repo, limit, source_id, _threshold, collection_id) do
-    tsquery = to_tsquery(query)
+  defp do_search(:fulltext, query, params) do
+    # Build VectorStore options
+    vector_store_opts =
+      [
+        limit: params.limit,
+        source_id: params.source_id
+      ]
+      |> maybe_add_repo(params.repo)
+      |> maybe_add_vector_store(params.vector_store)
 
-    base_query =
-      from(c in Chunk,
-        join: d in Document,
-        on: c.document_id == d.id,
-        where:
-          fragment("to_tsvector('english', ?) @@ to_tsquery('english', ?)", c.text, ^tsquery),
-        select: %{
-          id: c.id,
-          text: c.text,
-          document_id: c.document_id,
-          chunk_index: c.chunk_index,
-          score:
-            fragment(
-              "ts_rank(to_tsvector('english', ?), to_tsquery('english', ?))",
-              c.text,
-              ^tsquery
-            )
-        },
-        order_by: [
-          desc:
-            fragment(
-              "ts_rank(to_tsvector('english', ?), to_tsquery('english', ?))",
-              c.text,
-              ^tsquery
-            )
-        ],
-        limit: ^limit
-      )
+    # Use VectorStore for fulltext search (supports memory and pgvector)
+    results = VectorStore.search_text(params.collection, query, vector_store_opts)
 
-    final_query =
-      base_query
-      |> maybe_filter_source_id(source_id)
-      |> maybe_filter_collection_id(collection_id)
+    # Transform VectorStore result format to Arcana.search format
+    Enum.map(results, fn result ->
+      metadata = result.metadata || %{}
 
-    repo.all(final_query)
+      %{
+        id: result.id,
+        text: metadata[:text] || "",
+        document_id: metadata[:document_id],
+        chunk_index: metadata[:chunk_index],
+        score: result.score
+      }
+    end)
   end
 
-  defp do_search(:hybrid, query, repo, limit, source_id, threshold, collection_id) do
+  defp do_search(:hybrid, query, params) do
     # Get results from both methods
-    semantic_results =
-      do_search(:semantic, query, repo, limit * 2, source_id, threshold, collection_id)
+    semantic_params = %{params | limit: params.limit * 2}
+    fulltext_params = %{params | limit: params.limit * 2}
 
-    fulltext_results =
-      do_search(:fulltext, query, repo, limit * 2, source_id, threshold, collection_id)
+    semantic_results = do_search(:semantic, query, semantic_params)
+    fulltext_results = do_search(:fulltext, query, fulltext_params)
 
     # Combine using Reciprocal Rank Fusion (RRF)
-    rrf_combine(semantic_results, fulltext_results, limit)
+    rrf_combine(semantic_results, fulltext_results, params.limit)
   end
 
-  defp to_tsquery(query) do
-    query
-    |> String.split(~r/\s+/, trim: true)
-    |> Enum.join(" & ")
-  end
+  defp maybe_add_repo(opts, nil), do: opts
+  defp maybe_add_repo(opts, repo), do: Keyword.put(opts, :repo, repo)
 
-  defp maybe_filter_source_id(query, nil), do: query
+  defp maybe_add_vector_store(opts, nil), do: opts
 
-  defp maybe_filter_source_id(query, source_id) do
-    from([c, d] in query, where: d.source_id == ^source_id)
-  end
-
-  defp maybe_filter_collection_id(query, nil), do: query
-
-  defp maybe_filter_collection_id(query, collection_id) do
-    from([c, d] in query, where: d.collection_id == ^collection_id)
-  end
+  defp maybe_add_vector_store(opts, vector_store),
+    do: Keyword.put(opts, :vector_store, vector_store)
 
   defp rrf_combine(list1, list2, limit, k \\ 60) do
     # RRF formula: score = sum(1 / (k + rank))

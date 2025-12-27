@@ -95,6 +95,31 @@ defmodule Arcana.VectorStore.Memory do
   end
 
   @doc """
+  Searches for matching text in a collection (fulltext search).
+
+  Uses simple term matching with TF-IDF-like scoring.
+
+  ## Parameters
+
+    * `server` - The GenServer pid or name
+    * `collection` - The collection name to search in
+    * `query_text` - The query string
+    * `opts` - Search options
+      * `:limit` - Maximum number of results to return (default: 10)
+
+  ## Returns
+
+  A list of maps with keys:
+    * `:id` - The vector's unique identifier
+    * `:metadata` - The associated metadata map
+    * `:score` - Relevance score based on term matching (higher is more relevant)
+
+  """
+  def search_text(server, collection, query_text, opts \\ []) do
+    GenServer.call(server, {:search_text, collection, query_text, opts})
+  end
+
+  @doc """
   Deletes a vector from a collection.
 
   ## Parameters
@@ -211,6 +236,44 @@ defmodule Arcana.VectorStore.Memory do
   end
 
   @impl true
+  def handle_call({:search_text, collection, query_text, opts}, _from, state) do
+    limit = Keyword.get(opts, :limit, 10)
+
+    case get_in(state, [:collections, collection]) do
+      nil ->
+        {:reply, [], state}
+
+      %{ids: ids, metadata: metas, deleted: deleted} ->
+        # Tokenize query
+        query_terms = tokenize(query_text)
+
+        if Enum.empty?(query_terms) do
+          {:reply, [], state}
+        else
+          # Score each document by term matching
+          results =
+            ids
+            |> Enum.with_index()
+            |> Enum.reject(fn {_id, idx} -> MapSet.member?(deleted, idx) end)
+            |> Enum.map(fn {id, idx} ->
+              meta = Enum.at(metas, idx)
+              text = meta[:text] || ""
+              score = calculate_text_score(query_terms, text)
+              {id, meta, score, idx}
+            end)
+            |> Enum.filter(fn {_id, _meta, score, _idx} -> score > 0 end)
+            |> Enum.sort_by(fn {_id, _meta, score, _idx} -> score end, :desc)
+            |> Enum.take(limit)
+            |> Enum.map(fn {id, meta, score, _idx} ->
+              %{id: id, metadata: meta, score: score}
+            end)
+
+          {:reply, results, state}
+        end
+    end
+  end
+
+  @impl true
   def handle_call({:delete, collection, id}, _from, state) do
     case get_in(state, [:collections, collection]) do
       nil ->
@@ -273,6 +336,36 @@ defmodule Arcana.VectorStore.Memory do
 
       existing ->
         {existing, state}
+    end
+  end
+
+  # Tokenize text into lowercase terms
+  defp tokenize(text) do
+    text
+    |> String.downcase()
+    |> String.replace(~r/[^\w\s]/, "")
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.uniq()
+  end
+
+  # Calculate TF-IDF-like score: (matching terms / query terms) * (1 / log(doc_length))
+  defp calculate_text_score(query_terms, text) do
+    doc_terms = tokenize(text)
+
+    if Enum.empty?(doc_terms) do
+      0.0
+    else
+      matching = Enum.count(query_terms, fn term -> term in doc_terms end)
+
+      if matching == 0 do
+        0.0
+      else
+        # Normalize by query length and penalize very short/long documents
+        term_ratio = matching / length(query_terms)
+        # Simple length normalization
+        length_factor = 1.0 / :math.log(max(length(doc_terms), 2) + 1)
+        term_ratio * length_factor
+      end
     end
   end
 end

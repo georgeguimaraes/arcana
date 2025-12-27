@@ -100,7 +100,12 @@ defmodule Arcana.VectorStore.Pgvector do
         on: c.document_id == d.id,
         select: %{
           id: c.id,
-          metadata: merge(c.metadata, %{text: c.text, chunk_index: c.chunk_index}),
+          metadata:
+            merge(c.metadata, %{
+              text: c.text,
+              chunk_index: c.chunk_index,
+              document_id: c.document_id
+            }),
           score: fragment("1 - (? <=> ?)", c.embedding, ^query_embedding)
         },
         where: fragment("1 - (? <=> ?) > ?", c.embedding, ^query_embedding, ^threshold),
@@ -114,6 +119,70 @@ defmodule Arcana.VectorStore.Pgvector do
       |> maybe_filter_collection_id(collection_id)
 
     repo.all(final_query)
+  end
+
+  @impl true
+  def search_text(collection, query_text, opts) do
+    repo = Keyword.fetch!(opts, :repo)
+    limit = Keyword.get(opts, :limit, 10)
+    source_id = Keyword.get(opts, :source_id)
+
+    # Get collection_id if collection name is provided
+    collection_id =
+      if collection do
+        case repo.get_by(Collection, name: collection) do
+          nil -> nil
+          coll -> coll.id
+        end
+      end
+
+    # Convert query to tsquery format
+    tsquery = to_tsquery(query_text)
+
+    base_query =
+      from(c in Chunk,
+        join: d in Document,
+        on: c.document_id == d.id,
+        where:
+          fragment("to_tsvector('english', ?) @@ to_tsquery('english', ?)", c.text, ^tsquery),
+        select: %{
+          id: c.id,
+          metadata:
+            merge(c.metadata, %{
+              text: c.text,
+              chunk_index: c.chunk_index,
+              document_id: c.document_id
+            }),
+          score:
+            fragment(
+              "ts_rank(to_tsvector('english', ?), to_tsquery('english', ?))",
+              c.text,
+              ^tsquery
+            )
+        },
+        order_by: [
+          desc:
+            fragment(
+              "ts_rank(to_tsvector('english', ?), to_tsquery('english', ?))",
+              c.text,
+              ^tsquery
+            )
+        ],
+        limit: ^limit
+      )
+
+    final_query =
+      base_query
+      |> maybe_filter_source_id(source_id)
+      |> maybe_filter_collection_id(collection_id)
+
+    repo.all(final_query)
+  end
+
+  defp to_tsquery(query) do
+    query
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.join(" & ")
   end
 
   @impl true

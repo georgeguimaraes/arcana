@@ -82,11 +82,19 @@ defmodule Arcana.VectorStore do
               :ok | {:error, term()}
 
   @doc """
-  Searches for similar vectors in a collection.
+  Searches for similar vectors in a collection (semantic search).
 
   Returns a list of results with `:id`, `:metadata`, and `:score` keys.
   """
   @callback search(collection(), embedding(), opts :: keyword()) :: [search_result()]
+
+  @doc """
+  Searches for matching text in a collection (fulltext search).
+
+  Returns a list of results with `:id`, `:metadata`, and `:score` keys.
+  Score represents relevance based on term matching.
+  """
+  @callback search_text(collection(), query :: String.t(), opts :: keyword()) :: [search_result()]
 
   @doc """
   Deletes a vector from a collection.
@@ -118,14 +126,29 @@ defmodule Arcana.VectorStore do
 
   ## Options
 
-    * `:vector_store` - Override the configured backend (module or `:pgvector`/`:memory`)
-    * `:repo` - The Ecto repo (required for pgvector backend)
-    * `:server` - The Memory server pid/name (for memory backend, defaults to `Arcana.VectorStore.Memory`)
+    * `:vector_store` - Override the configured backend. Can be:
+      * `{:memory, pid: pid}` - Use memory backend with specific server
+      * `{:pgvector, repo: MyRepo}` - Use pgvector with specific repo
+      * `MyCustomModule` - Use a custom module implementing the behaviour
+    * `:limit` - Maximum number of results (default: 10)
+
+  ## Examples
+
+      # Use global config
+      VectorStore.store("products", "id", embedding, metadata)
+
+      # Override with memory backend
+      VectorStore.store("products", "id", embedding, metadata,
+        vector_store: {:memory, pid: memory_pid})
+
+      # Override with pgvector backend
+      VectorStore.store("products", "id", embedding, metadata,
+        vector_store: {:pgvector, repo: MyApp.Repo})
 
   """
   def store(collection, id, embedding, metadata, opts \\ []) do
-    {backend, opts} = Keyword.pop(opts, :vector_store, backend())
-    dispatch(:store, backend, [collection, id, embedding, metadata, opts], opts)
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:store, backend, [collection, id, embedding, metadata], backend_opts, opts)
   end
 
   @doc """
@@ -133,15 +156,47 @@ defmodule Arcana.VectorStore do
 
   ## Options
 
-    * `:vector_store` - Override the configured backend (module or `:pgvector`/`:memory`)
+    * `:vector_store` - Override the configured backend (see `store/5` for format)
     * `:limit` - Maximum number of results (default: 10)
-    * `:repo` - The Ecto repo (required for pgvector backend)
-    * `:server` - The Memory server pid/name (for memory backend)
+
+  ## Examples
+
+      # Use global config
+      VectorStore.search("products", query_embedding, limit: 10)
+
+      # Override with memory backend
+      VectorStore.search("products", query_embedding,
+        vector_store: {:memory, pid: memory_pid},
+        limit: 10)
 
   """
   def search(collection, query_embedding, opts \\ []) do
-    {backend, opts} = Keyword.pop(opts, :vector_store, backend())
-    dispatch(:search, backend, [collection, query_embedding, opts], opts)
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:search, backend, [collection, query_embedding], backend_opts, opts)
+  end
+
+  @doc """
+  Searches for matching text using the configured backend (fulltext search).
+
+  ## Options
+
+    * `:vector_store` - Override the configured backend (see `store/5` for format)
+    * `:limit` - Maximum number of results (default: 10)
+
+  ## Examples
+
+      # Use global config
+      VectorStore.search_text("products", "organic coffee", limit: 10)
+
+      # Override with memory backend
+      VectorStore.search_text("products", "organic coffee",
+        vector_store: {:memory, pid: memory_pid},
+        limit: 10)
+
+  """
+  def search_text(collection, query_text, opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:search_text, backend, [collection, query_text], backend_opts, opts)
   end
 
   @doc """
@@ -149,13 +204,12 @@ defmodule Arcana.VectorStore do
 
   ## Options
 
-    * `:vector_store` - Override the configured backend
-    * `:repo` - The Ecto repo (required for pgvector backend)
+    * `:vector_store` - Override the configured backend (see `store/5` for format)
 
   """
   def delete(collection, id, opts \\ []) do
-    {backend, opts} = Keyword.pop(opts, :vector_store, backend())
-    dispatch(:delete, backend, [collection, id, opts], opts)
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:delete, backend, [collection, id], backend_opts, opts)
   end
 
   @doc """
@@ -163,65 +217,102 @@ defmodule Arcana.VectorStore do
 
   ## Options
 
-    * `:vector_store` - Override the configured backend
-    * `:repo` - The Ecto repo (required for pgvector backend)
+    * `:vector_store` - Override the configured backend (see `store/5` for format)
 
   """
   def clear(collection, opts \\ []) do
-    {backend, opts} = Keyword.pop(opts, :vector_store, backend())
-    dispatch(:clear, backend, [collection, opts], opts)
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:clear, backend, [collection], backend_opts, opts)
   end
 
-  # Private dispatch helper
-  defp dispatch(:store, :pgvector, [collection, id, embedding, metadata, opts], _opts) do
+  # Extract backend and its options from opts
+  defp extract_backend(opts) do
+    {vector_store, opts} = Keyword.pop(opts, :vector_store, backend())
+
+    case vector_store do
+      {backend, backend_opts} when is_atom(backend) and is_list(backend_opts) ->
+        {backend, backend_opts, opts}
+
+      backend when is_atom(backend) ->
+        {backend, [], opts}
+    end
+  end
+
+  # Dispatch to memory backend
+  defp dispatch(:store, :memory, [collection, id, embedding, metadata], backend_opts, _opts) do
+    pid = Keyword.get(backend_opts, :pid, Memory)
+    Memory.store(pid, collection, id, embedding, metadata)
+  end
+
+  defp dispatch(:search, :memory, [collection, query_embedding], backend_opts, opts) do
+    pid = Keyword.get(backend_opts, :pid, Memory)
+    Memory.search(pid, collection, query_embedding, opts)
+  end
+
+  defp dispatch(:search_text, :memory, [collection, query_text], backend_opts, opts) do
+    pid = Keyword.get(backend_opts, :pid, Memory)
+    Memory.search_text(pid, collection, query_text, opts)
+  end
+
+  defp dispatch(:delete, :memory, [collection, id], backend_opts, _opts) do
+    pid = Keyword.get(backend_opts, :pid, Memory)
+    Memory.delete(pid, collection, id)
+  end
+
+  defp dispatch(:clear, :memory, [collection], backend_opts, _opts) do
+    pid = Keyword.get(backend_opts, :pid, Memory)
+    Memory.clear(pid, collection)
+  end
+
+  # Dispatch to pgvector backend
+  defp dispatch(:store, :pgvector, [collection, id, embedding, metadata], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
     Pgvector.store(collection, id, embedding, metadata, opts)
   end
 
-  defp dispatch(:store, :memory, [collection, id, embedding, metadata, _opts], opts) do
-    server = Keyword.get(opts, :server, Memory)
-    Memory.store(server, collection, id, embedding, metadata)
-  end
-
-  defp dispatch(:store, module, [collection, id, embedding, metadata, opts], _opts) do
-    module.store(collection, id, embedding, metadata, opts)
-  end
-
-  defp dispatch(:search, :pgvector, [collection, query_embedding, opts], _opts) do
+  defp dispatch(:search, :pgvector, [collection, query_embedding], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
     Pgvector.search(collection, query_embedding, opts)
   end
 
-  defp dispatch(:search, :memory, [collection, query_embedding, opts], opts) do
-    server = Keyword.get(opts, :server, Memory)
-    Memory.search(server, collection, query_embedding, opts)
+  defp dispatch(:search_text, :pgvector, [collection, query_text], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    Pgvector.search_text(collection, query_text, opts)
   end
 
-  defp dispatch(:search, module, [collection, query_embedding, opts], _opts) do
-    module.search(collection, query_embedding, opts)
-  end
-
-  defp dispatch(:delete, :pgvector, [collection, id, opts], _opts) do
+  defp dispatch(:delete, :pgvector, [collection, id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
     Pgvector.delete(collection, id, opts)
   end
 
-  defp dispatch(:delete, :memory, [collection, id, _opts], opts) do
-    server = Keyword.get(opts, :server, Memory)
-    Memory.delete(server, collection, id)
-  end
-
-  defp dispatch(:delete, module, [collection, id, opts], _opts) do
-    module.delete(collection, id, opts)
-  end
-
-  defp dispatch(:clear, :pgvector, [collection, opts], _opts) do
+  defp dispatch(:clear, :pgvector, [collection], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
     Pgvector.clear(collection, opts)
   end
 
-  defp dispatch(:clear, :memory, [collection, _opts], opts) do
-    server = Keyword.get(opts, :server, Memory)
-    Memory.clear(server, collection)
+  # Dispatch to custom module
+  defp dispatch(:store, module, [collection, id, embedding, metadata], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.store(collection, id, embedding, metadata, opts)
   end
 
-  defp dispatch(:clear, module, [collection, opts], _opts) do
+  defp dispatch(:search, module, [collection, query_embedding], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.search(collection, query_embedding, opts)
+  end
+
+  defp dispatch(:search_text, module, [collection, query_text], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.search_text(collection, query_text, opts)
+  end
+
+  defp dispatch(:delete, module, [collection, id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.delete(collection, id, opts)
+  end
+
+  defp dispatch(:clear, module, [collection], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
     module.clear(collection, opts)
   end
 end
