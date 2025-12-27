@@ -189,6 +189,34 @@ defmodule Arcana.AgentTest do
       assert ctx.error == :api_error
       assert is_nil(ctx.answer)
     end
+
+    test "accepts custom prompt function" do
+      llm = fn prompt ->
+        assert prompt =~ "CUSTOM ANSWER PROMPT"
+        {:ok, "Custom answer"}
+      end
+
+      custom_prompt = fn question, chunks ->
+        "CUSTOM ANSWER PROMPT: #{question}, context: #{length(chunks)} chunks"
+      end
+
+      ctx = %Context{
+        question: "test question",
+        repo: Arcana.TestRepo,
+        llm: llm,
+        results: [
+          %{
+            question: "test",
+            collection: "default",
+            chunks: [%{id: "1", text: "chunk text", score: 0.9}]
+          }
+        ]
+      }
+
+      ctx = Agent.answer(ctx, prompt: custom_prompt)
+
+      assert ctx.answer == "Custom answer"
+    end
   end
 
   describe "pipeline" do
@@ -379,6 +407,24 @@ defmodule Arcana.AgentTest do
 
       :telemetry.detach(ref)
     end
+
+    test "accepts custom prompt function" do
+      llm = fn prompt ->
+        # Verify custom prompt was used
+        assert prompt =~ "CUSTOM ROUTE PROMPT"
+        {:ok, ~s({"collections": ["api"]})}
+      end
+
+      custom_prompt = fn question, collections ->
+        "CUSTOM ROUTE PROMPT: #{question}, collections: #{inspect(collections)}"
+      end
+
+      ctx =
+        Agent.new("test", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.route(collections: ["docs", "api"], prompt: custom_prompt)
+
+      assert ctx.collections == ["api"]
+    end
   end
 
   describe "decompose/1" do
@@ -477,6 +523,23 @@ defmodule Arcana.AgentTest do
       assert metadata.sub_question_count == 2
 
       :telemetry.detach(ref)
+    end
+
+    test "accepts custom prompt function" do
+      llm = fn prompt ->
+        assert prompt =~ "CUSTOM DECOMPOSE"
+        {:ok, ~s({"sub_questions": ["a", "b"]})}
+      end
+
+      custom_prompt = fn question ->
+        "CUSTOM DECOMPOSE: #{question}"
+      end
+
+      ctx =
+        Agent.new("test", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.decompose(prompt: custom_prompt)
+
+      assert ctx.sub_questions == ["a", "b"]
     end
   end
 
@@ -610,6 +673,58 @@ defmodule Arcana.AgentTest do
       assert metadata.total_iterations == 1
 
       :telemetry.detach(ref)
+    end
+
+    test "accepts custom sufficient_prompt function" do
+      llm = fn prompt ->
+        assert prompt =~ "CUSTOM SUFFICIENT CHECK"
+        {:ok, ~s({"sufficient": true})}
+      end
+
+      custom_prompt = fn question, chunks ->
+        "CUSTOM SUFFICIENT CHECK: #{question}, chunks: #{length(chunks)}"
+      end
+
+      ctx =
+        Agent.new("test", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.search(self_correct: true, sufficient_prompt: custom_prompt)
+
+      assert is_list(ctx.results)
+    end
+
+    test "accepts custom rewrite_prompt function" do
+      attempt = :counters.new(1, [:atomics])
+
+      llm = fn prompt ->
+        cond do
+          prompt =~ "CUSTOM REWRITE" ->
+            {:ok, ~s({"query": "rewritten"})}
+
+          prompt =~ "sufficient" ->
+            count = :counters.get(attempt, 1)
+
+            if count < 1 do
+              :counters.add(attempt, 1, 1)
+              {:ok, ~s({"sufficient": false})}
+            else
+              {:ok, ~s({"sufficient": true})}
+            end
+
+          true ->
+            {:ok, "response"}
+        end
+      end
+
+      custom_prompt = fn question, chunks ->
+        "CUSTOM REWRITE: #{question}, chunks: #{length(chunks)}"
+      end
+
+      ctx =
+        Agent.new("test", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.search(self_correct: true, rewrite_prompt: custom_prompt)
+
+      [result | _] = ctx.results
+      assert result.iterations > 1
     end
   end
 

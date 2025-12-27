@@ -348,7 +348,6 @@ config :nx, default_backend: EXLA.Backend
 - [x] Hybrid search (vector + full-text with RRF)
 - [x] File ingestion (text, markdown, PDF)
 - [x] Telemetry events for observability
-- [ ] RAG pipeline with LLM integration
 - [ ] Async ingestion with Oban
 - [ ] Query rewriting
 - [ ] HyDE (Hypothetical Document Embeddings)

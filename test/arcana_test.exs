@@ -200,6 +200,31 @@ defmodule ArcanaTest do
 
       assert_receive {:context_size, 1}
     end
+
+    test "accepts custom prompt function" do
+      test_pid = self()
+
+      # LLM that captures the system prompt it receives
+      test_llm = fn prompt, context, opts ->
+        send(test_pid, {:llm_called, prompt, context, opts})
+        {:ok, "Answer"}
+      end
+
+      custom_prompt = fn question, context ->
+        "CUSTOM SYSTEM: Answer '#{question}' using #{length(context)} sources"
+      end
+
+      {:ok, _} =
+        Arcana.ask("What is Paris?",
+          repo: Repo,
+          llm: test_llm,
+          prompt: custom_prompt
+        )
+
+      assert_receive {:llm_called, _prompt, _context, opts}
+      assert opts[:system_prompt] =~ "CUSTOM SYSTEM"
+      assert opts[:system_prompt] =~ "What is Paris?"
+    end
   end
 
   describe "rewrite_query/2" do

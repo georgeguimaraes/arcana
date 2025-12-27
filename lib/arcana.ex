@@ -452,6 +452,7 @@ defmodule Arcana do
     * `:source_id` - Filter context to a specific source
     * `:threshold` - Minimum similarity score for context (default: 0.0)
     * `:mode` - Search mode: `:semantic` (default), `:fulltext`, or `:hybrid`
+    * `:prompt` - Custom prompt function `fn question, context -> system_prompt_string end`
 
   ## Examples
 
@@ -462,6 +463,16 @@ defmodule Arcana do
       # Using a LangChain model (when langchain is installed)
       llm = LangChain.ChatModels.ChatOpenAI.new!(%{model: "gpt-4o-mini"})
       {:ok, answer} = Arcana.ask("What is the capital?", repo: MyApp.Repo, llm: llm)
+
+      # Using a custom prompt
+      custom_prompt = fn question, context ->
+        "Answer '\#{question}' based on: \#{Enum.map_join(context, ", ", & &1.text)}"
+      end
+      {:ok, answer} = Arcana.ask("What is the capital?",
+        repo: MyApp.Repo,
+        llm: llm,
+        prompt: custom_prompt
+      )
 
   """
   def ask(question, opts) when is_binary(question) do
@@ -485,7 +496,10 @@ defmodule Arcana do
             |> Keyword.put_new(:limit, 5)
 
           context = search(question, search_opts)
-          result = LLM.complete(llm, question, context)
+          prompt_fn = Keyword.get(opts, :prompt, &default_ask_prompt/2)
+          llm_opts = [system_prompt: prompt_fn.(question, context)]
+
+          result = LLM.complete(llm, question, context, llm_opts)
 
           stop_metadata =
             case result do
@@ -522,6 +536,27 @@ defmodule Arcana do
       document ->
         repo.delete!(document)
         :ok
+    end
+  end
+
+  defp default_ask_prompt(_question, context) do
+    context_text =
+      Enum.map_join(context, "\n\n---\n\n", fn
+        %{text: text} -> text
+        text when is_binary(text) -> text
+        other -> inspect(other)
+      end)
+
+    if context_text != "" do
+      """
+      Answer the user's question based on the following context.
+      If the answer is not in the context, say you don't know.
+
+      Context:
+      #{context_text}
+      """
+    else
+      "You are a helpful assistant."
     end
   end
 

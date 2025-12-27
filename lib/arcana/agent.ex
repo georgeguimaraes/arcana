@@ -71,6 +71,7 @@ defmodule Arcana.Agent do
   ## Options
 
   - `:collections` (required) - List of available collection names
+  - `:prompt` - Custom prompt function `fn question, collections -> prompt_string end`
 
   ## Example
 
@@ -92,16 +93,11 @@ defmodule Arcana.Agent do
     }
 
     :telemetry.span([:arcana, :agent, :route], start_metadata, fn ->
-      prompt = """
-      Which collection(s) should be searched for this question?
-
-      Question: "#{ctx.question}"
-
-      Available collections: #{inspect(available_collections)}
-
-      Return JSON only: {"collections": ["name1", "name2"], "reasoning": "..."}
-      Select only the most relevant collection(s). If unsure, include all.
-      """
+      prompt =
+        case Keyword.get(opts, :prompt) do
+          nil -> default_route_prompt(ctx.question, available_collections)
+          custom_fn -> custom_fn.(ctx.question, available_collections)
+        end
 
       {collections, reasoning} =
         case ctx.llm.(prompt) do
@@ -133,11 +129,28 @@ defmodule Arcana.Agent do
     end)
   end
 
+  defp default_route_prompt(question, available_collections) do
+    """
+    Which collection(s) should be searched for this question?
+
+    Question: "#{question}"
+
+    Available collections: #{inspect(available_collections)}
+
+    Return JSON only: {"collections": ["name1", "name2"], "reasoning": "..."}
+    Select only the most relevant collection(s). If unsure, include all.
+    """
+  end
+
   @doc """
   Breaks a complex question into simpler sub-questions.
 
   Uses the LLM to analyze the question and split it into parts that can
   be searched independently. Simple questions are returned unchanged.
+
+  ## Options
+
+  - `:prompt` - Custom prompt function `fn question -> prompt_string end`
 
   ## Example
 
@@ -148,20 +161,19 @@ defmodule Arcana.Agent do
 
   The sub-questions are stored in `ctx.sub_questions` and used by `search/2`.
   """
-  def decompose(%Context{error: error} = ctx) when not is_nil(error), do: ctx
+  def decompose(ctx, opts \\ [])
 
-  def decompose(%Context{} = ctx) do
+  def decompose(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
+
+  def decompose(%Context{} = ctx, opts) do
     start_metadata = %{question: ctx.question}
 
     :telemetry.span([:arcana, :agent, :decompose], start_metadata, fn ->
-      prompt = """
-      Break this question into simpler sub-questions that can be answered independently:
-
-      "#{ctx.question}"
-
-      Return JSON only: {"sub_questions": ["q1", "q2", ...], "reasoning": "..."}
-      If the question is already simple, return: {"sub_questions": ["#{ctx.question}"], "reasoning": "simple question"}
-      """
+      prompt =
+        case Keyword.get(opts, :prompt) do
+          nil -> default_decompose_prompt(ctx.question)
+          custom_fn -> custom_fn.(ctx.question)
+        end
 
       sub_questions =
         case ctx.llm.(prompt) do
@@ -183,6 +195,17 @@ defmodule Arcana.Agent do
     end)
   end
 
+  defp default_decompose_prompt(question) do
+    """
+    Break this question into simpler sub-questions that can be answered independently:
+
+    "#{question}"
+
+    Return JSON only: {"sub_questions": ["q1", "q2", ...], "reasoning": "..."}
+    If the question is already simple, return: {"sub_questions": ["#{question}"], "reasoning": "simple question"}
+    """
+  end
+
   @doc """
   Executes search and populates results in the context.
 
@@ -193,6 +216,8 @@ defmodule Arcana.Agent do
 
   - `:self_correct` - Enable self-correcting search (default: false)
   - `:max_iterations` - Max retry attempts for self-correct (default: 3)
+  - `:sufficient_prompt` - Custom prompt function `fn question, chunks -> prompt_string end`
+  - `:rewrite_prompt` - Custom prompt function `fn question, chunks -> prompt_string end`
 
   ## Example
 
@@ -215,6 +240,8 @@ defmodule Arcana.Agent do
   def search(%Context{} = ctx, opts) do
     self_correct = Keyword.get(opts, :self_correct, false)
     max_iterations = Keyword.get(opts, :max_iterations, 3)
+    sufficient_prompt_fn = Keyword.get(opts, :sufficient_prompt)
+    rewrite_prompt_fn = Keyword.get(opts, :rewrite_prompt)
 
     start_metadata = %{
       question: ctx.question,
@@ -227,11 +254,16 @@ defmodule Arcana.Agent do
       questions = ctx.sub_questions || [ctx.question]
       collections = ctx.collections || ["default"]
 
+      prompt_opts = %{
+        sufficient_prompt: sufficient_prompt_fn,
+        rewrite_prompt: rewrite_prompt_fn
+      }
+
       results =
         for question <- questions,
             collection <- collections do
           if self_correct do
-            do_self_correcting_search(ctx, question, collection, max_iterations)
+            do_self_correcting_search(ctx, question, collection, max_iterations, prompt_opts)
           else
             chunks = do_simple_search(ctx, question, collection)
             %{question: question, collection: collection, chunks: chunks, iterations: 1}
@@ -261,30 +293,45 @@ defmodule Arcana.Agent do
     )
   end
 
-  defp do_self_correcting_search(ctx, question, collection, max_iterations) do
-    do_self_correcting_search(ctx, question, collection, max_iterations, 1)
+  defp do_self_correcting_search(ctx, question, collection, max_iterations, prompt_opts) do
+    do_self_correcting_search(ctx, question, collection, max_iterations, prompt_opts, 1)
   end
 
-  defp do_self_correcting_search(ctx, question, collection, max_iterations, iteration)
+  defp do_self_correcting_search(
+         ctx,
+         question,
+         collection,
+         max_iterations,
+         _prompt_opts,
+         iteration
+       )
        when iteration > max_iterations do
     # Max iterations reached, return best effort
     chunks = do_simple_search(ctx, question, collection)
     %{question: question, collection: collection, chunks: chunks, iterations: max_iterations}
   end
 
-  defp do_self_correcting_search(ctx, question, collection, max_iterations, iteration) do
+  defp do_self_correcting_search(
+         ctx,
+         question,
+         collection,
+         max_iterations,
+         prompt_opts,
+         iteration
+       ) do
     chunks = do_simple_search(ctx, question, collection)
 
-    if sufficient_results?(ctx, question, chunks) do
+    if sufficient_results?(ctx, question, chunks, prompt_opts.sufficient_prompt) do
       %{question: question, collection: collection, chunks: chunks, iterations: iteration}
     else
-      case rewrite_query(ctx, question, chunks) do
+      case rewrite_query(ctx, question, chunks, prompt_opts.rewrite_prompt) do
         {:ok, rewritten_query} ->
           do_self_correcting_search(
             ctx,
             rewritten_query,
             collection,
             max_iterations,
+            prompt_opts,
             iteration + 1
           )
 
@@ -295,21 +342,12 @@ defmodule Arcana.Agent do
     end
   end
 
-  defp sufficient_results?(ctx, question, chunks) do
-    chunks_text =
-      chunks
-      |> Enum.map(& &1.text)
-      |> Enum.join("\n---\n")
-
-    prompt = """
-    Question: "#{question}"
-
-    Retrieved chunks:
-    #{chunks_text}
-
-    Are these chunks sufficient to answer the question?
-    Return JSON only: {"sufficient": true} or {"sufficient": false, "reasoning": "..."}
-    """
+  defp sufficient_results?(ctx, question, chunks, custom_prompt_fn) do
+    prompt =
+      case custom_prompt_fn do
+        nil -> default_sufficient_prompt(question, chunks)
+        fn_ref -> fn_ref.(question, chunks)
+      end
 
     case ctx.llm.(prompt) do
       {:ok, response} ->
@@ -325,23 +363,29 @@ defmodule Arcana.Agent do
     end
   end
 
-  defp rewrite_query(ctx, question, chunks) do
+  defp default_sufficient_prompt(question, chunks) do
     chunks_text =
       chunks
-      |> Enum.take(3)
       |> Enum.map(& &1.text)
       |> Enum.join("\n---\n")
 
-    prompt = """
-    The following search query did not return sufficient results:
-    Query: "#{question}"
+    """
+    Question: "#{question}"
 
-    Retrieved (insufficient) results:
+    Retrieved chunks:
     #{chunks_text}
 
-    Rewrite the query to find better results.
-    Return JSON only: {"query": "rewritten query here"}
+    Are these chunks sufficient to answer the question?
+    Return JSON only: {"sufficient": true} or {"sufficient": false, "reasoning": "..."}
     """
+  end
+
+  defp rewrite_query(ctx, question, chunks, custom_prompt_fn) do
+    prompt =
+      case custom_prompt_fn do
+        nil -> default_rewrite_prompt(question, chunks)
+        fn_ref -> fn_ref.(question, chunks)
+      end
 
     case ctx.llm.(prompt) do
       {:ok, response} ->
@@ -355,11 +399,34 @@ defmodule Arcana.Agent do
     end
   end
 
+  defp default_rewrite_prompt(question, chunks) do
+    chunks_text =
+      chunks
+      |> Enum.take(3)
+      |> Enum.map(& &1.text)
+      |> Enum.join("\n---\n")
+
+    """
+    The following search query did not return sufficient results:
+    Query: "#{question}"
+
+    Retrieved (insufficient) results:
+    #{chunks_text}
+
+    Rewrite the query to find better results.
+    Return JSON only: {"query": "rewritten query here"}
+    """
+  end
+
   @doc """
   Generates the final answer from search results.
 
   Collects all chunks from results, deduplicates by ID, and prompts the LLM
   to generate an answer based on the context.
+
+  ## Options
+
+  - `:prompt` - Custom prompt function `fn question, chunks -> prompt_string end`
 
   ## Example
 
@@ -370,9 +437,11 @@ defmodule Arcana.Agent do
       ctx.answer
       # => "The answer based on retrieved context..."
   """
-  def answer(%Context{error: error} = ctx) when not is_nil(error), do: ctx
+  def answer(ctx, opts \\ [])
 
-  def answer(%Context{} = ctx) do
+  def answer(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
+
+  def answer(%Context{} = ctx, opts) do
     start_metadata = %{question: ctx.question}
 
     :telemetry.span([:arcana, :agent, :answer], start_metadata, fn ->
@@ -381,7 +450,11 @@ defmodule Arcana.Agent do
         |> Enum.flat_map(& &1.chunks)
         |> Enum.uniq_by(& &1.id)
 
-      prompt = build_answer_prompt(ctx.question, all_chunks)
+      prompt =
+        case Keyword.get(opts, :prompt) do
+          nil -> default_answer_prompt(ctx.question, all_chunks)
+          custom_fn -> custom_fn.(ctx.question, all_chunks)
+        end
 
       updated_ctx =
         case ctx.llm.(prompt) do
@@ -401,7 +474,7 @@ defmodule Arcana.Agent do
     end)
   end
 
-  defp build_answer_prompt(question, chunks) do
+  defp default_answer_prompt(question, chunks) do
     context =
       chunks
       |> Enum.map(& &1.text)
