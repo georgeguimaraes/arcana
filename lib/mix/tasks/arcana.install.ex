@@ -64,12 +64,19 @@ if Code.ensure_loaded?(Igniter) do
 
       Next steps:
       1. Run the migration: mix ecto.migrate
-      2. Add Arcana.Embeddings.Serving to your supervision tree:
+
+      2. Add Arcana.Embedding.Local to your supervision tree (for local embeddings):
 
           children = [
             #{inspect(repo_module)},
-            {Arcana.Embeddings.Serving, []}
+            Arcana.Embedding.Local
           ]
+
+         For in-memory vector store (no PostgreSQL required), also add:
+
+            {Arcana.VectorStore.Memory, name: Arcana.VectorStore.Memory}
+
+         And configure: config :arcana, vector_store: :memory
 
       3. Start using Arcana:
 
@@ -359,12 +366,19 @@ else
 
       Next steps:
       1. Run the migration: mix ecto.migrate
-      2. Add Arcana to your supervision tree:
+
+      2. Add Arcana.Embedding.Local to your supervision tree (for local embeddings):
 
           children = [
             MyApp.Repo,
-            {Arcana.Embeddings.Serving, []}
+            Arcana.Embedding.Local
           ]
+
+         For in-memory vector store (no PostgreSQL required), also add:
+
+            {Arcana.VectorStore.Memory, name: Arcana.VectorStore.Memory}
+
+         And configure: config :arcana, vector_store: :memory
 
       3. Configure pgvector types in your repo config:
 
