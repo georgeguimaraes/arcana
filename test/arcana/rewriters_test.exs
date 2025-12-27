@@ -129,11 +129,11 @@ defmodule Arcana.RewritersTest do
       assert result =~ "test query"
     end
 
-    test "LangChain model structs are accepted" do
-      # Verify the protocol is implemented for LangChain models
-      chat = %LangChain.ChatModels.ChatOpenAI{model: "gpt-4o-mini"}
+    test "model strings are accepted (requires req_llm)" do
+      # Verify the protocol is implemented for model strings
+      model = "openai:gpt-4o-mini"
 
-      assert Arcana.LLM.impl_for(chat) != nil
+      assert Arcana.LLM.impl_for(model) != nil
     end
   end
 end

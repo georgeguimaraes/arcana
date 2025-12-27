@@ -27,7 +27,7 @@ defmodule Arcana.MixProject do
       extras: [
         "README.md",
         "guides/getting-started.md",
-        "guides/langchain-integration.md"
+        "guides/llm-integration.md"
       ],
       groups_for_extras: [
         Guides: ~r/guides\/.*/
@@ -74,8 +74,8 @@ defmodule Arcana.MixProject do
       # Optional: Enhanced installer
       {:igniter, "~> 0.5", optional: true},
 
-      # Optional: LangChain integration
-      {:langchain, "~> 0.3", optional: true}
+      # Optional: Req.LLM for LLM integrations
+      {:req_llm, "~> 1.2", optional: true}
     ]
   end
 end

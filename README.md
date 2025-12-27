@@ -258,6 +258,70 @@ results = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)
 {:error, :not_found} = Arcana.delete(invalid_id, repo: MyApp.Repo)
 ```
 
+### Ask (Simple RAG)
+
+```elixir
+# Using a model string (requires req_llm dependency)
+{:ok, answer} = Arcana.ask("What is Elixir?",
+  repo: MyApp.Repo,
+  llm: "openai:gpt-4o-mini"
+)
+
+# With custom prompt
+custom_prompt = fn question, context ->
+  "Answer '#{question}' using: #{Enum.map_join(context, ", ", & &1.text)}"
+end
+{:ok, answer} = Arcana.ask("What is Elixir?",
+  repo: MyApp.Repo,
+  llm: "openai:gpt-4o-mini",
+  prompt: custom_prompt
+)
+```
+
+### Agentic RAG
+
+For complex questions, use the Agent pipeline with self-correcting search, question decomposition, and collection routing:
+
+```elixir
+llm = fn prompt -> {:ok, "LLM response"} end
+
+ctx =
+  Arcana.Agent.new("Compare Elixir and Erlang features", repo: MyApp.Repo, llm: llm)
+  |> Arcana.Agent.route(collections: ["elixir-docs", "erlang-docs"])
+  |> Arcana.Agent.decompose()
+  |> Arcana.Agent.search(self_correct: true)
+  |> Arcana.Agent.answer()
+
+ctx.answer
+# => "Generated answer based on retrieved context..."
+```
+
+#### Pipeline Steps
+
+| Step | Description |
+|------|-------------|
+| `new/2` | Initialize context with question and options |
+| `route/2` | LLM selects relevant collections to search |
+| `decompose/2` | LLM breaks complex questions into sub-questions |
+| `search/2` | Execute search (with optional self-correction) |
+| `answer/2` | Generate final answer from retrieved context |
+
+#### Custom Prompts
+
+All pipeline steps accept custom prompt functions:
+
+```elixir
+ctx
+|> Agent.route(collections: [...], prompt: fn question, collections -> "..." end)
+|> Agent.decompose(prompt: fn question -> "..." end)
+|> Agent.search(
+  self_correct: true,
+  sufficient_prompt: fn question, chunks -> "..." end,
+  rewrite_prompt: fn question, chunks -> "..." end
+)
+|> Agent.answer(prompt: fn question, chunks -> "..." end)
+```
+
 ## Telemetry
 
 Arcana emits telemetry events for observability. All operations use `:telemetry.span/3` which automatically emits `:start`, `:stop`, and `:exception` events.
@@ -328,8 +392,11 @@ config :nx, default_backend: EXLA.Backend
 ┌─────────────────────────────────────────────────────────┐
 │                     Your Phoenix App                     │
 ├─────────────────────────────────────────────────────────┤
-│  Arcana.ingest/2  │  Arcana.search/2  │  Arcana.delete/2│
-├───────────────────┴───────────────────┴─────────────────┤
+│                    Arcana.Agent                          │
+│     (route → decompose → search → answer pipeline)      │
+├─────────────────────────────────────────────────────────┤
+│  Arcana.ask/2   │  Arcana.search/2  │  Arcana.ingest/2  │
+├─────────────────┴───────────────────┴───────────────────┤
 │                                                         │
 │  ┌─────────────┐  ┌─────────────────┐  ┌─────────────┐ │
 │  │   Chunker   │  │ Embeddings      │  │   Search    │ │

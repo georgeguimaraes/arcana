@@ -132,13 +132,13 @@ defmodule ArcanaTest do
       assert answer =~ "chunks"
     end
 
-    test "accepts LangChain model structs via protocol" do
-      # Verify that a LangChain model struct is accepted (protocol is implemented)
-      # We can't actually call the API, but we can verify it's not rejected
-      chat = %LangChain.ChatModels.ChatOpenAI{model: "gpt-4o-mini"}
+    test "accepts model string via protocol (requires req_llm)" do
+      # Verify that a model string is accepted (protocol is implemented for BitString)
+      # We can't actually call the API, but we can verify the protocol implementation exists
+      model = "openai:gpt-4o-mini"
 
       # This should not raise - the protocol implementation exists
-      assert Arcana.LLM.impl_for(chat) != nil
+      assert Arcana.LLM.impl_for(model) != nil
     end
 
     test "returns answer using retrieved context" do

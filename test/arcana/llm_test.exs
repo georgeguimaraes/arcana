@@ -34,24 +34,19 @@ defmodule Arcana.LLMTest do
     end
   end
 
-  describe "LangChain integration" do
-    test "works with ChatOpenAI struct" do
-      # We can't actually call the API, but we can verify the struct is accepted
-      chat = %LangChain.ChatModels.ChatOpenAI{
-        model: "gpt-4o-mini",
-        temperature: 0.7
-      }
+  describe "Req.LLM integration" do
+    test "works with OpenAI model string" do
+      # We can't actually call the API, but we can verify the string is accepted
+      model = "openai:gpt-4o-mini"
 
-      # The protocol should be implemented for this struct
-      assert LLM.impl_for(chat) != nil
+      # The protocol should be implemented for BitString
+      assert LLM.impl_for(model) != nil
     end
 
-    test "works with ChatAnthropic struct" do
-      chat = %LangChain.ChatModels.ChatAnthropic{
-        model: "claude-3-5-sonnet-latest"
-      }
+    test "works with Anthropic model string" do
+      model = "anthropic:claude-sonnet-4-20250514"
 
-      assert LLM.impl_for(chat) != nil
+      assert LLM.impl_for(model) != nil
     end
   end
 end

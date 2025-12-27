@@ -5,22 +5,23 @@ defprotocol Arcana.LLM do
   Arcana accepts any LLM that implements this protocol. Built-in implementations
   are provided for:
 
+  - Model strings via Req.LLM (e.g., `"openai:gpt-4o-mini"`, `"anthropic:claude-sonnet-4-20250514"`)
   - Anonymous functions (for testing and simple use cases)
-  - LangChain chat models (ChatOpenAI, ChatAnthropic, etc.)
 
   ## Examples
+
+  Using a model string (requires `req_llm` dependency):
+
+      Arcana.ask("question", llm: "openai:gpt-4o-mini", repo: MyApp.Repo)
+
+      # Or with Anthropic
+      Arcana.ask("question", llm: "anthropic:claude-sonnet-4-20250514", repo: MyApp.Repo)
 
   Using an anonymous function:
 
       llm = fn prompt, context ->
         {:ok, "Generated answer"}
       end
-
-      Arcana.ask("question", llm: llm, repo: MyApp.Repo)
-
-  Using a LangChain model:
-
-      llm = LangChain.ChatModels.ChatOpenAI.new!(%{model: "gpt-4o-mini"})
 
       Arcana.ask("question", llm: llm, repo: MyApp.Repo)
 
@@ -32,7 +33,7 @@ defprotocol Arcana.LLM do
         "Answer '\#{question}' using only: \#{Enum.map_join(context, ", ", & &1.text)}"
       end
 
-      Arcana.ask("question", llm: llm, repo: MyApp.Repo, prompt: custom_prompt)
+      Arcana.ask("question", llm: "openai:gpt-4o-mini", repo: MyApp.Repo, prompt: custom_prompt)
 
   """
 
@@ -61,81 +62,26 @@ defimpl Arcana.LLM, for: Function do
   end
 end
 
-# LangChain implementations
-if Code.ensure_loaded?(LangChain.ChatModels.ChatOpenAI) do
-  defimpl Arcana.LLM, for: LangChain.ChatModels.ChatOpenAI do
-    alias LangChain.Chains.LLMChain
-    alias LangChain.Message
-    alias LangChain.Message.ContentPart
-
-    def complete(chat_model, prompt, context, opts) do
+# Req.LLM implementation for model strings like "openai:gpt-4o-mini"
+if Code.ensure_loaded?(ReqLLM) do
+  defimpl Arcana.LLM, for: BitString do
+    def complete(model, prompt, context, opts) when is_binary(model) do
       system_message =
         case Keyword.get(opts, :system_prompt) do
           nil -> default_system_prompt(context)
           custom -> custom
         end
 
-      {:ok, updated_chain} =
-        %{llm: chat_model}
-        |> LLMChain.new!()
-        |> LLMChain.add_message(Message.new_system!(system_message))
-        |> LLMChain.add_message(Message.new_user!(prompt))
-        |> LLMChain.run()
+      llm_context =
+        ReqLLM.Context.new([
+          ReqLLM.Context.system(system_message),
+          ReqLLM.Context.user(prompt)
+        ])
 
-      {:ok, ContentPart.content_to_string(updated_chain.last_message.content)}
-    rescue
-      e -> {:error, e}
-    end
-
-    defp default_system_prompt(context) do
-      context_text = format_context(context)
-
-      if context_text != "" do
-        """
-        Answer the user's question based on the following context.
-        If the answer is not in the context, say you don't know.
-
-        Context:
-        #{context_text}
-        """
-      else
-        "You are a helpful assistant."
+      case ReqLLM.generate_text(model, llm_context) do
+        {:ok, response} -> {:ok, response.text}
+        {:error, reason} -> {:error, reason}
       end
-    end
-
-    defp format_context([]), do: ""
-
-    defp format_context(context) do
-      Enum.map_join(context, "\n\n---\n\n", fn
-        %{text: text} -> text
-        text when is_binary(text) -> text
-        other -> inspect(other)
-      end)
-    end
-  end
-end
-
-if Code.ensure_loaded?(LangChain.ChatModels.ChatAnthropic) do
-  defimpl Arcana.LLM, for: LangChain.ChatModels.ChatAnthropic do
-    alias LangChain.Chains.LLMChain
-    alias LangChain.Message
-    alias LangChain.Message.ContentPart
-
-    def complete(chat_model, prompt, context, opts) do
-      system_message =
-        case Keyword.get(opts, :system_prompt) do
-          nil -> default_system_prompt(context)
-          custom -> custom
-        end
-
-      {:ok, updated_chain} =
-        %{llm: chat_model}
-        |> LLMChain.new!()
-        |> LLMChain.add_message(Message.new_system!(system_message))
-        |> LLMChain.add_message(Message.new_user!(prompt))
-        |> LLMChain.run()
-
-      {:ok, ContentPart.content_to_string(updated_chain.last_message.content)}
     rescue
       e -> {:error, e}
     end
