@@ -47,7 +47,22 @@ The installer will:
   repo: MyApp.Repo,
   source_id: "book-123"
 )
+
+# Ingest from file (supports .txt, .md, .pdf)
+{:ok, document} = Arcana.ingest_file("path/to/document.pdf", repo: MyApp.Repo)
+
+# Organize documents into collections
+{:ok, document} = Arcana.ingest(
+  "Product documentation",
+  repo: MyApp.Repo,
+  collection: "products"
+)
 ```
+
+> **Note:** PDF support requires `pdftotext` from the Poppler library. Install with:
+> - macOS: `brew install poppler`
+> - Ubuntu/Debian: `apt-get install poppler-utils`
+> - Check availability: `Arcana.Parser.pdf_support_available?()`
 
 ### Searching
 
@@ -66,7 +81,8 @@ results = Arcana.search("query",
   repo: MyApp.Repo,
   limit: 5,
   threshold: 0.7,
-  source_id: "book-123"
+  source_id: "book-123",
+  collection: "products"  # Filter by collection
 )
 ```
 

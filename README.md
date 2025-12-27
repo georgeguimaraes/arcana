@@ -150,6 +150,15 @@ end
   chunk_size: 256,
   chunk_overlap: 25
 )
+
+# Ingest from file
+{:ok, document} = Arcana.ingest_file("path/to/document.pdf", repo: MyApp.Repo)
+
+# With collection for segmentation
+{:ok, document} = Arcana.ingest(content,
+  repo: MyApp.Repo,
+  collection: "products"
+)
 ```
 
 #### Chunking Options
@@ -160,6 +169,39 @@ end
 | `:chunk_size` | `450` | Maximum chunk size in tokens |
 | `:chunk_overlap` | `50` | Overlap between chunks in tokens |
 | `:size_unit` | `:tokens` | Size measurement: `:tokens` or `:characters` |
+| `:collection` | `"default"` | Collection name for document segmentation |
+
+#### Supported File Formats
+
+| Extension | Content Type |
+|-----------|--------------|
+| `.txt` | text/plain |
+| `.md`, `.markdown` | text/markdown |
+| `.pdf` | application/pdf (requires poppler) |
+
+#### PDF Support (Optional)
+
+PDF parsing requires `pdftotext` from the Poppler library. Install it for your platform:
+
+```bash
+# macOS
+brew install poppler
+
+# Ubuntu/Debian
+apt-get install poppler-utils
+
+# Fedora
+dnf install poppler-utils
+```
+
+Check if PDF support is available:
+
+```elixir
+Arcana.Parser.pdf_support_available?()
+# => true or false
+```
+
+If poppler is not installed, `ingest_file/2` returns `{:error, :pdf_support_not_available}` for PDF files.
 
 ### Search
 
@@ -181,7 +223,8 @@ results = Arcana.search("query",
   repo: MyApp.Repo,
   limit: 5,
   source_id: "user-123",
-  threshold: 0.5
+  threshold: 0.5,
+  collection: "products"  # Filter by collection
 )
 ```
 
@@ -255,7 +298,7 @@ config :nx, default_backend: EXLA.Backend
 
 - [x] LiveView dashboard
 - [x] Hybrid search (vector + full-text with RRF)
-- [ ] File ingestion (PDF, DOCX)
+- [x] File ingestion (text, markdown, PDF)
 - [ ] RAG pipeline with LLM integration
 - [ ] Async ingestion with Oban
 - [ ] Query rewriting
