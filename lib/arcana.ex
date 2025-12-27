@@ -18,10 +18,53 @@ defmodule Arcana do
 
   """
 
-  alias Arcana.{Chunk, Chunker, Collection, Document, LLM, Parser}
-  alias Arcana.Embeddings.Serving
+  alias Arcana.{Chunk, Chunker, Collection, Document, Embedding, LLM, Parser}
 
   import Ecto.Query
+
+  @doc """
+  Returns the configured embedder.
+
+  The embedder is configured via application config:
+
+      # Default: Local Bumblebee with bge-small-en-v1.5
+      config :arcana, embedding: :local
+
+      # Local with different model
+      config :arcana, embedding: {:local, model: "BAAI/bge-large-en-v1.5"}
+
+      # OpenAI (requires req_llm and OPENAI_API_KEY)
+      config :arcana, embedding: :openai
+      config :arcana, embedding: {:openai, model: "text-embedding-3-large"}
+
+      # Custom function
+      config :arcana, embedding: {:custom, fn text -> YourModule.embed(text) end}
+
+  """
+  def embedder do
+    case Application.get_env(:arcana, :embedding, :local) do
+      :local ->
+        Arcana.Embedding.Local.new()
+
+      {:local, opts} ->
+        Arcana.Embedding.Local.new(opts)
+
+      :openai ->
+        Arcana.Embedding.OpenAI.new()
+
+      {:openai, opts} ->
+        Arcana.Embedding.OpenAI.new(opts)
+
+      {:custom, fun} when is_function(fun, 1) ->
+        Arcana.Embedding.Custom.new(fun: fun)
+
+      {:custom, fun, opts} when is_function(fun, 1) ->
+        Arcana.Embedding.Custom.new([fun: fun] ++ opts)
+
+      other ->
+        raise ArgumentError, "invalid embedding config: #{inspect(other)}"
+    end
+  end
 
   @doc """
   Ingests text content, creating a document with embedded chunks.
@@ -76,10 +119,12 @@ defmodule Arcana do
       chunks = Chunker.chunk(text, chunk_opts)
 
       # Embed and store chunks
+      emb = embedder()
+
       chunk_records =
         chunks
         |> Enum.map(fn chunk ->
-          embedding = Serving.embed(chunk.text)
+          {:ok, embedding} = Embedding.embed(emb, chunk.text)
 
           %Chunk{}
           |> Chunk.changeset(%{
@@ -177,10 +222,12 @@ defmodule Arcana do
     chunks = Chunker.chunk(text, chunk_opts)
 
     # Embed and store chunks
+    emb = embedder()
+
     chunk_records =
       chunks
       |> Enum.map(fn chunk ->
-        embedding = Serving.embed(chunk.text)
+        {:ok, embedding} = Embedding.embed(emb, chunk.text)
 
         %Chunk{}
         |> Chunk.changeset(%{
@@ -291,7 +338,7 @@ defmodule Arcana do
   end
 
   defp do_search(:semantic, query, repo, limit, source_id, threshold, collection_id) do
-    query_embedding = Serving.embed(query)
+    {:ok, query_embedding} = Embedding.embed(embedder(), query)
 
     base_query =
       from(c in Chunk,
