@@ -57,8 +57,8 @@ defmodule Arcana.CollectionTest do
       assert found.id == original.id
     end
 
-    test "creates default collection when name is :default" do
-      assert {:ok, collection} = Collection.get_or_create(:default, Arcana.TestRepo)
+    test "creates default collection when name is 'default'" do
+      assert {:ok, collection} = Collection.get_or_create("default", Arcana.TestRepo)
       assert collection.name == "default"
     end
   end

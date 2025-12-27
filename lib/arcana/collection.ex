@@ -33,17 +33,12 @@ defmodule Arcana.Collection do
   @doc """
   Gets an existing collection by name or creates a new one.
 
-  Accepts either a string name or the atom `:default` which
-  maps to the "default" collection.
-
   ## Examples
 
       {:ok, collection} = Collection.get_or_create("products", MyRepo)
-      {:ok, collection} = Collection.get_or_create(:default, MyRepo)
+      {:ok, collection} = Collection.get_or_create("default", MyRepo)
 
   """
-  def get_or_create(:default, repo), do: get_or_create("default", repo)
-
   def get_or_create(name, repo) when is_binary(name) do
     case repo.get_by(__MODULE__, name: name) do
       nil ->

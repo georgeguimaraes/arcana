@@ -47,7 +47,7 @@ defmodule Arcana do
     repo = Keyword.fetch!(opts, :repo)
     source_id = Keyword.get(opts, :source_id)
     metadata = Keyword.get(opts, :metadata, %{})
-    collection_name = Keyword.get(opts, :collection, :default)
+    collection_name = Keyword.get(opts, :collection, "default")
     chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap])
 
     # Get or create collection
@@ -140,7 +140,7 @@ defmodule Arcana do
     metadata = Keyword.get(opts, :metadata, %{})
     file_path = Keyword.get(opts, :file_path)
     content_type = Keyword.get(opts, :content_type, "text/plain")
-    collection_name = Keyword.get(opts, :collection, :default)
+    collection_name = Keyword.get(opts, :collection, "default")
     chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap])
 
     # Get or create collection

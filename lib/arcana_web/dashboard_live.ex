@@ -112,9 +112,7 @@ defmodule ArcanaWeb.DashboardLive do
         assign(socket, upload_error: nil)
       else
         error_msg =
-          errors
-          |> Enum.map(fn {:error, reason} -> inspect(reason) end)
-          |> Enum.join(", ")
+          Enum.map_join(errors, ", ", fn {:error, reason} -> inspect(reason) end)
 
         assign(socket, upload_error: "Some files failed: #{error_msg}")
       end
@@ -289,17 +287,15 @@ defmodule ArcanaWeb.DashboardLive do
   defp parse_format("elixir"), do: :elixir
   defp parse_format(_), do: :plaintext
 
-  defp normalize_collection(""), do: :default
-  defp normalize_collection(nil), do: :default
+  defp normalize_collection(""), do: "default"
+  defp normalize_collection(nil), do: "default"
   defp normalize_collection(name) when is_binary(name), do: name
 
   defp format_metadata(nil), do: "-"
   defp format_metadata(metadata) when metadata == %{}, do: "-"
 
   defp format_metadata(metadata) when is_map(metadata) do
-    metadata
-    |> Enum.map(fn {k, v} -> "#{k}: #{v}" end)
-    |> Enum.join(", ")
+    Enum.map_join(metadata, ", ", fn {k, v} -> "#{k}: #{v}" end)
   end
 
   defp error_to_string(:too_large), do: "File too large (max 10MB)"
