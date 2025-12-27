@@ -33,6 +33,7 @@ defmodule ArcanaWeb.DashboardLive do
         reembed_progress: nil,
         embedding_info: get_embedding_info()
       )
+      |> assign(config_info: get_config_info())
       |> allow_upload(:files,
         accept: ~w(.txt .md .markdown .pdf),
         max_entries: 10,
@@ -1103,6 +1104,14 @@ defmodule ArcanaWeb.DashboardLive do
         >
           Maintenance
         </button>
+        <button
+          data-tab="info"
+          class={"arcana-tab #{if @tab == :info, do: "active", else: ""}"}
+          phx-click="switch_tab"
+          phx-value-tab="info"
+        >
+          Info
+        </button>
       </nav>
 
       <div class="arcana-content">
@@ -1135,6 +1144,8 @@ defmodule ArcanaWeb.DashboardLive do
               reembed_running={@reembed_running}
               reembed_progress={@reembed_progress}
             />
+          <% :info -> %>
+            <.info_tab config_info={@config_info} />
         <% end %>
       </div>
     </div>
@@ -1677,6 +1688,129 @@ defmodule ArcanaWeb.DashboardLive do
             Re-embed All Chunks
           </button>
         <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  defp get_config_info do
+    %{
+      repo: Application.get_env(:arcana, :repo),
+      llm: format_llm_config(Application.get_env(:arcana, :llm)),
+      embedding: format_embedding_config(Application.get_env(:arcana, :embedding, :local))
+    }
+  end
+
+  defp format_llm_config(nil), do: %{configured: false}
+
+  defp format_llm_config(llm) when is_function(llm) do
+    %{configured: true, type: "Function"}
+  end
+
+  defp format_llm_config(llm) do
+    case llm do
+      %{__struct__: module} = struct ->
+        %{
+          configured: true,
+          type: module |> Module.split() |> List.last(),
+          model: Map.get(struct, :model, "unknown")
+        }
+
+      _ ->
+        %{configured: true, type: inspect(llm)}
+    end
+  end
+
+  defp format_embedding_config(:local), do: %{type: :local, model: "BAAI/bge-small-en-v1.5"}
+  defp format_embedding_config(:openai), do: %{type: :openai, model: "text-embedding-3-small"}
+
+  defp format_embedding_config({:local, opts}) do
+    %{type: :local, model: Keyword.get(opts, :model, "BAAI/bge-small-en-v1.5")}
+  end
+
+  defp format_embedding_config({:openai, opts}) do
+    %{type: :openai, model: Keyword.get(opts, :model, "text-embedding-3-small")}
+  end
+
+  defp format_embedding_config({:custom, _fun}), do: %{type: :custom}
+  defp format_embedding_config({:custom, _fun, _opts}), do: %{type: :custom}
+
+  defp format_embedding_config({module, opts}) when is_atom(module) and is_list(opts) do
+    %{type: :custom_module, module: module, opts: opts}
+  end
+
+  defp format_embedding_config(module) when is_atom(module) do
+    %{type: :custom_module, module: module}
+  end
+
+  defp format_embedding_config(other), do: %{type: :unknown, raw: inspect(other)}
+
+  defp info_tab(assigns) do
+    ~H"""
+    <div class="arcana-info">
+      <h2>Configuration</h2>
+
+      <div class="arcana-info-section">
+        <h3>Repository</h3>
+        <div class="arcana-doc-info">
+          <div class="arcana-doc-field">
+            <label>Module</label>
+            <code><%= inspect(@config_info.repo) %></code>
+          </div>
+        </div>
+      </div>
+
+      <div class="arcana-info-section">
+        <h3>Embedding</h3>
+        <div class="arcana-doc-info">
+          <div class="arcana-doc-field">
+            <label>Type</label>
+            <span><%= @config_info.embedding.type %></span>
+          </div>
+          <%= if @config_info.embedding[:model] do %>
+            <div class="arcana-doc-field">
+              <label>Model</label>
+              <span><%= @config_info.embedding.model %></span>
+            </div>
+          <% end %>
+          <%= if @config_info.embedding[:module] do %>
+            <div class="arcana-doc-field">
+              <label>Module</label>
+              <code><%= inspect(@config_info.embedding.module) %></code>
+            </div>
+          <% end %>
+        </div>
+      </div>
+
+      <div class="arcana-info-section">
+        <h3>LLM</h3>
+        <div class="arcana-doc-info">
+          <%= if @config_info.llm.configured do %>
+            <div class="arcana-doc-field">
+              <label>Type</label>
+              <span><%= @config_info.llm.type %></span>
+            </div>
+            <%= if @config_info.llm[:model] do %>
+              <div class="arcana-doc-field">
+                <label>Model</label>
+                <span><%= @config_info.llm.model %></span>
+              </div>
+            <% end %>
+          <% else %>
+            <div class="arcana-doc-field">
+              <label>Status</label>
+              <span style="color: #9ca3af;">Not configured</span>
+            </div>
+          <% end %>
+        </div>
+      </div>
+
+      <div class="arcana-info-section">
+        <h3>Raw Configuration</h3>
+        <pre class="arcana-doc-content" style="font-size: 0.75rem;">config :arcana,
+    repo: <%= inspect(@config_info.repo) %>,
+    embedding: <%= inspect(Application.get_env(:arcana, :embedding, :local)) %>,
+    llm: <%= if Application.get_env(:arcana, :llm), do: inspect(Application.get_env(:arcana, :llm)), else: "nil" %></pre>
       </div>
     </div>
     """
