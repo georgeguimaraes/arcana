@@ -62,6 +62,78 @@ defmodule Arcana.Agent do
   end
 
   @doc """
+  Routes the question to relevant collections.
+
+  Uses the LLM to decide which collection(s) are most relevant for
+  the question. This allows searching only in relevant collections
+  instead of searching everything.
+
+  ## Options
+
+  - `:collections` (required) - List of available collection names
+
+  ## Example
+
+      ctx
+      |> Agent.route(collections: ["docs", "api", "support"])
+      |> Agent.search()
+      |> Agent.answer()
+
+  The selected collections are stored in `ctx.collections` and used by `search/2`.
+  """
+  def route(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
+
+  def route(%Context{} = ctx, opts) do
+    available_collections = Keyword.fetch!(opts, :collections)
+
+    start_metadata = %{
+      question: ctx.question,
+      available_collections: available_collections
+    }
+
+    :telemetry.span([:arcana, :agent, :route], start_metadata, fn ->
+      prompt = """
+      Which collection(s) should be searched for this question?
+
+      Question: "#{ctx.question}"
+
+      Available collections: #{inspect(available_collections)}
+
+      Return JSON only: {"collections": ["name1", "name2"], "reasoning": "..."}
+      Select only the most relevant collection(s). If unsure, include all.
+      """
+
+      {collections, reasoning} =
+        case ctx.llm.(prompt) do
+          {:ok, response} ->
+            case Jason.decode(response) do
+              {:ok, %{"collections" => cols, "reasoning" => reason}}
+              when is_list(cols) ->
+                {cols, reason}
+
+              {:ok, %{"collections" => cols}} when is_list(cols) ->
+                {cols, nil}
+
+              _ ->
+                {available_collections, nil}
+            end
+
+          {:error, _} ->
+            {available_collections, nil}
+        end
+
+      updated_ctx = %{ctx | collections: collections, routing_reasoning: reasoning}
+
+      stop_metadata = %{
+        selected_count: length(collections),
+        selected_collections: collections
+      }
+
+      {updated_ctx, stop_metadata}
+    end)
+  end
+
+  @doc """
   Breaks a complex question into simpler sub-questions.
 
   Uses the LLM to analyze the question and split it into parts that can

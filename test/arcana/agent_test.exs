@@ -283,6 +283,104 @@ defmodule Arcana.AgentTest do
     end
   end
 
+  describe "route/2" do
+    test "selects collections based on question" do
+      llm = fn prompt ->
+        if prompt =~ "Which collection" do
+          {:ok, ~s({"collections": ["docs", "api"], "reasoning": "Technical question"})}
+        else
+          {:ok, "response"}
+        end
+      end
+
+      ctx =
+        Agent.new("How do I use the API?", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.route(collections: ["docs", "api", "support"])
+
+      assert ctx.collections == ["docs", "api"]
+      assert ctx.routing_reasoning == "Technical question"
+    end
+
+    test "selects single collection" do
+      llm = fn prompt ->
+        if prompt =~ "Which collection" do
+          {:ok, ~s({"collections": ["support"], "reasoning": "Support question"})}
+        else
+          {:ok, "response"}
+        end
+      end
+
+      ctx =
+        Agent.new("I need help", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.route(collections: ["docs", "support"])
+
+      assert ctx.collections == ["support"]
+    end
+
+    test "falls back to all collections on LLM error" do
+      llm = fn _prompt -> {:error, :api_error} end
+
+      ctx =
+        Agent.new("question", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.route(collections: ["a", "b", "c"])
+
+      assert ctx.collections == ["a", "b", "c"]
+    end
+
+    test "falls back to all collections on malformed JSON" do
+      llm = fn _prompt -> {:ok, "not json"} end
+
+      ctx =
+        Agent.new("question", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.route(collections: ["x", "y"])
+
+      assert ctx.collections == ["x", "y"]
+    end
+
+    test "skips if context has error" do
+      ctx = %Context{
+        question: "test",
+        repo: Arcana.TestRepo,
+        llm: fn _ -> {:ok, "response"} end,
+        error: :previous_error
+      }
+
+      result = Agent.route(ctx, collections: ["a", "b"])
+      assert result.error == :previous_error
+      assert is_nil(result.collections)
+    end
+
+    test "emits telemetry events" do
+      ref = make_ref()
+      test_pid = self()
+
+      :telemetry.attach_many(
+        ref,
+        [
+          [:arcana, :agent, :route, :start],
+          [:arcana, :agent, :route, :stop]
+        ],
+        fn event, measurements, metadata, _ ->
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      llm = fn _prompt ->
+        {:ok, ~s({"collections": ["docs"], "reasoning": "docs only"})}
+      end
+
+      Agent.new("question", repo: Arcana.TestRepo, llm: llm)
+      |> Agent.route(collections: ["docs", "api"])
+
+      assert_receive {:telemetry, [:arcana, :agent, :route, :start], _, _}
+      assert_receive {:telemetry, [:arcana, :agent, :route, :stop], _, metadata}
+      assert metadata.selected_count == 1
+
+      :telemetry.detach(ref)
+    end
+  end
+
   describe "decompose/1" do
     test "breaks complex question into sub-questions" do
       llm = fn prompt ->
