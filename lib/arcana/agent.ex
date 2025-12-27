@@ -62,6 +62,56 @@ defmodule Arcana.Agent do
   end
 
   @doc """
+  Breaks a complex question into simpler sub-questions.
+
+  Uses the LLM to analyze the question and split it into parts that can
+  be searched independently. Simple questions are returned unchanged.
+
+  ## Example
+
+      ctx
+      |> Agent.decompose()
+      |> Agent.search()
+      |> Agent.answer()
+
+  The sub-questions are stored in `ctx.sub_questions` and used by `search/2`.
+  """
+  def decompose(%Context{error: error} = ctx) when not is_nil(error), do: ctx
+
+  def decompose(%Context{} = ctx) do
+    start_metadata = %{question: ctx.question}
+
+    :telemetry.span([:arcana, :agent, :decompose], start_metadata, fn ->
+      prompt = """
+      Break this question into simpler sub-questions that can be answered independently:
+
+      "#{ctx.question}"
+
+      Return JSON only: {"sub_questions": ["q1", "q2", ...], "reasoning": "..."}
+      If the question is already simple, return: {"sub_questions": ["#{ctx.question}"], "reasoning": "simple question"}
+      """
+
+      sub_questions =
+        case ctx.llm.(prompt) do
+          {:ok, response} ->
+            case Jason.decode(response) do
+              {:ok, %{"sub_questions" => questions}} when is_list(questions) -> questions
+              _ -> [ctx.question]
+            end
+
+          {:error, _} ->
+            [ctx.question]
+        end
+
+      updated_ctx = %{ctx | sub_questions: sub_questions}
+
+      stop_metadata = %{sub_question_count: length(sub_questions)}
+
+      {updated_ctx, stop_metadata}
+    end)
+  end
+
+  @doc """
   Executes search and populates results in the context.
 
   Uses `sub_questions` if present (from decompose step), otherwise uses the original question.

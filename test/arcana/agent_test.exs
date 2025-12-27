@@ -283,6 +283,105 @@ defmodule Arcana.AgentTest do
     end
   end
 
+  describe "decompose/1" do
+    test "breaks complex question into sub-questions" do
+      llm = fn prompt ->
+        if prompt =~ "Break this question" do
+          {:ok,
+           ~s({"sub_questions": ["What is Elixir?", "What is its syntax?"], "reasoning": "Split by topic"})}
+        else
+          {:ok, "response"}
+        end
+      end
+
+      ctx =
+        Agent.new("What is Elixir and what is its syntax?", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.decompose()
+
+      assert ctx.sub_questions == ["What is Elixir?", "What is its syntax?"]
+    end
+
+    test "keeps simple questions unchanged" do
+      llm = fn prompt ->
+        if prompt =~ "Break this question" do
+          {:ok, ~s({"sub_questions": ["What is Elixir?"], "reasoning": "Already simple"})}
+        else
+          {:ok, "response"}
+        end
+      end
+
+      ctx =
+        Agent.new("What is Elixir?", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.decompose()
+
+      assert ctx.sub_questions == ["What is Elixir?"]
+    end
+
+    test "handles LLM error gracefully" do
+      llm = fn _prompt -> {:error, :api_error} end
+
+      ctx =
+        Agent.new("What is Elixir?", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.decompose()
+
+      # On error, should use original question
+      assert ctx.sub_questions == ["What is Elixir?"]
+    end
+
+    test "handles malformed JSON by using original question" do
+      llm = fn _prompt -> {:ok, "not valid json"} end
+
+      ctx =
+        Agent.new("What is Elixir?", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.decompose()
+
+      assert ctx.sub_questions == ["What is Elixir?"]
+    end
+
+    test "skips if context has error" do
+      ctx = %Context{
+        question: "test",
+        repo: Arcana.TestRepo,
+        llm: fn _ -> {:ok, "response"} end,
+        error: :previous_error
+      }
+
+      result = Agent.decompose(ctx)
+      assert result.error == :previous_error
+      assert is_nil(result.sub_questions)
+    end
+
+    test "emits telemetry events" do
+      ref = make_ref()
+      test_pid = self()
+
+      :telemetry.attach_many(
+        ref,
+        [
+          [:arcana, :agent, :decompose, :start],
+          [:arcana, :agent, :decompose, :stop]
+        ],
+        fn event, measurements, metadata, _ ->
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      llm = fn _prompt ->
+        {:ok, ~s({"sub_questions": ["q1", "q2"], "reasoning": "split"})}
+      end
+
+      Agent.new("complex question", repo: Arcana.TestRepo, llm: llm)
+      |> Agent.decompose()
+
+      assert_receive {:telemetry, [:arcana, :agent, :decompose, :start], _, _}
+      assert_receive {:telemetry, [:arcana, :agent, :decompose, :stop], _, metadata}
+      assert metadata.sub_question_count == 2
+
+      :telemetry.detach(ref)
+    end
+  end
+
   describe "self-correcting search" do
     setup do
       {:ok, _doc} =
