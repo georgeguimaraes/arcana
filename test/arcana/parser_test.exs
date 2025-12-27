@@ -27,20 +27,44 @@ defmodule Arcana.ParserTest do
     end
   end
 
-  describe "parse/2 with PDF files" do
-    test "extracts text from PDF files" do
-      # Create a simple PDF with known content
-      path = fixture_path("sample.pdf")
+  describe "pdf_support_available?/0" do
+    test "returns boolean indicating pdftotext availability" do
+      result = Parser.pdf_support_available?()
+      assert is_boolean(result)
+    end
+  end
 
-      assert {:ok, text} = Parser.parse(path)
-      assert String.contains?(text, "Hello PDF")
+  describe "parse/2 with PDF files" do
+    @tag :pdf_support
+    test "extracts text from PDF files" do
+      if Parser.pdf_support_available?() do
+        path = fixture_path("sample.pdf")
+
+        assert {:ok, text} = Parser.parse(path)
+        assert String.contains?(text, "Hello PDF")
+      else
+        # Skip if pdftotext not installed
+        :ok
+      end
     end
 
     test "returns error for corrupted PDF" do
       path = create_temp_file("not a real pdf", ".pdf")
 
       assert {:error, reason} = Parser.parse(path)
-      assert reason in [:invalid_pdf, :parse_error]
+      assert reason in [:invalid_pdf, :pdf_parse_error, :pdf_support_not_available]
+    end
+
+    test "returns pdf_support_not_available when pdftotext missing" do
+      # This tests the error path - we can't easily test without pdftotext
+      # but we verify the function exists and returns expected types
+      path = fixture_path("sample.pdf")
+
+      case Parser.parse(path) do
+        {:ok, _text} -> assert Parser.pdf_support_available?()
+        {:error, :pdf_support_not_available} -> refute Parser.pdf_support_available?()
+        {:error, other} -> flunk("Unexpected error: #{inspect(other)}")
+      end
     end
   end
 

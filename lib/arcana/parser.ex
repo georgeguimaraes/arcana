@@ -3,6 +3,21 @@ defmodule Arcana.Parser do
   Parses files into text content for ingestion.
 
   Supports multiple file formats including plain text, markdown, and PDF.
+
+  ## PDF Support (Optional)
+
+  PDF parsing requires `pdftotext` from the Poppler library to be installed:
+
+      # macOS
+      brew install poppler
+
+      # Ubuntu/Debian
+      apt-get install poppler-utils
+
+      # Fedora
+      dnf install poppler-utils
+
+  Use `Arcana.Parser.pdf_support_available?/0` to check if PDF support is enabled.
   """
 
   @text_extensions [".txt", ".md", ".markdown"]
@@ -13,6 +28,22 @@ defmodule Arcana.Parser do
   """
   def supported_formats do
     @text_extensions ++ @pdf_extensions
+  end
+
+  @doc """
+  Checks if PDF support is available (pdftotext installed).
+
+  ## Examples
+
+      iex> Arcana.Parser.pdf_support_available?()
+      true  # or false if poppler not installed
+
+  """
+  def pdf_support_available? do
+    case System.find_executable("pdftotext") do
+      nil -> false
+      _path -> true
+    end
   end
 
   @doc """
@@ -69,16 +100,16 @@ defmodule Arcana.Parser do
   end
 
   defp extract_pdf_text(path) do
-    # Try pdftotext (poppler-utils) first
-    case System.cmd("pdftotext", ["-layout", path, "-"], stderr_to_stdout: true) do
-      {text, 0} ->
-        {:ok, String.trim(text)}
+    if pdf_support_available?() do
+      case System.cmd("pdftotext", ["-layout", path, "-"], stderr_to_stdout: true) do
+        {text, 0} ->
+          {:ok, String.trim(text)}
 
-      {_, _} ->
-        {:error, :parse_error}
+        {_, _} ->
+          {:error, :pdf_parse_error}
+      end
+    else
+      {:error, :pdf_support_not_available}
     end
-  rescue
-    ErlangError ->
-      {:error, :pdftotext_not_found}
   end
 end

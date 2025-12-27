@@ -1,6 +1,8 @@
 defmodule Arcana.IngestFileTest do
   use Arcana.DataCase, async: true
 
+  alias Arcana.Parser
+
   describe "ingest_file/2" do
     test "ingests a text file and creates document with chunks" do
       path = create_temp_file("This is test content for ingestion.", ".txt")
@@ -23,14 +25,35 @@ defmodule Arcana.IngestFileTest do
       assert document.content_type == "text/markdown"
     end
 
+    @tag :pdf_support
     test "ingests a PDF file" do
+      if Parser.pdf_support_available?() do
+        path = fixture_path("sample.pdf")
+
+        assert {:ok, document} = Arcana.ingest_file(path, repo: Arcana.TestRepo)
+
+        assert String.contains?(document.content, "Hello PDF")
+        assert document.content_type == "application/pdf"
+        assert document.file_path == path
+      else
+        # Skip if pdftotext not installed
+        :ok
+      end
+    end
+
+    test "returns error when PDF support not available" do
       path = fixture_path("sample.pdf")
 
-      assert {:ok, document} = Arcana.ingest_file(path, repo: Arcana.TestRepo)
+      case Arcana.ingest_file(path, repo: Arcana.TestRepo) do
+        {:ok, _document} ->
+          assert Parser.pdf_support_available?()
 
-      assert String.contains?(document.content, "Hello PDF")
-      assert document.content_type == "application/pdf"
-      assert document.file_path == path
+        {:error, :pdf_support_not_available} ->
+          refute Parser.pdf_support_available?()
+
+        {:error, other} ->
+          flunk("Unexpected error: #{inspect(other)}")
+      end
     end
 
     test "stores file_path in document metadata" do
