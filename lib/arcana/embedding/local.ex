@@ -25,6 +25,8 @@ defmodule Arcana.Embedding.Local do
 
   @behaviour Arcana.Embedding
 
+  alias Bumblebee.Text.TextEmbedding
+
   @default_model "BAAI/bge-small-en-v1.5"
 
   @doc """
@@ -52,7 +54,7 @@ defmodule Arcana.Embedding.Local do
     {:ok, tokenizer} = Bumblebee.load_tokenizer({:hf, model})
 
     serving =
-      Bumblebee.Text.TextEmbedding.text_embedding(model_info, tokenizer,
+      TextEmbedding.text_embedding(model_info, tokenizer,
         compile: [batch_size: 32, sequence_length: 512],
         defn_options: [compiler: EXLA]
       )

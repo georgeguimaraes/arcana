@@ -63,7 +63,7 @@ defmodule Arcana.AgentTest do
         |> Agent.search()
 
       assert is_list(ctx.results)
-      assert length(ctx.results) > 0
+      refute Enum.empty?(ctx.results)
 
       [first | _] = ctx.results
       assert first.question == "functional programming"
@@ -244,8 +244,8 @@ defmodule Arcana.AgentTest do
         |> Agent.answer()
 
       assert ctx.answer == "Elixir runs on the BEAM VM."
-      assert length(ctx.results) > 0
-      assert length(ctx.context_used) > 0
+      refute Enum.empty?(ctx.results)
+      refute Enum.empty?(ctx.context_used)
     end
   end
 
@@ -570,12 +570,10 @@ defmodule Arcana.AgentTest do
 
     test "with self_correct: true evaluates result sufficiency" do
       llm = fn prompt ->
-        cond do
-          prompt =~ "sufficient" ->
-            {:ok, ~s({"sufficient": true, "reasoning": "Results look good"})}
-
-          true ->
-            {:ok, "response"}
+        if prompt =~ "sufficient" do
+          {:ok, ~s({"sufficient": true, "reasoning": "Results look good"})}
+        else
+          {:ok, "response"}
         end
       end
 

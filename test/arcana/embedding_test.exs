@@ -18,6 +18,8 @@ defmodule Arcana.EmbeddingTest do
   use ExUnit.Case, async: true
 
   alias Arcana.Embedding
+  alias Arcana.Embedding.Local
+  alias Arcana.Embedding.OpenAI
 
   describe "Arcana.Embedding behaviour with Custom (function wrapper)" do
     test "Custom embedder works with function" do
@@ -66,21 +68,21 @@ defmodule Arcana.EmbeddingTest do
     end
   end
 
-  describe "Arcana.Embedding.Local" do
+  describe "Local" do
     test "returns correct dimensions for known models" do
-      assert Arcana.Embedding.Local.dimensions([]) == 384
-      assert Arcana.Embedding.Local.dimensions(model: "BAAI/bge-small-en-v1.5") == 384
-      assert Arcana.Embedding.Local.dimensions(model: "BAAI/bge-base-en-v1.5") == 768
-      assert Arcana.Embedding.Local.dimensions(model: "BAAI/bge-large-en-v1.5") == 1024
+      assert Local.dimensions([]) == 384
+      assert Local.dimensions(model: "BAAI/bge-small-en-v1.5") == 384
+      assert Local.dimensions(model: "BAAI/bge-base-en-v1.5") == 768
+      assert Local.dimensions(model: "BAAI/bge-large-en-v1.5") == 1024
     end
   end
 
-  describe "Arcana.Embedding.OpenAI" do
+  describe "OpenAI" do
     test "returns correct dimensions for known models" do
-      assert Arcana.Embedding.OpenAI.dimensions([]) == 1536
-      assert Arcana.Embedding.OpenAI.dimensions(model: "text-embedding-3-small") == 1536
-      assert Arcana.Embedding.OpenAI.dimensions(model: "text-embedding-3-large") == 3072
-      assert Arcana.Embedding.OpenAI.dimensions(model: "text-embedding-ada-002") == 1536
+      assert OpenAI.dimensions([]) == 1536
+      assert OpenAI.dimensions(model: "text-embedding-3-small") == 1536
+      assert OpenAI.dimensions(model: "text-embedding-3-large") == 3072
+      assert OpenAI.dimensions(model: "text-embedding-ada-002") == 1536
     end
   end
 

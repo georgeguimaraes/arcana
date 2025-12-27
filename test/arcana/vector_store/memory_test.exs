@@ -119,7 +119,7 @@ defmodule Arcana.VectorStore.MemoryTest do
 
       # Verify it's gone
       results = Memory.search(pid, "default", embedding, limit: 10)
-      assert length(results) == 0
+      assert Enum.empty?(results)
     end
 
     test "returns error for non-existent id", %{pid: pid} do

@@ -1,6 +1,8 @@
 defmodule Arcana.TelemetryTest do
   use Arcana.DataCase, async: true
 
+  alias Arcana.Embeddings.Serving
+
   describe "ingest telemetry" do
     test "emits [:arcana, :ingest, :start] and [:arcana, :ingest, :stop] events" do
       ref = make_ref()
@@ -123,7 +125,7 @@ defmodule Arcana.TelemetryTest do
         nil
       )
 
-      _embedding = Arcana.Embeddings.Serving.embed("test text")
+      _embedding = Serving.embed("test text")
 
       assert_receive {:telemetry, [:arcana, :embed, :start], start_measurements, start_metadata}
       assert is_integer(start_measurements.system_time)

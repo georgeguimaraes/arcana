@@ -100,23 +100,8 @@ defmodule Arcana.Agent do
         end
 
       {collections, reasoning} =
-        case ctx.llm.(prompt) do
-          {:ok, response} ->
-            case Jason.decode(response) do
-              {:ok, %{"collections" => cols, "reasoning" => reason}}
-              when is_list(cols) ->
-                {cols, reason}
-
-              {:ok, %{"collections" => cols}} when is_list(cols) ->
-                {cols, nil}
-
-              _ ->
-                {available_collections, nil}
-            end
-
-          {:error, _} ->
-            {available_collections, nil}
-        end
+        ctx.llm.(prompt)
+        |> parse_route_response(available_collections)
 
       updated_ctx = %{ctx | collections: collections, routing_reasoning: reasoning}
 
@@ -140,6 +125,23 @@ defmodule Arcana.Agent do
     Return JSON only: {"collections": ["name1", "name2"], "reasoning": "..."}
     Select only the most relevant collection(s). If unsure, include all.
     """
+  end
+
+  defp parse_route_response({:ok, response}, fallback_collections) do
+    case Jason.decode(response) do
+      {:ok, %{"collections" => cols, "reasoning" => reason}} when is_list(cols) ->
+        {cols, reason}
+
+      {:ok, %{"collections" => cols}} when is_list(cols) ->
+        {cols, nil}
+
+      _ ->
+        {fallback_collections, nil}
+    end
+  end
+
+  defp parse_route_response({:error, _}, fallback_collections) do
+    {fallback_collections, nil}
   end
 
   @doc """
@@ -176,16 +178,8 @@ defmodule Arcana.Agent do
         end
 
       sub_questions =
-        case ctx.llm.(prompt) do
-          {:ok, response} ->
-            case Jason.decode(response) do
-              {:ok, %{"sub_questions" => questions}} when is_list(questions) -> questions
-              _ -> [ctx.question]
-            end
-
-          {:error, _} ->
-            [ctx.question]
-        end
+        ctx.llm.(prompt)
+        |> parse_decompose_response(ctx.question)
 
       updated_ctx = %{ctx | sub_questions: sub_questions}
 
@@ -204,6 +198,17 @@ defmodule Arcana.Agent do
     Return JSON only: {"sub_questions": ["q1", "q2", ...], "reasoning": "..."}
     If the question is already simple, return: {"sub_questions": ["#{question}"], "reasoning": "simple question"}
     """
+  end
+
+  defp parse_decompose_response({:ok, response}, fallback_question) do
+    case Jason.decode(response) do
+      {:ok, %{"sub_questions" => questions}} when is_list(questions) -> questions
+      _ -> [fallback_question]
+    end
+  end
+
+  defp parse_decompose_response({:error, _}, fallback_question) do
+    [fallback_question]
   end
 
   @doc """
@@ -364,10 +369,7 @@ defmodule Arcana.Agent do
   end
 
   defp default_sufficient_prompt(question, chunks) do
-    chunks_text =
-      chunks
-      |> Enum.map(& &1.text)
-      |> Enum.join("\n---\n")
+    chunks_text = Enum.map_join(chunks, "\n---\n", & &1.text)
 
     """
     Question: "#{question}"
@@ -403,8 +405,7 @@ defmodule Arcana.Agent do
     chunks_text =
       chunks
       |> Enum.take(3)
-      |> Enum.map(& &1.text)
-      |> Enum.join("\n---\n")
+      |> Enum.map_join("\n---\n", & &1.text)
 
     """
     The following search query did not return sufficient results:
@@ -475,10 +476,7 @@ defmodule Arcana.Agent do
   end
 
   defp default_answer_prompt(question, chunks) do
-    context =
-      chunks
-      |> Enum.map(& &1.text)
-      |> Enum.join("\n\n---\n\n")
+    context = Enum.map_join(chunks, "\n\n---\n\n", & &1.text)
 
     """
     Question: "#{question}"

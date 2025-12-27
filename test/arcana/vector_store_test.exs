@@ -2,10 +2,11 @@ defmodule Arcana.VectorStoreTest do
   use ExUnit.Case, async: true
 
   alias Arcana.VectorStore
+  alias Arcana.VectorStore.Memory
 
   describe "per-call :vector_store option" do
     setup do
-      {:ok, pid} = Arcana.VectorStore.Memory.start_link(name: nil)
+      {:ok, pid} = Memory.start_link(name: nil)
       %{pid: pid}
     end
 
@@ -13,7 +14,7 @@ defmodule Arcana.VectorStoreTest do
       embedding = List.duplicate(0.5, 384)
 
       # Store directly via Memory
-      :ok = Arcana.VectorStore.Memory.store(pid, "test", "id-1", embedding, %{text: "hello"})
+      :ok = Memory.store(pid, "test", "id-1", embedding, %{text: "hello"})
 
       # Search via dispatch with explicit vector_store option
       results =
@@ -36,32 +37,32 @@ defmodule Arcana.VectorStoreTest do
         )
 
       # Verify via direct Memory call
-      results = Arcana.VectorStore.Memory.search(pid, "test", embedding, limit: 10)
+      results = Memory.search(pid, "test", embedding, limit: 10)
       assert length(results) == 1
     end
 
     test "delete uses {:memory, pid: pid} to override config", %{pid: pid} do
       embedding = List.duplicate(0.5, 384)
-      :ok = Arcana.VectorStore.Memory.store(pid, "test", "id-1", embedding, %{text: "hello"})
+      :ok = Memory.store(pid, "test", "id-1", embedding, %{text: "hello"})
 
       # Delete via dispatch
       :ok = VectorStore.delete("test", "id-1", vector_store: {:memory, pid: pid})
 
       # Verify deleted
-      results = Arcana.VectorStore.Memory.search(pid, "test", embedding, limit: 10)
+      results = Memory.search(pid, "test", embedding, limit: 10)
       assert results == []
     end
 
     test "clear uses {:memory, pid: pid} to override config", %{pid: pid} do
       embedding = List.duplicate(0.5, 384)
-      :ok = Arcana.VectorStore.Memory.store(pid, "test", "id-1", embedding, %{text: "hello"})
-      :ok = Arcana.VectorStore.Memory.store(pid, "test", "id-2", embedding, %{text: "world"})
+      :ok = Memory.store(pid, "test", "id-1", embedding, %{text: "hello"})
+      :ok = Memory.store(pid, "test", "id-2", embedding, %{text: "world"})
 
       # Clear via dispatch
       :ok = VectorStore.clear("test", vector_store: {:memory, pid: pid})
 
       # Verify cleared
-      results = Arcana.VectorStore.Memory.search(pid, "test", embedding, limit: 10)
+      results = Memory.search(pid, "test", embedding, limit: 10)
       assert results == []
     end
 

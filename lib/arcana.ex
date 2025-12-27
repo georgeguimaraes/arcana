@@ -62,31 +62,25 @@ defmodule Arcana do
 
   """
   def embedder do
-    case Application.get_env(:arcana, :embedding, :local) do
-      :local ->
-        {Arcana.Embedding.Local, []}
+    Application.get_env(:arcana, :embedding, :local)
+    |> parse_embedder_config()
+  end
 
-      {:local, opts} ->
-        {Arcana.Embedding.Local, opts}
+  defp parse_embedder_config(:local), do: {Arcana.Embedding.Local, []}
+  defp parse_embedder_config({:local, opts}), do: {Arcana.Embedding.Local, opts}
+  defp parse_embedder_config(:openai), do: {Arcana.Embedding.OpenAI, []}
+  defp parse_embedder_config({:openai, opts}), do: {Arcana.Embedding.OpenAI, opts}
 
-      :openai ->
-        {Arcana.Embedding.OpenAI, []}
+  defp parse_embedder_config(fun) when is_function(fun, 1),
+    do: {Arcana.Embedding.Custom, [fun: fun]}
 
-      {:openai, opts} ->
-        {Arcana.Embedding.OpenAI, opts}
+  defp parse_embedder_config({module, opts}) when is_atom(module) and is_list(opts),
+    do: {module, opts}
 
-      fun when is_function(fun, 1) ->
-        {Arcana.Embedding.Custom, [fun: fun]}
+  defp parse_embedder_config(module) when is_atom(module), do: {module, []}
 
-      {module, opts} when is_atom(module) and is_list(opts) ->
-        {module, opts}
-
-      module when is_atom(module) ->
-        {module, []}
-
-      other ->
-        raise ArgumentError, "invalid embedding config: #{inspect(other)}"
-    end
+  defp parse_embedder_config(other) do
+    raise ArgumentError, "invalid embedding config: #{inspect(other)}"
   end
 
   @doc """
@@ -350,16 +344,7 @@ defmodule Arcana do
     }
 
     :telemetry.span([:arcana, :search], start_metadata, fn ->
-      # Apply query rewriting if configured
-      search_query =
-        if rewriter do
-          case rewrite_query(query, rewriter: rewriter) do
-            {:ok, rewritten} -> rewritten
-            {:error, _} -> query
-          end
-        else
-          query
-        end
+      search_query = maybe_rewrite_query(query, rewriter)
 
       results =
         do_search(mode, search_query, %{
@@ -456,6 +441,15 @@ defmodule Arcana do
 
   defp maybe_add_vector_store(opts, vector_store),
     do: Keyword.put(opts, :vector_store, vector_store)
+
+  defp maybe_rewrite_query(query, nil), do: query
+
+  defp maybe_rewrite_query(query, rewriter) do
+    case rewrite_query(query, rewriter: rewriter) do
+      {:ok, rewritten} -> rewritten
+      {:error, _} -> query
+    end
+  end
 
   defp rrf_combine(list1, list2, limit, k \\ 60) do
     # RRF formula: score = sum(1 / (k + rank))
@@ -570,12 +564,7 @@ defmodule Arcana do
           llm_opts = [system_prompt: prompt_fn.(question, context)]
 
           result = LLM.complete(llm, question, context, llm_opts)
-
-          stop_metadata =
-            case result do
-              {:ok, answer} -> %{answer: answer, context_count: length(context)}
-              {:error, _} -> %{context_count: length(context)}
-            end
+          stop_metadata = ask_stop_metadata(result, context)
 
           {result, stop_metadata}
         end)
@@ -628,6 +617,14 @@ defmodule Arcana do
     else
       "You are a helpful assistant."
     end
+  end
+
+  defp ask_stop_metadata({:ok, answer}, context) do
+    %{answer: answer, context_count: length(context)}
+  end
+
+  defp ask_stop_metadata({:error, _}, context) do
+    %{context_count: length(context)}
   end
 
   # Merges application config defaults with provided options.
