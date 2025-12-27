@@ -234,7 +234,7 @@ results = Arcana.search("query",
 
 #### Search Modes
 
-Arcana supports three search modes:
+Arcana supports three search modes, all working with both pgvector and memory backends:
 
 ```elixir
 # Semantic search (default) - finds similar meaning
@@ -245,13 +245,19 @@ results = Arcana.search("query", repo: MyApp.Repo, mode: :fulltext)
 
 # Hybrid search - combines both with RRF fusion
 results = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)
+
+# Override vector store per-call (useful for testing)
+results = Arcana.search("query",
+  vector_store: {:memory, pid: memory_pid},
+  mode: :semantic
+)
 ```
 
-| Mode | Best for | How it works |
-|------|----------|--------------|
-| `:semantic` | Conceptual queries | Vector similarity via pgvector |
-| `:fulltext` | Exact terms, names | PostgreSQL tsvector/tsquery |
-| `:hybrid` | General purpose | Reciprocal Rank Fusion of both |
+| Mode | Best for | pgvector | memory |
+|------|----------|----------|--------|
+| `:semantic` | Conceptual queries | Cosine similarity via HNSW | HNSWLib approximate k-NN |
+| `:fulltext` | Exact terms, names | PostgreSQL tsvector/tsquery | TF-IDF term matching |
+| `:hybrid` | General purpose | Reciprocal Rank Fusion of both | RRF of both |
 
 **Hybrid search** uses [Reciprocal Rank Fusion (RRF)](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf) to combine results. RRF scores by rank position (`1/(k + rank)`) rather than raw scores, making it robust when combining different scoring scales.
 
@@ -453,7 +459,13 @@ config :arcana, vector_store: :memory
 
 #### Memory Backend
 
-The memory backend uses [hnswlib](https://github.com/elixir-nx/hnswlib) for fast approximate nearest neighbor search. Useful for:
+The memory backend uses [hnswlib](https://github.com/elixir-nx/hnswlib) for fast approximate nearest neighbor search. It supports all three search modes:
+
+- **Semantic**: HNSWLib with cosine similarity
+- **Fulltext**: TF-IDF-like term matching with length normalization
+- **Hybrid**: RRF fusion of both
+
+Useful for:
 
 - Testing embedding models without database migrations
 - Smaller RAGs where pgvector overhead isn't justified
@@ -488,8 +500,15 @@ defmodule MyApp.WeaviateStore do
   @impl true
   def search(collection, query_embedding, opts) do
     limit = Keyword.get(opts, :limit, 10)
-    # Query Weaviate and return results
-    [%{id: "...", metadata: %{}, score: 0.95}]
+    # Query Weaviate for similar vectors
+    [%{id: "...", metadata: %{text: "..."}, score: 0.95}]
+  end
+
+  @impl true
+  def search_text(collection, query_text, opts) do
+    limit = Keyword.get(opts, :limit, 10)
+    # Query Weaviate for keyword matches
+    [%{id: "...", metadata: %{text: "..."}, score: 0.85}]
   end
 
   @impl true
@@ -520,16 +539,25 @@ For low-level vector operations, use the VectorStore API directly:
 alias Arcana.VectorStore
 
 # Store a vector
-:ok = VectorStore.store("products", "item-1", embedding, %{name: "Widget"}, repo: MyApp.Repo)
+:ok = VectorStore.store("products", "item-1", embedding, %{text: "Widget", name: "Widget"}, repo: MyApp.Repo)
 
-# Search for similar vectors
+# Semantic search (cosine similarity)
 results = VectorStore.search("products", query_embedding, limit: 10, repo: MyApp.Repo)
+
+# Fulltext search (keyword matching)
+results = VectorStore.search_text("products", "widget", limit: 10, repo: MyApp.Repo)
 
 # Delete a vector
 :ok = VectorStore.delete("products", "item-1", repo: MyApp.Repo)
 
 # Clear a collection
 :ok = VectorStore.clear("products", repo: MyApp.Repo)
+
+# Per-call backend override
+results = VectorStore.search("products", query_embedding,
+  vector_store: {:memory, pid: memory_pid},
+  limit: 10
+)
 ```
 
 ### Other Settings
