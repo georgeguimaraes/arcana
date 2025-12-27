@@ -118,22 +118,14 @@ defmodule Arcana.VectorStore do
 
   ## Options
 
+    * `:vector_store` - Override the configured backend (module or `:pgvector`/`:memory`)
     * `:repo` - The Ecto repo (required for pgvector backend)
     * `:server` - The Memory server pid/name (for memory backend, defaults to `Arcana.VectorStore.Memory`)
 
   """
   def store(collection, id, embedding, metadata, opts \\ []) do
-    case backend() do
-      :pgvector ->
-        Pgvector.store(collection, id, embedding, metadata, opts)
-
-      :memory ->
-        server = Keyword.get(opts, :server, Memory)
-        Memory.store(server, collection, id, embedding, metadata)
-
-      module when is_atom(module) ->
-        module.store(collection, id, embedding, metadata, opts)
-    end
+    {backend, opts} = Keyword.pop(opts, :vector_store, backend())
+    dispatch(:store, backend, [collection, id, embedding, metadata, opts], opts)
   end
 
   @doc """
@@ -141,56 +133,95 @@ defmodule Arcana.VectorStore do
 
   ## Options
 
+    * `:vector_store` - Override the configured backend (module or `:pgvector`/`:memory`)
     * `:limit` - Maximum number of results (default: 10)
     * `:repo` - The Ecto repo (required for pgvector backend)
     * `:server` - The Memory server pid/name (for memory backend)
 
   """
   def search(collection, query_embedding, opts \\ []) do
-    case backend() do
-      :pgvector ->
-        Pgvector.search(collection, query_embedding, opts)
-
-      :memory ->
-        server = Keyword.get(opts, :server, Memory)
-        Memory.search(server, collection, query_embedding, opts)
-
-      module when is_atom(module) ->
-        module.search(collection, query_embedding, opts)
-    end
+    {backend, opts} = Keyword.pop(opts, :vector_store, backend())
+    dispatch(:search, backend, [collection, query_embedding, opts], opts)
   end
 
   @doc """
   Deletes a vector using the configured backend.
+
+  ## Options
+
+    * `:vector_store` - Override the configured backend
+    * `:repo` - The Ecto repo (required for pgvector backend)
+
   """
   def delete(collection, id, opts \\ []) do
-    case backend() do
-      :pgvector ->
-        Pgvector.delete(collection, id, opts)
-
-      :memory ->
-        server = Keyword.get(opts, :server, Memory)
-        Memory.delete(server, collection, id)
-
-      module when is_atom(module) ->
-        module.delete(collection, id, opts)
-    end
+    {backend, opts} = Keyword.pop(opts, :vector_store, backend())
+    dispatch(:delete, backend, [collection, id, opts], opts)
   end
 
   @doc """
   Clears a collection using the configured backend.
+
+  ## Options
+
+    * `:vector_store` - Override the configured backend
+    * `:repo` - The Ecto repo (required for pgvector backend)
+
   """
   def clear(collection, opts \\ []) do
-    case backend() do
-      :pgvector ->
-        Pgvector.clear(collection, opts)
+    {backend, opts} = Keyword.pop(opts, :vector_store, backend())
+    dispatch(:clear, backend, [collection, opts], opts)
+  end
 
-      :memory ->
-        server = Keyword.get(opts, :server, Memory)
-        Memory.clear(server, collection)
+  # Private dispatch helper
+  defp dispatch(:store, :pgvector, [collection, id, embedding, metadata, opts], _opts) do
+    Pgvector.store(collection, id, embedding, metadata, opts)
+  end
 
-      module when is_atom(module) ->
-        module.clear(collection, opts)
-    end
+  defp dispatch(:store, :memory, [collection, id, embedding, metadata, _opts], opts) do
+    server = Keyword.get(opts, :server, Memory)
+    Memory.store(server, collection, id, embedding, metadata)
+  end
+
+  defp dispatch(:store, module, [collection, id, embedding, metadata, opts], _opts) do
+    module.store(collection, id, embedding, metadata, opts)
+  end
+
+  defp dispatch(:search, :pgvector, [collection, query_embedding, opts], _opts) do
+    Pgvector.search(collection, query_embedding, opts)
+  end
+
+  defp dispatch(:search, :memory, [collection, query_embedding, opts], opts) do
+    server = Keyword.get(opts, :server, Memory)
+    Memory.search(server, collection, query_embedding, opts)
+  end
+
+  defp dispatch(:search, module, [collection, query_embedding, opts], _opts) do
+    module.search(collection, query_embedding, opts)
+  end
+
+  defp dispatch(:delete, :pgvector, [collection, id, opts], _opts) do
+    Pgvector.delete(collection, id, opts)
+  end
+
+  defp dispatch(:delete, :memory, [collection, id, _opts], opts) do
+    server = Keyword.get(opts, :server, Memory)
+    Memory.delete(server, collection, id)
+  end
+
+  defp dispatch(:delete, module, [collection, id, opts], _opts) do
+    module.delete(collection, id, opts)
+  end
+
+  defp dispatch(:clear, :pgvector, [collection, opts], _opts) do
+    Pgvector.clear(collection, opts)
+  end
+
+  defp dispatch(:clear, :memory, [collection, _opts], opts) do
+    server = Keyword.get(opts, :server, Memory)
+    Memory.clear(server, collection)
+  end
+
+  defp dispatch(:clear, module, [collection, opts], _opts) do
+    module.clear(collection, opts)
   end
 end
