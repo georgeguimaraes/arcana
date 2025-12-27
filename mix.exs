@@ -69,13 +69,17 @@ defmodule Arcana.MixProject do
       {:phoenix_live_view, "~> 1.0", optional: true},
       {:phoenix_html, "~> 4.1", optional: true},
       {:floki, "~> 0.36", only: :test},
-      {:lazy_html, "~> 0.1", only: :test},
+      {:lazy_html, "~> 0.1.8", only: :test},
 
       # Optional: Enhanced installer
       {:igniter, "~> 0.5", optional: true},
 
       # Optional: Req.LLM for LLM integrations
-      {:req_llm, "~> 1.2", optional: true}
+      {:req_llm, "~> 1.2", optional: true},
+
+      # Optional: In-memory vector store with HNSW
+      {:hnswlib, github: "elixir-nx/hnswlib", optional: true},
+      {:elixir_make, "~> 0.9", override: true}
     ]
   end
 end

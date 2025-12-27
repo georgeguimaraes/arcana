@@ -437,6 +437,60 @@ Then configure:
 config :arcana, embedding: {MyApp.CohereEmbedder, api_key: "..."}
 ```
 
+### Vector Store Backends
+
+Arcana supports multiple vector storage backends:
+
+```elixir
+# config/config.exs
+
+# Use pgvector (default) - requires PostgreSQL with pgvector
+config :arcana, vector_store: :pgvector
+
+# Use in-memory storage with HNSWLib - no database needed
+config :arcana, vector_store: :memory
+```
+
+#### Memory Backend
+
+The memory backend uses [hnswlib](https://github.com/elixir-nx/hnswlib) for fast approximate nearest neighbor search. Useful for:
+
+- Testing embedding models without database migrations
+- Smaller RAGs where pgvector overhead isn't justified
+- Development and experimentation workflows
+
+Add to your supervision tree:
+
+```elixir
+# lib/my_app/application.ex
+children = [
+  MyApp.Repo,
+  {Arcana.VectorStore.Memory, name: Arcana.VectorStore.Memory}
+]
+```
+
+**Note:** Data is not persisted - all vectors are lost when the process stops.
+
+#### Direct VectorStore API
+
+For low-level vector operations, use the VectorStore API directly:
+
+```elixir
+alias Arcana.VectorStore
+
+# Store a vector
+:ok = VectorStore.store("products", "item-1", embedding, %{name: "Widget"}, repo: MyApp.Repo)
+
+# Search for similar vectors
+results = VectorStore.search("products", query_embedding, limit: 10, repo: MyApp.Repo)
+
+# Delete a vector
+:ok = VectorStore.delete("products", "item-1", repo: MyApp.Repo)
+
+# Clear a collection
+:ok = VectorStore.clear("products", repo: MyApp.Repo)
+```
+
 ### Other Settings
 
 ```elixir
@@ -482,6 +536,7 @@ config :nx, default_backend: EXLA.Backend
 - [x] Hybrid search (vector + full-text with RRF)
 - [x] File ingestion (text, markdown, PDF)
 - [x] Telemetry events for observability
+- [x] In-memory vector store (HNSWLib backend)
 - [ ] Async ingestion with Oban
 - [ ] Query rewriting
 - [ ] HyDE (Hypothetical Document Embeddings)
