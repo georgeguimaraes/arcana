@@ -353,11 +353,11 @@ config :nx, default_backend: EXLA.Backend
 - [ ] Query rewriting
 - [ ] HyDE (Hypothetical Document Embeddings)
 - [ ] GraphRAG (knowledge graph + community summaries)
-- [ ] Agentic RAG
-  - [ ] Agent pipeline with context struct
-  - [ ] Self-correcting search (evaluate + retry)
-  - [ ] Question decomposition (multi-step)
-  - [ ] Collection routing
+- [x] Agentic RAG
+  - [x] Agent pipeline with context struct
+  - [x] Self-correcting search (evaluate + retry)
+  - [x] Question decomposition (multi-step)
+  - [x] Collection routing
 
 ## Development
 
