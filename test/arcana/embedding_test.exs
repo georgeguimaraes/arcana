@@ -1,3 +1,15 @@
+# Test module for config loading - defined before test module
+defmodule Arcana.EmbeddingTest.MockEmbedder do
+  defstruct [:dimensions, :api_key]
+
+  def new(opts \\ []) do
+    %__MODULE__{
+      dimensions: Keyword.get(opts, :dimensions, 384),
+      api_key: Keyword.get(opts, :api_key)
+    }
+  end
+end
+
 defmodule Arcana.EmbeddingTest do
   use ExUnit.Case, async: true
 
@@ -97,6 +109,43 @@ defmodule Arcana.EmbeddingTest do
       # The test config sets a custom embedder, but we can verify the function works
       embedder = Arcana.embedder()
       assert embedder != nil
+    end
+  end
+
+  describe "custom module config" do
+    test "embedder/0 supports {module, opts} config" do
+      original = Application.get_env(:arcana, :embedding)
+
+      Application.put_env(
+        :arcana,
+        :embedding,
+        {Arcana.EmbeddingTest.MockEmbedder, dimensions: 128, api_key: "test-key"}
+      )
+
+      try do
+        embedder = Arcana.embedder()
+
+        assert %Arcana.EmbeddingTest.MockEmbedder{} = embedder
+        assert embedder.dimensions == 128
+        assert embedder.api_key == "test-key"
+      after
+        Application.put_env(:arcana, :embedding, original)
+      end
+    end
+
+    test "embedder/0 supports bare module config" do
+      original = Application.get_env(:arcana, :embedding)
+
+      Application.put_env(:arcana, :embedding, Arcana.EmbeddingTest.MockEmbedder)
+
+      try do
+        embedder = Arcana.embedder()
+
+        assert %Arcana.EmbeddingTest.MockEmbedder{} = embedder
+        assert embedder.dimensions == 384
+      after
+        Application.put_env(:arcana, :embedding, original)
+      end
     end
   end
 end

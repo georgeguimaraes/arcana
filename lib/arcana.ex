@@ -38,7 +38,39 @@ defmodule Arcana do
       config :arcana, embedding: {:openai, model: "text-embedding-3-large"}
 
       # Custom function
-      config :arcana, embedding: {:custom, fn text -> YourModule.embed(text) end}
+      config :arcana, embedding: {:custom, fn text -> {:ok, embedding} end}
+
+      # Custom module implementing Arcana.Embedding protocol
+      config :arcana, embedding: MyApp.CohereEmbedding
+      config :arcana, embedding: {MyApp.CohereEmbedding, api_key: "..."}
+
+  ## Custom Embedding Modules
+
+  You can implement your own embedding module by defining a struct and
+  implementing the `Arcana.Embedding` protocol:
+
+      defmodule MyApp.CohereEmbedding do
+        defstruct [:api_key, :model]
+
+        def new(opts \\\\ []) do
+          %__MODULE__{
+            api_key: opts[:api_key] || System.get_env("COHERE_API_KEY"),
+            model: opts[:model] || "embed-english-v3.0"
+          }
+        end
+      end
+
+      defimpl Arcana.Embedding, for: MyApp.CohereEmbedding do
+        def embed(embedder, text) do
+          # Call Cohere API and return {:ok, embedding} or {:error, reason}
+        end
+
+        def embed_batch(embedder, texts) do
+          {:ok, Enum.map(texts, fn t -> elem(embed(embedder, t), 1) end)}
+        end
+
+        def dimensions(_embedder), do: 1024
+      end
 
   """
   def embedder do
@@ -60,6 +92,12 @@ defmodule Arcana do
 
       {:custom, fun, opts} when is_function(fun, 1) ->
         Arcana.Embedding.Custom.new([fun: fun] ++ opts)
+
+      {module, opts} when is_atom(module) and is_list(opts) ->
+        module.new(opts)
+
+      module when is_atom(module) ->
+        module.new()
 
       other ->
         raise ArgumentError, "invalid embedding config: #{inspect(other)}"
