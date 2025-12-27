@@ -201,76 +201,80 @@ defmodule Arcana.VectorStore.Memory do
   def handle_call({:search, collection, query_embedding, opts}, _from, state) do
     limit = Keyword.get(opts, :limit, 10)
 
-    case get_in(state, [:collections, collection]) do
-      nil ->
-        {:reply, [], state}
+    results =
+      case get_in(state, [:collections, collection]) do
+        nil -> []
+        collection_data -> search_collection(collection_data, query_embedding, limit)
+      end
 
-      %{index: index, ids: ids, metadata: metas, deleted: deleted} ->
-        # Get more results than needed to account for deleted items
-        k = min(limit + MapSet.size(deleted), length(ids))
+    {:reply, results, state}
+  end
 
-        if k == 0 do
-          {:reply, [], state}
-        else
-          query = Nx.tensor([query_embedding], type: :f32)
-          {:ok, labels, distances} = HNSWLib.Index.knn_query(index, query, k: k)
+  defp search_collection(
+         %{index: index, ids: ids, metadata: metas, deleted: deleted},
+         query_embedding,
+         limit
+       ) do
+    k = min(limit + MapSet.size(deleted), length(ids))
 
-          # Map labels back to ids and metadata, filtering deleted
-          results =
-            labels
-            |> Nx.to_flat_list()
-            |> Enum.zip(Nx.to_flat_list(distances))
-            |> Enum.reject(fn {idx, _distance} -> MapSet.member?(deleted, idx) end)
-            |> Enum.take(limit)
-            |> Enum.map(fn {idx, distance} ->
-              %{
-                id: Enum.at(ids, idx),
-                metadata: Enum.at(metas, idx),
-                score: 1.0 - distance
-              }
-            end)
+    if k == 0 do
+      []
+    else
+      query = Nx.tensor([query_embedding], type: :f32)
+      {:ok, labels, distances} = HNSWLib.Index.knn_query(index, query, k: k)
 
-          {:reply, results, state}
-        end
+      labels
+      |> Nx.to_flat_list()
+      |> Enum.zip(Nx.to_flat_list(distances))
+      |> Enum.reject(fn {idx, _distance} -> MapSet.member?(deleted, idx) end)
+      |> Enum.take(limit)
+      |> Enum.map(&format_search_result(&1, ids, metas))
     end
+  end
+
+  defp format_search_result({idx, distance}, ids, metas) do
+    %{
+      id: Enum.at(ids, idx),
+      metadata: Enum.at(metas, idx),
+      score: 1.0 - distance
+    }
   end
 
   @impl true
   def handle_call({:search_text, collection, query_text, opts}, _from, state) do
     limit = Keyword.get(opts, :limit, 10)
 
-    case get_in(state, [:collections, collection]) do
-      nil ->
-        {:reply, [], state}
+    results =
+      case get_in(state, [:collections, collection]) do
+        nil -> []
+        collection_data -> search_text_collection(collection_data, query_text, limit)
+      end
 
-      %{ids: ids, metadata: metas, deleted: deleted} ->
-        # Tokenize query
-        query_terms = tokenize(query_text)
+    {:reply, results, state}
+  end
 
-        if Enum.empty?(query_terms) do
-          {:reply, [], state}
-        else
-          # Score each document by term matching
-          results =
-            ids
-            |> Enum.with_index()
-            |> Enum.reject(fn {_id, idx} -> MapSet.member?(deleted, idx) end)
-            |> Enum.map(fn {id, idx} ->
-              meta = Enum.at(metas, idx)
-              text = meta[:text] || ""
-              score = calculate_text_score(query_terms, text)
-              {id, meta, score, idx}
-            end)
-            |> Enum.filter(fn {_id, _meta, score, _idx} -> score > 0 end)
-            |> Enum.sort_by(fn {_id, _meta, score, _idx} -> score end, :desc)
-            |> Enum.take(limit)
-            |> Enum.map(fn {id, meta, score, _idx} ->
-              %{id: id, metadata: meta, score: score}
-            end)
+  defp search_text_collection(%{ids: ids, metadata: metas, deleted: deleted}, query_text, limit) do
+    query_terms = tokenize(query_text)
 
-          {:reply, results, state}
-        end
+    if Enum.empty?(query_terms) do
+      []
+    else
+      ids
+      |> Enum.with_index()
+      |> Enum.reject(fn {_id, idx} -> MapSet.member?(deleted, idx) end)
+      |> Enum.map(&score_document(&1, metas, query_terms))
+      |> Enum.filter(fn {_id, _meta, score} -> score > 0 end)
+      |> Enum.sort_by(fn {_id, _meta, score} -> score end, :desc)
+      |> Enum.take(limit)
+      |> Enum.map(fn {id, meta, score} -> %{id: id, metadata: meta, score: score} end)
     end
+  end
+
+  defp score_document({id, idx}, metas, query_terms) do
+    meta = Enum.at(metas, idx)
+    text = meta[:text] || ""
+    score = calculate_text_score(query_terms, text)
+    {id, meta, score}
   end
 
   @impl true
@@ -279,20 +283,27 @@ defmodule Arcana.VectorStore.Memory do
       nil ->
         {:reply, {:error, :not_found}, state}
 
-      %{ids: ids, deleted: deleted} = collection_data ->
-        case Enum.find_index(ids, &(&1 == id)) do
-          nil ->
-            {:reply, {:error, :not_found}, state}
+      collection_data ->
+        case delete_from_collection(collection_data, id) do
+          {:ok, updated_collection} ->
+            state = put_in(state, [:collections, collection], updated_collection)
+            {:reply, :ok, state}
 
-          idx ->
-            if MapSet.member?(deleted, idx) do
-              {:reply, {:error, :not_found}, state}
-            else
-              collection_data = %{collection_data | deleted: MapSet.put(deleted, idx)}
-              state = put_in(state, [:collections, collection], collection_data)
-              {:reply, :ok, state}
-            end
+          :not_found ->
+            {:reply, {:error, :not_found}, state}
         end
+    end
+  end
+
+  defp delete_from_collection(%{ids: ids, deleted: deleted} = collection_data, id) do
+    case Enum.find_index(ids, &(&1 == id)) do
+      nil ->
+        :not_found
+
+      idx ->
+        if MapSet.member?(deleted, idx),
+          do: :not_found,
+          else: {:ok, %{collection_data | deleted: MapSet.put(deleted, idx)}}
     end
   end
 
