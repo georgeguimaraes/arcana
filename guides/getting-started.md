@@ -139,6 +139,29 @@ scope "/admin", MyAppWeb do
 end
 ```
 
+## Telemetry
+
+Arcana emits telemetry events for all operations. You can attach handlers to observe performance and usage:
+
+```elixir
+# In your application startup
+:telemetry.attach_many(
+  "my-arcana-handler",
+  [
+    [:arcana, :ingest, :stop],
+    [:arcana, :search, :stop],
+    [:arcana, :ask, :stop]
+  ],
+  fn event, measurements, metadata, _config ->
+    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+    Logger.info("#{inspect(event)} completed in #{duration_ms}ms")
+  end,
+  nil
+)
+```
+
+Events follow the `:telemetry.span/3` convention with `:start`, `:stop`, and `:exception` suffixes. See `Arcana.Telemetry` for complete documentation.
+
 ## Next Steps
 
 - [LangChain Integration](langchain-integration.md) - Connect Arcana to LLMs

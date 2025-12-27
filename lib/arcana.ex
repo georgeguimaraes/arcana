@@ -50,48 +50,61 @@ defmodule Arcana do
     collection_name = Keyword.get(opts, :collection, "default")
     chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap])
 
-    # Get or create collection
-    {:ok, collection} = Collection.get_or_create(collection_name, repo)
+    start_metadata = %{
+      text: text,
+      repo: repo,
+      collection: collection_name
+    }
 
-    # Create document
-    {:ok, document} =
-      %Document{}
-      |> Document.changeset(%{
-        content: text,
-        source_id: source_id,
-        metadata: metadata,
-        status: :processing,
-        collection_id: collection.id
-      })
-      |> repo.insert()
+    :telemetry.span([:arcana, :ingest], start_metadata, fn ->
+      # Get or create collection
+      {:ok, collection} = Collection.get_or_create(collection_name, repo)
 
-    # Chunk the text
-    chunks = Chunker.chunk(text, chunk_opts)
-
-    # Embed and store chunks
-    chunk_records =
-      chunks
-      |> Enum.map(fn chunk ->
-        embedding = Serving.embed(chunk.text)
-
-        %Chunk{}
-        |> Chunk.changeset(%{
-          text: chunk.text,
-          embedding: embedding,
-          chunk_index: chunk.chunk_index,
-          token_count: chunk.token_count,
-          document_id: document.id
+      # Create document
+      {:ok, document} =
+        %Document{}
+        |> Document.changeset(%{
+          content: text,
+          source_id: source_id,
+          metadata: metadata,
+          status: :processing,
+          collection_id: collection.id
         })
-        |> repo.insert!()
-      end)
+        |> repo.insert()
 
-    # Update document status
-    {:ok, document} =
-      document
-      |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
-      |> repo.update()
+      # Chunk the text
+      chunks = Chunker.chunk(text, chunk_opts)
 
-    {:ok, document}
+      # Embed and store chunks
+      chunk_records =
+        chunks
+        |> Enum.map(fn chunk ->
+          embedding = Serving.embed(chunk.text)
+
+          %Chunk{}
+          |> Chunk.changeset(%{
+            text: chunk.text,
+            embedding: embedding,
+            chunk_index: chunk.chunk_index,
+            token_count: chunk.token_count,
+            document_id: document.id
+          })
+          |> repo.insert!()
+        end)
+
+      # Update document status
+      {:ok, document} =
+        document
+        |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
+        |> repo.update()
+
+      stop_metadata = %{
+        document: document,
+        chunk_count: length(chunk_records)
+      }
+
+      {{:ok, document}, stop_metadata}
+    end)
   end
 
   @doc """
@@ -238,27 +251,43 @@ defmodule Arcana do
             "invalid search mode: #{inspect(mode)}. Must be one of #{inspect(@valid_modes)}"
     end
 
-    # Apply query rewriting if configured
-    search_query =
-      if rewriter do
-        case rewrite_query(query, rewriter: rewriter) do
-          {:ok, rewritten} -> rewritten
-          {:error, _} -> query
-        end
-      else
-        query
-      end
+    start_metadata = %{
+      query: query,
+      repo: repo,
+      mode: mode,
+      limit: limit
+    }
 
-    # Get collection_id if filtering by collection
-    collection_id =
-      if collection_name do
-        case repo.get_by(Collection, name: collection_name) do
-          nil -> nil
-          collection -> collection.id
+    :telemetry.span([:arcana, :search], start_metadata, fn ->
+      # Apply query rewriting if configured
+      search_query =
+        if rewriter do
+          case rewrite_query(query, rewriter: rewriter) do
+            {:ok, rewritten} -> rewritten
+            {:error, _} -> query
+          end
+        else
+          query
         end
-      end
 
-    do_search(mode, search_query, repo, limit, source_id, threshold, collection_id)
+      # Get collection_id if filtering by collection
+      collection_id =
+        if collection_name do
+          case repo.get_by(Collection, name: collection_name) do
+            nil -> nil
+            collection -> collection.id
+          end
+        end
+
+      results = do_search(mode, search_query, repo, limit, source_id, threshold, collection_id)
+
+      stop_metadata = %{
+        results: results,
+        result_count: length(results)
+      }
+
+      {results, stop_metadata}
+    end)
   end
 
   defp do_search(:semantic, query, repo, limit, source_id, threshold, collection_id) do
@@ -437,19 +466,35 @@ defmodule Arcana do
   """
   def ask(question, opts) when is_binary(question) do
     opts = merge_defaults(opts)
+    repo = Keyword.get(opts, :repo)
 
     case Keyword.get(opts, :llm) do
       nil ->
         {:error, :no_llm_configured}
 
       llm ->
-        search_opts =
-          opts
-          |> Keyword.take([:repo, :limit, :source_id, :threshold, :mode])
-          |> Keyword.put_new(:limit, 5)
+        start_metadata = %{
+          question: question,
+          repo: repo
+        }
 
-        context = search(question, search_opts)
-        LLM.complete(llm, question, context)
+        :telemetry.span([:arcana, :ask], start_metadata, fn ->
+          search_opts =
+            opts
+            |> Keyword.take([:repo, :limit, :source_id, :threshold, :mode])
+            |> Keyword.put_new(:limit, 5)
+
+          context = search(question, search_opts)
+          result = LLM.complete(llm, question, context)
+
+          stop_metadata =
+            case result do
+              {:ok, answer} -> %{answer: answer, context_count: length(context)}
+              {:error, _} -> %{context_count: length(context)}
+            end
+
+          {result, stop_metadata}
+        end)
     end
   end
 

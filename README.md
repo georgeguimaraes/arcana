@@ -258,6 +258,54 @@ results = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)
 {:error, :not_found} = Arcana.delete(invalid_id, repo: MyApp.Repo)
 ```
 
+## Telemetry
+
+Arcana emits telemetry events for observability. All operations use `:telemetry.span/3` which automatically emits `:start`, `:stop`, and `:exception` events.
+
+### Events
+
+| Event | Description |
+|-------|-------------|
+| `[:arcana, :ingest, :*]` | Document ingestion |
+| `[:arcana, :search, :*]` | Search queries |
+| `[:arcana, :ask, :*]` | RAG question answering |
+| `[:arcana, :embed, :*]` | Embedding generation |
+
+### Example Handler
+
+```elixir
+defmodule MyApp.ArcanaLogger do
+  require Logger
+
+  def setup do
+    events = [
+      [:arcana, :ingest, :stop],
+      [:arcana, :search, :stop],
+      [:arcana, :ask, :stop]
+    ]
+
+    :telemetry.attach_many("arcana-logger", events, &handle_event/4, nil)
+  end
+
+  def handle_event([:arcana, :ingest, :stop], measurements, metadata, _) do
+    ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+    Logger.info("Ingested document #{metadata.document.id} in #{ms}ms")
+  end
+
+  def handle_event([:arcana, :search, :stop], measurements, metadata, _) do
+    ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+    Logger.info("Search returned #{metadata.result_count} results in #{ms}ms")
+  end
+
+  def handle_event([:arcana, :ask, :stop], measurements, metadata, _) do
+    ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+    Logger.info("RAG answered with #{metadata.context_count} chunks in #{ms}ms")
+  end
+end
+```
+
+See `Arcana.Telemetry` module docs for complete event documentation.
+
 ## Configuration
 
 ```elixir

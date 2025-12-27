@@ -38,8 +38,16 @@ defmodule Arcana.Embeddings.Serving do
   Embeds a single text and returns a list of floats (384 dimensions).
   """
   def embed(text) when is_binary(text) do
-    %{embedding: embedding} = Nx.Serving.batched_run(__MODULE__, text)
-    Nx.to_flat_list(embedding)
+    start_metadata = %{text: text}
+
+    :telemetry.span([:arcana, :embed], start_metadata, fn ->
+      %{embedding: embedding} = Nx.Serving.batched_run(__MODULE__, text)
+      result = Nx.to_flat_list(embedding)
+
+      stop_metadata = %{dimensions: length(result)}
+
+      {result, stop_metadata}
+    end)
   end
 
   @doc """
