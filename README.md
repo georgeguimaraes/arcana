@@ -471,6 +471,47 @@ children = [
 
 **Note:** Data is not persisted - all vectors are lost when the process stops.
 
+#### Custom Vector Store
+
+Implement the `Arcana.VectorStore` behaviour for custom backends (e.g., Weaviate, Pinecone, Qdrant):
+
+```elixir
+defmodule MyApp.WeaviateStore do
+  @behaviour Arcana.VectorStore
+
+  @impl true
+  def store(collection, id, embedding, metadata, opts) do
+    # Store vector in Weaviate
+    :ok
+  end
+
+  @impl true
+  def search(collection, query_embedding, opts) do
+    limit = Keyword.get(opts, :limit, 10)
+    # Query Weaviate and return results
+    [%{id: "...", metadata: %{}, score: 0.95}]
+  end
+
+  @impl true
+  def delete(collection, id, opts) do
+    # Delete from Weaviate
+    :ok
+  end
+
+  @impl true
+  def clear(collection, opts) do
+    # Clear collection in Weaviate
+    :ok
+  end
+end
+```
+
+Then configure:
+
+```elixir
+config :arcana, vector_store: MyApp.WeaviateStore
+```
+
 #### Direct VectorStore API
 
 For low-level vector operations, use the VectorStore API directly:
