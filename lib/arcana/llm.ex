@@ -84,13 +84,11 @@ if Code.ensure_loaded?(LangChain.ChatModels.ChatOpenAI) do
     defp format_context([]), do: ""
 
     defp format_context(context) do
-      context
-      |> Enum.map(fn
+      Enum.map_join(context, "\n\n---\n\n", fn
         %{text: text} -> text
         text when is_binary(text) -> text
         other -> inspect(other)
       end)
-      |> Enum.join("\n\n---\n\n")
     end
   end
 end
@@ -132,13 +130,11 @@ if Code.ensure_loaded?(LangChain.ChatModels.ChatAnthropic) do
     defp format_context([]), do: ""
 
     defp format_context(context) do
-      context
-      |> Enum.map(fn
+      Enum.map_join(context, "\n\n---\n\n", fn
         %{text: text} -> text
         text when is_binary(text) -> text
         other -> inspect(other)
       end)
-      |> Enum.join("\n\n---\n\n")
     end
   end
 end
