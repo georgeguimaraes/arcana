@@ -105,6 +105,16 @@ if Code.ensure_loaded?(Igniter) do
         def up do
           execute "CREATE EXTENSION IF NOT EXISTS vector"
 
+          create table(:arcana_collections, primary_key: false) do
+            add :id, :binary_id, primary_key: true
+            add :name, :string, null: false
+            add :description, :text
+
+            timestamps()
+          end
+
+          create unique_index(:arcana_collections, [:name])
+
           create table(:arcana_documents, primary_key: false) do
             add :id, :binary_id, primary_key: true
             add :content, :text
@@ -115,6 +125,7 @@ if Code.ensure_loaded?(Igniter) do
             add :status, :string, default: "pending"
             add :error, :text
             add :chunk_count, :integer, default: 0
+            add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :nilify_all)
 
             timestamps()
           end
@@ -133,6 +144,7 @@ if Code.ensure_loaded?(Igniter) do
 
           create index(:arcana_chunks, [:document_id])
           create index(:arcana_documents, [:source_id])
+          create index(:arcana_documents, [:collection_id])
 
           execute \"\"\"
           CREATE INDEX arcana_chunks_embedding_idx ON arcana_chunks
@@ -176,6 +188,7 @@ if Code.ensure_loaded?(Igniter) do
           drop table(:arcana_evaluation_test_cases)
           drop table(:arcana_chunks)
           drop table(:arcana_documents)
+          drop table(:arcana_collections)
           # Note: We don't drop the vector extension as it may be used by other tables
         end
       end
@@ -266,6 +279,16 @@ else
       def up do
         execute "CREATE EXTENSION IF NOT EXISTS vector"
 
+        create table(:arcana_collections, primary_key: false) do
+          add :id, :binary_id, primary_key: true
+          add :name, :string, null: false
+          add :description, :text
+
+          timestamps()
+        end
+
+        create unique_index(:arcana_collections, [:name])
+
         create table(:arcana_documents, primary_key: false) do
           add :id, :binary_id, primary_key: true
           add :content, :text
@@ -276,6 +299,7 @@ else
           add :status, :string, default: "pending"
           add :error, :text
           add :chunk_count, :integer, default: 0
+          add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :nilify_all)
 
           timestamps()
         end
@@ -294,6 +318,7 @@ else
 
         create index(:arcana_chunks, [:document_id])
         create index(:arcana_documents, [:source_id])
+        create index(:arcana_documents, [:collection_id])
 
         execute \"\"\"
         CREATE INDEX arcana_chunks_embedding_idx ON arcana_chunks
@@ -337,6 +362,7 @@ else
         drop table(:arcana_evaluation_test_cases)
         drop table(:arcana_chunks)
         drop table(:arcana_documents)
+        drop table(:arcana_collections)
         # Note: We don't drop the vector extension as it may be used by other tables
       end
     end
