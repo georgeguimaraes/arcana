@@ -148,7 +148,7 @@ end
 )
 ```
 
-See the [LangChain Integration](langchain-integration.md) guide for production-ready LLM integration.
+See the [LLM Integration](llm-integration.md) guide for production-ready LLM integration.
 
 ## Agentic RAG Pipeline
 
@@ -318,5 +318,5 @@ Events follow the `:telemetry.span/3` convention with `:start`, `:stop`, and `:e
 
 ## Next Steps
 
-- [LangChain Integration](langchain-integration.md) - Connect Arcana to LLMs
+- [LLM Integration](llm-integration.md) - Connect Arcana to LLMs
 - API Reference - Full documentation of all modules
