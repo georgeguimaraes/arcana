@@ -564,19 +564,8 @@ defmodule Arcana.Agent do
 
       {reranked_chunks, scores} =
         case do_rerank(reranker, ctx.question, all_chunks_before, reranker_opts) do
-          {:ok, chunks} ->
-            # Build scores map from the reranked order
-            scores_map =
-              chunks
-              |> Enum.with_index()
-              |> Enum.map(fn {chunk, idx} -> {chunk.id, length(chunks) - idx} end)
-              |> Map.new()
-
-            {chunks, scores_map}
-
-          {:error, _reason} ->
-            # On error, keep original chunks
-            {all_chunks_before, %{}}
+          {:ok, chunks} -> {chunks, build_scores_map(chunks)}
+          {:error, _reason} -> {all_chunks_before, %{}}
         end
 
       # Update results with reranked chunks (flattened into single result)
@@ -607,6 +596,13 @@ defmodule Arcana.Agent do
 
   defp do_rerank(reranker, question, chunks, opts) when is_function(reranker, 3) do
     reranker.(question, chunks, opts)
+  end
+
+  # Build scores map from reranked order (higher position = higher score)
+  defp build_scores_map(chunks) do
+    chunks
+    |> Enum.with_index()
+    |> Map.new(fn {chunk, idx} -> {chunk.id, length(chunks) - idx} end)
   end
 
   @doc """
