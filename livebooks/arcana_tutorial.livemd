@@ -469,6 +469,157 @@ Vl.new(width: 500, height: 300, title: "Score Comparison: '#{query}'")
 |> Vl.encode_field(:x_offset, "type", type: :nominal)
 ```
 
+## 9. Query Expansion
+
+Query expansion improves search results by adding synonyms and related terms to your search queries. This is useful when users search with abbreviations (e.g., "ML" instead of "machine learning").
+
+### How It Works
+
+The `Agent.expand/2` step uses an LLM to analyze your query and add related terms:
+
+```
+Original: "ML models"
+Expanded: "ML machine learning artificial intelligence models algorithms neural networks"
+```
+
+### Example with Mock LLM
+
+```elixir
+# Mock LLM that expands queries
+expand_llm = fn prompt ->
+  cond do
+    prompt =~ "ML" or prompt =~ "machine learning" ->
+      {:ok, "ML machine learning artificial intelligence models algorithms deep learning neural networks"}
+
+    prompt =~ "API" ->
+      {:ok, "API application programming interface REST GraphQL endpoints HTTP requests"}
+
+    true ->
+      {:ok, prompt}
+  end
+end
+
+# Using with Agent pipeline
+alias Arcana.Agent
+
+# First ingest a document about ML
+{:ok, _} = Arcana.ingest(
+  "Deep learning is a subset of machine learning that uses neural networks.",
+  repo: nil,
+  vector_store: {:memory, pid: memory_pid},
+  collection: "tech-docs"
+)
+
+# The expand step would add synonyms before search
+# ctx = Agent.new("ML", repo: nil, llm: expand_llm) |> Agent.expand()
+# ctx.expanded_query => "ML machine learning artificial intelligence..."
+
+IO.puts("Query expansion adds synonyms to improve recall")
+```
+
+### Expand vs. Decompose
+
+| Step | Purpose | Use When |
+|------|---------|----------|
+| `expand/2` | Adds synonyms | Short queries, abbreviations, jargon |
+| `decompose/2` | Splits into sub-questions | Complex, multi-part questions |
+
+You can combine both:
+
+```elixir
+# ctx = Agent.new("What is ML and how does it work?", ...)
+#   |> Agent.expand()      # Adds synonyms
+#   |> Agent.decompose()   # Splits into sub-questions
+#   |> Agent.search()
+```
+
+## 10. Re-ranking
+
+Re-ranking improves search result quality by scoring each retrieved chunk's relevance to the question, then filtering and re-sorting by score.
+
+### How It Works
+
+```
+Retrieved chunks: [chunk1, chunk2, chunk3, chunk4, chunk5]
+                      ↓
+LLM scores each:  [  9,     3,      8,     2,      7  ]
+                      ↓
+Filter (≥7):      [chunk1,         chunk3,        chunk5]
+                      ↓
+Sort by score:    [chunk1, chunk3, chunk5]  # 9, 8, 7
+```
+
+### Using the Default Reranker
+
+```elixir
+# Mock LLM that scores relevance
+scoring_llm = fn prompt ->
+  cond do
+    prompt =~ "functional programming" and prompt =~ "Rate how relevant" ->
+      {:ok, ~s({"score": 9, "reasoning": "directly relevant"})}
+
+    prompt =~ "weather" and prompt =~ "Rate how relevant" ->
+      {:ok, ~s({"score": 2, "reasoning": "not relevant"})}
+
+    prompt =~ "Rate how relevant" ->
+      {:ok, ~s({"score": 5, "reasoning": "somewhat relevant"})}
+
+    true ->
+      {:ok, "Elixir is a functional programming language."}
+  end
+end
+
+# Rerank filters low-scoring chunks
+# ctx = Agent.new("What is Elixir?", ...)
+#   |> Agent.search()
+#   |> Agent.rerank(threshold: 7)  # Keep only chunks scoring 7+
+
+IO.puts("Re-ranking filters out irrelevant chunks")
+```
+
+### Custom Reranker
+
+Implement the `Arcana.Reranker` behaviour for custom scoring logic:
+
+```elixir
+defmodule MyKeywordReranker do
+  @behaviour Arcana.Reranker
+
+  @impl Arcana.Reranker
+  def rerank(_question, chunks, opts) do
+    threshold = Keyword.get(opts, :threshold, 5)
+
+    scored_chunks =
+      chunks
+      |> Enum.map(fn chunk ->
+        score = if chunk.text =~ "Elixir", do: 10, else: 3
+        {chunk, score}
+      end)
+      |> Enum.filter(fn {_chunk, score} -> score >= threshold end)
+      |> Enum.sort_by(fn {_chunk, score} -> score end, :desc)
+      |> Enum.map(fn {chunk, _score} -> chunk end)
+
+    {:ok, scored_chunks}
+  end
+end
+
+# Use with: Agent.rerank(ctx, reranker: MyKeywordReranker)
+```
+
+### Full Pipeline
+
+```elixir
+# Complete agentic RAG pipeline:
+# ctx = Agent.new("What is Elixir?", repo: MyApp.Repo, llm: my_llm)
+#   |> Agent.select()     # Choose collections
+#   |> Agent.expand()     # Add synonyms
+#   |> Agent.search()     # Retrieve chunks
+#   |> Agent.rerank()     # Filter by relevance
+#   |> Agent.answer()     # Generate answer
+
+IO.puts("The full pipeline: select → expand → search → rerank → answer")
+```
+
 ## Summary
 
 | Concept | Description |
@@ -478,7 +629,9 @@ Vl.new(width: 500, height: 300, title: "Score Comparison: '#{query}'")
 | **Fulltext Search** | Matches exact keywords with TF-IDF scoring |
 | **Hybrid Search** | Combines both using Reciprocal Rank Fusion |
 | **Collections** | Organize documents into logical groups |
-| **Agent Pipeline** | Decompose → Select → Search → Answer |
+| **Query Expansion** | Add synonyms for better recall |
+| **Re-ranking** | Filter chunks by LLM-scored relevance |
+| **Agent Pipeline** | Select → Expand → Search → Rerank → Answer |
 
 ### Next Steps
 
