@@ -57,15 +57,20 @@ defmodule Arcana.Chunker do
 
     text
     |> TextChunker.split(text_chunker_opts)
+    |> Enum.map(& &1.text)
+    |> Enum.reject(&blank?/1)
     |> Enum.with_index()
-    |> Enum.map(fn {chunk, index} ->
+    |> Enum.map(fn {text, index} ->
       %{
-        text: chunk.text,
+        text: text,
         chunk_index: index,
-        token_count: estimate_tokens(chunk.text)
+        token_count: estimate_tokens(text)
       }
     end)
   end
+
+  defp blank?(nil), do: true
+  defp blank?(str) when is_binary(str), do: String.trim(str) == ""
 
   defp estimate_tokens(text) do
     # Rough estimate: ~4 chars per token for English

@@ -55,6 +55,18 @@ defmodule Arcana.ChunkerTest do
       assert Chunker.chunk("") == []
     end
 
+    test "filters out whitespace-only chunks" do
+      # Text with lots of whitespace that could produce empty chunks
+      text = "Content.\n\n\n\n\n\n\nMore content."
+
+      chunks = Chunker.chunk(text, chunk_size: 20, size_unit: :characters)
+
+      # No chunk should be blank
+      for chunk <- chunks do
+        assert String.trim(chunk.text) != "", "Found blank chunk: #{inspect(chunk.text)}"
+      end
+    end
+
     test "accepts format option for plaintext" do
       text = "Hello world"
       chunks = Chunker.chunk(text, format: :plaintext)
