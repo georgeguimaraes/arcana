@@ -676,6 +676,7 @@ config :nx, default_backend: EXLA.Backend
 - [x] Telemetry events for observability
 - [x] In-memory vector store (HNSWLib backend)
 - [x] Query expansion (Agent.expand/2)
+- [x] Re-ranking (Agent.rerank/2)
 - [ ] Async ingestion with Oban
 - [ ] HyDE (Hypothetical Document Embeddings)
 - [ ] GraphRAG (knowledge graph + community summaries)
@@ -704,4 +705,4 @@ mix test
 
 ## License
 
-MIT
+Apache 2.0
