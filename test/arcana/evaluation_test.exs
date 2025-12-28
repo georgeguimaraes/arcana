@@ -160,6 +160,58 @@ defmodule Arcana.EvaluationTest do
       # Should save vector store backend
       assert run.config.vector_store in [:pgvector, :memory]
     end
+
+    test "with evaluate_answers: true generates and evaluates answers", %{test_cases: test_cases} do
+      # Mock LLM that returns answers and faithfulness scores
+      llm = fn prompt ->
+        cond do
+          # Answer generation prompt (from Arcana.ask)
+          prompt =~ "Context:" or prompt =~ "Answer the" ->
+            {:ok, "Elixir is a functional programming language."}
+
+          # Faithfulness evaluation prompt
+          prompt =~ "faithfulness" ->
+            {:ok, ~s({"score": 8, "reasoning": "Well grounded in context."})}
+
+          true ->
+            {:ok, "Default response"}
+        end
+      end
+
+      {:ok, run} =
+        Evaluation.run(
+          repo: Repo,
+          mode: :semantic,
+          evaluate_answers: true,
+          llm: llm
+        )
+
+      assert run.status == :completed
+
+      # Should have faithfulness metric
+      assert is_float(run.metrics.faithfulness)
+      assert run.metrics.faithfulness >= 0 and run.metrics.faithfulness <= 10
+
+      # Per-case results should include answer evaluation
+      for tc <- test_cases do
+        result = run.results[tc.id]
+        assert Map.has_key?(result, :answer)
+        assert Map.has_key?(result, :faithfulness_score)
+        assert Map.has_key?(result, :faithfulness_reasoning)
+      end
+    end
+
+    test "with evaluate_answers: true raises without llm" do
+      assert_raise ArgumentError, ~r/llm.*required/i, fn ->
+        Evaluation.run(repo: Repo, evaluate_answers: true)
+      end
+    end
+
+    test "without evaluate_answers does not include answer metrics", %{test_cases: _test_cases} do
+      {:ok, run} = Evaluation.run(repo: Repo, mode: :semantic)
+
+      refute Map.has_key?(run.metrics, :faithfulness)
+    end
   end
 
   describe "list_test_cases/1" do

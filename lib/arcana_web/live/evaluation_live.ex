@@ -56,26 +56,44 @@ defmodule ArcanaWeb.EvaluationLive do
   def handle_event("eval_run", params, socket) do
     repo = socket.assigns.repo
     mode = parse_mode(params["mode"])
+    evaluate_answers = params["evaluate_answers"] == "true"
 
-    socket = assign(socket, eval_running: true, eval_message: nil)
+    # Check if LLM is configured when evaluate_answers is requested
+    llm = Application.get_env(:arcana, :llm)
 
-    case Evaluation.run(repo: repo, mode: mode) do
-      {:ok, _run} ->
-        socket =
-          socket
-          |> assign(eval_running: false, eval_message: {:success, "Evaluation completed!"})
-          |> load_evaluation_data()
-          |> assign(eval_view: :history)
+    if evaluate_answers and is_nil(llm) do
+      {:noreply,
+       assign(socket,
+         eval_message: {:error, "No LLM configured. Set :arcana, :llm in your config."}
+       )}
+    else
+      socket = assign(socket, eval_running: true, eval_message: nil)
+      opts = build_run_opts(repo, mode, evaluate_answers, llm)
 
-        {:noreply, socket}
+      case Evaluation.run(opts) do
+        {:ok, _run} ->
+          socket =
+            socket
+            |> assign(eval_running: false, eval_message: {:success, "Evaluation completed!"})
+            |> load_evaluation_data()
+            |> assign(eval_view: :history)
 
-      {:error, :no_test_cases} ->
-        {:noreply,
-         assign(socket,
-           eval_running: false,
-           eval_message: {:error, "No test cases. Generate some first."}
-         )}
+          {:noreply, socket}
+
+        {:error, :no_test_cases} ->
+          {:noreply,
+           assign(socket,
+             eval_running: false,
+             eval_message: {:error, "No test cases. Generate some first."}
+           )}
+      end
     end
+  end
+
+  defp build_run_opts(repo, mode, false, _llm), do: [repo: repo, mode: mode]
+
+  defp build_run_opts(repo, mode, true, llm) do
+    [repo: repo, mode: mode, evaluate_answers: true, llm: llm]
   end
 
   def handle_event("eval_generate", params, socket) do
@@ -284,6 +302,12 @@ defmodule ArcanaWeb.EvaluationLive do
           </select>
         </label>
 
+        <label style="display: flex; align-items: center; gap: 0.5rem;">
+          <input type="checkbox" name="evaluate_answers" value="true" />
+          Evaluate Answers
+          <span style="font-size: 0.75rem; color: #6b7280;">(requires LLM)</span>
+        </label>
+
         <button type="submit" disabled={@running or @test_case_count == 0}>
           <%= if @running, do: "Running...", else: "Run Evaluation" %>
         </button>
@@ -346,6 +370,12 @@ defmodule ArcanaWeb.EvaluationLive do
                     <div class="arcana-metric-value"><%= format_pct(run.metrics["hit_rate_at_5"] || run.metrics[:hit_rate_at_5]) %></div>
                     <div class="arcana-metric-label">Hit Rate@5</div>
                   </div>
+                  <%= if run.metrics["faithfulness"] || run.metrics[:faithfulness] do %>
+                    <div class="arcana-metric-card">
+                      <div class="arcana-metric-value"><%= format_score(run.metrics["faithfulness"] || run.metrics[:faithfulness]) %></div>
+                      <div class="arcana-metric-label">Faithfulness</div>
+                    </div>
+                  <% end %>
                 </div>
               <% end %>
             </div>

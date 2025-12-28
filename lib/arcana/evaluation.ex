@@ -54,12 +54,21 @@ defmodule Arcana.Evaluation do
     * `:repo` - Ecto repo (required)
     * `:mode` - Search mode :semantic | :fulltext | :hybrid (default: :semantic)
     * `:source_id` - Limit evaluation to specific source
+    * `:evaluate_answers` - When true, also evaluates answer quality (default: false)
+    * `:llm` - LLM function (required when evaluate_answers is true)
 
   """
   def run(opts) do
     repo = Keyword.fetch!(opts, :repo)
     mode = Keyword.get(opts, :mode, :semantic)
     source_id = Keyword.get(opts, :source_id)
+    evaluate_answers = Keyword.get(opts, :evaluate_answers, false)
+    llm = Keyword.get(opts, :llm)
+
+    # Validate llm is provided when evaluate_answers is true
+    if evaluate_answers and is_nil(llm) do
+      raise ArgumentError, ":llm is required when evaluate_answers: true"
+    end
 
     test_cases = list_test_cases(opts)
 
@@ -73,6 +82,7 @@ defmodule Arcana.Evaluation do
         arcana_config
         |> Map.put(:mode, mode)
         |> Map.put(:source_id, source_id)
+        |> Map.put(:evaluate_answers, evaluate_answers)
 
       # Create a run record
       {:ok, run} =
@@ -87,12 +97,19 @@ defmodule Arcana.Evaluation do
       # Evaluate each test case
       case_results =
         Enum.map(test_cases, fn test_case ->
-          search_results = Arcana.search(test_case.question, repo: repo, mode: mode, limit: 10)
-          Metrics.evaluate_case(test_case, search_results)
+          evaluate_test_case(test_case, repo, mode, evaluate_answers, llm)
         end)
 
       # Aggregate metrics
       metrics = Metrics.aggregate(case_results)
+
+      # Add answer metrics if evaluated
+      metrics =
+        if evaluate_answers do
+          Map.put(metrics, :faithfulness, average_faithfulness(case_results))
+        else
+          metrics
+        end
 
       # Convert case results to storable format
       results_map =
@@ -111,6 +128,68 @@ defmodule Arcana.Evaluation do
         |> repo.update()
 
       {:ok, run}
+    end
+  end
+
+  defp evaluate_test_case(test_case, repo, mode, evaluate_answers, llm) do
+    search_results = Arcana.search(test_case.question, repo: repo, mode: mode, limit: 10)
+    retrieval_metrics = Metrics.evaluate_case(test_case, search_results)
+
+    if evaluate_answers do
+      answer_metrics = evaluate_answer(test_case.question, search_results, llm)
+      Map.merge(retrieval_metrics, answer_metrics)
+    else
+      retrieval_metrics
+    end
+  end
+
+  defp average_faithfulness(case_results) do
+    scores =
+      case_results
+      |> Enum.map(& &1.faithfulness_score)
+      |> Enum.reject(&is_nil/1)
+
+    if Enum.empty?(scores), do: 0.0, else: Enum.sum(scores) / length(scores)
+  end
+
+  defp evaluate_answer(question, search_results, llm) do
+    alias Arcana.Evaluation.AnswerMetrics
+
+    # Generate answer using the search results as context
+    chunks_text = Enum.map_join(search_results, "\n\n", & &1.text)
+
+    answer_prompt = """
+    Answer the following question based only on the provided context.
+
+    Context:
+    #{chunks_text}
+
+    Question: #{question}
+
+    Answer:
+    """
+
+    answer =
+      case Arcana.LLM.complete(llm, answer_prompt, []) do
+        {:ok, response} -> response
+        {:error, _} -> nil
+      end
+
+    # Evaluate faithfulness if we got an answer
+    if answer do
+      case AnswerMetrics.evaluate_faithfulness(question, search_results, answer, llm: llm) do
+        {:ok, %{score: score, reasoning: reasoning}} ->
+          %{
+            answer: answer,
+            faithfulness_score: score,
+            faithfulness_reasoning: reasoning
+          }
+
+        {:error, _} ->
+          %{answer: answer, faithfulness_score: nil, faithfulness_reasoning: nil}
+      end
+    else
+      %{answer: nil, faithfulness_score: nil, faithfulness_reasoning: nil}
     end
   end
 

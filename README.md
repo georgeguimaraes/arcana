@@ -472,6 +472,21 @@ Or use the mix task:
 mix arcana.eval.run --mode hybrid
 ```
 
+### Evaluating Answer Quality
+
+For end-to-end RAG evaluation, measure how faithful generated answers are:
+
+```elixir
+{:ok, run} = Arcana.Evaluation.run(
+  repo: MyApp.Repo,
+  mode: :semantic,
+  evaluate_answers: true,
+  llm: Application.get_env(:arcana, :llm)
+)
+
+run.metrics.faithfulness  # => 7.8 (0-10 scale)
+```
+
 ### Metrics
 
 | Metric | Description |
@@ -480,6 +495,7 @@ mix arcana.eval.run --mode hybrid
 | **Recall@K** | Fraction of relevant chunks found in top K |
 | **Precision@K** | Fraction of top K results that are relevant |
 | **Hit Rate@K** | Fraction of queries with at least one relevant in top K |
+| **Faithfulness** | How well answers are grounded in retrieved context (0-10) |
 
 See the [Evaluation Guide](guides/evaluation.md) for more details.
 

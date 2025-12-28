@@ -106,6 +106,10 @@ defmodule ArcanaWeb.DashboardComponents do
   def format_pct(value) when is_float(value), do: "#{Float.round(value * 100, 1)}%"
   def format_pct(value) when is_integer(value), do: "#{value}%"
 
+  def format_score(nil), do: "-"
+  def format_score(value) when is_float(value), do: "#{Float.round(value, 1)}/10"
+  def format_score(value) when is_integer(value), do: "#{value}/10"
+
   def error_to_string(:too_large), do: "File too large (max 10MB)"
   def error_to_string(:too_many_files), do: "Too many files (max 10)"
   def error_to_string(:not_accepted), do: "File type not supported"

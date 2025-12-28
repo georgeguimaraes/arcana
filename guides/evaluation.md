@@ -83,6 +83,29 @@ Run an evaluation against all test cases:
 )
 ```
 
+### Evaluating Answer Quality
+
+For end-to-end RAG evaluation, you can also evaluate the quality of generated answers:
+
+```elixir
+{:ok, run} = Arcana.Evaluation.run(
+  repo: MyApp.Repo,
+  mode: :semantic,
+  evaluate_answers: true,
+  llm: Application.get_env(:arcana, :llm)
+)
+
+# Includes faithfulness metric
+run.metrics.faithfulness  # => 7.8 (0-10 scale)
+```
+
+When `evaluate_answers: true` is set, the evaluation:
+1. Generates an answer for each test case using the retrieved chunks
+2. Uses LLM-as-judge to score how faithful the answer is to the context
+3. Aggregates scores into an overall faithfulness metric
+
+**Faithfulness** measures whether the generated answer is grounded in the retrieved chunks (0 = hallucinated, 10 = fully faithful).
+
 ### Using the Mix Task
 
 ```bash
@@ -173,6 +196,8 @@ See the [Dashboard Guide](dashboard.md) for setup instructions.
 
 ## Metrics Explained
 
+### Retrieval Metrics
+
 | Metric | Description | Good Value |
 |--------|-------------|------------|
 | **MRR** (Mean Reciprocal Rank) | Average of 1/rank for first relevant result | > 0.7 |
@@ -180,12 +205,19 @@ See the [Dashboard Guide](dashboard.md) for setup instructions.
 | **Precision@K** | Fraction of top K results that are relevant | > 0.6 |
 | **Hit Rate@K** | Fraction of queries with at least one relevant result in top K | > 0.9 |
 
+### Answer Quality Metrics
+
+| Metric | Description | Good Value |
+|--------|-------------|------------|
+| **Faithfulness** | How well the answer is grounded in retrieved context (0-10) | > 7.0 |
+
 ### Which Metric to Focus On?
 
 - **MRR** - Best for single-answer scenarios where you need the relevant chunk first
 - **Recall@K** - Important when you need to find all relevant information
 - **Precision@K** - Matters when you want to minimize irrelevant context
 - **Hit Rate@K** - Good baseline to ensure retrieval is working at all
+- **Faithfulness** - Essential for preventing hallucinations in generated answers
 
 ## Best Practices
 
