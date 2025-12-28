@@ -1,4 +1,4 @@
-defmodule Arcana.Reranker do
+defmodule Arcana.Agent.Reranker do
   @moduledoc """
   Behaviour for re-ranking search results.
 
@@ -7,16 +7,16 @@ defmodule Arcana.Reranker do
 
   ## Built-in Implementations
 
-  - `Arcana.Reranker.LLM` - Uses your LLM to score relevance (default)
+  - `Arcana.Agent.Reranker.LLM` - Uses your LLM to score relevance (default)
 
   ## Custom Implementations
 
   Implement the `rerank/3` callback:
 
       defmodule MyApp.CrossEncoderReranker do
-        @behaviour Arcana.Reranker
+        @behaviour Arcana.Agent.Reranker
 
-        @impl Arcana.Reranker
+        @impl Arcana.Agent.Reranker
         def rerank(question, chunks, opts) do
           # Your custom logic
           {:ok, scored_and_filtered_chunks}

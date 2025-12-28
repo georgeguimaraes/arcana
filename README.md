@@ -1,5 +1,7 @@
 # Arcana 🔮📚
 
+[![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2Fgeorgeguimaraes%2Farcana%2Fblob%2Fmain%2Flivebooks%2Farcana_tutorial.livemd)
+
 Embeddable RAG library for Elixir/Phoenix. Add vector search, document retrieval, and AI-powered question answering to any Phoenix application. Supports both simple RAG and agentic RAG with query expansion, self-correction, and multi-step reasoning.
 
 ## Features
@@ -317,12 +319,48 @@ ctx.answer
 | Step | Description |
 |------|-------------|
 | `new/2` | Initialize context with question and options |
-| `select/2` | LLM selects relevant collections to search |
+| `select/2` | Select relevant collections (LLM or custom selector) |
 | `expand/2` | Expand query with synonyms and related terms |
 | `decompose/2` | Break complex questions into sub-questions |
 | `search/2` | Execute search (with optional self-correction) |
 | `rerank/2` | Re-score and filter chunks by relevance |
 | `answer/2` | Generate final answer from retrieved context |
+
+**Custom collection selection:**
+
+By default, `select/2` uses the LLM to pick collections. For deterministic routing based on user context or business logic, provide a custom selector:
+
+```elixir
+# Custom selector module
+defmodule MyApp.TeamBasedSelector do
+  @behaviour Arcana.Agent.Selector
+
+  @impl true
+  def select(_question, _collections, opts) do
+    case opts[:context][:team] do
+      "api" -> {:ok, ["api-reference"], "API team routing"}
+      "mobile" -> {:ok, ["mobile-docs"], "Mobile team routing"}
+      _ -> {:ok, ["general"], "Default routing"}
+    end
+  end
+end
+
+ctx
+|> Agent.select(
+  collections: ["api-reference", "mobile-docs", "general"],
+  selector: MyApp.TeamBasedSelector,
+  context: %{team: current_user.team}
+)
+
+# Or inline function
+ctx
+|> Agent.select(
+  collections: ["docs", "api"],
+  selector: fn question, _collections, _opts ->
+    if question =~ "API", do: {:ok, ["api"], "API query"}, else: {:ok, ["docs"], nil}
+  end
+)
+```
 
 **Query expansion vs. decomposition:**
 
@@ -347,7 +385,7 @@ For custom re-ranking logic, provide a module or function:
 ```elixir
 # Custom reranker module
 defmodule MyApp.CrossEncoderReranker do
-  @behaviour Arcana.Reranker
+  @behaviour Arcana.Agent.Reranker
 
   @impl true
   def rerank(question, chunks, _opts) do

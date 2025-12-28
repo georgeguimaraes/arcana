@@ -64,25 +64,42 @@ defmodule Arcana.Agent do
   @doc """
   Selects which collection(s) to search for the question.
 
-  Uses the LLM to decide which collection(s) are most relevant for
-  the question. This allows searching only in relevant collections
-  instead of searching everything.
+  By default, uses the LLM to decide which collection(s) are most relevant.
+  You can provide a custom selector module or function for deterministic routing.
 
   Collection descriptions are automatically fetched from the database
-  and included in the prompt to help the LLM make better routing decisions.
+  and passed to the selector.
 
   ## Options
 
   - `:collections` (required) - List of available collection names
-  - `:prompt` - Custom prompt function `fn question, collections_with_descriptions -> prompt_string end`
-    where `collections_with_descriptions` is a list of `{name, description}` tuples
+  - `:selector` - Custom selector module or function (default: `Arcana.Agent.Selector.LLM`)
+  - `:prompt` - Custom prompt function for LLM selector
+  - `:context` - User context map passed to custom selectors
 
   ## Example
 
+      # LLM-based selection (default)
       ctx
       |> Agent.select(collections: ["docs", "api", "support"])
       |> Agent.search()
-      |> Agent.answer()
+
+      # Custom selector module
+      ctx
+      |> Agent.select(
+        collections: ["docs", "api"],
+        selector: MyApp.TeamBasedSelector,
+        context: %{team: user.team}
+      )
+
+      # Inline selector function
+      ctx
+      |> Agent.select(
+        collections: ["docs", "api"],
+        selector: fn question, _collections, _opts ->
+          if question =~ "API", do: {:ok, ["api"], "API query"}, else: {:ok, ["docs"], nil}
+        end
+      )
 
   The selected collections are stored in `ctx.collections` and used by `search/2`.
   """
@@ -91,22 +108,20 @@ defmodule Arcana.Agent do
   def select(%Context{} = ctx, opts) do
     collection_names = Keyword.fetch!(opts, :collections)
     collections_with_descriptions = fetch_collections(ctx.repo, collection_names)
+    selector = Keyword.get(opts, :selector, Arcana.Agent.Selector.LLM)
 
     start_metadata = %{
       question: ctx.question,
-      available_collections: collection_names
+      available_collections: collection_names,
+      selector: selector_name(selector)
     }
 
     :telemetry.span([:arcana, :agent, :select], start_metadata, fn ->
-      prompt =
-        case Keyword.get(opts, :prompt) do
-          nil -> default_select_prompt(ctx.question, collections_with_descriptions)
-          custom_fn -> custom_fn.(ctx.question, collections_with_descriptions)
-        end
+      selector_opts = Keyword.merge(opts, llm: ctx.llm)
 
       {collections, reasoning} =
-        ctx.llm.(prompt)
-        |> parse_select_response(collection_names)
+        do_select(selector, ctx.question, collections_with_descriptions, selector_opts)
+        |> handle_select_result(collection_names)
 
       updated_ctx = %{ctx | collections: collections, selection_reasoning: reasoning}
 
@@ -119,6 +134,25 @@ defmodule Arcana.Agent do
     end)
   end
 
+  defp selector_name(selector) when is_atom(selector), do: selector
+  defp selector_name(_selector), do: :custom_function
+
+  defp do_select(selector, question, collections, opts) when is_atom(selector) do
+    selector.select(question, collections, opts)
+  end
+
+  defp do_select(selector, question, collections, opts) when is_function(selector, 3) do
+    selector.(question, collections, opts)
+  end
+
+  defp handle_select_result({:ok, collections, reasoning}, _fallback) do
+    {collections, reasoning}
+  end
+
+  defp handle_select_result({:error, _reason}, fallback_collections) do
+    {fallback_collections, nil}
+  end
+
   defp fetch_collections(repo, names) do
     import Ecto.Query
 
@@ -129,47 +163,6 @@ defmodule Arcana.Agent do
     Enum.map(names, fn name ->
       {name, Map.get(db_collections, name)}
     end)
-  end
-
-  defp default_select_prompt(question, collections_with_descriptions) do
-    collections_text = format_collections_for_prompt(collections_with_descriptions)
-
-    """
-    Which collection(s) should be searched for this question?
-
-    Question: "#{question}"
-
-    Available collections:
-    #{collections_text}
-
-    Return JSON only: {"collections": ["name1", "name2"], "reasoning": "..."}
-    Select only the most relevant collection(s). If unsure, include all.
-    """
-  end
-
-  defp format_collections_for_prompt(collections) do
-    Enum.map_join(collections, "\n", fn
-      {name, nil} -> "- #{name}"
-      {name, ""} -> "- #{name}"
-      {name, description} -> "- #{name}: #{description}"
-    end)
-  end
-
-  defp parse_select_response({:ok, response}, fallback_collections) do
-    case Jason.decode(response) do
-      {:ok, %{"collections" => cols, "reasoning" => reason}} when is_list(cols) ->
-        {cols, reason}
-
-      {:ok, %{"collections" => cols}} when is_list(cols) ->
-        {cols, nil}
-
-      _ ->
-        {fallback_collections, nil}
-    end
-  end
-
-  defp parse_select_response({:error, _}, fallback_collections) do
-    {fallback_collections, nil}
   end
 
   @default_expand_prompt """
@@ -546,7 +539,7 @@ defmodule Arcana.Agent do
   def rerank(%Context{results: []} = ctx, _opts), do: %{ctx | rerank_scores: %{}}
 
   def rerank(%Context{} = ctx, opts) do
-    reranker = Keyword.get(opts, :reranker, Arcana.Reranker.LLM)
+    reranker = Keyword.get(opts, :reranker, Arcana.Agent.Reranker.LLM)
     threshold = Keyword.get(opts, :threshold, 7)
     prompt_fn = Keyword.get(opts, :prompt)
 

@@ -496,6 +496,111 @@ defmodule Arcana.AgentTest do
 
       assert ctx.collections == ["api"]
     end
+
+    test "accepts custom selector module" do
+      defmodule TestSelector do
+        @behaviour Arcana.Agent.Selector
+
+        @impl true
+        def select(_question, _collections, opts) do
+          # Deterministic selection based on user context
+          team = get_in(opts, [:context, :team])
+
+          case team do
+            "api" -> {:ok, ["api-reference"], "API team routing"}
+            _ -> {:ok, ["docs"], "Default routing"}
+          end
+        end
+      end
+
+      # LLM should not be called when using custom selector
+      llm = fn _prompt -> raise "LLM should not be called" end
+
+      ctx =
+        Agent.new("test", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.select(
+          collections: ["docs", "api-reference"],
+          selector: TestSelector,
+          context: %{team: "api"}
+        )
+
+      assert ctx.collections == ["api-reference"]
+      assert ctx.selection_reasoning == "API team routing"
+    end
+
+    test "accepts custom selector function" do
+      # LLM should not be called when using custom selector
+      llm = fn _prompt -> raise "LLM should not be called" end
+
+      custom_selector = fn question, _collections, _opts ->
+        if question =~ "API" do
+          {:ok, ["api-docs"], "Question mentions API"}
+        else
+          {:ok, ["general"], "General query"}
+        end
+      end
+
+      ctx =
+        Agent.new("How do I use the API?", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.select(collections: ["general", "api-docs"], selector: custom_selector)
+
+      assert ctx.collections == ["api-docs"]
+      assert ctx.selection_reasoning == "Question mentions API"
+    end
+
+    test "selector receives collections with descriptions" do
+      {:ok, _} =
+        Arcana.TestRepo.insert(%Arcana.Collection{
+          name: "products",
+          description: "Product catalog data"
+        })
+
+      llm = fn _prompt -> raise "LLM should not be called" end
+
+      selector = fn _question, collections, _opts ->
+        # Verify collections have descriptions
+        assert Enum.find(collections, fn {name, _desc} -> name == "products" end)
+        {_name, description} = Enum.find(collections, fn {name, _} -> name == "products" end)
+        assert description == "Product catalog data"
+
+        {:ok, ["products"], "verified descriptions"}
+      end
+
+      ctx =
+        Agent.new("test", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.select(collections: ["products"], selector: selector)
+
+      assert ctx.collections == ["products"]
+    end
+
+    test "falls back to all collections when custom selector returns error" do
+      llm = fn _prompt -> {:ok, ~s({"collections": ["fallback"]})} end
+
+      selector = fn _question, _collections, _opts ->
+        {:error, :something_went_wrong}
+      end
+
+      ctx =
+        Agent.new("test", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.select(collections: ["a", "b", "c"], selector: selector)
+
+      # Should fall back to all collections
+      assert ctx.collections == ["a", "b", "c"]
+    end
+
+    test "uses Arcana.Selector.LLM as default selector" do
+      llm = fn prompt ->
+        assert prompt =~ "Which collection"
+        {:ok, ~s({"collections": ["docs"], "reasoning": "LLM selected"})}
+      end
+
+      ctx =
+        Agent.new("question", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.select(collections: ["docs", "api"])
+
+      assert ctx.collections == ["docs"]
+      assert ctx.selection_reasoning == "LLM selected"
+    end
   end
 
   describe "decompose/1" do
@@ -1036,9 +1141,9 @@ defmodule Arcana.AgentTest do
 
     test "accepts custom reranker module" do
       defmodule TestReranker do
-        @behaviour Arcana.Reranker
+        @behaviour Arcana.Agent.Reranker
 
-        @impl Arcana.Reranker
+        @impl Arcana.Agent.Reranker
         def rerank(_question, chunks, _opts) do
           # Just reverse the chunks as a simple test
           {:ok, Enum.reverse(chunks)}

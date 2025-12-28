@@ -1,4 +1,4 @@
-defmodule Arcana.Reranker.LLM do
+defmodule Arcana.Agent.Reranker.LLM do
   @moduledoc """
   LLM-based re-ranker that uses your configured LLM to score chunk relevance.
 
@@ -14,7 +14,7 @@ defmodule Arcana.Reranker.LLM do
       |> Agent.answer()
 
       # Directly
-      {:ok, reranked} = Arcana.Reranker.LLM.rerank(
+      {:ok, reranked} = Arcana.Agent.Reranker.LLM.rerank(
         "What is Elixir?",
         chunks,
         llm: &my_llm/1,
@@ -22,7 +22,7 @@ defmodule Arcana.Reranker.LLM do
       )
   """
 
-  @behaviour Arcana.Reranker
+  @behaviour Arcana.Agent.Reranker
 
   @default_threshold 7
 
@@ -40,7 +40,7 @@ defmodule Arcana.Reranker.LLM do
   - 0-3 = not relevant
   """
 
-  @impl Arcana.Reranker
+  @impl Arcana.Agent.Reranker
   def rerank(_question, [], _opts), do: {:ok, []}
 
   def rerank(question, chunks, opts) do
