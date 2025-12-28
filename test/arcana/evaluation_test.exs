@@ -30,6 +30,65 @@ defmodule Arcana.EvaluationTest do
       assert Enum.all?(test_cases, &(&1.source == :synthetic))
       assert Enum.all?(test_cases, &(length(&1.relevant_chunks) == 1))
     end
+
+    test "filters by collection when specified" do
+      # Ingest documents into different collections
+      {:ok, _doc1} =
+        Arcana.ingest("Elixir is a functional programming language.",
+          repo: Repo,
+          collection: "elixir-docs"
+        )
+
+      {:ok, _doc2} =
+        Arcana.ingest("Python is great for machine learning.",
+          repo: Repo,
+          collection: "python-docs"
+        )
+
+      # Mock LLM
+      llm = fn _prompt, _context ->
+        {:ok, "Generated question?"}
+      end
+
+      # Generate from elixir-docs only
+      {:ok, test_cases} =
+        Evaluation.generate_test_cases(
+          repo: Repo,
+          llm: llm,
+          sample_size: 10,
+          collection: "elixir-docs"
+        )
+
+      assert length(test_cases) == 1
+
+      # Verify the chunk is from elixir-docs collection
+      [tc] = test_cases
+      [chunk] = tc.relevant_chunks
+      chunk = Repo.preload(chunk, document: :collection)
+      assert chunk.document.collection.name == "elixir-docs"
+    end
+
+    test "returns empty when collection has no chunks" do
+      # Ingest into one collection
+      {:ok, _doc} =
+        Arcana.ingest("Some content.",
+          repo: Repo,
+          collection: "existing"
+        )
+
+      llm = fn _prompt, _context -> {:ok, "Question?"} end
+
+      # Try to generate from non-existent collection
+      {:ok, test_cases} =
+        Evaluation.generate_test_cases(
+          repo: Repo,
+          llm: llm,
+          sample_size: 10,
+          collection: "non-existent"
+        )
+
+      assert test_cases == []
+    end
   end
 
   describe "run/1" do

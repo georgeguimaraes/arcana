@@ -38,11 +38,13 @@ defmodule ArcanaWeb.EvaluationLive do
     test_cases = Evaluation.list_test_cases(repo: repo)
     runs = Evaluation.list_runs(repo: repo, limit: 10)
     test_case_count = Evaluation.count_test_cases(repo: repo)
+    collections = load_collections(repo)
 
     assign(socket,
       eval_test_cases: test_cases,
       eval_runs: runs,
-      eval_test_case_count: test_case_count
+      eval_test_case_count: test_case_count,
+      collections: collections
     )
   end
 
@@ -79,6 +81,7 @@ defmodule ArcanaWeb.EvaluationLive do
   def handle_event("eval_generate", params, socket) do
     repo = socket.assigns.repo
     sample_size = parse_int(params["sample_size"], 10)
+    collection = blank_to_nil(params["collection"])
 
     case Application.get_env(:arcana, :llm) do
       nil ->
@@ -91,9 +94,10 @@ defmodule ArcanaWeb.EvaluationLive do
         socket = assign(socket, eval_generating: true, eval_message: nil)
 
         parent = self()
+        opts = build_generate_opts(repo, llm, sample_size, collection)
 
         Task.start(fn ->
-          result = Evaluation.generate_test_cases(repo: repo, llm: llm, sample_size: sample_size)
+          result = Evaluation.generate_test_cases(opts)
           send(parent, {:eval_generate_complete, result})
         end)
 
@@ -141,6 +145,14 @@ defmodule ArcanaWeb.EvaluationLive do
     {:noreply, socket}
   end
 
+  defp build_generate_opts(repo, llm, sample_size, nil) do
+    [repo: repo, llm: llm, sample_size: sample_size]
+  end
+
+  defp build_generate_opts(repo, llm, sample_size, collection) do
+    [repo: repo, llm: llm, sample_size: sample_size, collection: collection]
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -180,7 +192,7 @@ defmodule ArcanaWeb.EvaluationLive do
 
         <%= case @eval_view do %>
           <% :test_cases -> %>
-            <.eval_test_cases_view test_cases={@eval_test_cases} generating={@eval_generating} />
+            <.eval_test_cases_view test_cases={@eval_test_cases} generating={@eval_generating} collections={@collections} />
           <% :run -> %>
             <.eval_run_view running={@eval_running} test_case_count={@eval_test_case_count} />
           <% :history -> %>
@@ -195,6 +207,16 @@ defmodule ArcanaWeb.EvaluationLive do
     ~H"""
     <div class="arcana-eval-test-cases">
       <form phx-submit="eval_generate" class="arcana-run-form" style="margin-bottom: 1.5rem;">
+        <label>
+          Collection
+          <select name="collection">
+            <option value="">All collections</option>
+            <%= for col <- @collections do %>
+              <option value={col.name}><%= col.name %></option>
+            <% end %>
+          </select>
+        </label>
+
         <label>
           Sample Size
           <select name="sample_size">

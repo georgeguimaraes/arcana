@@ -32,6 +32,7 @@ defmodule Arcana.Evaluation.Generator do
     * `:llm` - LLM implementing Arcana.LLM protocol (required)
     * `:sample_size` - Number of chunks to sample (default: 50)
     * `:source_id` - Limit to chunks from specific source
+    * `:collection` - Limit to chunks from specific collection
     * `:prompt` - Custom prompt template (must include {chunk_text})
 
   """
@@ -40,9 +41,10 @@ defmodule Arcana.Evaluation.Generator do
     llm = Keyword.fetch!(opts, :llm)
     sample_size = Keyword.get(opts, :sample_size, 50)
     source_id = Keyword.get(opts, :source_id)
+    collection = Keyword.get(opts, :collection)
     prompt_template = Keyword.get(opts, :prompt, @default_prompt)
 
-    chunks = sample_chunks(repo, sample_size, source_id)
+    chunks = sample_chunks(repo, sample_size, source_id, collection)
 
     test_cases =
       chunks
@@ -65,7 +67,7 @@ defmodule Arcana.Evaluation.Generator do
   """
   def default_prompt, do: @default_prompt
 
-  defp sample_chunks(repo, sample_size, source_id) do
+  defp sample_chunks(repo, sample_size, source_id, collection) do
     query =
       from(c in Chunk,
         join: d in assoc(c, :document),
@@ -76,6 +78,16 @@ defmodule Arcana.Evaluation.Generator do
     query =
       if source_id do
         from([c, d] in query, where: d.source_id == ^source_id)
+      else
+        query
+      end
+
+    query =
+      if collection do
+        from([c, d] in query,
+          join: col in assoc(d, :collection),
+          where: col.name == ^collection
+        )
       else
         query
       end

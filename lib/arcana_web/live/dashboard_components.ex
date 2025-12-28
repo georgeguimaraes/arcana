@@ -91,6 +91,10 @@ defmodule ArcanaWeb.DashboardComponents do
   def normalize_collection(nil), do: "default"
   def normalize_collection(name) when is_binary(name), do: name
 
+  def blank_to_nil(""), do: nil
+  def blank_to_nil(nil), do: nil
+  def blank_to_nil(value), do: value
+
   def format_metadata(nil), do: "-"
   def format_metadata(metadata) when metadata == %{}, do: "-"
 
