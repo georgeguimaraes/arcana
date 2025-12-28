@@ -150,6 +150,84 @@ end
 
 See the [LangChain Integration](langchain-integration.md) guide for production-ready LLM integration.
 
+## Agentic RAG Pipeline
+
+For more control over the RAG process, use the Agent pipeline:
+
+```elixir
+alias Arcana.Agent
+
+llm = fn prompt -> {:ok, "LLM response"} end
+
+ctx =
+  Agent.new("Compare Elixir and Erlang", repo: MyApp.Repo, llm: llm)
+  |> Agent.select(collections: ["elixir-docs", "erlang-docs"])
+  |> Agent.expand()
+  |> Agent.search()
+  |> Agent.answer()
+
+ctx.answer
+```
+
+### Pipeline Steps
+
+| Step | Purpose |
+|------|---------|
+| `new/2` | Initialize with question, repo, and LLM |
+| `select/2` | Choose which collections to search |
+| `expand/2` | Add synonyms to improve retrieval |
+| `decompose/2` | Split complex questions into parts |
+| `search/2` | Execute search (with optional self-correction) |
+| `answer/2` | Generate final answer |
+
+### Expand vs. Decompose
+
+Use **`expand/2`** when queries contain abbreviations, jargon, or domain-specific terms:
+
+```elixir
+# Before expand: "ML models"
+# After expand: "ML machine learning artificial intelligence models algorithms"
+
+ctx
+|> Agent.expand()
+|> Agent.search()
+```
+
+Use **`decompose/2`** when questions have multiple parts:
+
+```elixir
+# Before decompose: "What is X and how does it compare to Y?"
+# After decompose: ["What is X?", "How does it compare to Y?"]
+
+ctx
+|> Agent.decompose()
+|> Agent.search()  # Searches each sub-question
+```
+
+You can combine both:
+
+```elixir
+ctx
+|> Agent.expand()      # Adds synonyms to the original question
+|> Agent.decompose()   # Splits into sub-questions
+|> Agent.search()      # Searches each expanded sub-question
+```
+
+### Self-Correcting Search
+
+Enable automatic query refinement when results are insufficient:
+
+```elixir
+ctx
+|> Agent.search(self_correct: true, max_iterations: 3)
+```
+
+The agent will:
+1. Execute the search
+2. Ask the LLM if results are sufficient
+3. If not, rewrite the query and retry
+4. Repeat until sufficient or max iterations reached
+
 ## Query Rewriting
 
 Improve search results by rewriting queries before searching:

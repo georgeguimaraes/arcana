@@ -304,7 +304,7 @@ llm = fn prompt -> {:ok, "LLM response"} end
 ctx =
   Arcana.Agent.new("Compare Elixir and Erlang features", repo: MyApp.Repo, llm: llm)
   |> Arcana.Agent.select(collections: ["elixir-docs", "erlang-docs"])
-  |> Arcana.Agent.decompose()
+  |> Arcana.Agent.expand()
   |> Arcana.Agent.search(self_correct: true)
   |> Arcana.Agent.answer()
 
@@ -318,9 +318,17 @@ ctx.answer
 |------|-------------|
 | `new/2` | Initialize context with question and options |
 | `select/2` | LLM selects relevant collections to search |
-| `decompose/2` | LLM breaks complex questions into sub-questions |
+| `expand/2` | Expand query with synonyms and related terms |
+| `decompose/2` | Break complex questions into sub-questions |
 | `search/2` | Execute search (with optional self-correction) |
 | `answer/2` | Generate final answer from retrieved context |
+
+**Query expansion vs. decomposition:**
+
+- `expand/2` adds synonyms to a single query: "ML models" → "ML machine learning artificial intelligence models"
+- `decompose/2` splits into multiple queries: "What is X and how does it compare to Y?" → ["What is X?", "How does it compare to Y?"]
+
+Use `expand/2` when queries use jargon or abbreviations. Use `decompose/2` for multi-part questions.
 
 #### Custom Prompts
 
@@ -329,6 +337,7 @@ All pipeline steps accept custom prompt functions:
 ```elixir
 ctx
 |> Agent.select(collections: [...], prompt: fn question, collections -> "..." end)
+|> Agent.expand(prompt: fn question -> "..." end)
 |> Agent.decompose(prompt: fn question -> "..." end)
 |> Agent.search(
   self_correct: true,
@@ -633,8 +642,8 @@ config :nx, default_backend: EXLA.Backend
 - [x] File ingestion (text, markdown, PDF)
 - [x] Telemetry events for observability
 - [x] In-memory vector store (HNSWLib backend)
+- [x] Query expansion (Agent.expand/2)
 - [ ] Async ingestion with Oban
-- [ ] Query rewriting
 - [ ] HyDE (Hypothetical Document Embeddings)
 - [ ] GraphRAG (knowledge graph + community summaries)
 - [x] Agentic RAG

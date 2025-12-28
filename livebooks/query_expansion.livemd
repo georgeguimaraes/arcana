@@ -1,0 +1,250 @@
+# Query Expansion with Arcana
+
+```elixir
+Mix.install([
+  {:arcana, path: ".."},
+  {:kino, "~> 0.12"}
+])
+```
+
+## Introduction
+
+Query expansion improves search results by adding synonyms and related terms to your search queries. This is particularly useful when:
+
+- Users search with abbreviations (e.g., "ML" instead of "machine learning")
+- Domain-specific jargon might not match document text
+- Queries are too short to capture intent
+
+## How It Works
+
+The `Agent.expand/2` step uses an LLM to analyze your query and add related terms:
+
+```
+Original: "ML models"
+Expanded: "ML machine learning artificial intelligence models algorithms neural networks"
+```
+
+The expanded query searches for documents matching any of these terms, improving recall.
+
+## Setup
+
+First, let's set up a simple mock LLM and some test data:
+
+```elixir
+# Start the test repo
+{:ok, _} = Arcana.TestRepo.start_link()
+
+# Create a mock LLM that expands queries
+expand_llm = fn prompt ->
+  cond do
+    prompt =~ "ML" or prompt =~ "machine learning" ->
+      {:ok, "ML machine learning artificial intelligence models algorithms deep learning neural networks"}
+
+    prompt =~ "API" ->
+      {:ok, "API application programming interface REST GraphQL endpoints HTTP requests"}
+
+    true ->
+      {:ok, prompt}  # Return as-is for unknown queries
+  end
+end
+```
+
+## Ingesting Test Documents
+
+Let's ingest some documents with different terminology:
+
+```elixir
+# Ingest documents about machine learning
+{:ok, _} = Arcana.ingest(
+  "Deep learning is a subset of machine learning that uses neural networks with many layers.",
+  repo: Arcana.TestRepo,
+  collection: "tech-docs"
+)
+
+{:ok, _} = Arcana.ingest(
+  "Artificial intelligence algorithms can process large amounts of data to find patterns.",
+  repo: Arcana.TestRepo,
+  collection: "tech-docs"
+)
+
+{:ok, _} = Arcana.ingest(
+  "REST APIs provide a standard way for applications to communicate over HTTP.",
+  repo: Arcana.TestRepo,
+  collection: "tech-docs"
+)
+
+IO.puts("Documents ingested successfully!")
+```
+
+## Searching Without Expansion
+
+Let's search for "ML" without expansion:
+
+```elixir
+results_without_expansion = Arcana.search("ML",
+  repo: Arcana.TestRepo,
+  collection: "tech-docs"
+)
+
+IO.puts("Results without expansion: #{length(results_without_expansion)}")
+Enum.each(results_without_expansion, fn r ->
+  IO.puts("  - #{String.slice(r.text, 0, 60)}...")
+end)
+```
+
+The search may not find documents that use "machine learning" or "artificial intelligence" instead of "ML".
+
+## Searching With Query Expansion
+
+Now let's use the Agent pipeline with `expand/2`:
+
+```elixir
+alias Arcana.Agent
+
+ctx =
+  Agent.new("ML", repo: Arcana.TestRepo, llm: expand_llm)
+  |> Agent.expand()
+  |> Agent.search()
+
+IO.puts("Expanded query: #{ctx.expanded_query}")
+IO.puts("Results with expansion: #{length(ctx.results |> Enum.flat_map(& &1.chunks))}")
+
+Enum.each(ctx.results, fn result ->
+  IO.puts("\nSearched for: #{result.question}")
+  Enum.each(result.chunks, fn chunk ->
+    IO.puts("  - #{String.slice(chunk.text, 0, 60)}...")
+  end)
+end)
+```
+
+## Expand vs. Decompose
+
+Arcana provides two different query transformation steps:
+
+### `expand/2` - Adds synonyms to a single query
+
+Best for abbreviations, jargon, and short queries:
+
+```elixir
+ctx =
+  Agent.new("ML models", repo: Arcana.TestRepo, llm: expand_llm)
+  |> Agent.expand()
+
+IO.puts("Original: ML models")
+IO.puts("Expanded: #{ctx.expanded_query}")
+```
+
+### `decompose/2` - Splits into multiple queries
+
+Best for complex, multi-part questions:
+
+```elixir
+decompose_llm = fn prompt ->
+  if prompt =~ "Break this question" do
+    {:ok, ~s({"sub_questions": ["What is machine learning?", "How does it work?"], "reasoning": "Split by topic"})}
+  else
+    {:ok, "Response"}
+  end
+end
+
+ctx =
+  Agent.new("What is ML and how does it work?", repo: Arcana.TestRepo, llm: decompose_llm)
+  |> Agent.decompose()
+
+IO.puts("Original: What is ML and how does it work?")
+IO.puts("Sub-questions: #{inspect(ctx.sub_questions)}")
+```
+
+### Combining Both
+
+You can use both in the same pipeline:
+
+```elixir
+full_llm = fn prompt ->
+  cond do
+    prompt =~ "Expand this search query" ->
+      {:ok, "machine learning AI artificial intelligence algorithms"}
+
+    prompt =~ "Break this question" ->
+      {:ok, ~s({"sub_questions": ["What is ML?", "What are ML use cases?"], "reasoning": "Split"})}
+
+    true ->
+      {:ok, "Answer based on context"}
+  end
+end
+
+ctx =
+  Agent.new("What is ML and what are its use cases?", repo: Arcana.TestRepo, llm: full_llm)
+  |> Agent.expand()
+  |> Agent.decompose()
+  |> Agent.search()
+  |> Agent.answer()
+
+IO.puts("Original question: #{ctx.question}")
+IO.puts("Expanded query: #{ctx.expanded_query}")
+IO.puts("Sub-questions: #{inspect(ctx.sub_questions)}")
+IO.puts("Total results: #{length(ctx.results)}")
+```
+
+## Custom Prompts
+
+You can customize the expansion prompt for your domain:
+
+```elixir
+custom_expand_prompt = fn question ->
+  """
+  You are a search query expander for a technical documentation system.
+
+  Expand this query with relevant technical synonyms and related terms.
+  Focus on terms that would appear in software documentation.
+
+  Query: #{question}
+
+  Return only the expanded query, nothing else.
+  """
+end
+
+ctx =
+  Agent.new("API endpoints", repo: Arcana.TestRepo, llm: expand_llm)
+  |> Agent.expand(prompt: custom_expand_prompt)
+
+IO.puts("Custom expanded: #{ctx.expanded_query}")
+```
+
+## Best Practices
+
+1. **Use expand for short queries** - Longer queries usually have enough context
+2. **Domain-specific prompts** - Tailor expansion prompts to your document domain
+3. **Combine with decompose** - Use both for complex questions with jargon
+4. **Monitor via telemetry** - Track expansion effectiveness with `:arcana, :agent, :expand` events
+
+## Telemetry Events
+
+The expand step emits telemetry events for monitoring:
+
+```elixir
+:telemetry.attach(
+  "expand-monitor",
+  [:arcana, :agent, :expand, :stop],
+  fn _event, measurements, metadata, _config ->
+    ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+    IO.puts("Expand took #{ms}ms: #{metadata.expanded_query}")
+  end,
+  nil
+)
+
+# Run a query to see the event
+Agent.new("ML", repo: Arcana.TestRepo, llm: expand_llm)
+|> Agent.expand()
+
+:telemetry.detach("expand-monitor")
+```
+
+## Summary
+
+Query expansion is a simple but powerful technique for improving search recall:
+
+- Use `Agent.expand/2` to add synonyms to queries
+- Use `Agent.decompose/2` to split complex questions
+- Combine both for comprehensive coverage
+- Customize prompts for your domain
