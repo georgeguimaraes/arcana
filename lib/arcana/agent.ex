@@ -172,6 +172,65 @@ defmodule Arcana.Agent do
     {fallback_collections, nil}
   end
 
+  @default_expand_prompt """
+  Expand this search query with synonyms and related terms to improve retrieval.
+  Return only the expanded query, nothing else.
+
+  Query: {query}
+  """
+
+  @doc """
+  Expands the query with synonyms and related terms.
+
+  Uses the LLM to add related terms and synonyms that may help
+  find more relevant documents. The expanded query is used by `search/2`
+  if present.
+
+  ## Options
+
+  - `:prompt` - Custom prompt function `fn question -> prompt_string end`
+
+  ## Example
+
+      ctx
+      |> Agent.expand()
+      |> Agent.search()
+      |> Agent.answer()
+
+  The expanded query is stored in `ctx.expanded_query` and used by `search/2`.
+  """
+  def expand(ctx, opts \\ [])
+
+  def expand(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
+
+  def expand(%Context{} = ctx, opts) do
+    start_metadata = %{question: ctx.question}
+
+    :telemetry.span([:arcana, :agent, :expand], start_metadata, fn ->
+      prompt =
+        case Keyword.get(opts, :prompt) do
+          nil -> default_expand_prompt(ctx.question)
+          custom_fn -> custom_fn.(ctx.question)
+        end
+
+      expanded_query =
+        case ctx.llm.(prompt) do
+          {:ok, expanded} -> String.trim(expanded)
+          {:error, _} -> nil
+        end
+
+      updated_ctx = %{ctx | expanded_query: expanded_query}
+
+      stop_metadata = %{expanded_query: expanded_query}
+
+      {updated_ctx, stop_metadata}
+    end)
+  end
+
+  defp default_expand_prompt(question) do
+    String.replace(@default_expand_prompt, "{query}", question)
+  end
+
   @doc """
   Breaks a complex question into simpler sub-questions.
 
@@ -284,7 +343,7 @@ defmodule Arcana.Agent do
     }
 
     :telemetry.span([:arcana, :agent, :search], start_metadata, fn ->
-      questions = ctx.sub_questions || [ctx.question]
+      questions = ctx.sub_questions || [ctx.expanded_query || ctx.question]
       collections = ctx.collections || ["default"]
 
       prompt_opts = %{

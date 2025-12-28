@@ -20,6 +20,9 @@ defmodule Arcana.Agent.Context do
   - `:collections` - List of collection names to search
   - `:selection_reasoning` - LLM's reasoning for the selection decision
 
+  ### Populated by `expand/2`
+  - `:expanded_query` - Query expanded with synonyms and related terms
+
   ### Populated by `decompose/1`
   - `:sub_questions` - List of sub-questions to search separately
 
@@ -47,6 +50,9 @@ defmodule Arcana.Agent.Context do
     # Populated by select/2
     :collections,
     :selection_reasoning,
+
+    # Populated by expand/2
+    :expanded_query,
 
     # Populated by decompose/1
     :sub_questions,
