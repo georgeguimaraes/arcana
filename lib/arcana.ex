@@ -93,7 +93,7 @@ defmodule Arcana do
     * `:metadata` - Optional map of metadata to store with the document
     * `:chunk_size` - Maximum chunk size in characters (default: 1024)
     * `:chunk_overlap` - Overlap between chunks (default: 200)
-    * `:collection` - Collection name to organize the document (default: "default")
+    * `:collection` - Collection name (string) or map with name and description (default: "default")
 
   ## Examples
 
@@ -101,13 +101,22 @@ defmodule Arcana do
       {:ok, doc} = Arcana.ingest("Hello", repo: MyApp.Repo, source_id: "doc-123")
       {:ok, doc} = Arcana.ingest("Hello", repo: MyApp.Repo, collection: "products")
 
+      # With collection description (helps Agent.select/2 make better routing decisions)
+      {:ok, doc} = Arcana.ingest("API docs",
+        repo: MyApp.Repo,
+        collection: %{name: "api", description: "REST API reference documentation"}
+      )
+
   """
   def ingest(text, opts) when is_binary(text) do
     opts = merge_defaults(opts)
     repo = Keyword.fetch!(opts, :repo)
     source_id = Keyword.get(opts, :source_id)
     metadata = Keyword.get(opts, :metadata, %{})
-    collection_name = Keyword.get(opts, :collection, "default")
+
+    {collection_name, collection_description} =
+      parse_collection_opt(Keyword.get(opts, :collection, "default"))
+
     chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap])
 
     start_metadata = %{
@@ -118,7 +127,7 @@ defmodule Arcana do
 
     :telemetry.span([:arcana, :ingest], start_metadata, fn ->
       # Get or create collection
-      {:ok, collection} = Collection.get_or_create(collection_name, repo)
+      {:ok, collection} = Collection.get_or_create(collection_name, repo, collection_description)
 
       # Create document
       {:ok, document} =
@@ -629,6 +638,10 @@ defmodule Arcana do
 
   # Merges application config defaults with provided options.
   # Options passed explicitly take precedence over config.
+  defp parse_collection_opt(name) when is_binary(name), do: {name, nil}
+  defp parse_collection_opt(%{name: name, description: desc}), do: {name, desc}
+  defp parse_collection_opt(%{name: name}), do: {name, nil}
+
   defp merge_defaults(opts) do
     defaults =
       [:repo, :llm]

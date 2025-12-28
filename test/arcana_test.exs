@@ -30,6 +30,44 @@ defmodule ArcanaTest do
 
       assert document.metadata == metadata
     end
+
+    test "accepts collection as string" do
+      {:ok, document} = Arcana.ingest("test", repo: Repo, collection: "my-collection")
+
+      collection = Repo.get!(Arcana.Collection, document.collection_id)
+      assert collection.name == "my-collection"
+    end
+
+    test "accepts collection as map with name and description" do
+      {:ok, document} =
+        Arcana.ingest("test",
+          repo: Repo,
+          collection: %{name: "docs", description: "Official documentation"}
+        )
+
+      collection = Repo.get!(Arcana.Collection, document.collection_id)
+      assert collection.name == "docs"
+      assert collection.description == "Official documentation"
+    end
+
+    test "updates collection description if already exists" do
+      # First, create the collection without description
+      {:ok, doc1} = Arcana.ingest("first doc", repo: Repo, collection: "existing")
+
+      collection1 = Repo.get!(Arcana.Collection, doc1.collection_id)
+      assert collection1.description == nil
+
+      # Now ingest with description - should update
+      {:ok, doc2} =
+        Arcana.ingest("second doc",
+          repo: Repo,
+          collection: %{name: "existing", description: "Now with description"}
+        )
+
+      collection2 = Repo.get!(Arcana.Collection, doc2.collection_id)
+      assert collection2.id == collection1.id
+      assert collection2.description == "Now with description"
+    end
   end
 
   describe "search/2" do

@@ -163,6 +163,12 @@ For OpenAI embeddings or custom providers, skip this step.
   repo: MyApp.Repo,
   collection: "products"
 )
+
+# With collection description (helps Agent.select/2 route to the right collection)
+{:ok, document} = Arcana.ingest(content,
+  repo: MyApp.Repo,
+  collection: %{name: "api", description: "REST API reference documentation"}
+)
 ```
 
 #### Chunking Options
@@ -173,7 +179,7 @@ For OpenAI embeddings or custom providers, skip this step.
 | `:chunk_size` | `450` | Maximum chunk size in tokens |
 | `:chunk_overlap` | `50` | Overlap between chunks in tokens |
 | `:size_unit` | `:tokens` | Size measurement: `:tokens` or `:characters` |
-| `:collection` | `"default"` | Collection name for document segmentation |
+| `:collection` | `"default"` | Collection name (string) or map with `:name` and `:description` |
 
 #### Supported File Formats
 

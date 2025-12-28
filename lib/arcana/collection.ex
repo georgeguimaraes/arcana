@@ -33,21 +33,38 @@ defmodule Arcana.Collection do
   @doc """
   Gets an existing collection by name or creates a new one.
 
+  If a description is provided and the collection already exists,
+  the description is updated only if the existing one is nil or empty.
+
   ## Examples
 
       {:ok, collection} = Collection.get_or_create("products", MyRepo)
       {:ok, collection} = Collection.get_or_create("default", MyRepo)
+      {:ok, collection} = Collection.get_or_create("docs", MyRepo, "Official documentation")
 
   """
-  def get_or_create(name, repo) when is_binary(name) do
+  def get_or_create(name, repo, description \\ nil) when is_binary(name) do
     case repo.get_by(__MODULE__, name: name) do
       nil ->
         %__MODULE__{}
-        |> changeset(%{name: name})
+        |> changeset(%{name: name, description: description})
         |> repo.insert()
 
       collection ->
-        {:ok, collection}
+        maybe_update_description(collection, description, repo)
+    end
+  end
+
+  defp maybe_update_description(collection, nil, _repo), do: {:ok, collection}
+  defp maybe_update_description(collection, "", _repo), do: {:ok, collection}
+
+  defp maybe_update_description(collection, description, repo) do
+    if is_nil(collection.description) or collection.description == "" do
+      collection
+      |> changeset(%{description: description})
+      |> repo.update()
+    else
+      {:ok, collection}
     end
   end
 end

@@ -95,6 +95,13 @@ For OpenAI embeddings or custom providers, see the [LLM Integration](llm-integra
   repo: MyApp.Repo,
   collection: "products"
 )
+
+# With collection description (helps Agent.select/2 route to the right collection)
+{:ok, document} = Arcana.ingest(
+  "API reference",
+  repo: MyApp.Repo,
+  collection: %{name: "api", description: "REST API endpoints and parameters"}
+)
 ```
 
 > **Note:** PDF support requires `pdftotext` from the Poppler library. Install with:
