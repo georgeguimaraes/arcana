@@ -1,0 +1,343 @@
+# Re-ranking with Arcana
+
+```elixir
+Mix.install([
+  {:arcana, path: ".."},
+  {:kino, "~> 0.12"}
+])
+```
+
+## Introduction
+
+Re-ranking improves search result quality by scoring each retrieved chunk's relevance to the question, then filtering and re-sorting by score. This is particularly useful when:
+
+- Initial retrieval returns many marginally relevant chunks
+- You want to reduce noise before generating an answer
+- Quality matters more than recall
+
+## How It Works
+
+The `Agent.rerank/2` step uses an LLM to score each chunk:
+
+```
+Retrieved chunks: [chunk1, chunk2, chunk3, chunk4, chunk5]
+                      ↓
+LLM scores each:  [  9,     3,      8,     2,      7  ]
+                      ↓
+Filter (≥7):      [chunk1,         chunk3,        chunk5]
+                      ↓
+Sort by score:    [chunk1, chunk3, chunk5]  # 9, 8, 7
+```
+
+## Setup
+
+First, let's set up a mock LLM and some test data:
+
+```elixir
+# Start the test repo
+{:ok, _} = Arcana.TestRepo.start_link()
+
+# Create a mock LLM that scores based on relevance
+scoring_llm = fn prompt ->
+  cond do
+    prompt =~ "functional programming" and prompt =~ "Rate how relevant" ->
+      {:ok, ~s({"score": 9, "reasoning": "directly relevant to Elixir"})}
+
+    prompt =~ "weather" and prompt =~ "Rate how relevant" ->
+      {:ok, ~s({"score": 2, "reasoning": "not relevant to programming"})}
+
+    prompt =~ "BEAM" and prompt =~ "Rate how relevant" ->
+      {:ok, ~s({"score": 8, "reasoning": "related infrastructure"})}
+
+    prompt =~ "Rate how relevant" ->
+      {:ok, ~s({"score": 5, "reasoning": "somewhat relevant"})}
+
+    true ->
+      {:ok, "Elixir is a functional programming language."}
+  end
+end
+```
+
+## Ingesting Test Documents
+
+Let's ingest some documents with varying relevance:
+
+```elixir
+# Ingest documents about Elixir and unrelated topics
+{:ok, _} = Arcana.ingest(
+  "Elixir is a functional programming language designed for building scalable applications.",
+  repo: Arcana.TestRepo,
+  collection: "rerank-demo"
+)
+
+{:ok, _} = Arcana.ingest(
+  "The weather forecast shows sunny skies for the weekend.",
+  repo: Arcana.TestRepo,
+  collection: "rerank-demo"
+)
+
+{:ok, _} = Arcana.ingest(
+  "Elixir runs on the BEAM virtual machine, which provides fault tolerance.",
+  repo: Arcana.TestRepo,
+  collection: "rerank-demo"
+)
+
+{:ok, _} = Arcana.ingest(
+  "Phoenix is a web framework built with Elixir for real-time applications.",
+  repo: Arcana.TestRepo,
+  collection: "rerank-demo"
+)
+
+IO.puts("Documents ingested successfully!")
+```
+
+## Searching Without Re-ranking
+
+Let's search without re-ranking first:
+
+```elixir
+alias Arcana.Agent
+alias Arcana.Agent.Context
+
+ctx =
+  %Context{
+    question: "What is Elixir?",
+    repo: Arcana.TestRepo,
+    llm: scoring_llm,
+    limit: 10,
+    threshold: 0.0,
+    collections: ["rerank-demo"]
+  }
+  |> Agent.search()
+
+IO.puts("Results without re-ranking: #{length(Enum.flat_map(ctx.results, & &1.chunks))}")
+
+Enum.each(ctx.results, fn result ->
+  IO.puts("\nQuestion: #{result.question}")
+  Enum.each(result.chunks, fn chunk ->
+    IO.puts("  - #{String.slice(chunk.text, 0, 60)}...")
+  end)
+end)
+```
+
+## Searching With Re-ranking
+
+Now let's add re-ranking to filter out irrelevant chunks:
+
+```elixir
+ctx =
+  %Context{
+    question: "What is Elixir?",
+    repo: Arcana.TestRepo,
+    llm: scoring_llm,
+    limit: 10,
+    threshold: 0.0,
+    collections: ["rerank-demo"]
+  }
+  |> Agent.search()
+  |> Agent.rerank(threshold: 7)
+
+IO.puts("Results with re-ranking (threshold: 7): #{length(Enum.flat_map(ctx.results, & &1.chunks))}")
+
+Enum.each(ctx.results, fn result ->
+  Enum.each(result.chunks, fn chunk ->
+    IO.puts("  - #{String.slice(chunk.text, 0, 60)}...")
+  end)
+end)
+
+IO.puts("\nRerank scores: #{inspect(ctx.rerank_scores)}")
+```
+
+## Adjusting the Threshold
+
+You can adjust the threshold to be more or less strict:
+
+```elixir
+# Strict threshold (only highly relevant)
+strict_ctx =
+  %Context{
+    question: "What is Elixir?",
+    repo: Arcana.TestRepo,
+    llm: scoring_llm,
+    limit: 10,
+    threshold: 0.0,
+    collections: ["rerank-demo"]
+  }
+  |> Agent.search()
+  |> Agent.rerank(threshold: 9)
+
+IO.puts("Strict threshold (9+): #{length(Enum.flat_map(strict_ctx.results, & &1.chunks))} chunks")
+
+# Lenient threshold
+lenient_ctx =
+  %Context{
+    question: "What is Elixir?",
+    repo: Arcana.TestRepo,
+    llm: scoring_llm,
+    limit: 10,
+    threshold: 0.0,
+    collections: ["rerank-demo"]
+  }
+  |> Agent.search()
+  |> Agent.rerank(threshold: 4)
+
+IO.puts("Lenient threshold (4+): #{length(Enum.flat_map(lenient_ctx.results, & &1.chunks))} chunks")
+```
+
+## Custom Reranker
+
+You can implement your own reranker for specialized scoring logic:
+
+```elixir
+# Custom reranker that filters by keyword
+keyword_reranker = fn _question, chunks, _opts ->
+  filtered = Enum.filter(chunks, fn chunk ->
+    chunk.text =~ "Elixir" or chunk.text =~ "BEAM"
+  end)
+  {:ok, filtered}
+end
+
+ctx =
+  %Context{
+    question: "What is Elixir?",
+    repo: Arcana.TestRepo,
+    llm: scoring_llm,
+    limit: 10,
+    threshold: 0.0,
+    collections: ["rerank-demo"]
+  }
+  |> Agent.search()
+  |> Agent.rerank(reranker: keyword_reranker)
+
+IO.puts("Custom reranker results: #{length(Enum.flat_map(ctx.results, & &1.chunks))}")
+```
+
+## Custom Reranker Module
+
+For more complex logic, implement the `Arcana.Reranker` behaviour:
+
+```elixir
+defmodule MyReranker do
+  @behaviour Arcana.Reranker
+
+  @impl Arcana.Reranker
+  def rerank(question, chunks, opts) do
+    threshold = Keyword.get(opts, :threshold, 5)
+
+    scored_chunks =
+      chunks
+      |> Enum.map(fn chunk ->
+        score = if chunk.text =~ "Elixir", do: 10, else: 3
+        {chunk, score}
+      end)
+      |> Enum.filter(fn {_chunk, score} -> score >= threshold end)
+      |> Enum.sort_by(fn {_chunk, score} -> score end, :desc)
+      |> Enum.map(fn {chunk, _score} -> chunk end)
+
+    {:ok, scored_chunks}
+  end
+end
+
+ctx =
+  %Context{
+    question: "What is Elixir?",
+    repo: Arcana.TestRepo,
+    llm: scoring_llm,
+    limit: 10,
+    threshold: 0.0,
+    collections: ["rerank-demo"]
+  }
+  |> Agent.search()
+  |> Agent.rerank(reranker: MyReranker, threshold: 5)
+
+IO.puts("Custom module reranker: #{length(Enum.flat_map(ctx.results, & &1.chunks))} chunks")
+```
+
+## Full Pipeline with Re-ranking
+
+Here's a complete pipeline using re-ranking:
+
+```elixir
+full_llm = fn prompt ->
+  cond do
+    prompt =~ "Rate how relevant" ->
+      cond do
+        prompt =~ "functional" -> {:ok, ~s({"score": 9, "reasoning": "highly relevant"})}
+        prompt =~ "BEAM" -> {:ok, ~s({"score": 8, "reasoning": "relevant"})}
+        prompt =~ "Phoenix" -> {:ok, ~s({"score": 7, "reasoning": "related framework"})}
+        true -> {:ok, ~s({"score": 3, "reasoning": "not relevant"})}
+      end
+
+    prompt =~ "Answer the question" ->
+      {:ok, "Elixir is a functional programming language that runs on the BEAM VM, designed for building scalable and fault-tolerant applications."}
+
+    true ->
+      {:ok, "response"}
+  end
+end
+
+ctx =
+  %Context{
+    question: "What is Elixir?",
+    repo: Arcana.TestRepo,
+    llm: full_llm,
+    limit: 10,
+    threshold: 0.0,
+    collections: ["rerank-demo"]
+  }
+  |> Agent.search()
+  |> Agent.rerank(threshold: 7)
+  |> Agent.answer()
+
+IO.puts("Question: #{ctx.question}")
+IO.puts("Chunks used: #{length(ctx.context_used)}")
+IO.puts("Answer: #{ctx.answer}")
+```
+
+## Telemetry Events
+
+The rerank step emits telemetry events for monitoring:
+
+```elixir
+:telemetry.attach(
+  "rerank-monitor",
+  [:arcana, :agent, :rerank, :stop],
+  fn _event, measurements, metadata, _config ->
+    ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+    IO.puts("Rerank: #{metadata.chunks_before} -> #{metadata.chunks_after} chunks in #{ms}ms")
+  end,
+  nil
+)
+
+# Run a query to see the event
+%Context{
+  question: "Elixir",
+  repo: Arcana.TestRepo,
+  llm: scoring_llm,
+  limit: 10,
+  threshold: 0.0,
+  collections: ["rerank-demo"]
+}
+|> Agent.search()
+|> Agent.rerank()
+
+:telemetry.detach("rerank-monitor")
+```
+
+## Best Practices
+
+1. **Start with default threshold (7)** - Adjust based on your quality requirements
+2. **Monitor with telemetry** - Track chunks_before/after to tune effectiveness
+3. **Consider latency** - Re-ranking adds an LLM call per chunk
+4. **Use custom rerankers** - For domain-specific scoring or cross-encoder models
+5. **Combine with expand** - Expand queries first, then rerank to filter noise
+
+## Summary
+
+Re-ranking improves result quality by:
+
+- Scoring each chunk's relevance using the LLM
+- Filtering out chunks below the threshold
+- Re-sorting by relevance score
+
+Use it when quality matters more than latency, or when initial retrieval returns too much noise.

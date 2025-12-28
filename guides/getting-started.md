@@ -178,6 +178,7 @@ ctx.answer
 | `expand/2` | Add synonyms to improve retrieval |
 | `decompose/2` | Split complex questions into parts |
 | `search/2` | Execute search (with optional self-correction) |
+| `rerank/2` | Re-score and filter chunks by relevance |
 | `answer/2` | Generate final answer |
 
 ### Expand vs. Decompose
@@ -227,6 +228,36 @@ The agent will:
 2. Ask the LLM if results are sufficient
 3. If not, rewrite the query and retry
 4. Repeat until sufficient or max iterations reached
+
+### Re-ranking
+
+Improve result quality by re-scoring chunks after retrieval:
+
+```elixir
+ctx
+|> Agent.search()
+|> Agent.rerank(threshold: 7)  # Keep chunks scoring 7+/10
+|> Agent.answer()
+```
+
+The LLM scores each chunk's relevance to the question. Chunks below the threshold are filtered out, and remaining chunks are sorted by score.
+
+For custom re-ranking logic (e.g., cross-encoder models):
+
+```elixir
+# Custom reranker module
+defmodule MyApp.CrossEncoderReranker do
+  @behaviour Arcana.Reranker
+
+  @impl true
+  def rerank(question, chunks, _opts) do
+    # Your scoring logic here
+    {:ok, scored_chunks}
+  end
+end
+
+ctx |> Agent.rerank(reranker: MyApp.CrossEncoderReranker)
+```
 
 ## Query Rewriting
 

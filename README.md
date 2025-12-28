@@ -1,8 +1,6 @@
 # Arcana
 
-Embeddable RAG (Retrieval Augmented Generation) library for Elixir. Add vector search and document retrieval to any Phoenix application.
-
-Similar to how Oban works - add the dependency, configure it, and embed it in your supervision tree.
+Embeddable Agentic RAG library for Elixir/Phoenix. Add vector search, document retrieval, and AI-powered question answering to any Phoenix application.
 
 ## Features
 
@@ -321,6 +319,7 @@ ctx.answer
 | `expand/2` | Expand query with synonyms and related terms |
 | `decompose/2` | Break complex questions into sub-questions |
 | `search/2` | Execute search (with optional self-correction) |
+| `rerank/2` | Re-score and filter chunks by relevance |
 | `answer/2` | Generate final answer from retrieved context |
 
 **Query expansion vs. decomposition:**
@@ -329,6 +328,39 @@ ctx.answer
 - `decompose/2` splits into multiple queries: "What is X and how does it compare to Y?" → ["What is X?", "How does it compare to Y?"]
 
 Use `expand/2` when queries use jargon or abbreviations. Use `decompose/2` for multi-part questions.
+
+**Re-ranking:**
+
+`rerank/2` improves result quality by scoring each chunk's relevance using the LLM, then filtering by threshold:
+
+```elixir
+ctx
+|> Agent.search()
+|> Agent.rerank(threshold: 7)  # Keep chunks scoring 7+/10
+|> Agent.answer()
+```
+
+For custom re-ranking logic, provide a module or function:
+
+```elixir
+# Custom reranker module
+defmodule MyApp.CrossEncoderReranker do
+  @behaviour Arcana.Reranker
+
+  @impl true
+  def rerank(question, chunks, _opts) do
+    # Your cross-encoder logic here
+    {:ok, scored_and_filtered_chunks}
+  end
+end
+
+Agent.rerank(ctx, reranker: MyApp.CrossEncoderReranker)
+
+# Or inline function
+Agent.rerank(ctx, reranker: fn question, chunks, _opts ->
+  {:ok, filter_by_custom_logic(question, chunks)}
+end)
+```
 
 #### Custom Prompts
 
@@ -344,6 +376,7 @@ ctx
   sufficient_prompt: fn question, chunks -> "..." end,
   rewrite_prompt: fn question, chunks -> "..." end
 )
+|> Agent.rerank(prompt: fn question, chunk_text -> "..." end)
 |> Agent.answer(prompt: fn question, chunks -> "..." end)
 ```
 
@@ -619,7 +652,7 @@ config :nx, default_backend: EXLA.Backend
 │                     Your Phoenix App                     │
 ├─────────────────────────────────────────────────────────┤
 │                    Arcana.Agent                          │
-│     (route → decompose → search → answer pipeline)      │
+│  (select → expand → search → rerank → answer pipeline)  │
 ├─────────────────────────────────────────────────────────┤
 │  Arcana.ask/2   │  Arcana.search/2  │  Arcana.ingest/2  │
 ├─────────────────┴───────────────────┴───────────────────┤
