@@ -1,5 +1,8 @@
 defmodule Arcana.TelemetryTest do
-  use Arcana.DataCase, async: true
+  # async: false because telemetry events are global and can interfere
+  # across parallel tests (e.g., ask test's internal search can trigger
+  # events that the search test receives)
+  use Arcana.DataCase, async: false
 
   alias Arcana.Embeddings.Serving
 
