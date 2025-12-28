@@ -4,13 +4,15 @@ Embeddable RAG library for Elixir/Phoenix. Add vector search, document retrieval
 
 ## Features
 
-- **Local embeddings** - Uses Bumblebee with `bge-small-en-v1.5` (no API keys needed)
-- **pgvector storage** - HNSW index for fast similarity search
+- **Simple API** - `ingest/2`, `search/2`, `ask/2` for basic RAG
+- **Agentic RAG** - Pipeline with query expansion, decomposition, re-ranking, and self-correction
 - **Hybrid search** - Vector, full-text, or combined with Reciprocal Rank Fusion
-- **Simple API** - `ingest/2`, `search/2`, `delete/2`
-- **Source scoping** - Filter searches by `source_id` for multi-tenant apps
+- **Multiple backends** - pgvector (default) or in-memory HNSWLib
+- **Configurable embeddings** - Local Bumblebee, OpenAI, or custom providers
+- **File ingestion** - Text, Markdown, and PDF support
 - **Embeddable** - Uses your existing Repo, no separate database
 - **LiveView Dashboard** - Optional web UI for managing documents and searching
+- **Telemetry** - Built-in observability for all operations
 
 ## Installation
 
