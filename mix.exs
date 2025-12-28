@@ -27,7 +27,12 @@ defmodule Arcana.MixProject do
       extras: [
         "README.md",
         "guides/getting-started.md",
-        "guides/llm-integration.md"
+        "guides/llm-integration.md",
+        "guides/agentic-rag.md",
+        "guides/reranking.md",
+        "guides/search-algorithms.md",
+        "guides/evaluation.md",
+        "guides/dashboard.md"
       ],
       groups_for_extras: [
         Guides: ~r/guides\/.*/

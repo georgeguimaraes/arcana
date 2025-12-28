@@ -319,4 +319,8 @@ Events follow the `:telemetry.span/3` convention with `:start`, `:stop`, and `:e
 ## Next Steps
 
 - [LLM Integration](llm-integration.md) - Connect Arcana to LLMs
-- API Reference - Full documentation of all modules
+- [Agentic RAG](agentic-rag.md) - Build sophisticated RAG pipelines
+- [Re-ranking](reranking.md) - Improve retrieval quality
+- [Search Algorithms](search-algorithms.md) - Hybrid search modes
+- [Evaluation](evaluation.md) - Measure retrieval quality
+- [Dashboard](dashboard.md) - Web UI setup
