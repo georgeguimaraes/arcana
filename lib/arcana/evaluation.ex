@@ -66,12 +66,20 @@ defmodule Arcana.Evaluation do
     if Enum.empty?(test_cases) do
       {:error, :no_test_cases}
     else
+      # Build config with full Arcana settings
+      arcana_config = Arcana.config()
+
+      run_config =
+        arcana_config
+        |> Map.put(:mode, mode)
+        |> Map.put(:source_id, source_id)
+
       # Create a run record
       {:ok, run} =
         %Run{}
         |> Run.changeset(%{
           status: :running,
-          config: %{mode: mode, source_id: source_id},
+          config: run_config,
           test_case_count: length(test_cases)
         })
         |> repo.insert()

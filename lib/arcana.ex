@@ -66,6 +66,35 @@ defmodule Arcana do
     |> parse_embedder_config()
   end
 
+  @doc """
+  Returns the current Arcana configuration.
+
+  Useful for logging, debugging, and storing with evaluation runs
+  to track which settings produced which results.
+
+  ## Example
+
+      Arcana.config()
+      # => %{
+      #   embedding: %{module: Arcana.Embedding.Local, model: "BAAI/bge-small-en-v1.5", dimensions: 384},
+      #   vector_store: :pgvector
+      # }
+
+  """
+  def config do
+    {emb_module, emb_opts} = embedder()
+    model = Keyword.get(emb_opts, :model, "BAAI/bge-small-en-v1.5")
+
+    %{
+      embedding: %{
+        module: emb_module,
+        model: model,
+        dimensions: Arcana.Embedding.dimensions(embedder())
+      },
+      vector_store: Application.get_env(:arcana, :vector_store, :pgvector)
+    }
+  end
+
   defp parse_embedder_config(:local), do: {Arcana.Embedding.Local, []}
   defp parse_embedder_config({:local, opts}), do: {Arcana.Embedding.Local, opts}
   defp parse_embedder_config(:openai), do: {Arcana.Embedding.OpenAI, []}

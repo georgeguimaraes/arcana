@@ -87,6 +87,20 @@ defmodule Arcana.EvaluationTest do
 
       assert {:error, :no_test_cases} = Evaluation.run(repo: Repo)
     end
+
+    test "saves full Arcana config in run", %{test_cases: _test_cases} do
+      {:ok, run} = Evaluation.run(repo: Repo, mode: :semantic)
+
+      # Should save embedding config
+      assert run.config.embedding.model == "BAAI/bge-small-en-v1.5"
+      assert run.config.embedding.dimensions == 384
+
+      # Should save search mode
+      assert run.config.mode == :semantic
+
+      # Should save vector store backend
+      assert run.config.vector_store in [:pgvector, :memory]
+    end
   end
 
   describe "list_test_cases/1" do
