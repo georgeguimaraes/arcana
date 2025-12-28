@@ -1,4 +1,4 @@
-# Arcana
+# Arcana 🔮📚
 
 Embeddable RAG library for Elixir/Phoenix. Add vector search, document retrieval, and AI-powered question answering to any Phoenix application. Supports both simple RAG and agentic RAG with query expansion, self-correction, and multi-step reasoning.
 

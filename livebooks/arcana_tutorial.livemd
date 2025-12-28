@@ -1,4 +1,4 @@
-# Arcana Tutorial
+# Arcana 🔮📚 Tutorial
 
 ```elixir
 Mix.install([

@@ -1,4 +1,4 @@
-# Getting Started with Arcana
+# Getting Started with Arcana 🔮📚
 
 Arcana is a RAG (Retrieval Augmented Generation) library for Elixir that lets you build AI-powered search and question-answering into your Phoenix applications.
 
