@@ -40,6 +40,7 @@ defmodule ArcanaWeb.DashboardLive do
         max_file_size: 10_000_000
       )
       |> assign(selected_collection: nil)
+      |> assign(editing_collection: nil, confirm_delete_collection: nil)
       |> load_collections()
       |> load_documents()
       |> load_source_ids()
@@ -259,6 +260,77 @@ defmodule ArcanaWeb.DashboardLive do
     {:noreply, socket}
   end
 
+  # Collection CRUD events
+  def handle_event("create_collection", %{"collection" => params}, socket) do
+    repo = socket.assigns.repo
+    name = params["name"] || ""
+    description = params["description"]
+
+    case Collection.get_or_create(name, repo, description) do
+      {:ok, _collection} ->
+        {:noreply, load_collections(socket)}
+
+      {:error, changeset} ->
+        {:noreply,
+         put_flash(socket, :error, "Failed to create collection: #{inspect(changeset.errors)}")}
+    end
+  end
+
+  def handle_event("edit_collection", %{"id" => id}, socket) do
+    repo = socket.assigns.repo
+    collection = repo.get(Collection, id)
+    {:noreply, assign(socket, editing_collection: collection)}
+  end
+
+  def handle_event("cancel_edit_collection", _params, socket) do
+    {:noreply, assign(socket, editing_collection: nil)}
+  end
+
+  def handle_event("update_collection", %{"id" => id, "collection" => params}, socket) do
+    repo = socket.assigns.repo
+    collection = repo.get!(Collection, id)
+
+    changeset =
+      Collection.changeset(collection, %{
+        name: params["name"] || collection.name,
+        description: params["description"]
+      })
+
+    case repo.update(changeset) do
+      {:ok, _updated} ->
+        {:noreply, socket |> assign(editing_collection: nil) |> load_collections()}
+
+      {:error, changeset} ->
+        {:noreply, put_flash(socket, :error, "Failed to update: #{inspect(changeset.errors)}")}
+    end
+  end
+
+  def handle_event("confirm_delete_collection", %{"id" => id}, socket) do
+    {:noreply, assign(socket, confirm_delete_collection: id)}
+  end
+
+  def handle_event("cancel_delete_collection", _params, socket) do
+    {:noreply, assign(socket, confirm_delete_collection: nil)}
+  end
+
+  def handle_event("delete_collection", %{"id" => id}, socket) do
+    repo = socket.assigns.repo
+
+    case repo.get(Collection, id) do
+      nil ->
+        {:noreply, assign(socket, confirm_delete_collection: nil)}
+
+      collection ->
+        repo.delete!(collection)
+
+        {:noreply,
+         socket
+         |> assign(confirm_delete_collection: nil)
+         |> load_collections()
+         |> load_documents()}
+    end
+  end
+
   @impl true
   def handle_info({:reembed_progress, current, total}, socket) do
     {:noreply, assign(socket, reembed_progress: %{current: current, total: total})}
@@ -398,8 +470,16 @@ defmodule ArcanaWeb.DashboardLive do
     collections =
       repo.all(
         from(c in Collection,
+          left_join: d in Document,
+          on: d.collection_id == c.id,
+          group_by: c.id,
           order_by: c.name,
-          select: %{id: c.id, name: c.name}
+          select: %{
+            id: c.id,
+            name: c.name,
+            description: c.description,
+            document_count: count(d.id)
+          }
         )
       )
 
@@ -1081,6 +1161,14 @@ defmodule ArcanaWeb.DashboardLive do
           Documents
         </button>
         <button
+          data-tab="collections"
+          class={"arcana-tab #{if @tab == :collections, do: "active", else: ""}"}
+          phx-click="switch_tab"
+          phx-value-tab="collections"
+        >
+          Collections
+        </button>
+        <button
           data-tab="search"
           class={"arcana-tab #{if @tab == :search, do: "active", else: ""}"}
           phx-click="switch_tab"
@@ -1125,6 +1213,12 @@ defmodule ArcanaWeb.DashboardLive do
               uploads={@uploads}
               upload_error={@upload_error}
               collections={@collections}
+            />
+          <% :collections -> %>
+            <.collections_tab
+              collections={@collections}
+              editing_collection={@editing_collection}
+              confirm_delete={@confirm_delete_collection}
             />
           <% :search -> %>
             <.search_tab results={@search_results} query={@search_query} source_ids={@source_ids} collections={@collections} />
@@ -1744,6 +1838,142 @@ defmodule ArcanaWeb.DashboardLive do
   end
 
   defp format_embedding_config(other), do: %{type: :unknown, raw: inspect(other)}
+
+  defp collections_tab(assigns) do
+    ~H"""
+    <div class="arcana-collections">
+      <h2>Collections</h2>
+
+      <div class="arcana-ingest-form">
+        <h3>Create Collection</h3>
+        <form id="new-collection-form" phx-submit="create_collection">
+          <div class="arcana-form-row">
+            <input
+              type="text"
+              name="collection[name]"
+              placeholder="Collection name"
+              class="arcana-input"
+              required
+            />
+            <input
+              type="text"
+              name="collection[description]"
+              placeholder="Description (optional)"
+              class="arcana-input"
+              style="flex: 2;"
+            />
+            <button type="submit" class="arcana-btn arcana-btn-primary">
+              Create
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div class="arcana-doc-list">
+        <%= if Enum.empty?(@collections) do %>
+          <div class="arcana-empty">No collections yet. Create one above.</div>
+        <% else %>
+          <table class="arcana-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Description</th>
+                <th>Documents</th>
+                <th style="width: 120px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <%= for collection <- @collections do %>
+                <tr id={"collection-#{collection.name}"}>
+                  <%= if @editing_collection && @editing_collection.id == collection.id do %>
+                    <td colspan="4">
+                      <form
+                        id={"edit-collection-form-#{collection.id}"}
+                        phx-submit="update_collection"
+                        phx-value-id={collection.id}
+                        class="arcana-edit-form"
+                      >
+                        <div class="arcana-form-row">
+                          <input
+                            type="text"
+                            name="collection[name]"
+                            value={collection.name}
+                            class="arcana-input"
+                            disabled
+                          />
+                          <input
+                            type="text"
+                            name="collection[description]"
+                            value={collection.description || ""}
+                            placeholder="Description"
+                            class="arcana-input"
+                            style="flex: 2;"
+                          />
+                          <button type="submit" class="arcana-btn arcana-btn-primary">Save</button>
+                          <button
+                            type="button"
+                            class="arcana-btn"
+                            phx-click="cancel_edit_collection"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    </td>
+                  <% else %>
+                    <td><code><%= collection.name %></code></td>
+                    <td><%= collection.description || "-" %></td>
+                    <td>
+                      <%= collection.document_count %> <%= if collection.document_count == 1, do: "document", else: "documents" %>
+                    </td>
+                    <td>
+                      <%= if @confirm_delete == collection.id do %>
+                        <div class="arcana-confirm-delete">
+                          <span>Delete?</span>
+                          <button
+                            id="confirm-delete"
+                            class="arcana-btn arcana-btn-danger"
+                            phx-click="delete_collection"
+                            phx-value-id={collection.id}
+                          >
+                            Yes
+                          </button>
+                          <button
+                            class="arcana-btn"
+                            phx-click="cancel_delete_collection"
+                          >
+                            No
+                          </button>
+                        </div>
+                      <% else %>
+                        <button
+                          id={"edit-collection-#{collection.id}"}
+                          class="arcana-btn"
+                          phx-click="edit_collection"
+                          phx-value-id={collection.id}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          id={"delete-collection-#{collection.id}"}
+                          class="arcana-btn arcana-btn-danger"
+                          phx-click="confirm_delete_collection"
+                          phx-value-id={collection.id}
+                        >
+                          Delete
+                        </button>
+                      <% end %>
+                    </td>
+                  <% end %>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
 
   defp info_tab(assigns) do
     ~H"""
