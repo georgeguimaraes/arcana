@@ -507,6 +507,109 @@ defmodule Arcana.Agent do
   end
 
   @doc """
+  Re-ranks search results to improve quality before answering.
+
+  Scores each chunk based on relevance to the question, filters by threshold,
+  and re-sorts by score. Uses `Arcana.Reranker.LLM` by default.
+
+  ## Options
+
+  - `:reranker` - Custom reranker module or function (default: `Arcana.Reranker.LLM`)
+  - `:threshold` - Minimum score to keep (default: 7, range 0-10)
+  - `:prompt` - Custom prompt function for LLM reranker `fn question, chunk_text -> prompt end`
+
+  ## Example
+
+      ctx
+      |> Agent.search()
+      |> Agent.rerank()
+      |> Agent.answer()
+
+  ## Custom Reranker
+
+      # Module implementing Arcana.Reranker behaviour
+      Agent.rerank(ctx, reranker: MyApp.CrossEncoderReranker)
+
+      # Inline function
+      Agent.rerank(ctx, reranker: fn question, chunks, opts ->
+        {:ok, my_rerank(question, chunks)}
+      end)
+
+  The reranked results replace `ctx.results`, and scores are stored in `ctx.rerank_scores`.
+  """
+  def rerank(ctx, opts \\ [])
+
+  def rerank(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
+
+  def rerank(%Context{results: nil} = ctx, _opts), do: %{ctx | results: [], rerank_scores: %{}}
+
+  def rerank(%Context{results: []} = ctx, _opts), do: %{ctx | rerank_scores: %{}}
+
+  def rerank(%Context{} = ctx, opts) do
+    reranker = Keyword.get(opts, :reranker, Arcana.Reranker.LLM)
+    threshold = Keyword.get(opts, :threshold, 7)
+    prompt_fn = Keyword.get(opts, :prompt)
+
+    start_metadata = %{
+      question: ctx.question,
+      reranker: reranker_name(reranker)
+    }
+
+    :telemetry.span([:arcana, :agent, :rerank], start_metadata, fn ->
+      all_chunks_before =
+        ctx.results
+        |> Enum.flat_map(& &1.chunks)
+
+      reranker_opts = [llm: ctx.llm, threshold: threshold, prompt: prompt_fn]
+
+      {reranked_chunks, scores} =
+        case do_rerank(reranker, ctx.question, all_chunks_before, reranker_opts) do
+          {:ok, chunks} ->
+            # Build scores map from the reranked order
+            scores_map =
+              chunks
+              |> Enum.with_index()
+              |> Enum.map(fn {chunk, idx} -> {chunk.id, length(chunks) - idx} end)
+              |> Map.new()
+
+            {chunks, scores_map}
+
+          {:error, _reason} ->
+            # On error, keep original chunks
+            {all_chunks_before, %{}}
+        end
+
+      # Update results with reranked chunks (flattened into single result)
+      updated_results =
+        if Enum.empty?(reranked_chunks) do
+          []
+        else
+          [%{question: ctx.question, collection: "reranked", chunks: reranked_chunks}]
+        end
+
+      updated_ctx = %{ctx | results: updated_results, rerank_scores: scores}
+
+      stop_metadata = %{
+        chunks_before: length(all_chunks_before),
+        chunks_after: length(reranked_chunks)
+      }
+
+      {updated_ctx, stop_metadata}
+    end)
+  end
+
+  defp reranker_name(reranker) when is_atom(reranker), do: reranker
+  defp reranker_name(_reranker), do: :custom_function
+
+  defp do_rerank(reranker, question, chunks, opts) when is_atom(reranker) do
+    reranker.rerank(question, chunks, opts)
+  end
+
+  defp do_rerank(reranker, question, chunks, opts) when is_function(reranker, 3) do
+    reranker.(question, chunks, opts)
+  end
+
+  @doc """
   Generates the final answer from search results.
 
   Collects all chunks from results, deduplicates by ID, and prompts the LLM

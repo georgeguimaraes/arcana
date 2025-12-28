@@ -29,6 +29,9 @@ defmodule Arcana.Agent.Context do
   ### Populated by `search/2`
   - `:results` - List of `%{question: _, collection: _, chunks: _}` maps
 
+  ### Populated by `rerank/2`
+  - `:rerank_scores` - Map of chunk ID to score (for debugging/observability)
+
   ### Populated by `answer/1`
   - `:answer` - The generated answer
   - `:context_used` - Chunks used to generate the answer
@@ -59,6 +62,9 @@ defmodule Arcana.Agent.Context do
 
     # Populated by search/2
     :results,
+
+    # Populated by rerank/2
+    :rerank_scores,
 
     # Populated by answer/1
     :answer,
