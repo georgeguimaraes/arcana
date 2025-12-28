@@ -121,7 +121,7 @@ Uses your LLM to score each chunk:
 3. Filters chunks below threshold
 4. Sorts by score descending
 
-This is the default when you call `Agent.rerank/2`.
+This is the default when you call `Arcana.Agent.rerank/2`.
 
 ## Telemetry
 
