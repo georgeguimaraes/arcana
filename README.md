@@ -12,6 +12,7 @@ Embeddable RAG library for Elixir/Phoenix. Add vector search, document retrieval
 - **Multiple backends** - pgvector (default) or in-memory HNSWLib
 - **Configurable embeddings** - Local Bumblebee, OpenAI, or custom providers
 - **File ingestion** - Text, Markdown, and PDF support
+- **Evaluation** - Measure retrieval quality with MRR, Recall, Precision metrics
 - **Embeddable** - Uses your existing Repo, no separate database
 - **LiveView Dashboard** - Optional web UI for managing documents and searching
 - **Telemetry** - Built-in observability for all operations
@@ -419,6 +420,68 @@ ctx
 |> Agent.rerank(prompt: fn question, chunk_text -> "..." end)
 |> Agent.answer(prompt: fn question, chunks -> "..." end)
 ```
+
+## Evaluation
+
+Measure and improve your retrieval quality with Arcana's evaluation system.
+
+### Test Cases
+
+Create test cases that pair questions with their known relevant chunks:
+
+```elixir
+# Manual test case
+{:ok, test_case} = Arcana.Evaluation.create_test_case(
+  repo: MyApp.Repo,
+  question: "How do you manage state in Elixir?",
+  relevant_chunk_ids: [chunk.id]
+)
+
+# Generate synthetic test cases using LLM
+{:ok, test_cases} = Arcana.Evaluation.generate_test_cases(
+  repo: MyApp.Repo,
+  llm: Application.get_env(:arcana, :llm),
+  sample_size: 50,
+  collection: "elixir-docs"  # optional: filter by collection
+)
+```
+
+Or use the mix task:
+
+```bash
+mix arcana.eval.generate --sample-size 50 --collection elixir-docs
+```
+
+### Running Evaluations
+
+```elixir
+{:ok, run} = Arcana.Evaluation.run(repo: MyApp.Repo, mode: :semantic)
+
+run.metrics
+# => %{
+#   mrr: 0.76,
+#   recall_at_5: 0.84,
+#   precision_at_5: 0.68,
+#   hit_rate_at_5: 0.91
+# }
+```
+
+Or use the mix task:
+
+```bash
+mix arcana.eval.run --mode hybrid
+```
+
+### Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **MRR** | Mean Reciprocal Rank - average of 1/rank for first relevant result |
+| **Recall@K** | Fraction of relevant chunks found in top K |
+| **Precision@K** | Fraction of top K results that are relevant |
+| **Hit Rate@K** | Fraction of queries with at least one relevant in top K |
+
+See the [Evaluation Guide](guides/evaluation.md) for more details.
 
 ## Telemetry
 

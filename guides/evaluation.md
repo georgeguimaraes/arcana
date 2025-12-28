@@ -8,7 +8,7 @@ Arcana provides tools to evaluate how well your RAG pipeline retrieves relevant 
 
 1. **Test Cases** - Questions paired with their known relevant chunks
 2. **Evaluation Runs** - Execute searches and measure performance
-3. **Metrics** - Standard IR metrics (MRR, Precision, Recall)
+3. **Metrics** - Standard IR metrics (MRR, Precision, Recall, Hit Rate)
 
 ## Creating Test Cases
 
@@ -34,19 +34,43 @@ chunk = hd(chunks)
 Generate test cases automatically using an LLM:
 
 ```elixir
-llm = fn prompt ->
-  # Your LLM implementation
-  {:ok, LangChain.chat(prompt)}
-end
-
 {:ok, test_cases} = Arcana.Evaluation.generate_test_cases(
   repo: MyApp.Repo,
-  llm: llm,
+  llm: Application.get_env(:arcana, :llm),
   sample_size: 50
 )
 ```
 
 The generator samples random chunks and asks the LLM to create questions that should retrieve those chunks.
+
+#### Filtering by Collection
+
+Generate test cases from a specific collection:
+
+```elixir
+{:ok, test_cases} = Arcana.Evaluation.generate_test_cases(
+  repo: MyApp.Repo,
+  llm: Application.get_env(:arcana, :llm),
+  sample_size: 50,
+  collection: "elixir-docs"
+)
+```
+
+#### Using the Mix Task
+
+```bash
+# Generate 50 test cases (default)
+mix arcana.eval.generate
+
+# Custom sample size
+mix arcana.eval.generate --sample-size 100
+
+# From a specific collection
+mix arcana.eval.generate --collection elixir-docs
+
+# From a specific source
+mix arcana.eval.generate --source-id my-source
+```
 
 ## Running Evaluations
 
@@ -59,15 +83,38 @@ Run an evaluation against all test cases:
 )
 ```
 
+### Using the Mix Task
+
+```bash
+# Run with semantic search (default)
+mix arcana.eval.run
+
+# Run with hybrid search
+mix arcana.eval.run --mode hybrid
+
+# Run with full-text search
+mix arcana.eval.run --mode fulltext
+```
+
 ### Understanding Results
 
 ```elixir
 # Overall metrics
 run.metrics
 # => %{
-#   recall_at_5: 0.84,      # % of relevant chunks in top 5
-#   precision_at_5: 0.68,   # % of top 5 that are relevant
-#   mrr: 0.76               # Mean Reciprocal Rank
+#   recall_at_1: 0.62,
+#   recall_at_3: 0.78,
+#   recall_at_5: 0.84,
+#   recall_at_10: 0.91,
+#   precision_at_1: 0.62,
+#   precision_at_3: 0.52,
+#   precision_at_5: 0.34,
+#   precision_at_10: 0.18,
+#   mrr: 0.76,
+#   hit_rate_at_1: 0.62,
+#   hit_rate_at_3: 0.78,
+#   hit_rate_at_5: 0.84,
+#   hit_rate_at_10: 0.91
 # }
 
 # Per-case results
@@ -114,6 +161,16 @@ runs = Arcana.Evaluation.list_runs(repo: MyApp.Repo, limit: 10)
 {:ok, _} = Arcana.Evaluation.delete_run(run_id, repo: MyApp.Repo)
 ```
 
+## Dashboard
+
+The Arcana Dashboard provides a visual interface for evaluation:
+
+- **Test Cases tab** - View, generate, and delete test cases
+- **Run Evaluation tab** - Execute evaluations with different search modes
+- **History tab** - View past runs with metrics
+
+See the [Dashboard Guide](dashboard.md) for setup instructions.
+
 ## Metrics Explained
 
 | Metric | Description | Good Value |
@@ -121,6 +178,14 @@ runs = Arcana.Evaluation.list_runs(repo: MyApp.Repo, limit: 10)
 | **MRR** (Mean Reciprocal Rank) | Average of 1/rank for first relevant result | > 0.7 |
 | **Recall@K** | Fraction of relevant chunks found in top K | > 0.8 |
 | **Precision@K** | Fraction of top K results that are relevant | > 0.6 |
+| **Hit Rate@K** | Fraction of queries with at least one relevant result in top K | > 0.9 |
+
+### Which Metric to Focus On?
+
+- **MRR** - Best for single-answer scenarios where you need the relevant chunk first
+- **Recall@K** - Important when you need to find all relevant information
+- **Precision@K** - Matters when you want to minimize irrelevant context
+- **Hit Rate@K** - Good baseline to ensure retrieval is working at all
 
 ## Best Practices
 
@@ -128,3 +193,5 @@ runs = Arcana.Evaluation.list_runs(repo: MyApp.Repo, limit: 10)
 2. **Sufficient sample size** - Aim for 50+ test cases for reliable metrics
 3. **Regular evaluation** - Re-run after changing embeddings, chunking, or search settings
 4. **Track over time** - Compare runs to ensure changes improve quality
+5. **Use collection filtering** - Evaluate specific document collections separately
+6. **Test all search modes** - Compare semantic, fulltext, and hybrid to find what works best
