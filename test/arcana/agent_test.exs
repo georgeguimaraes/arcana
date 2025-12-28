@@ -221,8 +221,10 @@ defmodule Arcana.AgentTest do
 
   describe "pipeline" do
     setup do
+      # Use words that will overlap with the query for mock embeddings
+      # Mock embeddings use word hashes, so shared words = higher similarity
       {:ok, _doc} =
-        Arcana.ingest("Elixir runs on the BEAM virtual machine.",
+        Arcana.ingest("Elixir is a functional programming language that runs on BEAM.",
           repo: Arcana.TestRepo
         )
 
@@ -238,11 +240,11 @@ defmodule Arcana.AgentTest do
         end
       end
 
+      # Query shares "Elixir", "programming", "language" with document
       ctx =
-        Agent.new("What VM does Elixir use?",
+        Agent.new("What programming language is Elixir?",
           repo: Arcana.TestRepo,
-          llm: llm,
-          threshold: 0.0
+          llm: llm
         )
         |> Agent.search()
         |> Agent.answer()
