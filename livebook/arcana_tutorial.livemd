@@ -1,0 +1,494 @@
+# Arcana Tutorial
+
+```elixir
+Mix.install([
+  {:arcana, path: Path.expand("../"), force: true},
+  {:kino, "~> 0.14"},
+  {:kino_vega_lite, "~> 0.1"}
+])
+
+alias VegaLite, as: Vl
+```
+
+## Intro
+
+A hands-on guide to building RAG (Retrieval Augmented Generation) applications with Arcana. We'll use the in-memory vector store, so no database setup is required.
+
+**What you'll learn:**
+
+1. Ingesting documents into a vector store
+2. Semantic, fulltext, and hybrid search
+3. Organizing documents into collections
+4. Building agentic RAG pipelines
+
+## 1. Getting Started: In-Memory Vector Store
+
+Arcana supports two storage backends: **pgvector** (PostgreSQL) and **memory** (HNSWLib). The memory backend is perfect for learning and experimentation.
+
+### Start the Memory Vector Store
+
+```elixir
+# Start the in-memory vector store
+{:ok, memory_pid} = Arcana.VectorStore.Memory.start_link(name: nil)
+
+# We'll pass this pid to all operations
+IO.puts("Memory vector store started: #{inspect(memory_pid)}")
+```
+
+### Start Local Embeddings
+
+Arcana uses Bumblebee to generate embeddings locally with `bge-small-en-v1.5`. This creates 384-dimensional vectors.
+
+```elixir
+# Start the local embedding model
+# This downloads the model on first run (~100MB)
+{:ok, _} = Arcana.Embedding.Local.start_link([])
+
+# Verify it's working
+{:ok, embedding} = Arcana.Embedding.embed(Arcana.embedder(), "Hello, world!")
+IO.puts("Embedding dimensions: #{length(embedding)}")
+```
+
+## 2. Storing and Searching Vectors
+
+Let's store some sample documents about programming languages.
+
+### Store Documents
+
+```elixir
+alias Arcana.VectorStore
+
+# Sample documents about programming languages
+docs = [
+  %{
+    id: "elixir-intro",
+    text: "Elixir is a dynamic, functional language for building scalable applications. It runs on the Erlang VM (BEAM) and is known for fault-tolerance and concurrency."
+  },
+  %{
+    id: "elixir-syntax",
+    text: "Elixir uses pattern matching extensively. Functions can have multiple clauses that match different patterns. The pipe operator |> chains function calls elegantly."
+  },
+  %{
+    id: "erlang-intro",
+    text: "Erlang was designed for telecom systems requiring high availability. It pioneered the actor model with lightweight processes and message passing."
+  },
+  %{
+    id: "erlang-otp",
+    text: "OTP (Open Telecom Platform) provides behaviors like GenServer, Supervisor, and Application. These building blocks enable fault-tolerant system design."
+  },
+  %{
+    id: "python-intro",
+    text: "Python is a high-level, interpreted language emphasizing readability. It's popular for data science, web development, and scripting."
+  },
+  %{
+    id: "rust-intro",
+    text: "Rust provides memory safety without garbage collection through its ownership system. It's used for systems programming where performance is critical."
+  }
+]
+
+# Store each document
+for doc <- docs do
+  {:ok, embedding} = Arcana.Embedding.embed(Arcana.embedder(), doc.text)
+
+  :ok = VectorStore.store(
+    "languages",           # collection name
+    doc.id,                # unique id
+    embedding,             # vector embedding
+    %{text: doc.text},     # metadata
+    vector_store: {:memory, pid: memory_pid}
+  )
+end
+
+IO.puts("Stored #{length(docs)} documents in 'languages' collection")
+```
+
+### Semantic Search
+
+Semantic search finds documents with similar **meaning**, not just matching keywords.
+
+```elixir
+# Search for documents about concurrent programming
+query = "concurrent programming with message passing"
+
+{:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), query)
+
+results = VectorStore.search(
+  "languages",
+  query_embedding,
+  vector_store: {:memory, pid: memory_pid},
+  limit: 3
+)
+
+IO.puts("Query: #{query}\n")
+IO.puts("Results:")
+for result <- results do
+  IO.puts("  [#{Float.round(result.score, 3)}] #{result.id}")
+  IO.puts("    #{String.slice(result.metadata.text, 0, 80)}...")
+end
+```
+
+Notice how it finds Elixir and Erlang documents even though we searched for "concurrent" and "message passing" - the model understands these concepts are related.
+
+### Fulltext Search
+
+Fulltext search matches exact keywords using TF-IDF-like scoring.
+
+```elixir
+# Search for exact term "pattern matching"
+results = VectorStore.search_text(
+  "languages",
+  "pattern matching",
+  vector_store: {:memory, pid: memory_pid},
+  limit: 3
+)
+
+IO.puts("Fulltext search: 'pattern matching'\n")
+IO.puts("Results:")
+for result <- results do
+  IO.puts("  [#{Float.round(result.score, 3)}] #{result.id}")
+  IO.puts("    #{String.slice(result.metadata.text, 0, 80)}...")
+end
+```
+
+This only returns documents containing the exact terms "pattern" and "matching".
+
+## 3. Search Mode Comparison
+
+Let's visualize how different search modes perform on the same query.
+
+```elixir
+# Compare search modes
+test_queries = [
+  "functional programming language",
+  "memory safety",
+  "fault tolerant systems",
+  "BEAM virtual machine"
+]
+
+comparison_data =
+  for query <- test_queries do
+    {:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), query)
+
+    # Semantic search
+    semantic = VectorStore.search("languages", query_embedding,
+      vector_store: {:memory, pid: memory_pid}, limit: 1)
+
+    # Fulltext search
+    fulltext = VectorStore.search_text("languages", query,
+      vector_store: {:memory, pid: memory_pid}, limit: 1)
+
+    %{
+      query: query,
+      semantic_match: if(semantic != [], do: hd(semantic).id, else: "none"),
+      semantic_score: if(semantic != [], do: hd(semantic).score, else: 0),
+      fulltext_match: if(fulltext != [], do: hd(fulltext).id, else: "none"),
+      fulltext_score: if(fulltext != [], do: hd(fulltext).score, else: 0)
+    }
+  end
+
+Kino.DataTable.new(comparison_data)
+```
+
+**Key insight:** Semantic search understands meaning ("BEAM virtual machine" matches Elixir), while fulltext requires exact terms.
+
+## 4. Working with Collections
+
+Collections let you organize documents into logical groups, like folders.
+
+```elixir
+# Add some web framework documents to a new collection
+frameworks = [
+  %{id: "phoenix", text: "Phoenix is a web framework for Elixir. It uses channels for real-time features and LiveView for server-rendered interactive UIs."},
+  %{id: "rails", text: "Ruby on Rails pioneered convention over configuration. It includes ActiveRecord ORM and follows the MVC pattern."},
+  %{id: "django", text: "Django is a Python web framework with batteries included. It has an admin interface, ORM, and authentication built-in."}
+]
+
+for doc <- frameworks do
+  {:ok, embedding} = Arcana.Embedding.embed(Arcana.embedder(), doc.text)
+  :ok = VectorStore.store("frameworks", doc.id, embedding, %{text: doc.text},
+    vector_store: {:memory, pid: memory_pid})
+end
+
+IO.puts("Stored #{length(frameworks)} documents in 'frameworks' collection")
+```
+
+```elixir
+# Search only in frameworks collection
+query = "real-time web applications"
+{:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), query)
+
+framework_results = VectorStore.search("frameworks", query_embedding,
+  vector_store: {:memory, pid: memory_pid}, limit: 2)
+
+language_results = VectorStore.search("languages", query_embedding,
+  vector_store: {:memory, pid: memory_pid}, limit: 2)
+
+IO.puts("Query: #{query}\n")
+IO.puts("From 'frameworks':")
+for r <- framework_results, do: IO.puts("  #{r.id}: #{Float.round(r.score, 3)}")
+
+IO.puts("\nFrom 'languages':")
+for r <- language_results, do: IO.puts("  #{r.id}: #{Float.round(r.score, 3)}")
+```
+
+## 5. Visualizing Similarity Scores
+
+Let's create a heatmap showing how similar each document is to various queries.
+
+```elixir
+queries = ["concurrency", "web framework", "memory management", "functional"]
+doc_ids = ["elixir-intro", "erlang-intro", "python-intro", "rust-intro", "phoenix"]
+
+# Get all documents
+all_docs = docs ++ [%{id: "phoenix", text: hd(frameworks).text}]
+
+# Calculate similarity matrix
+heatmap_data =
+  for query <- queries,
+      doc <- all_docs,
+      doc.id in doc_ids do
+    {:ok, q_emb} = Arcana.Embedding.embed(Arcana.embedder(), query)
+    {:ok, d_emb} = Arcana.Embedding.embed(Arcana.embedder(), doc.text)
+
+    # Cosine similarity
+    dot = Enum.zip_with(q_emb, d_emb, &(&1 * &2)) |> Enum.sum()
+    norm_q = :math.sqrt(Enum.map(q_emb, &(&1 * &1)) |> Enum.sum())
+    norm_d = :math.sqrt(Enum.map(d_emb, &(&1 * &1)) |> Enum.sum())
+    similarity = dot / (norm_q * norm_d)
+
+    %{query: query, document: doc.id, similarity: Float.round(similarity, 3)}
+  end
+
+Vl.new(width: 400, height: 200, title: "Query-Document Similarity")
+|> Vl.data_from_values(heatmap_data)
+|> Vl.mark(:rect)
+|> Vl.encode_field(:x, "document", type: :nominal, title: "Document")
+|> Vl.encode_field(:y, "query", type: :nominal, title: "Query")
+|> Vl.encode_field(:color, "similarity",
+  type: :quantitative,
+  scale: [scheme: "blues"],
+  title: "Similarity"
+)
+```
+
+## 6. Agentic RAG Pipeline
+
+For complex questions, Arcana provides an Agent pipeline that can decompose questions, route to collections, and self-correct searches.
+
+### Define an LLM Function
+
+The agent needs an LLM to make decisions. Let's create a simple mock:
+
+```elixir
+# Mock LLM that returns structured responses
+# In production, use OpenAI, Anthropic, or another provider
+mock_llm = fn prompt ->
+  cond do
+    prompt =~ "collections" ->
+      # Route to relevant collections
+      {:ok, ~s({"collections": ["languages", "frameworks"], "reasoning": "Question covers both"})}
+
+    prompt =~ "sub_questions" ->
+      # Decompose into simpler questions
+      {:ok, ~s({"sub_questions": ["What is Elixir?", "What is Phoenix?"], "reasoning": "Two distinct topics"})}
+
+    prompt =~ "sufficient" ->
+      # Results are sufficient
+      {:ok, ~s({"sufficient": true})}
+
+    prompt =~ "Answer" ->
+      # Generate answer from context
+      context = prompt
+      {:ok, "Based on the context, Elixir is a functional language on BEAM, and Phoenix is its web framework with real-time capabilities."}
+
+    true ->
+      {:ok, "Default response"}
+  end
+end
+```
+
+### Simple RAG: Search → Answer
+
+```elixir
+alias Arcana.Agent
+
+# First, we need a repo-like interface for the agent
+# Since we're using memory backend, we'll work directly with VectorStore
+
+# Simple search and answer
+ctx =
+  Agent.new("Tell me about Elixir and its web framework",
+    repo: nil,  # Not using database
+    llm: mock_llm,
+    limit: 3
+  )
+
+# Manual search since we're using custom vector store
+{:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), ctx.question)
+
+lang_results = VectorStore.search("languages", query_embedding,
+  vector_store: {:memory, pid: memory_pid}, limit: 2)
+
+fw_results = VectorStore.search("frameworks", query_embedding,
+  vector_store: {:memory, pid: memory_pid}, limit: 2)
+
+# Combine results
+all_results = (lang_results ++ fw_results) |> Enum.map(fn r ->
+  %{id: r.id, text: r.metadata.text, score: r.score}
+end)
+
+IO.puts("Retrieved #{length(all_results)} chunks:")
+for r <- all_results do
+  IO.puts("  - #{r.id} (#{Float.round(r.score, 3)})")
+end
+```
+
+### Generate Answer with Context
+
+```elixir
+# Build context for the LLM
+context_text = all_results
+|> Enum.map(& &1.text)
+|> Enum.join("\n\n---\n\n")
+
+prompt = """
+Answer the question based on the following context.
+
+Question: "Tell me about Elixir and its web framework"
+
+Context:
+#{context_text}
+"""
+
+{:ok, answer} = mock_llm.(prompt)
+IO.puts("Answer:\n#{answer}")
+```
+
+## 7. Hybrid Search with RRF
+
+Hybrid search combines semantic and fulltext results using Reciprocal Rank Fusion (RRF).
+
+```elixir
+defmodule HybridSearch do
+  @doc """
+  Combines semantic and fulltext results using RRF.
+
+  RRF score = sum(1 / (k + rank)) where k=60
+  """
+  def search(collection, query, vector_store_opts, limit \\ 5) do
+    k = 60
+
+    # Get query embedding for semantic search
+    {:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), query)
+
+    # Semantic results
+    semantic = Arcana.VectorStore.search(collection, query_embedding,
+      Keyword.merge(vector_store_opts, limit: limit * 2))
+
+    # Fulltext results
+    fulltext = Arcana.VectorStore.search_text(collection, query,
+      Keyword.merge(vector_store_opts, limit: limit * 2))
+
+    # Build rank maps
+    semantic_ranks = semantic
+    |> Enum.with_index(1)
+    |> Map.new(fn {r, rank} -> {r.id, rank} end)
+
+    fulltext_ranks = fulltext
+    |> Enum.with_index(1)
+    |> Map.new(fn {r, rank} -> {r.id, rank} end)
+
+    # Get all unique results
+    all_results = (semantic ++ fulltext)
+    |> Enum.uniq_by(& &1.id)
+    |> Map.new(fn r -> {r.id, r} end)
+
+    # Calculate RRF scores
+    all_results
+    |> Enum.map(fn {id, result} ->
+      s_rank = Map.get(semantic_ranks, id, 1000)
+      f_rank = Map.get(fulltext_ranks, id, 1000)
+      rrf_score = 1/(k + s_rank) + 1/(k + f_rank)
+
+      %{result | score: rrf_score}
+    end)
+    |> Enum.sort_by(& &1.score, :desc)
+    |> Enum.take(limit)
+  end
+end
+```
+
+```elixir
+# Compare hybrid vs semantic only
+query = "BEAM concurrency"
+
+{:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), query)
+
+semantic_only = VectorStore.search("languages", query_embedding,
+  vector_store: {:memory, pid: memory_pid}, limit: 3)
+
+hybrid = HybridSearch.search("languages", query,
+  [vector_store: {:memory, pid: memory_pid}], 3)
+
+IO.puts("Query: '#{query}'\n")
+
+IO.puts("Semantic only:")
+for r <- semantic_only, do: IO.puts("  #{r.id}: #{Float.round(r.score, 3)}")
+
+IO.puts("\nHybrid (RRF):")
+for r <- hybrid, do: IO.puts("  #{r.id}: #{Float.round(r.score, 4)}")
+```
+
+## 8. Score Distribution Visualization
+
+```elixir
+# Get all scores for a query
+query = "programming language features"
+{:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), query)
+
+all_scores = VectorStore.search("languages", query_embedding,
+  vector_store: {:memory, pid: memory_pid}, limit: 10)
+|> Enum.map(fn r ->
+  %{document: r.id, score: r.score, type: "semantic"}
+end)
+
+fulltext_scores = VectorStore.search_text("languages", query,
+  vector_store: {:memory, pid: memory_pid}, limit: 10)
+|> Enum.map(fn r ->
+  %{document: r.id, score: r.score, type: "fulltext"}
+end)
+
+combined = all_scores ++ fulltext_scores
+
+Vl.new(width: 500, height: 300, title: "Score Comparison: '#{query}'")
+|> Vl.data_from_values(combined)
+|> Vl.mark(:bar)
+|> Vl.encode_field(:x, "document", type: :nominal, axis: [label_angle: -45])
+|> Vl.encode_field(:y, "score", type: :quantitative)
+|> Vl.encode_field(:color, "type", type: :nominal)
+|> Vl.encode_field(:x_offset, "type", type: :nominal)
+```
+
+## Summary
+
+| Concept | Description |
+|---------|-------------|
+| **Memory Backend** | HNSWLib-based in-memory store, no database needed |
+| **Semantic Search** | Finds similar meaning using embeddings |
+| **Fulltext Search** | Matches exact keywords with TF-IDF scoring |
+| **Hybrid Search** | Combines both using Reciprocal Rank Fusion |
+| **Collections** | Organize documents into logical groups |
+| **Agent Pipeline** | Decompose → Route → Search → Answer |
+
+### Next Steps
+
+1. Try with real documents (PDFs, markdown files)
+2. Connect to pgvector for persistence
+3. Use a real LLM (OpenAI, Anthropic) for the agent
+4. Add to your Phoenix application with the dashboard
+
+```elixir
+# Cleanup
+GenServer.stop(memory_pid)
+IO.puts("Memory vector store stopped")
+```
