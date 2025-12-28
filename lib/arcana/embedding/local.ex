@@ -29,6 +29,24 @@ defmodule Arcana.Embedding.Local do
 
   @default_model "BAAI/bge-small-en-v1.5"
 
+  # Known dimensions for common embedding models
+  @model_dimensions %{
+    # BGE models (BAAI) - recommended default
+    "BAAI/bge-small-en-v1.5" => 384,
+    "BAAI/bge-base-en-v1.5" => 768,
+    "BAAI/bge-large-en-v1.5" => 1024,
+    # E5 models (Microsoft) - good alternative
+    "intfloat/e5-small-v2" => 384,
+    "intfloat/e5-base-v2" => 768,
+    "intfloat/e5-large-v2" => 1024,
+    # GTE models (Alibaba)
+    "thenlper/gte-small" => 384,
+    "thenlper/gte-base" => 768,
+    "thenlper/gte-large" => 1024,
+    # Sentence Transformers - lightweight option
+    "sentence-transformers/all-MiniLM-L6-v2" => 384
+  }
+
   @doc """
   Returns the child spec for starting the embedding serving.
   """
@@ -86,26 +104,8 @@ defmodule Arcana.Embedding.Local do
 
   @impl Arcana.Embedding
   def dimensions(opts) do
-    # Known dimensions for common models
     model = Keyword.get(opts, :model, @default_model)
-
-    case model do
-      # BGE models (BAAI) - recommended default
-      "BAAI/bge-small-en-v1.5" -> 384
-      "BAAI/bge-base-en-v1.5" -> 768
-      "BAAI/bge-large-en-v1.5" -> 1024
-      # E5 models (Microsoft) - good alternative
-      "intfloat/e5-small-v2" -> 384
-      "intfloat/e5-base-v2" -> 768
-      "intfloat/e5-large-v2" -> 1024
-      # GTE models (Alibaba)
-      "thenlper/gte-small" -> 384
-      "thenlper/gte-base" -> 768
-      "thenlper/gte-large" -> 1024
-      # Sentence Transformers - lightweight option
-      "sentence-transformers/all-MiniLM-L6-v2" -> 384
-      _ -> detect_dimensions(opts)
-    end
+    Map.get(@model_dimensions, model) || detect_dimensions(opts)
   end
 
   defp detect_dimensions(opts) do
