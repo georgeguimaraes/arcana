@@ -19,6 +19,13 @@ defmodule ArcanaWeb.DashboardLive do
       socket
       |> assign(tab: :documents, repo: repo)
       |> assign(search_results: [], search_query: "")
+      |> assign(expanded_result_id: nil, viewing_search_document: nil)
+      |> assign(
+        agentic_question: "",
+        agentic_running: false,
+        agentic_context: nil,
+        agentic_error: nil
+      )
       |> assign(page: 1, per_page: 10)
       |> assign(viewing_document: nil)
       |> assign(upload_error: nil)
@@ -167,7 +174,84 @@ defmodule ArcanaWeb.DashboardLive do
         []
       end
 
-    {:noreply, assign(socket, search_results: results, search_query: query)}
+    {:noreply, assign(socket, search_results: results, search_query: query, expanded_result_id: nil)}
+  end
+
+  def handle_event("toggle_result", %{"id" => id}, socket) do
+    current = socket.assigns.expanded_result_id
+    new_id = if current == id, do: nil, else: id
+    {:noreply, assign(socket, expanded_result_id: new_id)}
+  end
+
+  def handle_event("view_search_document", %{"id" => id}, socket) do
+    repo = socket.assigns.repo
+    import Ecto.Query
+
+    document = repo.get(Document, id)
+
+    chunks =
+      repo.all(
+        from(c in Arcana.Chunk,
+          where: c.document_id == ^id,
+          order_by: c.chunk_index
+        )
+      )
+
+    {:noreply, assign(socket, viewing_search_document: %{document: document, chunks: chunks})}
+  end
+
+  def handle_event("close_search_document", _params, socket) do
+    {:noreply, assign(socket, viewing_search_document: nil)}
+  end
+
+  def handle_event("agentic_search", params, socket) do
+    repo = socket.assigns.repo
+    question = params["question"] || ""
+
+    case Application.get_env(:arcana, :llm) do
+      nil ->
+        {:noreply,
+         assign(socket,
+           agentic_error: "No LLM configured. Set :arcana, :llm in your config.",
+           agentic_running: false
+         )}
+
+      llm ->
+        if question == "" do
+          {:noreply, assign(socket, agentic_error: "Please enter a question")}
+        else
+          socket = assign(socket, agentic_running: true, agentic_error: nil, agentic_question: question)
+          parent = self()
+
+          # Parse options from form
+          use_select = params["use_select"] == "true"
+          use_expand = params["use_expand"] == "true"
+          use_decompose = params["use_decompose"] == "true"
+          use_rerank = params["use_rerank"] == "true"
+          self_correct = params["self_correct"] == "true"
+
+          Task.start(fn ->
+            result = run_agentic_pipeline(
+              question,
+              repo,
+              llm,
+              socket.assigns.collections,
+              use_select: use_select,
+              use_expand: use_expand,
+              use_decompose: use_decompose,
+              use_rerank: use_rerank,
+              self_correct: self_correct
+            )
+            send(parent, {:agentic_complete, result})
+          end)
+
+          {:noreply, socket}
+        end
+    end
+  end
+
+  def handle_event("agentic_clear", _params, socket) do
+    {:noreply, assign(socket, agentic_context: nil, agentic_error: nil, agentic_question: "")}
   end
 
   def handle_event("eval_switch_view", %{"view" => view}, socket) do
@@ -382,6 +466,20 @@ defmodule ArcanaWeb.DashboardLive do
   end
 
   @impl true
+  def handle_info({:agentic_complete, result}, socket) do
+    socket =
+      case result do
+        {:ok, ctx} ->
+          assign(socket, agentic_running: false, agentic_context: ctx, agentic_error: nil)
+
+        {:error, reason} ->
+          assign(socket, agentic_running: false, agentic_error: inspect(reason))
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_info({:eval_generate_complete, result}, socket) do
     socket =
       case result do
@@ -448,6 +546,60 @@ defmodule ArcanaWeb.DashboardLive do
   defp error_to_string(:too_many_files), do: "Too many files (max 10)"
   defp error_to_string(:not_accepted), do: "File type not supported"
   defp error_to_string(err), do: "Error: #{inspect(err)}"
+
+  defp run_agentic_pipeline(question, repo, llm, collections, opts) do
+    alias Arcana.Agent
+
+    collection_names = Enum.map(collections, & &1.name)
+
+    try do
+      ctx = Agent.new(question, repo: repo, llm: llm)
+
+      # Apply optional pipeline steps
+      ctx =
+        if Keyword.get(opts, :use_select, false) and length(collection_names) > 0 do
+          Agent.select(ctx, collections: collection_names)
+        else
+          ctx
+        end
+
+      ctx =
+        if Keyword.get(opts, :use_expand, false) do
+          Agent.expand(ctx)
+        else
+          ctx
+        end
+
+      ctx =
+        if Keyword.get(opts, :use_decompose, false) do
+          Agent.decompose(ctx)
+        else
+          ctx
+        end
+
+      # Search with optional self-correction
+      ctx = Agent.search(ctx, self_correct: Keyword.get(opts, :self_correct, false))
+
+      # Optional reranking
+      ctx =
+        if Keyword.get(opts, :use_rerank, false) do
+          Agent.rerank(ctx)
+        else
+          ctx
+        end
+
+      # Generate answer
+      ctx = Agent.answer(ctx)
+
+      if ctx.error do
+        {:error, ctx.error}
+      else
+        {:ok, ctx}
+      end
+    rescue
+      e -> {:error, Exception.message(e)}
+    end
+  end
 
   defp load_documents(socket) do
     repo = socket.assigns.repo
@@ -1234,6 +1386,107 @@ defmodule ArcanaWeb.DashboardLive do
         color: #6b7280;
         margin-bottom: 0.75rem;
       }
+
+      /* Search Results Styles */
+      .arcana-search-results {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+
+      .arcana-search-result {
+        border: 1px solid #e5e7eb;
+        border-radius: 0.5rem;
+        overflow: hidden;
+        background: white;
+      }
+
+      .arcana-result-header {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.75rem 1rem;
+        background: #f9fafb;
+        border-bottom: 1px solid #e5e7eb;
+      }
+
+      .arcana-result-score {
+        min-width: 60px;
+      }
+
+      .arcana-result-score .score-value {
+        font-weight: 600;
+        color: #7c3aed;
+        font-size: 0.875rem;
+      }
+
+      .arcana-result-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex: 1;
+      }
+
+      .arcana-result-meta code {
+        font-size: 0.7rem;
+      }
+
+      .arcana-chunk-badge {
+        background: #ede9fe;
+        color: #6d28d9;
+        padding: 0.125rem 0.5rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 500;
+      }
+
+      .arcana-result-actions {
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      .arcana-result-btn {
+        padding: 0.375rem 0.75rem;
+        border: 1px solid #d1d5db;
+        border-radius: 0.375rem;
+        background: white;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .arcana-result-btn:hover {
+        border-color: #7c3aed;
+        color: #7c3aed;
+      }
+
+      .arcana-result-btn-primary {
+        background: #7c3aed;
+        border-color: #7c3aed;
+        color: white;
+      }
+
+      .arcana-result-btn-primary:hover {
+        background: #6d28d9;
+        border-color: #6d28d9;
+        color: white;
+      }
+
+      .arcana-result-text {
+        padding: 1rem;
+        font-size: 0.875rem;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        color: #374151;
+        max-height: 100px;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .arcana-result-text.expanded {
+        max-height: none;
+        overflow: visible;
+      }
     </style>
     <div class="arcana-dashboard">
       <div class="arcana-stats">
@@ -1271,6 +1524,14 @@ defmodule ArcanaWeb.DashboardLive do
           phx-value-tab="search"
         >
           Search
+        </button>
+        <button
+          data-tab="agentic"
+          class={"arcana-tab #{if @tab == :agentic, do: "active", else: ""}"}
+          phx-click="switch_tab"
+          phx-value-tab="agentic"
+        >
+          Agentic
         </button>
         <button
           data-tab="evaluation"
@@ -1318,7 +1579,22 @@ defmodule ArcanaWeb.DashboardLive do
               confirm_delete={@confirm_delete_collection}
             />
           <% :search -> %>
-            <.search_tab results={@search_results} query={@search_query} source_ids={@source_ids} collections={@collections} />
+            <.search_tab
+              results={@search_results}
+              query={@search_query}
+              source_ids={@source_ids}
+              collections={@collections}
+              expanded_result_id={@expanded_result_id}
+              viewing_document={@viewing_search_document}
+            />
+          <% :agentic -> %>
+            <.agentic_tab
+              question={@agentic_question}
+              running={@agentic_running}
+              context={@agentic_context}
+              error={@agentic_error}
+              collections={@collections}
+            />
           <% :evaluation -> %>
             <.evaluation_tab
               view={@eval_view}
@@ -1562,89 +1838,539 @@ defmodule ArcanaWeb.DashboardLive do
   defp search_tab(assigns) do
     ~H"""
     <div class="arcana-search">
-      <h2>Search</h2>
+      <%= if @viewing_document do %>
+        <.search_document_detail viewing={@viewing_document} />
+      <% else %>
+        <h2>Search</h2>
 
-      <form id="search-form" phx-submit="search" class="arcana-search-form">
-        <div class="arcana-search-inputs">
-          <input type="text" name="query" placeholder="Enter search query..." value={@query} />
+        <form id="search-form" phx-submit="search" class="arcana-search-form">
+          <div class="arcana-search-inputs">
+            <input type="text" name="query" placeholder="Enter search query..." value={@query} />
 
-          <div class="arcana-search-options">
-            <label>
-              Mode
-              <select name="mode">
-                <option value="semantic">Semantic</option>
-                <option value="fulltext">Full-text</option>
-                <option value="hybrid">Hybrid</option>
-              </select>
+            <div class="arcana-search-options">
+              <label>
+                Mode
+                <select name="mode">
+                  <option value="semantic">Semantic</option>
+                  <option value="fulltext">Full-text</option>
+                  <option value="hybrid">Hybrid</option>
+                </select>
+              </label>
+
+              <label>
+                Limit
+                <select name="limit">
+                  <option value="5">5</option>
+                  <option value="10" selected>10</option>
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                </select>
+              </label>
+
+              <label>
+                Threshold
+                <input type="number" name="threshold" min="0" max="1" step="0.1" value="0" />
+              </label>
+
+              <label>
+                Source
+                <select name="source_id">
+                  <option value="">All sources</option>
+                  <%= for source_id <- @source_ids do %>
+                    <option value={source_id}><%= source_id %></option>
+                  <% end %>
+                </select>
+              </label>
+
+              <label>
+                Collection
+                <select name="collection">
+                  <option value="">All collections</option>
+                  <%= for collection <- @collections do %>
+                    <option value={collection.name}><%= collection.name %></option>
+                  <% end %>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <button type="submit">Search</button>
+        </form>
+
+        <%= if Enum.empty?(@results) and @query != "" do %>
+          <p class="arcana-empty">No results found for "<%= @query %>"</p>
+        <% end %>
+
+        <%= if not Enum.empty?(@results) do %>
+          <div class="arcana-search-results">
+            <%= for result <- @results do %>
+              <div class="arcana-search-result">
+                <div class="arcana-result-header">
+                  <div class="arcana-result-score">
+                    <span class="score-value"><%= Float.round(result.score, 4) %></span>
+                  </div>
+                  <div class="arcana-result-meta">
+                    <code><%= result.document_id %></code>
+                    <span class="arcana-chunk-badge">Chunk <%= result.chunk_index %></span>
+                  </div>
+                  <div class="arcana-result-actions">
+                    <button
+                      class="arcana-result-btn"
+                      phx-click="toggle_result"
+                      phx-value-id={result.id}
+                    >
+                      <%= if @expanded_result_id == result.id, do: "Collapse", else: "Expand" %>
+                    </button>
+                    <button
+                      class="arcana-result-btn arcana-result-btn-primary"
+                      phx-click="view_search_document"
+                      phx-value-id={result.document_id}
+                    >
+                      View Doc
+                    </button>
+                  </div>
+                </div>
+                <div class={"arcana-result-text #{if @expanded_result_id == result.id, do: "expanded", else: ""}"}>
+                  <%= if @expanded_result_id == result.id do %>
+                    <%= result.text %>
+                  <% else %>
+                    <%= String.slice(result.text, 0, 200) %><%= if String.length(result.text) > 200, do: "...", else: "" %>
+                  <% end %>
+                </div>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp search_document_detail(assigns) do
+    ~H"""
+    <div class="arcana-doc-detail">
+      <div class="arcana-doc-header">
+        <h2>Document Details</h2>
+        <button class="arcana-close-btn" phx-click="close_search_document">← Back to search</button>
+      </div>
+
+      <div class="arcana-doc-info">
+        <div class="arcana-doc-field">
+          <label>ID</label>
+          <code><%= @viewing.document.id %></code>
+        </div>
+        <div class="arcana-doc-field">
+          <label>Source</label>
+          <span><%= @viewing.document.source_id || "-" %></span>
+        </div>
+        <div class="arcana-doc-field">
+          <label>Metadata</label>
+          <span><%= format_metadata(@viewing.document.metadata) %></span>
+        </div>
+        <div class="arcana-doc-field">
+          <label>Created</label>
+          <span><%= @viewing.document.inserted_at %></span>
+        </div>
+      </div>
+
+      <div class="arcana-doc-section">
+        <h3>Full Content</h3>
+        <pre class="arcana-doc-content"><%= @viewing.document.content %></pre>
+      </div>
+
+      <div class="arcana-doc-section">
+        <h3>Chunks (<%= length(@viewing.chunks) %>)</h3>
+        <div class="arcana-chunks-list">
+          <%= for chunk <- @viewing.chunks do %>
+            <div class="arcana-chunk">
+              <div class="arcana-chunk-header">
+                <span class="arcana-chunk-index">Chunk <%= chunk.chunk_index %></span>
+                <span class="arcana-chunk-tokens"><%= chunk.token_count %> tokens</span>
+              </div>
+              <pre class="arcana-chunk-text"><%= chunk.text %></pre>
+            </div>
+          <% end %>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp agentic_tab(assigns) do
+    ~H"""
+    <div class="arcana-agentic">
+      <h2>Agentic Search</h2>
+      <p style="color: #6b7280; margin-bottom: 1rem; font-size: 0.875rem;">
+        Use the agentic pipeline for more sophisticated search with LLM-powered query expansion,
+        decomposition, and answer generation.
+      </p>
+
+      <%= if @error do %>
+        <div class="arcana-eval-message error">
+          <%= @error %>
+        </div>
+      <% end %>
+
+      <form id="agentic-form" phx-submit="agentic_search" class="arcana-agentic-form">
+        <div class="arcana-agentic-input">
+          <textarea
+            name="question"
+            placeholder="Ask a question about your documents..."
+            rows="3"
+            disabled={@running}
+          ><%= @question %></textarea>
+        </div>
+
+        <div class="arcana-agentic-options">
+          <h4>Pipeline Options</h4>
+          <div class="arcana-option-grid">
+            <label class="arcana-checkbox-label">
+              <input type="checkbox" name="use_select" value="true" disabled={@running or Enum.empty?(@collections)} />
+              <span>Collection Selection</span>
+              <small>LLM selects relevant collections</small>
             </label>
 
-            <label>
-              Limit
-              <select name="limit">
-                <option value="5">5</option>
-                <option value="10" selected>10</option>
-                <option value="20">20</option>
-                <option value="50">50</option>
-              </select>
+            <label class="arcana-checkbox-label">
+              <input type="checkbox" name="use_expand" value="true" disabled={@running} />
+              <span>Query Expansion</span>
+              <small>Generate related queries</small>
             </label>
 
-            <label>
-              Threshold
-              <input type="number" name="threshold" min="0" max="1" step="0.1" value="0" />
+            <label class="arcana-checkbox-label">
+              <input type="checkbox" name="use_decompose" value="true" disabled={@running} />
+              <span>Question Decomposition</span>
+              <small>Break into sub-questions</small>
             </label>
 
-            <label>
-              Source
-              <select name="source_id">
-                <option value="">All sources</option>
-                <%= for source_id <- @source_ids do %>
-                  <option value={source_id}><%= source_id %></option>
-                <% end %>
-              </select>
+            <label class="arcana-checkbox-label">
+              <input type="checkbox" name="self_correct" value="true" disabled={@running} />
+              <span>Self-Correction</span>
+              <small>Refine search if results are poor</small>
             </label>
 
-            <label>
-              Collection
-              <select name="collection">
-                <option value="">All collections</option>
-                <%= for collection <- @collections do %>
-                  <option value={collection.name}><%= collection.name %></option>
-                <% end %>
-              </select>
+            <label class="arcana-checkbox-label">
+              <input type="checkbox" name="use_rerank" value="true" disabled={@running} />
+              <span>Reranking</span>
+              <small>LLM-based result reranking</small>
             </label>
           </div>
         </div>
 
-        <button type="submit">Search</button>
+        <div class="arcana-agentic-actions">
+          <button type="submit" disabled={@running}>
+            <%= if @running, do: "Searching...", else: "Ask" %>
+          </button>
+          <%= if @context do %>
+            <button type="button" phx-click="agentic_clear" disabled={@running}>
+              Clear
+            </button>
+          <% end %>
+        </div>
       </form>
 
-      <%= if Enum.empty?(@results) and @query != "" do %>
-        <p class="arcana-empty">No results found for "<%= @query %>"</p>
+      <%= if @running do %>
+        <div class="arcana-agentic-loading">
+          <div class="arcana-spinner"></div>
+          <span>Running agentic pipeline...</span>
+        </div>
       <% end %>
 
-      <%= if not Enum.empty?(@results) do %>
-        <table class="arcana-results-table">
-          <thead>
-            <tr>
-              <th>Score</th>
-              <th>Text</th>
-              <th>Document ID</th>
-              <th>Chunk Index</th>
-            </tr>
-          </thead>
-          <tbody>
-            <%= for result <- @results do %>
-              <tr>
-                <td><%= Float.round(result.score, 4) %></td>
-                <td><%= String.slice(result.text, 0, 200) %>...</td>
-                <td><code><%= result.document_id %></code></td>
-                <td><%= result.chunk_index %></td>
-              </tr>
-            <% end %>
-          </tbody>
-        </table>
+      <%= if @context do %>
+        <div class="arcana-agentic-results">
+          <div class="arcana-agentic-answer">
+            <h3>Answer</h3>
+            <div class="arcana-answer-content">
+              <%= if @context.answer do %>
+                <%= @context.answer %>
+              <% else %>
+                <span style="color: #9ca3af; font-style: italic;">No answer generated</span>
+              <% end %>
+            </div>
+          </div>
+
+          <%= if @context.queries && length(@context.queries) > 1 do %>
+            <div class="arcana-agentic-section">
+              <h4>Expanded Queries</h4>
+              <ul class="arcana-query-list">
+                <%= for query <- @context.queries do %>
+                  <li><%= query %></li>
+                <% end %>
+              </ul>
+            </div>
+          <% end %>
+
+          <%= if @context.sub_questions && length(@context.sub_questions) > 0 do %>
+            <div class="arcana-agentic-section">
+              <h4>Sub-Questions</h4>
+              <ul class="arcana-query-list">
+                <%= for sq <- @context.sub_questions do %>
+                  <li><%= sq %></li>
+                <% end %>
+              </ul>
+            </div>
+          <% end %>
+
+          <%= if @context.selected_collections && length(@context.selected_collections) > 0 do %>
+            <div class="arcana-agentic-section">
+              <h4>Selected Collections</h4>
+              <div class="arcana-collection-badges">
+                <%= for coll <- @context.selected_collections do %>
+                  <span class="arcana-collection-badge"><%= coll %></span>
+                <% end %>
+              </div>
+            </div>
+          <% end %>
+
+          <%= if @context.results && length(@context.results) > 0 do %>
+            <div class="arcana-agentic-section">
+              <h4>Retrieved Chunks (<%= length(@context.results) %>)</h4>
+              <div class="arcana-search-results">
+                <%= for result <- @context.results do %>
+                  <div class="arcana-search-result">
+                    <div class="arcana-result-header">
+                      <div class="arcana-result-score">
+                        <span class="score-value"><%= Float.round(result.score, 4) %></span>
+                      </div>
+                      <div class="arcana-result-meta">
+                        <code><%= result.document_id %></code>
+                        <span class="arcana-chunk-badge">Chunk <%= result.chunk_index %></span>
+                      </div>
+                    </div>
+                    <div class="arcana-result-text">
+                      <%= String.slice(result.text, 0, 300) %><%= if String.length(result.text) > 300, do: "...", else: "" %>
+                    </div>
+                  </div>
+                <% end %>
+              </div>
+            </div>
+          <% end %>
+        </div>
       <% end %>
     </div>
+
+    <style>
+      .arcana-agentic-form {
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .arcana-agentic-input textarea {
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid #d1d5db;
+        border-radius: 0.375rem;
+        font-size: 0.875rem;
+        resize: vertical;
+        box-sizing: border-box;
+      }
+
+      .arcana-agentic-input textarea:focus {
+        outline: none;
+        border-color: #7c3aed;
+        box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+      }
+
+      .arcana-agentic-options {
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid #e5e7eb;
+      }
+
+      .arcana-agentic-options h4 {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: #374151;
+        margin: 0 0 0.75rem 0;
+      }
+
+      .arcana-option-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 0.75rem;
+      }
+
+      .arcana-checkbox-label {
+        display: flex;
+        flex-direction: column;
+        padding: 0.75rem;
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.375rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .arcana-checkbox-label:hover {
+        border-color: #7c3aed;
+      }
+
+      .arcana-checkbox-label input[type="checkbox"] {
+        position: absolute;
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+
+      .arcana-checkbox-label span {
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: #374151;
+      }
+
+      .arcana-checkbox-label small {
+        font-size: 0.75rem;
+        color: #6b7280;
+        margin-top: 0.25rem;
+      }
+
+      .arcana-checkbox-label:has(input:checked) {
+        background: #ede9fe;
+        border-color: #7c3aed;
+      }
+
+      .arcana-checkbox-label:has(input:checked) span {
+        color: #6d28d9;
+      }
+
+      .arcana-checkbox-label:has(input:disabled) {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .arcana-agentic-actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 1rem;
+      }
+
+      .arcana-agentic-actions button {
+        background: #7c3aed;
+        color: white;
+        padding: 0.625rem 1.25rem;
+        border: none;
+        border-radius: 0.375rem;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background-color 0.15s ease;
+      }
+
+      .arcana-agentic-actions button:hover {
+        background: #6d28d9;
+      }
+
+      .arcana-agentic-actions button:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+      }
+
+      .arcana-agentic-actions button[type="button"] {
+        background: transparent;
+        color: #6b7280;
+        border: 1px solid #d1d5db;
+      }
+
+      .arcana-agentic-actions button[type="button"]:hover {
+        border-color: #7c3aed;
+        color: #7c3aed;
+        background: transparent;
+      }
+
+      .arcana-agentic-loading {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 1.5rem;
+        background: #f9fafb;
+        border-radius: 0.5rem;
+        color: #6b7280;
+      }
+
+      .arcana-spinner {
+        width: 1.25rem;
+        height: 1.25rem;
+        border: 2px solid #e5e7eb;
+        border-top-color: #7c3aed;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      .arcana-agentic-results {
+        margin-top: 1.5rem;
+      }
+
+      .arcana-agentic-answer {
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.5rem;
+        overflow: hidden;
+        margin-bottom: 1rem;
+      }
+
+      .arcana-agentic-answer h3 {
+        margin: 0;
+        padding: 0.75rem 1rem;
+        background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+        color: white;
+        font-size: 0.875rem;
+        font-weight: 600;
+      }
+
+      .arcana-answer-content {
+        padding: 1rem;
+        font-size: 0.875rem;
+        line-height: 1.6;
+        white-space: pre-wrap;
+      }
+
+      .arcana-agentic-section {
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin-bottom: 1rem;
+      }
+
+      .arcana-agentic-section h4 {
+        margin: 0 0 0.75rem 0;
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: #374151;
+      }
+
+      .arcana-query-list {
+        margin: 0;
+        padding-left: 1.5rem;
+        font-size: 0.875rem;
+        color: #374151;
+      }
+
+      .arcana-query-list li {
+        margin-bottom: 0.25rem;
+      }
+
+      .arcana-collection-badges {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+
+      .arcana-collection-badge {
+        background: #ede9fe;
+        color: #6d28d9;
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 500;
+      }
+    </style>
     """
   end
 
