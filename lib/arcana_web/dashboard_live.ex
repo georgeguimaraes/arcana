@@ -1967,20 +1967,23 @@ defmodule ArcanaWeb.DashboardLive do
       <div class="arcana-ingest-form">
         <h3>Create Collection</h3>
         <form id="new-collection-form" phx-submit="create_collection">
-          <div class="arcana-form-row">
+          <div class="arcana-form-row" style="margin-bottom: 0.75rem;">
             <input
               type="text"
               name="collection[name]"
               placeholder="Collection name"
               class="arcana-input"
+              style="flex: 1; max-width: 300px;"
               required
             />
+          </div>
+          <div class="arcana-form-row">
             <input
               type="text"
               name="collection[description]"
-              placeholder="Description (optional)"
+              placeholder="Description (optional) - helps the agent select the right collection"
               class="arcana-input"
-              style="flex: 2;"
+              style="flex: 1;"
             />
             <button type="submit" class="arcana-btn arcana-btn-primary">
               Create

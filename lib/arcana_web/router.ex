@@ -59,7 +59,16 @@ defmodule ArcanaWeb.Router do
           get("/js-:hash", ArcanaWeb.Assets, :js, as: :arcana_asset)
           get("/css-:hash", ArcanaWeb.Assets, :css, as: :arcana_asset)
 
+          # Main dashboard (redirects to documents)
           live("/", ArcanaWeb.DashboardLive, :index, route_opts)
+
+          # Separate pages for each tab
+          live("/documents", ArcanaWeb.DocumentsLive, :index, route_opts)
+          live("/collections", ArcanaWeb.CollectionsLive, :index, route_opts)
+          live("/search", ArcanaWeb.SearchLive, :index, route_opts)
+          live("/evaluation", ArcanaWeb.EvaluationLive, :index, route_opts)
+          live("/maintenance", ArcanaWeb.MaintenanceLive, :index, route_opts)
+          live("/info", ArcanaWeb.InfoLive, :index, route_opts)
         end
       end
     end
