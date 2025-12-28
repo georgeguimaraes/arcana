@@ -1895,7 +1895,8 @@ defmodule ArcanaWeb.DashboardLive do
     %{
       repo: Application.get_env(:arcana, :repo),
       llm: format_llm_config(Application.get_env(:arcana, :llm)),
-      embedding: format_embedding_config(Application.get_env(:arcana, :embedding, :local))
+      embedding: format_embedding_config(Application.get_env(:arcana, :embedding, :local)),
+      reranker: format_reranker_config(Application.get_env(:arcana, :reranker))
     }
   end
 
@@ -1942,6 +1943,21 @@ defmodule ArcanaWeb.DashboardLive do
   end
 
   defp format_embedding_config(other), do: %{type: :unknown, raw: inspect(other)}
+
+  defp format_reranker_config(nil), do: %{module: Arcana.Reranker.LLM, configured: false}
+
+  defp format_reranker_config(module) when is_atom(module),
+    do: %{module: module, configured: true}
+
+  defp format_reranker_config({module, opts}) when is_atom(module) and is_list(opts) do
+    %{module: module, opts: opts, configured: true}
+  end
+
+  defp format_reranker_config(fun) when is_function(fun) do
+    %{type: :function, configured: true}
+  end
+
+  defp format_reranker_config(other), do: %{type: :unknown, raw: inspect(other), configured: true}
 
   defp collections_tab(assigns) do
     ~H"""
@@ -2140,11 +2156,32 @@ defmodule ArcanaWeb.DashboardLive do
       </div>
 
       <div class="arcana-info-section">
+        <h3>Reranker</h3>
+        <div class="arcana-doc-info">
+          <div class="arcana-doc-field">
+            <label>Module</label>
+            <code><%= inspect(@config_info.reranker[:module] || @config_info.reranker[:type]) %></code>
+          </div>
+          <%= if @config_info.reranker[:opts] do %>
+            <div class="arcana-doc-field">
+              <label>Options</label>
+              <span><%= inspect(@config_info.reranker.opts) %></span>
+            </div>
+          <% end %>
+          <div class="arcana-doc-field">
+            <label>Status</label>
+            <span><%= if @config_info.reranker.configured, do: "Configured", else: "Default" %></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="arcana-info-section">
         <h3>Raw Configuration</h3>
         <pre class="arcana-doc-content" style="font-size: 0.75rem;">config :arcana,
     repo: <%= inspect(@config_info.repo) %>,
     embedding: <%= inspect(Application.get_env(:arcana, :embedding, :local)) %>,
-    llm: <%= if Application.get_env(:arcana, :llm), do: inspect(Application.get_env(:arcana, :llm)), else: "nil" %></pre>
+    llm: <%= if Application.get_env(:arcana, :llm), do: inspect(Application.get_env(:arcana, :llm)), else: "nil" %>,
+    reranker: <%= if Application.get_env(:arcana, :reranker), do: inspect(Application.get_env(:arcana, :reranker)), else: "Arcana.Reranker.LLM (default)" %></pre>
       </div>
     </div>
     """

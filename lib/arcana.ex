@@ -91,7 +91,8 @@ defmodule Arcana do
         model: model,
         dimensions: Arcana.Embedding.dimensions(embedder())
       },
-      vector_store: Application.get_env(:arcana, :vector_store, :pgvector)
+      vector_store: Application.get_env(:arcana, :vector_store, :pgvector),
+      reranker: Application.get_env(:arcana, :reranker, Arcana.Reranker.LLM)
     }
   end
 
