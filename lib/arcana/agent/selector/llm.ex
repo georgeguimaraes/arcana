@@ -56,7 +56,7 @@ defmodule Arcana.Agent.Selector.LLM do
   defp parse_response(response, collections) do
     fallback_names = Enum.map(collections, fn {name, _} -> name end)
 
-    case Jason.decode(response) do
+    case JSON.decode(response) do
       {:ok, %{"collections" => cols, "reasoning" => reason}} when is_list(cols) ->
         {:ok, cols, reason}
 

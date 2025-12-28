@@ -65,7 +65,6 @@ defmodule Arcana.MixProject do
       {:bumblebee, "~> 0.6"},
       {:nx, "~> 0.9"},
       {:exla, "~> 0.9"},
-      {:jason, "~> 1.4"},
       {:text_chunker, "~> 0.3"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},

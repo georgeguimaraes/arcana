@@ -80,7 +80,7 @@ defmodule Arcana.Agent.Reranker.LLM do
   end
 
   defp parse_score(response) do
-    case Jason.decode(response) do
+    case JSON.decode(response) do
       {:ok, %{"score" => score}} when is_number(score) -> score
       _ -> 0
     end

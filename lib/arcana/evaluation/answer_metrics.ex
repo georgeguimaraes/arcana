@@ -69,7 +69,7 @@ defmodule Arcana.Evaluation.AnswerMetrics do
   end
 
   defp parse_response(response) do
-    case Jason.decode(response) do
+    case JSON.decode(response) do
       {:ok, %{"score" => score} = data} when is_number(score) ->
         {:ok,
          %{

@@ -127,7 +127,7 @@ defmodule Mix.Tasks.Arcana.Eval.Run do
   defp print_results(run, "json") do
     run
     |> Map.take([:metrics, :test_case_count, :config, :inserted_at])
-    |> Jason.encode!(pretty: true)
+    |> JSON.encode!()
     |> IO.puts()
   end
 

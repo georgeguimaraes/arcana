@@ -281,7 +281,7 @@ defmodule Arcana.Agent do
   end
 
   defp parse_decompose_response({:ok, response}, fallback_question) do
-    case Jason.decode(response) do
+    case JSON.decode(response) do
       {:ok, %{"sub_questions" => questions}} when is_list(questions) -> questions
       _ -> [fallback_question]
     end
@@ -436,7 +436,7 @@ defmodule Arcana.Agent do
 
     case ctx.llm.(prompt) do
       {:ok, response} ->
-        case Jason.decode(response) do
+        case JSON.decode(response) do
           {:ok, %{"sufficient" => true}} -> true
           {:ok, %{"sufficient" => false}} -> false
           _ -> true
@@ -471,7 +471,7 @@ defmodule Arcana.Agent do
 
     case ctx.llm.(prompt) do
       {:ok, response} ->
-        case Jason.decode(response) do
+        case JSON.decode(response) do
           {:ok, %{"query" => rewritten}} -> {:ok, rewritten}
           _ -> {:error, :invalid_response}
         end
