@@ -68,10 +68,14 @@ defmodule Arcana.Agent do
   the question. This allows searching only in relevant collections
   instead of searching everything.
 
+  Collection descriptions are automatically fetched from the database
+  and included in the prompt to help the LLM make better routing decisions.
+
   ## Options
 
   - `:collections` (required) - List of available collection names
-  - `:prompt` - Custom prompt function `fn question, collections -> prompt_string end`
+  - `:prompt` - Custom prompt function `fn question, collections_with_descriptions -> prompt_string end`
+    where `collections_with_descriptions` is a list of `{name, description}` tuples
 
   ## Example
 
@@ -85,23 +89,24 @@ defmodule Arcana.Agent do
   def select(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
 
   def select(%Context{} = ctx, opts) do
-    available_collections = Keyword.fetch!(opts, :collections)
+    collection_names = Keyword.fetch!(opts, :collections)
+    collections_with_descriptions = fetch_collections(ctx.repo, collection_names)
 
     start_metadata = %{
       question: ctx.question,
-      available_collections: available_collections
+      available_collections: collection_names
     }
 
     :telemetry.span([:arcana, :agent, :select], start_metadata, fn ->
       prompt =
         case Keyword.get(opts, :prompt) do
-          nil -> default_select_prompt(ctx.question, available_collections)
-          custom_fn -> custom_fn.(ctx.question, available_collections)
+          nil -> default_select_prompt(ctx.question, collections_with_descriptions)
+          custom_fn -> custom_fn.(ctx.question, collections_with_descriptions)
         end
 
       {collections, reasoning} =
         ctx.llm.(prompt)
-        |> parse_select_response(available_collections)
+        |> parse_select_response(collection_names)
 
       updated_ctx = %{ctx | collections: collections, selection_reasoning: reasoning}
 
@@ -114,17 +119,40 @@ defmodule Arcana.Agent do
     end)
   end
 
-  defp default_select_prompt(question, available_collections) do
+  defp fetch_collections(repo, names) do
+    import Ecto.Query
+
+    query = from(c in Arcana.Collection, where: c.name in ^names, select: {c.name, c.description})
+
+    db_collections = repo.all(query) |> Map.new()
+
+    Enum.map(names, fn name ->
+      {name, Map.get(db_collections, name)}
+    end)
+  end
+
+  defp default_select_prompt(question, collections_with_descriptions) do
+    collections_text = format_collections_for_prompt(collections_with_descriptions)
+
     """
     Which collection(s) should be searched for this question?
 
     Question: "#{question}"
 
-    Available collections: #{inspect(available_collections)}
+    Available collections:
+    #{collections_text}
 
     Return JSON only: {"collections": ["name1", "name2"], "reasoning": "..."}
     Select only the most relevant collection(s). If unsure, include all.
     """
+  end
+
+  defp format_collections_for_prompt(collections) do
+    Enum.map_join(collections, "\n", fn
+      {name, nil} -> "- #{name}"
+      {name, ""} -> "- #{name}"
+      {name, description} -> "- #{name}: #{description}"
+    end)
   end
 
   defp parse_select_response({:ok, response}, fallback_collections) do

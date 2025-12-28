@@ -329,6 +329,71 @@ defmodule Arcana.AgentTest do
       assert ctx.selection_reasoning == "Technical question"
     end
 
+    test "includes collection descriptions in prompt" do
+      # Create collections with descriptions
+      {:ok, _} =
+        Arcana.TestRepo.insert(%Arcana.Collection{
+          name: "docs",
+          description: "Official documentation and tutorials"
+        })
+
+      {:ok, _} =
+        Arcana.TestRepo.insert(%Arcana.Collection{
+          name: "api",
+          description: "API reference with function signatures"
+        })
+
+      llm = fn prompt ->
+        # Verify descriptions are included in prompt
+        assert prompt =~ "docs: Official documentation and tutorials"
+        assert prompt =~ "api: API reference with function signatures"
+        {:ok, ~s({"collections": ["docs"], "reasoning": "Docs have tutorials"})}
+      end
+
+      ctx =
+        Agent.new("How do I get started?", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.select(collections: ["docs", "api"])
+
+      assert ctx.collections == ["docs"]
+    end
+
+    test "handles collections without descriptions" do
+      # Create a collection without description
+      {:ok, _} =
+        Arcana.TestRepo.insert(%Arcana.Collection{
+          name: "misc",
+          description: nil
+        })
+
+      llm = fn prompt ->
+        # Should show just the name without colon
+        assert prompt =~ "- misc\n" or prompt =~ "- misc"
+        refute prompt =~ "misc:"
+        {:ok, ~s({"collections": ["misc"]})}
+      end
+
+      ctx =
+        Agent.new("test", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.select(collections: ["misc"])
+
+      assert ctx.collections == ["misc"]
+    end
+
+    test "handles collections not in database" do
+      # Don't create any collections - they only exist as names
+      llm = fn prompt ->
+        # Should still show the collection name
+        assert prompt =~ "- unknown_col"
+        {:ok, ~s({"collections": ["unknown_col"]})}
+      end
+
+      ctx =
+        Agent.new("test", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.select(collections: ["unknown_col"])
+
+      assert ctx.collections == ["unknown_col"]
+    end
+
     test "selects single collection" do
       llm = fn prompt ->
         if prompt =~ "Which collection" do
