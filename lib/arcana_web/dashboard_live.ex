@@ -41,6 +41,7 @@ defmodule ArcanaWeb.DashboardLive do
       )
       |> assign(selected_collection: nil)
       |> assign(editing_collection: nil, confirm_delete_collection: nil)
+      |> assign(filter_collection: nil)
       |> load_collections()
       |> load_documents()
       |> load_source_ids()
@@ -331,6 +332,15 @@ defmodule ArcanaWeb.DashboardLive do
     end
   end
 
+  # Document filtering events
+  def handle_event("filter_by_collection", %{"collection" => collection_name}, socket) do
+    {:noreply, socket |> assign(filter_collection: collection_name, page: 1) |> load_documents()}
+  end
+
+  def handle_event("clear_collection_filter", _params, socket) do
+    {:noreply, socket |> assign(filter_collection: nil, page: 1) |> load_documents()}
+  end
+
   @impl true
   def handle_info({:reembed_progress, current, total}, socket) do
     {:noreply, assign(socket, reembed_progress: %{current: current, total: total})}
@@ -425,18 +435,35 @@ defmodule ArcanaWeb.DashboardLive do
     repo = socket.assigns.repo
     page = socket.assigns.page
     per_page = socket.assigns.per_page
+    filter_collection = socket.assigns.filter_collection
     import Ecto.Query
 
-    total_count = repo.aggregate(Document, :count)
+    # Base query
+    base_query =
+      from(d in Document,
+        order_by: [desc: d.inserted_at],
+        preload: [:collection]
+      )
+
+    # Apply collection filter if set
+    filtered_query =
+      if filter_collection do
+        from(d in base_query,
+          join: c in assoc(d, :collection),
+          where: c.name == ^filter_collection
+        )
+      else
+        base_query
+      end
+
+    total_count = repo.aggregate(filtered_query, :count)
     total_pages = max(1, ceil(total_count / per_page))
 
     documents =
       repo.all(
-        from(d in Document,
-          order_by: [desc: d.inserted_at],
+        from(d in filtered_query,
           offset: ^((page - 1) * per_page),
-          limit: ^per_page,
-          preload: [:collection]
+          limit: ^per_page
         )
       )
 
@@ -803,6 +830,57 @@ defmodule ArcanaWeb.DashboardLive do
       .arcana-view-btn:hover {
         background: #7c3aed;
         color: white;
+      }
+
+      .arcana-filter-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        padding: 0.75rem 1rem;
+        background: #f3f4f6;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+      }
+
+      .arcana-filter-label {
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: #6b7280;
+        margin-right: 0.5rem;
+      }
+
+      .arcana-filter-btn {
+        padding: 0.375rem 0.75rem;
+        font-size: 0.875rem;
+        border: 1px solid #d1d5db;
+        border-radius: 9999px;
+        background: white;
+        color: #374151;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .arcana-filter-btn:hover {
+        border-color: #7c3aed;
+        color: #7c3aed;
+      }
+
+      .arcana-filter-btn.active {
+        background: #7c3aed;
+        border-color: #7c3aed;
+        color: white;
+      }
+
+      .arcana-filter-clear {
+        background: #fef2f2;
+        border-color: #fecaca;
+        color: #dc2626;
+      }
+
+      .arcana-filter-clear:hover {
+        background: #fee2e2;
+        border-color: #dc2626;
       }
 
       .arcana-doc-detail {
@@ -1213,6 +1291,7 @@ defmodule ArcanaWeb.DashboardLive do
               uploads={@uploads}
               upload_error={@upload_error}
               collections={@collections}
+              filter_collection={@filter_collection}
             />
           <% :collections -> %>
             <.collections_tab
@@ -1320,6 +1399,31 @@ defmodule ArcanaWeb.DashboardLive do
         </div>
         <button type="submit">Ingest</button>
       </form>
+
+      <%= if not Enum.empty?(@collections) do %>
+        <div class="arcana-filter-bar">
+          <span class="arcana-filter-label">Filter by collection:</span>
+          <%= for collection <- @collections do %>
+            <button
+              id={"filter-collection-#{collection.name}"}
+              class={"arcana-filter-btn #{if @filter_collection == collection.name, do: "active", else: ""}"}
+              phx-click="filter_by_collection"
+              phx-value-collection={collection.name}
+            >
+              <%= collection.name %>
+            </button>
+          <% end %>
+          <%= if @filter_collection do %>
+            <button
+              id="clear-collection-filter"
+              class="arcana-filter-btn arcana-filter-clear"
+              phx-click="clear_collection_filter"
+            >
+              ✕ Clear
+            </button>
+          <% end %>
+        </div>
+      <% end %>
 
       <%= if Enum.empty?(@documents) do %>
         <p class="arcana-empty">No documents yet. Paste some text above to get started.</p>

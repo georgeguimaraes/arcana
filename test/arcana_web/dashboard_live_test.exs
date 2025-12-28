@@ -120,16 +120,59 @@ defmodule ArcanaWeb.DashboardLiveTest do
     end
   end
 
-  # TODO: Implement document editing and filtering in future iteration
-  # describe "Documents tab" do
-  #   @tag :skip
-  #   test "edits document metadata", %{conn: conn} do
-  #     ...
-  #   end
-  #
-  #   @tag :skip
-  #   test "filters documents by collection", %{conn: conn} do
-  #     ...
-  #   end
-  # end
+  describe "Documents tab" do
+    test "lists documents", %{conn: conn} do
+      {:ok, _doc} = Arcana.ingest("Test content", repo: Repo)
+
+      {:ok, view, _html} = live(conn, "/arcana")
+
+      assert render(view) =~ "Test content"
+    end
+
+    test "filters documents by collection", %{conn: conn} do
+      {:ok, _doc1} = Arcana.ingest("Doc in collection A", repo: Repo, collection: "collection-a")
+      {:ok, _doc2} = Arcana.ingest("Doc in collection B", repo: Repo, collection: "collection-b")
+
+      {:ok, view, _html} = live(conn, "/arcana")
+
+      # Both documents should be visible initially
+      html = render(view)
+      assert html =~ "Doc in collection A"
+      assert html =~ "Doc in collection B"
+
+      # Filter by collection-a
+      view
+      |> element("#filter-collection-collection-a")
+      |> render_click()
+
+      # Should only show doc from collection-a
+      html = render(view)
+      assert html =~ "Doc in collection A"
+      refute html =~ "Doc in collection B"
+
+      # Clear filter
+      view
+      |> element("#clear-collection-filter")
+      |> render_click()
+
+      # Both should be visible again
+      html = render(view)
+      assert html =~ "Doc in collection A"
+      assert html =~ "Doc in collection B"
+    end
+
+    test "views document detail with chunks", %{conn: conn} do
+      {:ok, doc} = Arcana.ingest("Test content for viewing", repo: Repo)
+
+      {:ok, view, _html} = live(conn, "/arcana")
+
+      # Click view button
+      view |> element("[data-view-doc='#{doc.id}']") |> render_click()
+
+      # Should show document detail
+      html = render(view)
+      assert html =~ "Test content for viewing"
+      assert html =~ "Chunk"
+    end
+  end
 end
