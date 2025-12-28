@@ -290,14 +290,14 @@ end
 
 ### Agentic RAG
 
-For complex questions, use the Agent pipeline with self-correcting search, question decomposition, and collection routing:
+For complex questions, use the Agent pipeline with self-correcting search, question decomposition, and collection selection:
 
 ```elixir
 llm = fn prompt -> {:ok, "LLM response"} end
 
 ctx =
   Arcana.Agent.new("Compare Elixir and Erlang features", repo: MyApp.Repo, llm: llm)
-  |> Arcana.Agent.route(collections: ["elixir-docs", "erlang-docs"])
+  |> Arcana.Agent.select(collections: ["elixir-docs", "erlang-docs"])
   |> Arcana.Agent.decompose()
   |> Arcana.Agent.search(self_correct: true)
   |> Arcana.Agent.answer()
@@ -311,7 +311,7 @@ ctx.answer
 | Step | Description |
 |------|-------------|
 | `new/2` | Initialize context with question and options |
-| `route/2` | LLM selects relevant collections to search |
+| `select/2` | LLM selects relevant collections to search |
 | `decompose/2` | LLM breaks complex questions into sub-questions |
 | `search/2` | Execute search (with optional self-correction) |
 | `answer/2` | Generate final answer from retrieved context |
@@ -322,7 +322,7 @@ All pipeline steps accept custom prompt functions:
 
 ```elixir
 ctx
-|> Agent.route(collections: [...], prompt: fn question, collections -> "..." end)
+|> Agent.select(collections: [...], prompt: fn question, collections -> "..." end)
 |> Agent.decompose(prompt: fn question -> "..." end)
 |> Agent.search(
   self_correct: true,
@@ -614,7 +614,7 @@ config :nx, default_backend: EXLA.Backend
   - [x] Agent pipeline with context struct
   - [x] Self-correcting search (evaluate + retry)
   - [x] Question decomposition (multi-step)
-  - [x] Collection routing
+  - [x] Collection selection
 
 ## Development
 

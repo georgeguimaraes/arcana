@@ -273,7 +273,7 @@ Vl.new(width: 400, height: 200, title: "Query-Document Similarity")
 
 ## 6. Agentic RAG Pipeline
 
-For complex questions, Arcana provides an Agent pipeline that can decompose questions, route to collections, and self-correct searches.
+For complex questions, Arcana provides an Agent pipeline that can decompose questions, select collections, and self-correct searches.
 
 ### Define an LLM Function
 
@@ -285,7 +285,7 @@ The agent needs an LLM to make decisions. Let's create a simple mock:
 mock_llm = fn prompt ->
   cond do
     prompt =~ "collections" ->
-      # Route to relevant collections
+      # Select relevant collections
       {:ok, ~s({"collections": ["languages", "frameworks"], "reasoning": "Question covers both"})}
 
     prompt =~ "sub_questions" ->
@@ -478,7 +478,7 @@ Vl.new(width: 500, height: 300, title: "Score Comparison: '#{query}'")
 | **Fulltext Search** | Matches exact keywords with TF-IDF scoring |
 | **Hybrid Search** | Combines both using Reciprocal Rank Fusion |
 | **Collections** | Organize documents into logical groups |
-| **Agent Pipeline** | Decompose → Route → Search → Answer |
+| **Agent Pipeline** | Decompose → Select → Search → Answer |
 
 ### Next Steps
 

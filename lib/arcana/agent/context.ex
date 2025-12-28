@@ -16,9 +16,9 @@ defmodule Arcana.Agent.Context do
   - `:limit` - Maximum chunks to retrieve per search
   - `:threshold` - Minimum similarity threshold
 
-  ### Populated by `route/2`
+  ### Populated by `select/2`
   - `:collections` - List of collection names to search
-  - `:routing_reasoning` - LLM's reasoning for the routing decision
+  - `:selection_reasoning` - LLM's reasoning for the selection decision
 
   ### Populated by `decompose/1`
   - `:sub_questions` - List of sub-questions to search separately
@@ -44,9 +44,9 @@ defmodule Arcana.Agent.Context do
     :limit,
     :threshold,
 
-    # Populated by route/2
+    # Populated by select/2
     :collections,
-    :routing_reasoning,
+    :selection_reasoning,
 
     # Populated by decompose/1
     :sub_questions,

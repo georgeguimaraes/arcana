@@ -311,7 +311,7 @@ defmodule Arcana.AgentTest do
     end
   end
 
-  describe "route/2" do
+  describe "select/2" do
     test "selects collections based on question" do
       llm = fn prompt ->
         if prompt =~ "Which collection" do
@@ -323,10 +323,10 @@ defmodule Arcana.AgentTest do
 
       ctx =
         Agent.new("How do I use the API?", repo: Arcana.TestRepo, llm: llm)
-        |> Agent.route(collections: ["docs", "api", "support"])
+        |> Agent.select(collections: ["docs", "api", "support"])
 
       assert ctx.collections == ["docs", "api"]
-      assert ctx.routing_reasoning == "Technical question"
+      assert ctx.selection_reasoning == "Technical question"
     end
 
     test "selects single collection" do
@@ -340,7 +340,7 @@ defmodule Arcana.AgentTest do
 
       ctx =
         Agent.new("I need help", repo: Arcana.TestRepo, llm: llm)
-        |> Agent.route(collections: ["docs", "support"])
+        |> Agent.select(collections: ["docs", "support"])
 
       assert ctx.collections == ["support"]
     end
@@ -350,7 +350,7 @@ defmodule Arcana.AgentTest do
 
       ctx =
         Agent.new("question", repo: Arcana.TestRepo, llm: llm)
-        |> Agent.route(collections: ["a", "b", "c"])
+        |> Agent.select(collections: ["a", "b", "c"])
 
       assert ctx.collections == ["a", "b", "c"]
     end
@@ -360,7 +360,7 @@ defmodule Arcana.AgentTest do
 
       ctx =
         Agent.new("question", repo: Arcana.TestRepo, llm: llm)
-        |> Agent.route(collections: ["x", "y"])
+        |> Agent.select(collections: ["x", "y"])
 
       assert ctx.collections == ["x", "y"]
     end
@@ -373,7 +373,7 @@ defmodule Arcana.AgentTest do
         error: :previous_error
       }
 
-      result = Agent.route(ctx, collections: ["a", "b"])
+      result = Agent.select(ctx, collections: ["a", "b"])
       assert result.error == :previous_error
       assert is_nil(result.collections)
     end
@@ -385,8 +385,8 @@ defmodule Arcana.AgentTest do
       :telemetry.attach_many(
         ref,
         [
-          [:arcana, :agent, :route, :start],
-          [:arcana, :agent, :route, :stop]
+          [:arcana, :agent, :select, :start],
+          [:arcana, :agent, :select, :stop]
         ],
         fn event, measurements, metadata, _ ->
           send(test_pid, {:telemetry, event, measurements, metadata})
@@ -399,10 +399,10 @@ defmodule Arcana.AgentTest do
       end
 
       Agent.new("question", repo: Arcana.TestRepo, llm: llm)
-      |> Agent.route(collections: ["docs", "api"])
+      |> Agent.select(collections: ["docs", "api"])
 
-      assert_receive {:telemetry, [:arcana, :agent, :route, :start], _, _}
-      assert_receive {:telemetry, [:arcana, :agent, :route, :stop], _, metadata}
+      assert_receive {:telemetry, [:arcana, :agent, :select, :start], _, _}
+      assert_receive {:telemetry, [:arcana, :agent, :select, :stop], _, metadata}
       assert metadata.selected_count == 1
 
       :telemetry.detach(ref)
@@ -411,17 +411,17 @@ defmodule Arcana.AgentTest do
     test "accepts custom prompt function" do
       llm = fn prompt ->
         # Verify custom prompt was used
-        assert prompt =~ "CUSTOM ROUTE PROMPT"
+        assert prompt =~ "CUSTOM SELECT PROMPT"
         {:ok, ~s({"collections": ["api"]})}
       end
 
       custom_prompt = fn question, collections ->
-        "CUSTOM ROUTE PROMPT: #{question}, collections: #{inspect(collections)}"
+        "CUSTOM SELECT PROMPT: #{question}, collections: #{inspect(collections)}"
       end
 
       ctx =
         Agent.new("test", repo: Arcana.TestRepo, llm: llm)
-        |> Agent.route(collections: ["docs", "api"], prompt: custom_prompt)
+        |> Agent.select(collections: ["docs", "api"], prompt: custom_prompt)
 
       assert ctx.collections == ["api"]
     end

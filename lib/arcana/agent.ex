@@ -62,7 +62,7 @@ defmodule Arcana.Agent do
   end
 
   @doc """
-  Routes the question to relevant collections.
+  Selects which collection(s) to search for the question.
 
   Uses the LLM to decide which collection(s) are most relevant for
   the question. This allows searching only in relevant collections
@@ -76,15 +76,15 @@ defmodule Arcana.Agent do
   ## Example
 
       ctx
-      |> Agent.route(collections: ["docs", "api", "support"])
+      |> Agent.select(collections: ["docs", "api", "support"])
       |> Agent.search()
       |> Agent.answer()
 
   The selected collections are stored in `ctx.collections` and used by `search/2`.
   """
-  def route(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
+  def select(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
 
-  def route(%Context{} = ctx, opts) do
+  def select(%Context{} = ctx, opts) do
     available_collections = Keyword.fetch!(opts, :collections)
 
     start_metadata = %{
@@ -92,18 +92,18 @@ defmodule Arcana.Agent do
       available_collections: available_collections
     }
 
-    :telemetry.span([:arcana, :agent, :route], start_metadata, fn ->
+    :telemetry.span([:arcana, :agent, :select], start_metadata, fn ->
       prompt =
         case Keyword.get(opts, :prompt) do
-          nil -> default_route_prompt(ctx.question, available_collections)
+          nil -> default_select_prompt(ctx.question, available_collections)
           custom_fn -> custom_fn.(ctx.question, available_collections)
         end
 
       {collections, reasoning} =
         ctx.llm.(prompt)
-        |> parse_route_response(available_collections)
+        |> parse_select_response(available_collections)
 
-      updated_ctx = %{ctx | collections: collections, routing_reasoning: reasoning}
+      updated_ctx = %{ctx | collections: collections, selection_reasoning: reasoning}
 
       stop_metadata = %{
         selected_count: length(collections),
@@ -114,7 +114,7 @@ defmodule Arcana.Agent do
     end)
   end
 
-  defp default_route_prompt(question, available_collections) do
+  defp default_select_prompt(question, available_collections) do
     """
     Which collection(s) should be searched for this question?
 
@@ -127,7 +127,7 @@ defmodule Arcana.Agent do
     """
   end
 
-  defp parse_route_response({:ok, response}, fallback_collections) do
+  defp parse_select_response({:ok, response}, fallback_collections) do
     case Jason.decode(response) do
       {:ok, %{"collections" => cols, "reasoning" => reason}} when is_list(cols) ->
         {cols, reason}
@@ -140,7 +140,7 @@ defmodule Arcana.Agent do
     end
   end
 
-  defp parse_route_response({:error, _}, fallback_collections) do
+  defp parse_select_response({:error, _}, fallback_collections) do
     {fallback_collections, nil}
   end
 

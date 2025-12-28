@@ -172,7 +172,7 @@ llm = fn prompt -> ReqLLM.generate_text!("openai:gpt-4o-mini", prompt) end
 
 ctx =
   Arcana.Agent.new("Compare Elixir and Erlang features", repo: MyApp.Repo, llm: llm)
-  |> Arcana.Agent.route(collections: ["elixir-docs", "erlang-docs"])
+  |> Arcana.Agent.select(collections: ["elixir-docs", "erlang-docs"])
   |> Arcana.Agent.decompose()
   |> Arcana.Agent.search(self_correct: true)
   |> Arcana.Agent.answer()
@@ -184,7 +184,7 @@ All pipeline steps accept custom prompt options:
 
 ```elixir
 ctx
-|> Agent.route(collections: [...], prompt: fn question, collections -> "..." end)
+|> Agent.select(collections: [...], prompt: fn question, collections -> "..." end)
 |> Agent.decompose(prompt: fn question -> "..." end)
 |> Agent.search(
   self_correct: true,
