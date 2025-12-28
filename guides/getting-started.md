@@ -26,6 +26,44 @@ The installer will:
 - Generate the documents and chunks migrations
 - Configure the embedding model
 
+## Embedding Configuration
+
+Arcana uses local embeddings by default via Bumblebee. No API keys needed.
+
+```elixir
+# config/config.exs
+
+# Default - BGE Small (384 dimensions, 133MB)
+config :arcana, embedding: :local
+
+# Use a different model
+config :arcana, embedding: {:local, model: "BAAI/bge-base-en-v1.5"}
+```
+
+Add the embedding model to your supervision tree:
+
+```elixir
+# application.ex
+children = [
+  MyApp.Repo,
+  {Arcana.Embedding.Local, model: "BAAI/bge-small-en-v1.5"},
+  # ...
+]
+```
+
+### Available Models
+
+| Model | Dimensions | Size | Use Case |
+|-------|------------|------|----------|
+| `BAAI/bge-small-en-v1.5` | 384 | 133MB | Default, good balance |
+| `BAAI/bge-base-en-v1.5` | 768 | 438MB | Better accuracy |
+| `BAAI/bge-large-en-v1.5` | 1024 | 1.3GB | Best accuracy |
+| `intfloat/e5-small-v2` | 384 | 133MB | Alternative to BGE |
+| `thenlper/gte-small` | 384 | 67MB | Smallest, fastest |
+| `sentence-transformers/all-MiniLM-L6-v2` | 384 | 91MB | Lightweight |
+
+For OpenAI embeddings or custom providers, see the [LLM Integration](llm-integration.md) guide.
+
 ## Basic Usage
 
 ### Ingesting Documents

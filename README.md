@@ -413,9 +413,30 @@ config :arcana, embedding: {MyApp.CohereEmbedder, api_key: "..."}
 | Provider | Dimensions | Notes |
 |----------|------------|-------|
 | `:local` (default) | 384 | `bge-small-en-v1.5`, no API key needed |
-| `{:local, model: "BAAI/bge-large-en-v1.5"}` | 1024 | Larger local model |
-| `:openai` | 1536 | `text-embedding-3-small` |
+| `:openai` | 1536 | `text-embedding-3-small`, requires API key |
 | `{:openai, model: "text-embedding-3-large"}` | 3072 | Higher quality |
+
+#### Local Model Options
+
+All local models run via Bumblebee with no API keys required. Models are downloaded from HuggingFace on first use.
+
+| Model | Config | Dims | Size | Notes |
+|-------|--------|------|------|-------|
+| **BGE Small** | `{:local, model: "BAAI/bge-small-en-v1.5"}` | 384 | 133MB | Default, best balance |
+| **BGE Base** | `{:local, model: "BAAI/bge-base-en-v1.5"}` | 768 | 438MB | Better accuracy |
+| **BGE Large** | `{:local, model: "BAAI/bge-large-en-v1.5"}` | 1024 | 1.3GB | Best BGE accuracy |
+| **E5 Small** | `{:local, model: "intfloat/e5-small-v2"}` | 384 | 133MB | Microsoft, comparable to BGE |
+| **E5 Base** | `{:local, model: "intfloat/e5-base-v2"}` | 768 | 438MB | Strong all-rounder |
+| **E5 Large** | `{:local, model: "intfloat/e5-large-v2"}` | 1024 | 1.3GB | Best E5 accuracy |
+| **GTE Small** | `{:local, model: "thenlper/gte-small"}` | 384 | 67MB | Smallest, fastest |
+| **GTE Base** | `{:local, model: "thenlper/gte-base"}` | 768 | 220MB | Alibaba |
+| **GTE Large** | `{:local, model: "thenlper/gte-large"}` | 1024 | 670MB | Best GTE accuracy |
+| **MiniLM** | `{:local, model: "sentence-transformers/all-MiniLM-L6-v2"}` | 384 | 91MB | Lightweight, fast |
+
+**Recommendations:**
+- **Getting started:** Use default (`bge-small-en-v1.5`) - good quality, reasonable size
+- **Resource constrained:** Use `gte-small` (67MB) or `all-MiniLM-L6-v2` (91MB)
+- **Best accuracy:** Use `bge-large-en-v1.5` or `e5-large-v2` (1024 dimensions)
 
 #### Custom Embedding Module
 
