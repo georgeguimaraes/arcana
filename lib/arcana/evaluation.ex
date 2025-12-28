@@ -215,7 +215,7 @@ defmodule Arcana.Evaluation do
     limit = Keyword.get(opts, :limit, 20)
 
     from(r in Run,
-      order_by: [desc: r.inserted_at],
+      order_by: [desc: r.inserted_at, desc: r.id],
       limit: ^limit
     )
     |> repo.all()

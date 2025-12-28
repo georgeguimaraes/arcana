@@ -703,8 +703,10 @@ MIX_ENV=test mix ecto.migrate -r Arcana.TestRepo
 mix test
 ```
 
+---
+
 ## License
 
-Copyright (c) 2025 George Guimaraes
+Copyright (c) 2025 George Guimarães
 
-Apache 2.0
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.

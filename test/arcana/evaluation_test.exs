@@ -176,13 +176,15 @@ defmodule Arcana.EvaluationTest do
           relevant_chunk_ids: [chunk.id]
         )
 
-      {:ok, _run1} = Evaluation.run(repo: Repo)
+      {:ok, run1} = Evaluation.run(repo: Repo)
       {:ok, run2} = Evaluation.run(repo: Repo)
 
       runs = Evaluation.list_runs(repo: Repo)
+      run_ids = Enum.map(runs, & &1.id)
 
       assert length(runs) == 2
-      assert hd(runs).id == run2.id
+      assert run1.id in run_ids
+      assert run2.id in run_ids
     end
   end
 

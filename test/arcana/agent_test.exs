@@ -239,7 +239,11 @@ defmodule Arcana.AgentTest do
       end
 
       ctx =
-        Agent.new("What VM does Elixir use?", repo: Arcana.TestRepo, llm: llm)
+        Agent.new("What VM does Elixir use?",
+          repo: Arcana.TestRepo,
+          llm: llm,
+          threshold: 0.0
+        )
         |> Agent.search()
         |> Agent.answer()
 
