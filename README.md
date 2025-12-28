@@ -705,4 +705,6 @@ mix test
 
 ## License
 
+Copyright (c) 2025 George Guimaraes
+
 Apache 2.0
