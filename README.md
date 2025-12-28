@@ -679,14 +679,18 @@ config :nx, default_backend: EXLA.Backend
 - [x] In-memory vector store (HNSWLib backend)
 - [x] Query expansion (Agent.expand/2)
 - [x] Re-ranking (Agent.rerank/2)
-- [ ] Async ingestion with Oban
-- [ ] HyDE (Hypothetical Document Embeddings)
-- [ ] GraphRAG (knowledge graph + community summaries)
 - [x] Agentic RAG
   - [x] Agent pipeline with context struct
   - [x] Self-correcting search (evaluate + retry)
   - [x] Question decomposition (multi-step)
   - [x] Collection selection
+- [ ] E5 embedding model prefix support (`query:` / `passage:` prefixes)
+- [ ] Additional vector store backends
+  - [ ] TurboPuffer (hybrid search)
+  - [ ] ChromaDB
+- [ ] Async ingestion with Oban
+- [ ] HyDE (Hypothetical Document Embeddings)
+- [ ] GraphRAG (knowledge graph + community summaries)
 
 ## Development
 
