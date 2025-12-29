@@ -1962,8 +1962,8 @@ defmodule ArcanaWeb.DashboardLive do
 
             </div>
 
-            <div class="arcana-ask-collections" style="margin: 0;">
-              <label style="margin-bottom: 0.25rem;">Collections</label>
+            <div class="arcana-ask-collections">
+              <label>Collections</label>
               <div class="arcana-collection-checkboxes">
                 <%= for collection <- @collections do %>
                   <label class="arcana-collection-check">
