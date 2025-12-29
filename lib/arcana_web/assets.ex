@@ -205,7 +205,12 @@ defmodule ArcanaWeb.Assets do
   .arcana-table td {
     padding: 0.75rem;
     border-bottom: 1px solid #e5e7eb;
-    vertical-align: top;
+    vertical-align: middle;
+  }
+
+  .arcana-documents-table td:nth-child(5),
+  .arcana-documents-table td:nth-child(6) {
+    white-space: nowrap;
   }
 
   .arcana-documents-table tr:hover,
@@ -309,6 +314,7 @@ defmodule ArcanaWeb.Assets do
   .arcana-actions {
     display: flex;
     gap: 0.5rem;
+    white-space: nowrap;
   }
 
   .arcana-view-btn {
