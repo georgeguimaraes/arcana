@@ -22,12 +22,15 @@ defmodule Arcana.Telemetry.Logger do
   ## Example Output
 
       [info] [Arcana] search completed in 42ms (15 results)
+      [info] [Arcana] llm.complete completed in 1.23s [zai:glm-4.7] ok (156 chars) prompt=892chars
       [info] [Arcana] agent.rewrite completed in 235ms
-      [info] [Arcana] agent.expand completed in 180ms (3 queries)
+      [info] [Arcana] llm.complete completed in 2.1s [zai:glm-4.7] ok (45 chars) prompt=1204chars
+      [info] [Arcana] agent.expand completed in 2.15s (3 queries)
       [info] [Arcana] agent.search completed in 156ms (25 chunks)
       [info] [Arcana] agent.rerank completed in 312ms (10/25 kept)
-      [info] [Arcana] agent.answer completed in 1.45s
-      [info] [Arcana] ask completed in 2.34s
+      [info] [Arcana] llm.complete completed in 3.2s [zai:glm-4.7] ok (1892 chars) prompt=4521chars
+      [info] [Arcana] agent.answer completed in 3.25s
+      [info] [Arcana] ask completed in 6.12s
 
   ## Options
 
@@ -56,6 +59,8 @@ defmodule Arcana.Telemetry.Logger do
     [:arcana, :ask, :stop],
     [:arcana, :embed, :stop],
     [:arcana, :embed_batch, :stop],
+    # LLM calls
+    [:arcana, :llm, :complete, :stop],
     # Agent pipeline
     [:arcana, :agent, :rewrite, :stop],
     [:arcana, :agent, :select, :stop],
@@ -163,6 +168,21 @@ defmodule Arcana.Telemetry.Logger do
 
   defp extract_details("embed_batch", meta) do
     "(#{meta[:count] || "?"} texts)"
+  end
+
+  defp extract_details("llm.complete", meta) do
+    model = meta[:model] || "?"
+    prompt_len = meta[:prompt_length] || "?"
+    status = if meta[:success], do: "ok", else: "error"
+
+    response_info =
+      if meta[:success] do
+        "(#{meta[:response_length] || "?"} chars)"
+      else
+        "(#{meta[:error] || "unknown error"})"
+      end
+
+    "[#{model}] #{status} #{response_info} prompt=#{prompt_len}chars"
   end
 
   defp extract_details("agent.rewrite", meta) do

@@ -58,12 +58,29 @@ end
 # Implementation for anonymous functions
 defimpl Arcana.LLM, for: Function do
   def complete(fun, prompt, context, opts) do
-    case Function.info(fun, :arity) do
-      {:arity, 1} -> fun.(prompt)
-      {:arity, 2} -> fun.(prompt, context)
-      {:arity, 3} -> fun.(prompt, context, opts)
-      {:arity, _} -> {:error, :invalid_function_arity}
-    end
+    start_metadata = %{
+      model: "function",
+      prompt_length: String.length(prompt),
+      context_count: length(context)
+    }
+
+    :telemetry.span([:arcana, :llm, :complete], start_metadata, fn ->
+      result =
+        case Function.info(fun, :arity) do
+          {:arity, 1} -> fun.(prompt)
+          {:arity, 2} -> fun.(prompt, context)
+          {:arity, 3} -> fun.(prompt, context, opts)
+          {:arity, _} -> {:error, :invalid_function_arity}
+        end
+
+      stop_metadata =
+        case result do
+          {:ok, response} -> %{success: true, response_length: String.length(response)}
+          {:error, _} -> %{success: false}
+        end
+
+      {result, stop_metadata}
+    end)
   end
 end
 
@@ -85,21 +102,41 @@ if Code.ensure_loaded?(ReqLLM) do
           custom -> custom
         end
 
-      llm_context =
-        ReqLLM.Context.new([
-          ReqLLM.Context.system(system_message),
-          ReqLLM.Context.user(prompt)
-        ])
+      start_metadata = %{
+        model: model,
+        prompt_length: String.length(prompt),
+        system_prompt_length: String.length(system_message),
+        context_count: length(context)
+      }
 
-      # Pass through ReqLLM options like :api_key
-      reqllm_opts = Keyword.take(opts, [:api_key, :temperature, :max_tokens])
+      :telemetry.span([:arcana, :llm, :complete], start_metadata, fn ->
+        llm_context =
+          ReqLLM.Context.new([
+            ReqLLM.Context.system(system_message),
+            ReqLLM.Context.user(prompt)
+          ])
 
-      case ReqLLM.generate_text(model, llm_context, reqllm_opts) do
-        {:ok, response} -> {:ok, ReqLLM.Response.text(response)}
-        {:error, reason} -> {:error, reason}
-      end
-    rescue
-      e -> {:error, e}
+        # Pass through ReqLLM options like :api_key
+        reqllm_opts = Keyword.take(opts, [:api_key, :temperature, :max_tokens])
+
+        result =
+          try do
+            case ReqLLM.generate_text(model, llm_context, reqllm_opts) do
+              {:ok, response} -> {:ok, ReqLLM.Response.text(response)}
+              {:error, reason} -> {:error, reason}
+            end
+          rescue
+            e -> {:error, e}
+          end
+
+        stop_metadata =
+          case result do
+            {:ok, response} -> %{success: true, response_length: String.length(response)}
+            {:error, reason} -> %{success: false, error: inspect(reason)}
+          end
+
+        {result, stop_metadata}
+      end)
     end
 
     defp default_system_prompt(context) do

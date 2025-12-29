@@ -66,6 +66,20 @@ defmodule Arcana.Telemetry do
     * Measurement: `%{duration: integer}`
     * Metadata: `%{kind: atom(), reason: term(), stacktrace: list()}`
 
+  ### LLM Events
+
+  * `[:arcana, :llm, :complete, :start]` - Emitted when an LLM call begins.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{model: String.t(), prompt_length: integer, context_count: integer}`
+
+  * `[:arcana, :llm, :complete, :stop]` - Emitted when an LLM call completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{success: boolean, response_length: integer}` or `%{success: false, error: String.t()}`
+
+  * `[:arcana, :llm, :complete, :exception]` - Emitted when an LLM call fails.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{kind: atom(), reason: term(), stacktrace: list()}`
+
   ## Quick Start with Built-in Logger
 
   For quick setup, use the built-in logger:
