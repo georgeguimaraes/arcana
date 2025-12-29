@@ -119,6 +119,11 @@ defmodule Arcana.Telemetry.Logger do
         do: "[Arcana] #{event_name} completed in #{duration} #{details}",
         else: "[Arcana] #{event_name} completed in #{duration}"
 
+    # Debug: log metadata keys when model is missing
+    if event_name == "llm.complete" and not Map.has_key?(metadata, :model) do
+      Logger.debug("[Arcana] DEBUG: llm.complete metadata keys: #{inspect(Map.keys(metadata))}")
+    end
+
     Logger.log(config.level, message)
   end
 
@@ -179,7 +184,10 @@ defmodule Arcana.Telemetry.Logger do
       if meta[:success] do
         "(#{meta[:response_length] || "?"} chars)"
       else
-        "(#{meta[:error] || "unknown error"})"
+        error_str = meta[:error] || "unknown error"
+        # Truncate long errors to keep logs readable
+        truncated = if String.length(error_str) > 100, do: String.slice(error_str, 0, 100) <> "...", else: error_str
+        "(#{truncated})"
       end
 
     "[#{model}] #{status} #{response_info} prompt=#{prompt_len}chars"
