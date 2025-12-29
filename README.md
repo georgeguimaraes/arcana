@@ -4,6 +4,8 @@
 
 Embeddable RAG library for Elixir/Phoenix. Add vector search, document retrieval, and AI-powered question answering to any Phoenix application. Supports both simple RAG and agentic RAG with query expansion, self-correction, and multi-step reasoning.
 
+> **Example App**: See [arcana-adept](https://github.com/georgeguimaraes/arcana-adept) for a complete Phoenix app with a Doctor Who corpus ready to embed and query.
+
 ## Features
 
 - **Simple API** - `ingest/2`, `search/2`, `ask/2` for basic RAG
