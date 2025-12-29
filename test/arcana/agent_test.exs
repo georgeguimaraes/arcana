@@ -281,6 +281,28 @@ defmodule Arcana.AgentTest do
 
       assert ctx.answer == "Custom answer"
     end
+
+    test "accepts custom llm function" do
+      context_llm = fn _prompt -> {:ok, "context llm answer"} end
+      override_llm = fn _prompt -> {:ok, "override llm answer"} end
+
+      ctx = %Context{
+        question: "test question",
+        repo: Arcana.TestRepo,
+        llm: context_llm,
+        results: [
+          %{
+            question: "test",
+            collection: "default",
+            chunks: [%{id: "1", text: "chunk text", score: 0.9}]
+          }
+        ]
+      }
+
+      ctx = Agent.answer(ctx, llm: override_llm)
+
+      assert ctx.answer == "override llm answer"
+    end
   end
 
   describe "pipeline" do
@@ -780,6 +802,17 @@ defmodule Arcana.AgentTest do
 
       assert ctx.sub_questions == ["a", "b"]
     end
+
+    test "accepts custom llm function" do
+      context_llm = fn _prompt -> {:ok, ~s({"sub_questions": ["context"]})} end
+      override_llm = fn _prompt -> {:ok, ~s({"sub_questions": ["override"]})} end
+
+      ctx =
+        Agent.new("test query", repo: Arcana.TestRepo, llm: context_llm)
+        |> Agent.decompose(llm: override_llm)
+
+      assert ctx.sub_questions == ["override"]
+    end
   end
 
   describe "self-correcting search" do
@@ -965,6 +998,171 @@ defmodule Arcana.AgentTest do
     end
   end
 
+  describe "rewrite/2" do
+    test "rewrites conversational input into clear search query" do
+      llm = fn prompt ->
+        if prompt =~ "rewrite this input" do
+          {:ok, "compare Elixir and Go for web services"}
+        else
+          {:ok, "response"}
+        end
+      end
+
+      ctx =
+        Agent.new("Hey, I want to compare Elixir and Go lang for building web services",
+          repo: Arcana.TestRepo,
+          llm: llm
+        )
+        |> Agent.rewrite()
+
+      assert ctx.rewritten_query == "compare Elixir and Go for web services"
+    end
+
+    test "rewritten query is used by expand/2" do
+      llm = fn prompt ->
+        cond do
+          prompt =~ "rewrite this input" ->
+            {:ok, "compare Elixir and Go"}
+
+          prompt =~ "expand this query" ->
+            # Should receive the rewritten query, not the original
+            if prompt =~ "compare Elixir and Go" do
+              {:ok, "compare Elixir Go Golang BEAM concurrency"}
+            else
+              {:ok, "wrong query received"}
+            end
+
+          true ->
+            {:ok, "response"}
+        end
+      end
+
+      ctx =
+        Agent.new("Hey now, I want to compare Elixir and Go lang",
+          repo: Arcana.TestRepo,
+          llm: llm
+        )
+        |> Agent.rewrite()
+        |> Agent.expand()
+
+      assert ctx.rewritten_query == "compare Elixir and Go"
+      assert ctx.expanded_query == "compare Elixir Go Golang BEAM concurrency"
+    end
+
+    test "rewritten query is used by decompose/2" do
+      llm = fn prompt ->
+        cond do
+          prompt =~ "rewrite this input" ->
+            {:ok, "compare Elixir and Go"}
+
+          prompt =~ "decompose this question" ->
+            # Should receive the rewritten query, not the original
+            if prompt =~ "compare Elixir and Go" do
+              {:ok, ~s({"sub_questions": ["What is Elixir?", "What is Go?"]})}
+            else
+              {:ok, ~s({"sub_questions": ["wrong query"]})}
+            end
+
+          true ->
+            {:ok, "response"}
+        end
+      end
+
+      ctx =
+        Agent.new("Hey, can you tell me about Elixir vs Go?",
+          repo: Arcana.TestRepo,
+          llm: llm
+        )
+        |> Agent.rewrite()
+        |> Agent.decompose()
+
+      assert ctx.rewritten_query == "compare Elixir and Go"
+      assert ctx.sub_questions == ["What is Elixir?", "What is Go?"]
+    end
+
+    test "handles LLM error gracefully" do
+      llm = fn _prompt -> {:error, :api_error} end
+
+      ctx =
+        Agent.new("Hey, tell me about Elixir", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.rewrite()
+
+      assert is_nil(ctx.rewritten_query)
+      assert is_nil(ctx.error)
+    end
+
+    test "skips if context has error" do
+      ctx = %Context{
+        question: "test",
+        repo: Arcana.TestRepo,
+        llm: fn _ -> {:ok, "response"} end,
+        error: :previous_error
+      }
+
+      result = Agent.rewrite(ctx)
+      assert result.error == :previous_error
+      assert is_nil(result.rewritten_query)
+    end
+
+    test "accepts custom prompt function" do
+      custom_prompt = fn question ->
+        "Custom rewrite: #{question}"
+      end
+
+      llm = fn prompt ->
+        if prompt =~ "Custom rewrite:" do
+          {:ok, "custom rewritten query"}
+        else
+          {:ok, "default response"}
+        end
+      end
+
+      ctx =
+        Agent.new("test query", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.rewrite(prompt: custom_prompt)
+
+      assert ctx.rewritten_query == "custom rewritten query"
+    end
+
+    test "accepts custom llm function" do
+      context_llm = fn _prompt -> {:ok, "context llm response"} end
+      override_llm = fn _prompt -> {:ok, "override llm response"} end
+
+      ctx =
+        Agent.new("test query", repo: Arcana.TestRepo, llm: context_llm)
+        |> Agent.rewrite(llm: override_llm)
+
+      assert ctx.rewritten_query == "override llm response"
+    end
+
+    test "emits telemetry events" do
+      ref = make_ref()
+      test_pid = self()
+
+      :telemetry.attach_many(
+        ref,
+        [
+          [:arcana, :agent, :rewrite, :start],
+          [:arcana, :agent, :rewrite, :stop]
+        ],
+        fn event, measurements, metadata, _ ->
+          send(test_pid, {event, measurements, metadata})
+        end,
+        nil
+      )
+
+      llm = fn _prompt -> {:ok, "rewritten"} end
+
+      Agent.new("Hey, tell me about Elixir", repo: Arcana.TestRepo, llm: llm)
+      |> Agent.rewrite()
+
+      assert_receive {[:arcana, :agent, :rewrite, :start], _, %{question: _}}
+      assert_receive {[:arcana, :agent, :rewrite, :stop], _, %{rewritten_query: "rewritten"}}
+
+      :telemetry.detach(ref)
+    end
+  end
+
   describe "expand/2" do
     test "expands query with synonyms and related terms" do
       llm = fn prompt ->
@@ -1078,6 +1276,17 @@ defmodule Arcana.AgentTest do
         |> Agent.expand(prompt: custom_prompt)
 
       assert ctx.expanded_query == "custom expanded query"
+    end
+
+    test "accepts custom llm function" do
+      context_llm = fn _prompt -> {:ok, "context llm response"} end
+      override_llm = fn _prompt -> {:ok, "override llm response"} end
+
+      ctx =
+        Agent.new("test query", repo: Arcana.TestRepo, llm: context_llm)
+        |> Agent.expand(llm: override_llm)
+
+      assert ctx.expanded_query == "override llm response"
     end
   end
 

@@ -16,6 +16,9 @@ defmodule Arcana.Agent.Context do
   - `:limit` - Maximum chunks to retrieve per search
   - `:threshold` - Minimum similarity threshold
 
+  ### Populated by `rewrite/2`
+  - `:rewritten_query` - Conversational input rewritten as a clear search query
+
   ### Populated by `select/2`
   - `:collections` - List of collection names to search
   - `:selection_reasoning` - LLM's reasoning for the selection decision
@@ -49,6 +52,9 @@ defmodule Arcana.Agent.Context do
     # Options
     :limit,
     :threshold,
+
+    # Populated by rewrite/2
+    :rewritten_query,
 
     # Populated by select/2
     :collections,

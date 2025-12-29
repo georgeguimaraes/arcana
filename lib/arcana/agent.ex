@@ -61,6 +61,94 @@ defmodule Arcana.Agent do
     }
   end
 
+  @default_rewrite_prompt """
+  You are a search query optimizer. Your task is to rewrite conversational user input into a clear, standalone search query.
+
+  Rules:
+  - Remove conversational filler (greetings, "I want to", "Can you tell me", "Hey", etc.)
+  - Extract the core question or topic
+  - Keep ALL entity names, technical terms, and specific details
+  - Keep the query concise but complete
+  - If the input is already a clear query, return it unchanged
+  - Return only the rewritten query, nothing else
+
+  Examples:
+  Input: "Hey, so I was wondering if you could help me understand how Phoenix LiveView works"
+  Rewritten: "how Phoenix LiveView works"
+
+  Input: "I want to compare Elixir and Go lang for building web services"
+  Rewritten: "compare Elixir and Go for building web services"
+
+  Input: "Can you tell me about the advantages of using GenServer?"
+  Rewritten: "advantages of using GenServer"
+
+  Input: "What is pattern matching?"
+  Rewritten: "What is pattern matching?"
+
+  Now rewrite this input:
+  "{query}"
+  """
+
+  @doc """
+  Rewrites conversational input into a clear search query.
+
+  Uses the LLM to remove conversational noise (greetings, filler phrases)
+  while preserving the core question and all important terms.
+
+  This step should run before `expand/2` and `decompose/2` to clean up
+  the input before further transformations.
+
+  ## Options
+
+  - `:prompt` - Custom prompt function `fn question -> prompt_string end`
+  - `:llm` - Override the LLM function for this step
+
+  ## Example
+
+      ctx
+      |> Agent.rewrite()   # "Hey, tell me about Elixir" → "about Elixir"
+      |> Agent.expand()
+      |> Agent.search()
+      |> Agent.answer()
+  """
+  def rewrite(ctx, opts \\ [])
+
+  def rewrite(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
+
+  def rewrite(%Context{} = ctx, opts) do
+    start_metadata = %{question: ctx.question}
+
+    :telemetry.span([:arcana, :agent, :rewrite], start_metadata, fn ->
+      llm = Keyword.get(opts, :llm, ctx.llm)
+
+      prompt =
+        case Keyword.get(opts, :prompt) do
+          nil -> default_rewrite_prompt(ctx.question)
+          custom_fn -> custom_fn.(ctx.question)
+        end
+
+      rewritten_query =
+        case llm.(prompt) do
+          {:ok, rewritten} -> String.trim(rewritten)
+          {:error, _} -> nil
+        end
+
+      updated_ctx = %{ctx | rewritten_query: rewritten_query}
+
+      stop_metadata = %{rewritten_query: rewritten_query}
+
+      {updated_ctx, stop_metadata}
+    end)
+  end
+
+  defp default_rewrite_prompt(question) do
+    String.replace(@default_rewrite_prompt, "{query}", question)
+  end
+
+  # Returns the effective query to use: rewritten_query if available, else question
+  defp effective_query(%Context{rewritten_query: rewritten}) when is_binary(rewritten), do: rewritten
+  defp effective_query(%Context{question: question}), do: question
+
   @doc """
   Selects which collection(s) to search for the question.
 
@@ -199,6 +287,7 @@ defmodule Arcana.Agent do
   ## Options
 
   - `:prompt` - Custom prompt function `fn question -> prompt_string end`
+  - `:llm` - Override the LLM function for this step
 
   ## Example
 
@@ -214,17 +303,20 @@ defmodule Arcana.Agent do
   def expand(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
 
   def expand(%Context{} = ctx, opts) do
-    start_metadata = %{question: ctx.question}
+    query = effective_query(ctx)
+    start_metadata = %{question: query}
 
     :telemetry.span([:arcana, :agent, :expand], start_metadata, fn ->
+      llm = Keyword.get(opts, :llm, ctx.llm)
+
       prompt =
         case Keyword.get(opts, :prompt) do
-          nil -> default_expand_prompt(ctx.question)
-          custom_fn -> custom_fn.(ctx.question)
+          nil -> default_expand_prompt(query)
+          custom_fn -> custom_fn.(query)
         end
 
       expanded_query =
-        case ctx.llm.(prompt) do
+        case llm.(prompt) do
           {:ok, expanded} -> String.trim(expanded)
           {:error, _} -> nil
         end
@@ -250,6 +342,7 @@ defmodule Arcana.Agent do
   ## Options
 
   - `:prompt` - Custom prompt function `fn question -> prompt_string end`
+  - `:llm` - Override the LLM function for this step
 
   ## Example
 
@@ -265,18 +358,21 @@ defmodule Arcana.Agent do
   def decompose(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
 
   def decompose(%Context{} = ctx, opts) do
-    start_metadata = %{question: ctx.question}
+    query = effective_query(ctx)
+    start_metadata = %{question: query}
 
     :telemetry.span([:arcana, :agent, :decompose], start_metadata, fn ->
+      llm = Keyword.get(opts, :llm, ctx.llm)
+
       prompt =
         case Keyword.get(opts, :prompt) do
-          nil -> default_decompose_prompt(ctx.question)
-          custom_fn -> custom_fn.(ctx.question)
+          nil -> default_decompose_prompt(query)
+          custom_fn -> custom_fn.(query)
         end
 
       sub_questions =
-        ctx.llm.(prompt)
-        |> parse_decompose_response(ctx.question)
+        llm.(prompt)
+        |> parse_decompose_response(query)
 
       updated_ctx = %{ctx | sub_questions: sub_questions}
 
@@ -666,6 +762,7 @@ defmodule Arcana.Agent do
   ## Options
 
   - `:prompt` - Custom prompt function `fn question, chunks -> prompt_string end`
+  - `:llm` - Override the LLM function for this step
 
   ## Example
 
@@ -684,6 +781,8 @@ defmodule Arcana.Agent do
     start_metadata = %{question: ctx.question}
 
     :telemetry.span([:arcana, :agent, :answer], start_metadata, fn ->
+      llm = Keyword.get(opts, :llm, ctx.llm)
+
       all_chunks =
         ctx.results
         |> Enum.flat_map(& &1.chunks)
@@ -696,7 +795,7 @@ defmodule Arcana.Agent do
         end
 
       updated_ctx =
-        case ctx.llm.(prompt) do
+        case llm.(prompt) do
           {:ok, answer} ->
             %{ctx | answer: answer, context_used: all_chunks}
 

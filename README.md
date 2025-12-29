@@ -326,6 +326,7 @@ ctx.answer
 | Step | Description |
 |------|-------------|
 | `new/2` | Initialize context with question and options |
+| `rewrite/2` | Clean up conversational input into clear search queries |
 | `select/2` | Select relevant collections (LLM or custom selector) |
 | `expand/2` | Expand query with synonyms and related terms |
 | `decompose/2` | Break complex questions into sub-questions |
@@ -397,6 +398,15 @@ ctx
 )
 ```
 
+**Query rewriting:**
+
+`rewrite/2` cleans up conversational input into clear search queries. It removes noise like greetings and filler phrases while preserving entity names and technical terms:
+
+- "Hey, I want to compare Elixir and Go lang" → "compare Elixir and Go"
+- "Can you tell me about GenServer?" → "about GenServer"
+
+Use `rewrite/2` as the first step when questions come from conversational interfaces (chatbots, voice assistants).
+
 **Query expansion vs. decomposition:**
 
 - `expand/2` adds synonyms to a single query: "ML models" → "ML machine learning artificial intelligence models"
@@ -443,6 +453,7 @@ All pipeline steps accept custom prompt functions:
 
 ```elixir
 ctx
+|> Agent.rewrite(prompt: fn question -> "..." end)
 |> Agent.select(collections: [...], prompt: fn question, collections -> "..." end)
 |> Agent.expand(prompt: fn question -> "..." end)
 |> Agent.decompose(prompt: fn question -> "..." end)
@@ -805,7 +816,7 @@ config :nx, default_backend: EXLA.Backend
 │                     Your Phoenix App                     │
 ├─────────────────────────────────────────────────────────┤
 │                    Arcana.Agent                          │
-│  (select → expand → search → rerank → answer pipeline)  │
+│  (rewrite → select → expand → search → rerank → answer) │
 ├─────────────────────────────────────────────────────────┤
 │  Arcana.ask/2   │  Arcana.search/2  │  Arcana.ingest/2  │
 ├─────────────────┴───────────────────┴───────────────────┤

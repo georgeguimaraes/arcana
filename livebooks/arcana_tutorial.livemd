@@ -469,7 +469,64 @@ Vl.new(width: 500, height: 300, title: "Score Comparison: '#{query}'")
 |> Vl.encode_field(:x_offset, "type", type: :nominal)
 ```
 
-## 9. Query Expansion
+## 9. Query Rewriting
+
+Query rewriting cleans up conversational input into clear search queries. This is essential when questions come from chatbots or voice interfaces.
+
+### How It Works
+
+The `Agent.rewrite/2` step uses an LLM to remove conversational noise while preserving important terms:
+
+```
+Original: "Hey, I was wondering if you could tell me about Elixir"
+Rewritten: "about Elixir"
+
+Original: "So like, can you compare Python and Rust for me?"
+Rewritten: "compare Python and Rust"
+```
+
+### Example with Mock LLM
+
+```elixir
+# Mock LLM that rewrites queries
+rewrite_llm = fn prompt ->
+  cond do
+    prompt =~ "Hey" or prompt =~ "wondering" ->
+      {:ok, "about Elixir"}
+
+    prompt =~ "So like" or prompt =~ "for me" ->
+      {:ok, "compare Python and Rust"}
+
+    true ->
+      {:ok, prompt}
+  end
+end
+
+# Using with Agent pipeline
+# ctx = Agent.new("Hey, can you tell me about Elixir?", repo: nil, llm: rewrite_llm)
+#   |> Agent.rewrite()
+# ctx.rewritten_query => "about Elixir"
+
+IO.puts("Query rewriting removes conversational noise for better retrieval")
+```
+
+### Rewrite vs Expand
+
+| Step | Purpose | Use When |
+|------|---------|----------|
+| `rewrite/2` | Cleans conversational input | Chatbots, voice interfaces |
+| `expand/2` | Adds synonyms | Short queries, abbreviations, jargon |
+
+You can combine both (rewrite runs first):
+
+```elixir
+# ctx = Agent.new("Hey, tell me about ML", ...)
+#   |> Agent.rewrite()    # "Hey, tell me about ML" → "about ML"
+#   |> Agent.expand()     # "about ML" → "about ML machine learning..."
+#   |> Agent.search()
+```
+
+## 10. Query Expansion
 
 Query expansion improves search results by adding synonyms and related terms to your search queries. This is useful when users search with abbreviations (e.g., "ML" instead of "machine learning").
 
@@ -533,7 +590,7 @@ You can combine both:
 #   |> Agent.search()
 ```
 
-## 10. Re-ranking
+## 11. Re-ranking
 
 Re-ranking improves search result quality by scoring each retrieved chunk's relevance to the question, then filtering and re-sorting by score.
 
@@ -611,13 +668,14 @@ end
 ```elixir
 # Complete agentic RAG pipeline:
 # ctx = Agent.new("What is Elixir?", repo: MyApp.Repo, llm: my_llm)
+#   |> Agent.rewrite()    # Clean up conversational input
 #   |> Agent.select()     # Choose collections
 #   |> Agent.expand()     # Add synonyms
 #   |> Agent.search()     # Retrieve chunks
 #   |> Agent.rerank()     # Filter by relevance
 #   |> Agent.answer()     # Generate answer
 
-IO.puts("The full pipeline: select → expand → search → rerank → answer")
+IO.puts("The full pipeline: rewrite → select → expand → search → rerank → answer")
 ```
 
 ### Explicit Collection Selection
@@ -657,9 +715,10 @@ Use explicit collections when:
 | **Fulltext Search** | Matches exact keywords with TF-IDF scoring |
 | **Hybrid Search** | Combines both using Reciprocal Rank Fusion |
 | **Collections** | Organize documents into logical groups |
+| **Query Rewriting** | Clean conversational input into clear queries |
 | **Query Expansion** | Add synonyms for better recall |
 | **Re-ranking** | Filter chunks by LLM-scored relevance |
-| **Agent Pipeline** | Select → Expand → Search → Rerank → Answer |
+| **Agent Pipeline** | Rewrite → Select → Expand → Search → Rerank → Answer |
 
 ### Next Steps
 

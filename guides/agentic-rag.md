@@ -13,6 +13,7 @@ llm = fn prompt -> {:ok, LangChain.chat(prompt)} end
 
 ctx =
   Agent.new("Compare Elixir and Erlang", repo: MyApp.Repo, llm: llm)
+  |> Agent.rewrite()     # Clean up conversational input
   |> Agent.expand()      # Expand query with synonyms
   |> Agent.decompose()   # Break into sub-questions
   |> Agent.search()      # Search for each sub-question
@@ -36,6 +37,19 @@ ctx = Agent.new("What is Elixir?",
   threshold: 0.5   # Minimum similarity
 )
 ```
+
+### rewrite/2 - Clean Conversational Input
+
+Transform conversational input into clear search queries:
+
+```elixir
+ctx = Agent.rewrite(ctx)
+
+ctx.rewritten_query
+# "Hey, I want to compare Elixir and Go" → "compare Elixir and Go"
+```
+
+This step removes greetings, filler phrases, and conversational noise while preserving entity names and technical terms. Use when questions come from chatbots or voice interfaces.
 
 ### select/2 - Route to Collections
 
@@ -150,9 +164,14 @@ ctx.context_used
 
 ## Custom Prompts
 
-Every LLM-powered step accepts a custom prompt function:
+Every LLM-powered step accepts a custom prompt function and optional LLM override:
 
 ```elixir
+# Custom rewrite prompt
+Agent.rewrite(ctx, prompt: fn question ->
+  "Clean up this conversational input: #{question}"
+end)
+
 # Custom expansion prompt
 Agent.expand(ctx, prompt: fn question ->
   "Expand this query for better search: #{question}"
@@ -178,6 +197,10 @@ Agent.answer(ctx, prompt: fn question, chunks ->
   Question: #{question}
   """
 end)
+
+# Override LLM for a specific step
+Agent.rewrite(ctx, llm: faster_llm)
+Agent.answer(ctx, llm: more_capable_llm)
 ```
 
 ## Error Handling
@@ -203,6 +226,7 @@ Each step emits telemetry events:
 
 ```elixir
 # Available events
+[:arcana, :agent, :rewrite, :start | :stop | :exception]
 [:arcana, :agent, :select, :start | :stop | :exception]
 [:arcana, :agent, :expand, :start | :stop | :exception]
 [:arcana, :agent, :decompose, :start | :stop | :exception]
@@ -285,6 +309,7 @@ The `Arcana.Agent.Context` struct carries all state:
 | `question` | Original question |
 | `repo` | Ecto repo |
 | `llm` | LLM function |
+| `rewritten_query` | Query after cleanup (from rewrite) |
 | `expanded_query` | Query after expansion |
 | `sub_questions` | Decomposed questions |
 | `collections` | Selected collections |
