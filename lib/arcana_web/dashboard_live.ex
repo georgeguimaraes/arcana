@@ -1523,7 +1523,7 @@ defmodule ArcanaWeb.DashboardLive do
           phx-click="switch_tab"
           phx-value-tab="search"
         >
-          Search
+          Retrieve
         </button>
         <button
           data-tab="agentic"
@@ -1841,7 +1841,7 @@ defmodule ArcanaWeb.DashboardLive do
       <%= if @viewing_document do %>
         <.search_document_detail viewing={@viewing_document} />
       <% else %>
-        <h2>Search</h2>
+        <h2>Retrieve</h2>
 
         <form id="search-form" phx-submit="search" class="arcana-search-form">
           <div class="arcana-search-inputs">
