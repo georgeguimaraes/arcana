@@ -61,19 +61,16 @@ defmodule Mix.Tasks.Arcana.Reembed do
 
     Mix.shell().info("Re-embedding chunks...")
 
-    case Arcana.Maintenance.reembed(repo, batch_size: batch_size, progress: progress_fn) do
-      {:ok, %{rechunked_documents: docs, total_chunks: total}} ->
-        unless quiet, do: IO.puts("")
+    {:ok, %{rechunked_documents: docs, total_chunks: total}} =
+      Arcana.Maintenance.reembed(repo, batch_size: batch_size, progress: progress_fn)
 
-        if docs > 0 do
-          Mix.shell().info("Rechunked #{docs} documents.")
-        end
+    unless quiet, do: IO.puts("")
 
-        Mix.shell().info("Done! #{total} chunks total.")
-
-      {:error, reason} ->
-        Mix.raise("Re-embedding failed: #{inspect(reason)}")
+    if docs > 0 do
+      Mix.shell().info("Rechunked #{docs} documents.")
     end
+
+    Mix.shell().info("Done! #{total} chunks total.")
   end
 
   defp format_info(%{type: :local, model: model, dimensions: dims}) do
