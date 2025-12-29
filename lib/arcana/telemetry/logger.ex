@@ -119,11 +119,6 @@ defmodule Arcana.Telemetry.Logger do
         do: "[Arcana] #{event_name} completed in #{duration} #{details}",
         else: "[Arcana] #{event_name} completed in #{duration}"
 
-    # Debug: log metadata keys when model is missing
-    if event_name == "llm.complete" and not Map.has_key?(metadata, :model) do
-      Logger.debug("[Arcana] DEBUG: llm.complete metadata keys: #{inspect(Map.keys(metadata))}")
-    end
-
     Logger.log(config.level, message)
   end
 

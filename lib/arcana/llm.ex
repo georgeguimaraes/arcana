@@ -34,19 +34,22 @@ defmodule Arcana.LLM.Helpers do
   @moduledoc false
 
   def with_telemetry(model, prompt, context, fun) do
-    metadata = %{
+    start_metadata = %{
       model: model,
       prompt_length: String.length(prompt),
       context_count: length(context)
     }
 
-    :telemetry.span([:arcana, :llm, :complete], metadata, fn ->
+    :telemetry.span([:arcana, :llm, :complete], start_metadata, fn ->
       result = fun.()
 
       stop_metadata =
         case result do
-          {:ok, response} -> %{success: true, response_length: String.length(response)}
-          {:error, reason} -> %{success: false, error: inspect(reason)}
+          {:ok, response} ->
+            Map.merge(start_metadata, %{success: true, response_length: String.length(response)})
+
+          {:error, reason} ->
+            Map.merge(start_metadata, %{success: false, error: inspect(reason)})
         end
 
       {result, stop_metadata}
@@ -68,13 +71,12 @@ defmodule Arcana.LLM.Helpers do
       "" ->
         "You are a helpful assistant."
 
-      context_text ->
+      reference_text ->
         """
-        Answer the user's question based on the following context.
-        If the answer is not in the context, say you don't know.
+        You are a helpful assistant with access to the following reference material. Answer questions directly and naturally, using this information to inform your responses. Don't mention or reference the material explicitly in your answers.
 
-        Context:
-        #{context_text}
+        Reference material:
+        #{reference_text}
         """
     end
   end
