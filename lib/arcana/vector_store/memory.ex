@@ -24,6 +24,10 @@ defmodule Arcana.VectorStore.Memory do
       # Clear collection
       :ok = Memory.clear(pid, "default")
 
+  ## Requirements
+
+  Requires the `hnswlib` dependency.
+
   ## Notes
 
   - Data is not persisted to disk - all vectors are lost when the process stops
@@ -47,6 +51,14 @@ defmodule Arcana.VectorStore.Memory do
 
   """
   def start_link(opts \\ []) do
+    unless Code.ensure_loaded?(HNSWLib.Index) do
+      raise """
+      HNSWLib is required for the in-memory vector store but is not available.
+
+      Add {:hnswlib, "~> 0.1"} to your dependencies in mix.exs.
+      """
+    end
+
     {name, opts} = Keyword.pop(opts, :name)
     GenServer.start_link(__MODULE__, opts, name: name)
   end
@@ -181,9 +193,9 @@ defmodule Arcana.VectorStore.Memory do
           %{collection_data | deleted: MapSet.put(collection_data.deleted, existing_idx)}
       end
 
-    # Add to index
+    # Add to index (use apply to avoid compile-time warning for optional dep)
     tensor = Nx.tensor([embedding], type: :f32)
-    :ok = HNSWLib.Index.add_items(collection_data.index, tensor)
+    :ok = apply(HNSWLib.Index, :add_items, [collection_data.index, tensor])
 
     # Track id and metadata
     collection_data = %{
@@ -244,7 +256,7 @@ defmodule Arcana.VectorStore.Memory do
   @impl true
   def handle_call({:clear, collection}, _from, state) do
     dims = state.dimensions || 384
-    {:ok, index} = HNSWLib.Index.new(:cosine, dims, state.max_elements)
+    {:ok, index} = apply(HNSWLib.Index, :new, [:cosine, dims, state.max_elements])
 
     collection_data = %{
       index: index,
@@ -268,7 +280,7 @@ defmodule Arcana.VectorStore.Memory do
   defp get_or_create_collection(state, collection, dims) do
     case get_in(state, [:collections, collection]) do
       nil ->
-        {:ok, index} = HNSWLib.Index.new(:cosine, dims, state.max_elements)
+        {:ok, index} = apply(HNSWLib.Index, :new, [:cosine, dims, state.max_elements])
 
         collection_data = %{
           index: index,
@@ -295,7 +307,7 @@ defmodule Arcana.VectorStore.Memory do
       []
     else
       query = Nx.tensor([query_embedding], type: :f32)
-      {:ok, labels, distances} = HNSWLib.Index.knn_query(index, query, k: k)
+      {:ok, labels, distances} = apply(HNSWLib.Index, :knn_query, [index, query, [k: k]])
 
       labels
       |> Nx.to_flat_list()

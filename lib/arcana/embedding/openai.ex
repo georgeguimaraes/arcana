@@ -23,13 +23,22 @@ defmodule Arcana.Embedding.OpenAI do
 
   @impl Arcana.Embedding
   def embed(text, opts) do
+    unless Code.ensure_loaded?(ReqLLM) do
+      raise """
+      ReqLLM is required for OpenAI embeddings but is not available.
+
+      Add {:req_llm, "~> 0.3"} to your dependencies in mix.exs.
+      """
+    end
+
     model = Keyword.get(opts, :model, @default_model)
     model_spec = "openai:#{model}"
 
     start_metadata = %{text: text, model: model}
 
     :telemetry.span([:arcana, :embed], start_metadata, fn ->
-      case ReqLLM.embed(model_spec, text) do
+      # Use apply/3 to avoid compile-time warning about optional dependency
+      case apply(ReqLLM, :embed, [model_spec, text]) do
         {:ok, embedding} ->
           stop_metadata = %{dimensions: length(embedding)}
           {{:ok, embedding}, stop_metadata}
