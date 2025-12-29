@@ -181,6 +181,9 @@ defmodule ArcanaWeb.DocumentsLive do
           <.document_detail viewing={@viewing_document} />
         <% else %>
           <h2>Documents</h2>
+          <p class="arcana-tab-description">
+            Upload, view, and manage documents in your knowledge base.
+          </p>
 
           <div class="arcana-upload-section">
             <form id="upload-form" phx-submit="upload_files" phx-change="validate_upload">

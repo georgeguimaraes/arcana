@@ -97,7 +97,10 @@ defmodule ArcanaWeb.InfoLive do
     ~H"""
     <.dashboard_layout stats={@stats} current_tab={:info}>
       <div class="arcana-info">
-        <h2>Configuration</h2>
+        <h2>Info</h2>
+        <p class="arcana-tab-description">
+          View current Arcana configuration including embedding, LLM, and chunking settings.
+        </p>
 
         <div class="arcana-info-section">
           <h3>Repository</h3>

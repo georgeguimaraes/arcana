@@ -99,6 +99,9 @@ defmodule ArcanaWeb.CollectionsLive do
     <.dashboard_layout stats={@stats} current_tab={:collections}>
       <div class="arcana-collections">
         <h2>Collections</h2>
+        <p class="arcana-tab-description">
+          Organize documents into collections for scoped searches and better organization.
+        </p>
 
         <div class="arcana-ingest-form">
           <h3>Create Collection</h3>

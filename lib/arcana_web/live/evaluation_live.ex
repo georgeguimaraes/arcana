@@ -176,7 +176,10 @@ defmodule ArcanaWeb.EvaluationLive do
     ~H"""
     <.dashboard_layout stats={@stats} current_tab={:evaluation}>
       <div class="arcana-evaluation">
-        <h2>Retrieval Evaluation</h2>
+        <h2>Evaluation</h2>
+        <p class="arcana-tab-description">
+          Test retrieval quality with test cases and measure recall and precision metrics.
+        </p>
 
         <div class="arcana-eval-nav">
           <button

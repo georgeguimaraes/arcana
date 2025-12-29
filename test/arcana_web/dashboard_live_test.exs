@@ -3,21 +3,18 @@ defmodule ArcanaWeb.DashboardLiveTest do
 
   import Phoenix.LiveViewTest
 
-  describe "Collections tab" do
-    test "displays collections tab", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/arcana")
+  describe "Collections page" do
+    test "displays collections page", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/collections")
 
-      assert has_element?(view, "[data-tab='collections']")
+      assert has_element?(view, "h2", "Collections")
     end
 
     test "lists existing collections", %{conn: conn} do
       # Create a collection
       {:ok, _} = Arcana.Collection.get_or_create("my-collection", Repo, "Test description")
 
-      {:ok, view, _html} = live(conn, "/arcana")
-
-      # Click on collections tab
-      view |> element("[data-tab='collections']") |> render_click()
+      {:ok, view, _html} = live(conn, "/arcana/collections")
 
       assert has_element?(view, "#collection-my-collection")
       assert render(view) =~ "my-collection"
@@ -25,10 +22,7 @@ defmodule ArcanaWeb.DashboardLiveTest do
     end
 
     test "creates a new collection", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/arcana")
-
-      # Click on collections tab
-      view |> element("[data-tab='collections']") |> render_click()
+      {:ok, view, _html} = live(conn, "/arcana/collections")
 
       # Fill in the create form
       view
@@ -55,10 +49,7 @@ defmodule ArcanaWeb.DashboardLiveTest do
       # Create a collection
       {:ok, collection} = Arcana.Collection.get_or_create("edit-me", Repo, "Original description")
 
-      {:ok, view, _html} = live(conn, "/arcana")
-
-      # Click on collections tab
-      view |> element("[data-tab='collections']") |> render_click()
+      {:ok, view, _html} = live(conn, "/arcana/collections")
 
       # Click edit button
       view |> element("#edit-collection-#{collection.id}") |> render_click()
@@ -84,10 +75,7 @@ defmodule ArcanaWeb.DashboardLiveTest do
       # Create a collection
       {:ok, collection} = Arcana.Collection.get_or_create("delete-me", Repo, nil)
 
-      {:ok, view, _html} = live(conn, "/arcana")
-
-      # Click on collections tab
-      view |> element("[data-tab='collections']") |> render_click()
+      {:ok, view, _html} = live(conn, "/arcana/collections")
 
       # Click delete button
       view |> element("#delete-collection-#{collection.id}") |> render_click()
@@ -110,21 +98,18 @@ defmodule ArcanaWeb.DashboardLiveTest do
           collection: "counted-collection"
         )
 
-      {:ok, view, _html} = live(conn, "/arcana")
-
-      # Click on collections tab
-      view |> element("[data-tab='collections']") |> render_click()
+      {:ok, view, _html} = live(conn, "/arcana/collections")
 
       # Verify document count is shown
       assert render(view) =~ "1 document"
     end
   end
 
-  describe "Documents tab" do
+  describe "Documents page" do
     test "lists documents", %{conn: conn} do
       {:ok, _doc} = Arcana.ingest("Test content", repo: Repo)
 
-      {:ok, view, _html} = live(conn, "/arcana")
+      {:ok, view, _html} = live(conn, "/arcana/documents")
 
       assert render(view) =~ "Test content"
     end
@@ -133,7 +118,7 @@ defmodule ArcanaWeb.DashboardLiveTest do
       {:ok, _doc1} = Arcana.ingest("Doc in collection A", repo: Repo, collection: "collection-a")
       {:ok, _doc2} = Arcana.ingest("Doc in collection B", repo: Repo, collection: "collection-b")
 
-      {:ok, view, _html} = live(conn, "/arcana")
+      {:ok, view, _html} = live(conn, "/arcana/documents")
 
       # Both documents should be visible initially
       html = render(view)
@@ -164,7 +149,7 @@ defmodule ArcanaWeb.DashboardLiveTest do
     test "views document detail with chunks", %{conn: conn} do
       {:ok, doc} = Arcana.ingest("Test content for viewing", repo: Repo)
 
-      {:ok, view, _html} = live(conn, "/arcana")
+      {:ok, view, _html} = live(conn, "/arcana/documents")
 
       # Click view button
       view |> element("[data-view-doc='#{doc.id}']") |> render_click()

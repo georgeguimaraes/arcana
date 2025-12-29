@@ -81,6 +81,9 @@ defmodule ArcanaWeb.MaintenanceLive do
     <.dashboard_layout stats={@stats} current_tab={:maintenance}>
       <div class="arcana-maintenance">
         <h2>Maintenance</h2>
+        <p class="arcana-tab-description">
+          View embedding configuration and re-embed documents if settings change.
+        </p>
 
         <div class="arcana-maintenance-section">
           <h3>Embedding Configuration</h3>
