@@ -4,7 +4,16 @@ Arcana is a RAG (Retrieval Augmented Generation) library for Elixir that lets yo
 
 ## Installation
 
-Add Arcana to your dependencies:
+**With Igniter (recommended):**
+
+```bash
+mix igniter.install arcana
+mix ecto.migrate
+```
+
+This adds the dependency, creates migrations, configures your repo, and sets up the dashboard route.
+
+**Without Igniter:**
 
 ```elixir
 def deps do
@@ -14,17 +23,11 @@ def deps do
 end
 ```
 
-Then run:
-
 ```bash
 mix deps.get
 mix arcana.install
+mix ecto.migrate
 ```
-
-The installer will:
-- Add pgvector extension to your database
-- Generate the documents and chunks migrations
-- Configure the embedding model
 
 ## Embedding Configuration
 
