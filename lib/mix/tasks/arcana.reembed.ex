@@ -38,8 +38,8 @@ defmodule Mix.Tasks.Arcana.Reembed do
     batch_size = Keyword.get(opts, :batch_size, 50)
     quiet = Keyword.get(opts, :quiet, false)
 
-    # Start the application
-    {:ok, _} = Application.ensure_all_started(:arcana)
+    # Start the host application (which will start the repo)
+    Mix.Task.run("app.start")
 
     repo = Application.get_env(:arcana, :repo)
 
