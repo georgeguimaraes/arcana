@@ -21,6 +21,7 @@ defmodule ArcanaWeb.DashboardLive do
       |> assign(search_results: [], search_query: "")
       |> assign(expanded_result_id: nil, viewing_search_document: nil)
       |> assign(
+        ask_mode: :simple,
         ask_question: "",
         ask_running: false,
         ask_context: nil,
@@ -207,6 +208,8 @@ defmodule ArcanaWeb.DashboardLive do
   def handle_event("ask_submit", params, socket) do
     repo = socket.assigns.repo
     question = params["question"] || ""
+    mode = params["mode"] || "simple"
+    collection = params["collection"] || ""
 
     case Application.get_env(:arcana, :llm) do
       nil ->
@@ -223,25 +226,32 @@ defmodule ArcanaWeb.DashboardLive do
           socket = assign(socket, ask_running: true, ask_error: nil, ask_question: question)
           parent = self()
 
-          # Parse options from form
-          use_select = params["use_select"] == "true"
-          use_expand = params["use_expand"] == "true"
-          use_decompose = params["use_decompose"] == "true"
-          use_rerank = params["use_rerank"] == "true"
-          self_correct = params["self_correct"] == "true"
-
           Task.start(fn ->
-            result = run_ask_pipeline(
-              question,
-              repo,
-              llm,
-              socket.assigns.collections,
-              use_select: use_select,
-              use_expand: use_expand,
-              use_decompose: use_decompose,
-              use_rerank: use_rerank,
-              self_correct: self_correct
-            )
+            result =
+              if mode == "simple" do
+                run_simple_ask(question, repo, llm, collection)
+              else
+                # Agentic mode with pipeline options
+                use_llm_select = collection == "__llm_select__"
+                use_expand = params["use_expand"] == "true"
+                use_decompose = params["use_decompose"] == "true"
+                use_rerank = params["use_rerank"] == "true"
+                self_correct = params["self_correct"] == "true"
+
+                run_agentic_ask(
+                  question,
+                  repo,
+                  llm,
+                  socket.assigns.collections,
+                  collection: collection,
+                  use_llm_select: use_llm_select,
+                  use_expand: use_expand,
+                  use_decompose: use_decompose,
+                  use_rerank: use_rerank,
+                  self_correct: self_correct
+                )
+              end
+
             send(parent, {:ask_complete, result})
           end)
 
@@ -252,6 +262,10 @@ defmodule ArcanaWeb.DashboardLive do
 
   def handle_event("ask_clear", _params, socket) do
     {:noreply, assign(socket, ask_context: nil, ask_error: nil, ask_question: "")}
+  end
+
+  def handle_event("ask_switch_mode", %{"mode" => mode}, socket) do
+    {:noreply, assign(socket, ask_mode: String.to_existing_atom(mode))}
   end
 
   def handle_event("eval_switch_view", %{"view" => view}, socket) do
@@ -547,22 +561,64 @@ defmodule ArcanaWeb.DashboardLive do
   defp error_to_string(:not_accepted), do: "File type not supported"
   defp error_to_string(err), do: "Error: #{inspect(err)}"
 
-  defp run_ask_pipeline(question, repo, llm, collections, opts) do
+  defp run_simple_ask(question, repo, llm, collection) do
+    try do
+      opts = [repo: repo, llm: llm]
+      opts = if collection != "", do: Keyword.put(opts, :collection, collection), else: opts
+
+      case Arcana.ask(question, opts) do
+        {:ok, answer, results} ->
+          # Build a context-like struct for consistent UI display
+          {:ok,
+           %{
+             question: question,
+             answer: answer,
+             results: results,
+             queries: nil,
+             sub_questions: nil,
+             selected_collections: nil
+           }}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    rescue
+      e -> {:error, Exception.message(e)}
+    end
+  end
+
+  defp run_agentic_ask(question, repo, llm, collections, opts) do
     alias Arcana.Agent
 
     collection_names = Enum.map(collections, & &1.name)
+    selected_collection = Keyword.get(opts, :collection, "")
+    use_llm_select = Keyword.get(opts, :use_llm_select, false)
 
     try do
-      ctx = Agent.new(question, repo: repo, llm: llm)
+      # Initialize context, optionally with a specific collection
+      init_opts = [repo: repo, llm: llm]
 
-      # Apply optional pipeline steps
+      init_opts =
+        cond do
+          # User selected a specific collection (not "All" and not "LLM select")
+          selected_collection != "" and selected_collection != "__llm_select__" ->
+            Keyword.put(init_opts, :collection, selected_collection)
+
+          true ->
+            init_opts
+        end
+
+      ctx = Agent.new(question, init_opts)
+
+      # LLM collection selection (only if "Let LLM select" was chosen)
       ctx =
-        if Keyword.get(opts, :use_select, false) and length(collection_names) > 0 do
+        if use_llm_select and length(collection_names) > 1 do
           Agent.select(ctx, collections: collection_names)
         else
           ctx
         end
 
+      # Query expansion
       ctx =
         if Keyword.get(opts, :use_expand, false) do
           Agent.expand(ctx)
@@ -570,6 +626,7 @@ defmodule ArcanaWeb.DashboardLive do
           ctx
         end
 
+      # Question decomposition
       ctx =
         if Keyword.get(opts, :use_decompose, false) do
           Agent.decompose(ctx)
@@ -1589,6 +1646,7 @@ defmodule ArcanaWeb.DashboardLive do
             />
           <% :ask -> %>
             <.ask_tab
+              mode={@ask_mode}
               question={@ask_question}
               running={@ask_running}
               context={@ask_context}
@@ -2007,8 +2065,32 @@ defmodule ArcanaWeb.DashboardLive do
     <div class="arcana-ask">
       <h2>Ask</h2>
       <p class="arcana-tab-description">
-        Ask questions about your documents using an agentic RAG pipeline.
-        The LLM searches your knowledge base, retrieves relevant chunks, and generates an answer.
+        Ask questions about your documents. Choose Simple for basic RAG or Agentic for advanced pipeline features.
+      </p>
+
+      <div class="arcana-ask-mode-nav">
+        <button
+          class={"arcana-mode-btn #{if @mode == :simple, do: "active", else: ""}"}
+          phx-click="ask_switch_mode"
+          phx-value-mode="simple"
+        >
+          Simple
+        </button>
+        <button
+          class={"arcana-mode-btn #{if @mode == :agentic, do: "active", else: ""}"}
+          phx-click="ask_switch_mode"
+          phx-value-mode="agentic"
+        >
+          Agentic
+        </button>
+      </div>
+
+      <p class="arcana-mode-description">
+        <%= if @mode == :simple do %>
+          Basic RAG: search for relevant chunks and generate an answer.
+        <% else %>
+          Advanced RAG: query expansion, decomposition, self-correction, and reranking.
+        <% end %>
       </p>
 
       <%= if @error do %>
@@ -2018,6 +2100,8 @@ defmodule ArcanaWeb.DashboardLive do
       <% end %>
 
       <form id="ask-form" phx-submit="ask_submit" class="arcana-ask-form">
+        <input type="hidden" name="mode" value={@mode} />
+
         <div class="arcana-ask-input">
           <textarea
             name="question"
@@ -2027,40 +2111,49 @@ defmodule ArcanaWeb.DashboardLive do
           ><%= @question %></textarea>
         </div>
 
-        <div class="arcana-ask-options">
-          <h4>Pipeline Options</h4>
-          <div class="arcana-option-grid">
-            <label class="arcana-checkbox-label">
-              <input type="checkbox" name="use_select" value="true" disabled={@running or Enum.empty?(@collections)} />
-              <span>Collection Selection</span>
-              <small>LLM selects relevant collections</small>
-            </label>
-
-            <label class="arcana-checkbox-label">
-              <input type="checkbox" name="use_expand" value="true" disabled={@running} />
-              <span>Query Expansion</span>
-              <small>Generate related queries</small>
-            </label>
-
-            <label class="arcana-checkbox-label">
-              <input type="checkbox" name="use_decompose" value="true" disabled={@running} />
-              <span>Question Decomposition</span>
-              <small>Break into sub-questions</small>
-            </label>
-
-            <label class="arcana-checkbox-label">
-              <input type="checkbox" name="self_correct" value="true" disabled={@running} />
-              <span>Self-Correction</span>
-              <small>Refine search if results are poor</small>
-            </label>
-
-            <label class="arcana-checkbox-label">
-              <input type="checkbox" name="use_rerank" value="true" disabled={@running} />
-              <span>Reranking</span>
-              <small>LLM-based result reranking</small>
-            </label>
-          </div>
+        <div class="arcana-ask-collection">
+          <label>Collection</label>
+          <select name="collection" disabled={@running}>
+            <option value="">All collections</option>
+            <%= if @mode == :agentic and length(@collections) > 1 do %>
+              <option value="__llm_select__">Let LLM select</option>
+            <% end %>
+            <%= for coll <- @collections do %>
+              <option value={coll.name}><%= coll.name %></option>
+            <% end %>
+          </select>
         </div>
+
+        <%= if @mode == :agentic do %>
+          <div class="arcana-ask-options">
+            <h4>Pipeline Options</h4>
+            <div class="arcana-option-grid">
+              <label class="arcana-checkbox-label">
+                <input type="checkbox" name="use_expand" value="true" disabled={@running} />
+                <span>Query Expansion</span>
+                <small>Generate related queries</small>
+              </label>
+
+              <label class="arcana-checkbox-label">
+                <input type="checkbox" name="use_decompose" value="true" disabled={@running} />
+                <span>Question Decomposition</span>
+                <small>Break into sub-questions</small>
+              </label>
+
+              <label class="arcana-checkbox-label">
+                <input type="checkbox" name="self_correct" value="true" disabled={@running} />
+                <span>Self-Correction</span>
+                <small>Refine search if results are poor</small>
+              </label>
+
+              <label class="arcana-checkbox-label">
+                <input type="checkbox" name="use_rerank" value="true" disabled={@running} />
+                <span>Reranking</span>
+                <small>LLM-based result reranking</small>
+              </label>
+            </div>
+          </div>
+        <% end %>
 
         <div class="arcana-ask-actions">
           <button type="submit" disabled={@running}>
@@ -2077,7 +2170,7 @@ defmodule ArcanaWeb.DashboardLive do
       <%= if @running do %>
         <div class="arcana-ask-loading">
           <div class="arcana-spinner"></div>
-          <span>Running pipeline...</span>
+          <span><%= if @mode == :simple, do: "Generating answer...", else: "Running pipeline..." %></span>
         </div>
       <% end %>
 
@@ -2159,6 +2252,71 @@ defmodule ArcanaWeb.DashboardLive do
         color: #6b7280;
         margin-bottom: 1rem;
         font-size: 0.875rem;
+      }
+
+      .arcana-ask-mode-nav {
+        display: inline-flex;
+        background: #f3f4f6;
+        border-radius: 0.5rem;
+        padding: 0.25rem;
+        margin-bottom: 0.75rem;
+      }
+
+      .arcana-mode-btn {
+        padding: 0.5rem 1rem;
+        border: none;
+        background: transparent;
+        color: #6b7280;
+        font-size: 0.875rem;
+        font-weight: 500;
+        border-radius: 0.375rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .arcana-mode-btn:hover {
+        color: #374151;
+      }
+
+      .arcana-mode-btn.active {
+        background: white;
+        color: #7c3aed;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      }
+
+      .arcana-mode-description {
+        color: #9ca3af;
+        font-size: 0.8125rem;
+        margin-bottom: 1rem;
+        font-style: italic;
+      }
+
+      .arcana-ask-collection {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin: 1rem 0;
+      }
+
+      .arcana-ask-collection label {
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: #374151;
+      }
+
+      .arcana-ask-collection select {
+        padding: 0.5rem 0.75rem;
+        border: 1px solid #d1d5db;
+        border-radius: 0.375rem;
+        font-size: 0.875rem;
+        background: white;
+        min-width: 200px;
+      }
+
+      .arcana-ask-collection select:focus {
+        outline: none;
+        border-color: #7c3aed;
+        box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
       }
 
       .arcana-ask-form {
