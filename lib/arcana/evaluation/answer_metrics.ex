@@ -53,7 +53,7 @@ defmodule Arcana.Evaluation.AnswerMetrics do
 
     prompt = prompt_fn.(question, chunks, answer)
 
-    case LLM.complete(llm, prompt, []) do
+    case LLM.complete(llm, prompt, [], []) do
       {:ok, response} -> parse_response(response)
       {:error, _} = err -> err
     end

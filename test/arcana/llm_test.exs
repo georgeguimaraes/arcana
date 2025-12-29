@@ -10,7 +10,7 @@ defmodule Arcana.LLMTest do
       end
 
       context = [%{text: "chunk1"}, %{text: "chunk2"}]
-      {:ok, result} = LLM.complete(llm, "test question", context)
+      {:ok, result} = LLM.complete(llm, "test question", context, [])
 
       assert result == "Answer to: test question with 2 chunks"
     end
@@ -20,7 +20,7 @@ defmodule Arcana.LLMTest do
         {:ok, "Expanded: #{prompt}"}
       end
 
-      {:ok, result} = LLM.complete(llm, "short query", [])
+      {:ok, result} = LLM.complete(llm, "short query", [], [])
 
       assert result == "Expanded: short query"
     end
@@ -30,7 +30,7 @@ defmodule Arcana.LLMTest do
         {:error, :api_error}
       end
 
-      assert {:error, :api_error} = LLM.complete(llm, "test", [])
+      assert {:error, :api_error} = LLM.complete(llm, "test", [], [])
     end
   end
 

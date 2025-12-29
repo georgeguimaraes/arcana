@@ -2,147 +2,73 @@ defprotocol Arcana.LLM do
   @moduledoc """
   Protocol for LLM adapters used by Arcana.
 
-  Arcana accepts any LLM that implements this protocol. Built-in implementations
-  are provided for:
+  Arcana accepts any LLM that implements this protocol. Built-in implementations:
 
-  - Model strings via Req.LLM (e.g., `"openai:gpt-4o-mini"`, `"anthropic:claude-sonnet-4-20250514"`)
+  - Model strings via Req.LLM (e.g., `"openai:gpt-4o-mini"`, `"zai:glm-4.5-flash"`)
   - Tuples of `{model_string, opts}` for passing options like `:api_key`
-  - Anonymous functions (for testing and simple use cases)
+  - Anonymous functions (for testing)
 
   ## Examples
 
-  Using a model string (requires `req_llm` dependency):
-
+      # Model string (requires req_llm)
       Arcana.ask("question", llm: "openai:gpt-4o-mini", repo: MyApp.Repo)
 
-      # Or with Anthropic
-      Arcana.ask("question", llm: "anthropic:claude-sonnet-4-20250514", repo: MyApp.Repo)
+      # With options
+      Arcana.ask("question", llm: {"zai:glm-4.7", api_key: "key"}, repo: MyApp.Repo)
 
-  Using a tuple with options (e.g., custom API key):
-
-      Arcana.ask("question", llm: {"zai:glm-4.7", api_key: "your-api-key"}, repo: MyApp.Repo)
-
-  Using an anonymous function:
-
-      llm = fn prompt, context ->
-        {:ok, "Generated answer"}
-      end
-
-      Arcana.ask("question", llm: llm, repo: MyApp.Repo)
-
-  ## Custom Prompts
-
-  Pass a `:prompt` option to `Arcana.ask/2` to customize the system prompt:
-
-      custom_prompt = fn question, context ->
-        "Answer '\#{question}' using only: \#{Enum.map_join(context, ", ", & &1.text)}"
-      end
-
-      Arcana.ask("question", llm: "openai:gpt-4o-mini", repo: MyApp.Repo, prompt: custom_prompt)
+      # Function (for testing)
+      Arcana.ask("question", llm: fn _prompt -> {:ok, "answer"} end, repo: MyApp.Repo)
 
   """
 
   @doc """
   Completes a prompt with the given context and options.
 
-  ## Options
-
-  - `:system_prompt` - Custom system prompt string to use instead of the default
-
   Returns `{:ok, response}` or `{:error, reason}`.
   """
   @spec complete(t, String.t(), list(), keyword()) :: {:ok, String.t()} | {:error, term()}
-  def complete(llm, prompt, context, opts \\ [])
+  def complete(llm, prompt, context, opts)
 end
 
-# Implementation for anonymous functions
-defimpl Arcana.LLM, for: Function do
-  def complete(fun, prompt, context, opts) do
-    start_metadata = %{
-      model: "function",
+defmodule Arcana.LLM.Helpers do
+  @moduledoc false
+
+  def with_telemetry(model, prompt, context, fun) do
+    metadata = %{
+      model: model,
       prompt_length: String.length(prompt),
       context_count: length(context)
     }
 
-    :telemetry.span([:arcana, :llm, :complete], start_metadata, fn ->
-      result =
-        case Function.info(fun, :arity) do
-          {:arity, 1} -> fun.(prompt)
-          {:arity, 2} -> fun.(prompt, context)
-          {:arity, 3} -> fun.(prompt, context, opts)
-          {:arity, _} -> {:error, :invalid_function_arity}
-        end
+    :telemetry.span([:arcana, :llm, :complete], metadata, fn ->
+      result = fun.()
 
       stop_metadata =
         case result do
           {:ok, response} -> %{success: true, response_length: String.length(response)}
-          {:error, _} -> %{success: false}
+          {:error, reason} -> %{success: false, error: inspect(reason)}
         end
 
       {result, stop_metadata}
     end)
   end
-end
 
-# Req.LLM implementation for model strings like "openai:gpt-4o-mini"
-# Also supports tuples like {"openai:gpt-4o-mini", api_key: "..."}
-if Code.ensure_loaded?(ReqLLM) do
-  defimpl Arcana.LLM, for: Tuple do
-    def complete({model, llm_opts}, prompt, context, opts) when is_binary(model) do
-      merged_opts = Keyword.merge(llm_opts, opts)
-      Arcana.LLM.complete(model, prompt, context, merged_opts)
-    end
+  def format_context([]), do: ""
+
+  def format_context(context) do
+    Enum.map_join(context, "\n\n---\n\n", fn
+      %{text: text} -> text
+      text when is_binary(text) -> text
+      other -> inspect(other)
+    end)
   end
 
-  defimpl Arcana.LLM, for: BitString do
-    def complete(model, prompt, context, opts) when is_binary(model) do
-      system_message =
-        case Keyword.get(opts, :system_prompt) do
-          nil -> default_system_prompt(context)
-          custom -> custom
-        end
+  def default_system_prompt(context) do
+    case format_context(context) do
+      "" ->
+        "You are a helpful assistant."
 
-      start_metadata = %{
-        model: model,
-        prompt_length: String.length(prompt),
-        system_prompt_length: String.length(system_message),
-        context_count: length(context)
-      }
-
-      :telemetry.span([:arcana, :llm, :complete], start_metadata, fn ->
-        llm_context =
-          ReqLLM.Context.new([
-            ReqLLM.Context.system(system_message),
-            ReqLLM.Context.user(prompt)
-          ])
-
-        # Pass through ReqLLM options like :api_key
-        reqllm_opts = Keyword.take(opts, [:api_key, :temperature, :max_tokens])
-
-        result =
-          try do
-            case ReqLLM.generate_text(model, llm_context, reqllm_opts) do
-              {:ok, response} -> {:ok, ReqLLM.Response.text(response)}
-              {:error, reason} -> {:error, reason}
-            end
-          rescue
-            e -> {:error, e}
-          end
-
-        stop_metadata =
-          case result do
-            {:ok, response} -> %{success: true, response_length: String.length(response)}
-            {:error, reason} -> %{success: false, error: inspect(reason)}
-          end
-
-        {result, stop_metadata}
-      end)
-    end
-
-    defp default_system_prompt(context) do
-      context_text = format_context(context)
-
-      if context_text != "" do
+      context_text ->
         """
         Answer the user's question based on the following context.
         If the answer is not in the context, say you don't know.
@@ -150,19 +76,52 @@ if Code.ensure_loaded?(ReqLLM) do
         Context:
         #{context_text}
         """
-      else
-        "You are a helpful assistant."
-      end
     end
+  end
+end
 
-    defp format_context([]), do: ""
+defimpl Arcana.LLM, for: Function do
+  alias Arcana.LLM.Helpers
 
-    defp format_context(context) do
-      Enum.map_join(context, "\n\n---\n\n", fn
-        %{text: text} -> text
-        text when is_binary(text) -> text
-        other -> inspect(other)
+  def complete(fun, prompt, context, opts) do
+    Helpers.with_telemetry("function", prompt, context, fn ->
+      case Function.info(fun, :arity) do
+        {:arity, 1} -> fun.(prompt)
+        {:arity, 2} -> fun.(prompt, context)
+        {:arity, 3} -> fun.(prompt, context, opts)
+        {:arity, _} -> {:error, :invalid_function_arity}
+      end
+    end)
+  end
+end
+
+if Code.ensure_loaded?(ReqLLM) do
+  defimpl Arcana.LLM, for: BitString do
+    alias Arcana.LLM.Helpers
+
+    def complete(model, prompt, context, opts) do
+      Helpers.with_telemetry(model, prompt, context, fn ->
+        system_prompt = Keyword.get(opts, :system_prompt) || Helpers.default_system_prompt(context)
+
+        llm_context =
+          ReqLLM.Context.new([
+            ReqLLM.Context.system(system_prompt),
+            ReqLLM.Context.user(prompt)
+          ])
+
+        reqllm_opts = Keyword.take(opts, [:api_key, :temperature, :max_tokens])
+
+        case ReqLLM.generate_text(model, llm_context, reqllm_opts) do
+          {:ok, response} -> {:ok, ReqLLM.Response.text(response)}
+          {:error, reason} -> {:error, reason}
+        end
       end)
+    end
+  end
+
+  defimpl Arcana.LLM, for: Tuple do
+    def complete({model, llm_opts}, prompt, context, opts) do
+      Arcana.LLM.complete(model, prompt, context, Keyword.merge(llm_opts, opts))
     end
   end
 end

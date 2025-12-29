@@ -64,7 +64,7 @@ defmodule Arcana.Rewriters do
     prompt_template = Keyword.get(opts, :prompt, @default_expand_prompt)
 
     prompt = String.replace(prompt_template, "{query}", query)
-    LLM.complete(llm, prompt, [])
+    LLM.complete(llm, prompt, [], [])
   end
 
   def expand(opts) when is_list(opts) do
@@ -89,7 +89,7 @@ defmodule Arcana.Rewriters do
     prompt_template = Keyword.get(opts, :prompt, @default_keywords_prompt)
 
     prompt = String.replace(prompt_template, "{query}", query)
-    LLM.complete(llm, prompt, [])
+    LLM.complete(llm, prompt, [], [])
   end
 
   def keywords(opts) when is_list(opts) do
@@ -114,7 +114,7 @@ defmodule Arcana.Rewriters do
     prompt_template = Keyword.get(opts, :prompt, @default_decompose_prompt)
 
     prompt = String.replace(prompt_template, "{query}", query)
-    LLM.complete(llm, prompt, [])
+    LLM.complete(llm, prompt, [], [])
   end
 
   def decompose(opts) when is_list(opts) do

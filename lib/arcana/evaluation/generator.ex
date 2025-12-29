@@ -97,7 +97,7 @@ defmodule Arcana.Evaluation.Generator do
 
   defp generate_question(llm, chunk, prompt_template) do
     prompt = String.replace(prompt_template, "{chunk_text}", chunk.text)
-    LLM.complete(llm, prompt, [])
+    LLM.complete(llm, prompt, [], [])
   end
 
   defp create_test_case(repo, question, source_chunk) do

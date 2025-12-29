@@ -170,7 +170,7 @@ defmodule Arcana.Evaluation do
     """
 
     answer =
-      case Arcana.LLM.complete(llm, answer_prompt, []) do
+      case Arcana.LLM.complete(llm, answer_prompt, [], []) do
         {:ok, response} -> response
         {:error, _} -> nil
       end
