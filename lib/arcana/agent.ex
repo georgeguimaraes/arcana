@@ -61,34 +61,6 @@ defmodule Arcana.Agent do
     }
   end
 
-  @default_rewrite_prompt """
-  You are a search query optimizer. Your task is to rewrite conversational user input into a clear, standalone search query.
-
-  Rules:
-  - Remove conversational filler (greetings, "I want to", "Can you tell me", "Hey", etc.)
-  - Extract the core question or topic
-  - Keep ALL entity names, technical terms, and specific details
-  - Keep the query concise but complete
-  - If the input is already a clear query, return it unchanged
-  - Return only the rewritten query, nothing else
-
-  Examples:
-  Input: "Hey, so I was wondering if you could help me understand how Phoenix LiveView works"
-  Rewritten: "how Phoenix LiveView works"
-
-  Input: "I want to compare Elixir and Go lang for building web services"
-  Rewritten: "compare Elixir and Go for building web services"
-
-  Input: "Can you tell me about the advantages of using GenServer?"
-  Rewritten: "advantages of using GenServer"
-
-  Input: "What is pattern matching?"
-  Rewritten: "What is pattern matching?"
-
-  Now rewrite this input:
-  "{query}"
-  """
-
   @doc """
   Rewrites conversational input into a clear search query.
 
@@ -100,6 +72,7 @@ defmodule Arcana.Agent do
 
   ## Options
 
+  - `:rewriter` - Custom rewriter module or function (default: `Arcana.Agent.Rewriter.LLM`)
   - `:prompt` - Custom prompt function `fn question -> prompt_string end`
   - `:llm` - Override the LLM function for this step
 
@@ -110,26 +83,36 @@ defmodule Arcana.Agent do
       |> Agent.expand()
       |> Agent.search()
       |> Agent.answer()
+
+  ## Custom Rewriter
+
+      # Module implementing Arcana.Agent.Rewriter behaviour
+      Agent.rewrite(ctx, rewriter: MyApp.RegexRewriter)
+
+      # Inline function
+      Agent.rewrite(ctx, rewriter: fn question, _opts ->
+        {:ok, String.downcase(question)}
+      end)
   """
   def rewrite(ctx, opts \\ [])
 
   def rewrite(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
 
   def rewrite(%Context{} = ctx, opts) do
-    start_metadata = %{question: ctx.question}
+    rewriter = Keyword.get(opts, :rewriter, Arcana.Agent.Rewriter.LLM)
+
+    start_metadata = %{
+      question: ctx.question,
+      rewriter: rewriter_name(rewriter)
+    }
 
     :telemetry.span([:arcana, :agent, :rewrite], start_metadata, fn ->
       llm = Keyword.get(opts, :llm, ctx.llm)
-
-      prompt =
-        case Keyword.get(opts, :prompt) do
-          nil -> default_rewrite_prompt(ctx.question)
-          custom_fn -> custom_fn.(ctx.question)
-        end
+      rewriter_opts = Keyword.merge(opts, llm: llm)
 
       rewritten_query =
-        case llm.(prompt) do
-          {:ok, rewritten} -> String.trim(rewritten)
+        case do_rewrite(rewriter, ctx.question, rewriter_opts) do
+          {:ok, rewritten} -> rewritten
           {:error, _} -> nil
         end
 
@@ -141,8 +124,15 @@ defmodule Arcana.Agent do
     end)
   end
 
-  defp default_rewrite_prompt(question) do
-    String.replace(@default_rewrite_prompt, "{query}", question)
+  defp rewriter_name(rewriter) when is_atom(rewriter), do: rewriter
+  defp rewriter_name(_rewriter), do: :custom_function
+
+  defp do_rewrite(rewriter, question, opts) when is_atom(rewriter) do
+    rewriter.rewrite(question, opts)
+  end
+
+  defp do_rewrite(rewriter, question, opts) when is_function(rewriter, 2) do
+    rewriter.(question, opts)
   end
 
   # Returns the effective query to use, chaining through the pipeline:
@@ -256,30 +246,6 @@ defmodule Arcana.Agent do
     end)
   end
 
-  @default_expand_prompt """
-  You are a search query expansion assistant. Your task is to expand the user's query with synonyms and related terms to improve document retrieval.
-
-  Rules:
-  - Keep ALL original terms from the query
-  - Add synonyms and related terms that convey the same meaning
-  - Expand abbreviations and acronyms (e.g., "ML" → "ML machine learning")
-  - Do NOT remove or replace technical terms you don't recognize
-  - Return a single expanded query string, nothing else
-
-  Examples:
-  Query: "ML models for NLP"
-  Expanded: "ML machine learning models for NLP natural language processing text analysis"
-
-  Query: "remote work productivity"
-  Expanded: "remote work telecommuting working from home productivity efficiency performance"
-
-  Query: "Phoenix LiveView real-time"
-  Expanded: "Phoenix LiveView real-time live updates websocket server-rendered interactive"
-
-  Now expand this query:
-  "{query}"
-  """
-
   @doc """
   Expands the query with synonyms and related terms.
 
@@ -289,6 +255,7 @@ defmodule Arcana.Agent do
 
   ## Options
 
+  - `:expander` - Custom expander module or function (default: `Arcana.Agent.Expander.LLM`)
   - `:prompt` - Custom prompt function `fn question -> prompt_string end`
   - `:llm` - Override the LLM function for this step
 
@@ -300,6 +267,16 @@ defmodule Arcana.Agent do
       |> Agent.answer()
 
   The expanded query is stored in `ctx.expanded_query` and used by `search/2`.
+
+  ## Custom Expander
+
+      # Module implementing Arcana.Agent.Expander behaviour
+      Agent.expand(ctx, expander: MyApp.ThesaurusExpander)
+
+      # Inline function
+      Agent.expand(ctx, expander: fn question, _opts ->
+        {:ok, question <> " programming development"}
+      end)
   """
   def expand(ctx, opts \\ [])
 
@@ -307,20 +284,20 @@ defmodule Arcana.Agent do
 
   def expand(%Context{} = ctx, opts) do
     query = effective_query(ctx)
-    start_metadata = %{question: query}
+    expander = Keyword.get(opts, :expander, Arcana.Agent.Expander.LLM)
+
+    start_metadata = %{
+      question: query,
+      expander: expander_name(expander)
+    }
 
     :telemetry.span([:arcana, :agent, :expand], start_metadata, fn ->
       llm = Keyword.get(opts, :llm, ctx.llm)
-
-      prompt =
-        case Keyword.get(opts, :prompt) do
-          nil -> default_expand_prompt(query)
-          custom_fn -> custom_fn.(query)
-        end
+      expander_opts = Keyword.merge(opts, llm: llm)
 
       expanded_query =
-        case llm.(prompt) do
-          {:ok, expanded} -> String.trim(expanded)
+        case do_expand(expander, query, expander_opts) do
+          {:ok, expanded} -> expanded
           {:error, _} -> nil
         end
 
@@ -332,8 +309,15 @@ defmodule Arcana.Agent do
     end)
   end
 
-  defp default_expand_prompt(question) do
-    String.replace(@default_expand_prompt, "{query}", question)
+  defp expander_name(expander) when is_atom(expander), do: expander
+  defp expander_name(_expander), do: :custom_function
+
+  defp do_expand(expander, question, opts) when is_atom(expander) do
+    expander.expand(question, opts)
+  end
+
+  defp do_expand(expander, question, opts) when is_function(expander, 2) do
+    expander.(question, opts)
   end
 
   @doc """
@@ -344,6 +328,7 @@ defmodule Arcana.Agent do
 
   ## Options
 
+  - `:decomposer` - Custom decomposer module or function (default: `Arcana.Agent.Decomposer.LLM`)
   - `:prompt` - Custom prompt function `fn question -> prompt_string end`
   - `:llm` - Override the LLM function for this step
 
@@ -355,6 +340,16 @@ defmodule Arcana.Agent do
       |> Agent.answer()
 
   The sub-questions are stored in `ctx.sub_questions` and used by `search/2`.
+
+  ## Custom Decomposer
+
+      # Module implementing Arcana.Agent.Decomposer behaviour
+      Agent.decompose(ctx, decomposer: MyApp.KeywordDecomposer)
+
+      # Inline function
+      Agent.decompose(ctx, decomposer: fn question, _opts ->
+        {:ok, [question]}  # No decomposition
+      end)
   """
   def decompose(ctx, opts \\ [])
 
@@ -362,20 +357,22 @@ defmodule Arcana.Agent do
 
   def decompose(%Context{} = ctx, opts) do
     query = effective_query(ctx)
-    start_metadata = %{question: query}
+    decomposer = Keyword.get(opts, :decomposer, Arcana.Agent.Decomposer.LLM)
+
+    start_metadata = %{
+      question: query,
+      decomposer: decomposer_name(decomposer)
+    }
 
     :telemetry.span([:arcana, :agent, :decompose], start_metadata, fn ->
       llm = Keyword.get(opts, :llm, ctx.llm)
-
-      prompt =
-        case Keyword.get(opts, :prompt) do
-          nil -> default_decompose_prompt(query)
-          custom_fn -> custom_fn.(query)
-        end
+      decomposer_opts = Keyword.merge(opts, llm: llm)
 
       sub_questions =
-        llm.(prompt)
-        |> parse_decompose_response(query)
+        case do_decompose(decomposer, query, decomposer_opts) do
+          {:ok, questions} -> questions
+          {:error, _} -> [query]
+        end
 
       updated_ctx = %{ctx | sub_questions: sub_questions}
 
@@ -385,36 +382,15 @@ defmodule Arcana.Agent do
     end)
   end
 
-  defp default_decompose_prompt(question) do
-    """
-    You are an AI assistant that breaks down complex questions into simpler sub-questions for a search system.
+  defp decomposer_name(decomposer) when is_atom(decomposer), do: decomposer
+  defp decomposer_name(_decomposer), do: :custom_function
 
-    Rules:
-    - Generate 2-4 sub-questions that can be answered independently
-    - Each sub-question should retrieve different information from the knowledge base
-    - Do NOT rephrase acronyms or technical terms you don't recognize
-    - If the question is already simple, return it unchanged
-
-    Example:
-    Question: "How does Phoenix LiveView compare to React for real-time features?"
-    {"sub_questions": ["How does Phoenix LiveView handle real-time updates?", "How does React handle real-time updates?", "What are the performance characteristics of Phoenix LiveView?"]}
-
-    Now decompose this question:
-    "#{question}"
-
-    Return JSON only: {"sub_questions": ["q1", "q2", ...]}
-    """
+  defp do_decompose(decomposer, question, opts) when is_atom(decomposer) do
+    decomposer.decompose(question, opts)
   end
 
-  defp parse_decompose_response({:ok, response}, fallback_question) do
-    case JSON.decode(response) do
-      {:ok, %{"sub_questions" => questions}} when is_list(questions) -> questions
-      _ -> [fallback_question]
-    end
-  end
-
-  defp parse_decompose_response({:error, _}, fallback_question) do
-    [fallback_question]
+  defp do_decompose(decomposer, question, opts) when is_function(decomposer, 2) do
+    decomposer.(question, opts)
   end
 
   @doc """
@@ -439,6 +415,7 @@ defmodule Arcana.Agent do
 
   ## Options
 
+  - `:searcher` - Custom searcher module or function (default: `Arcana.Agent.Searcher.Arcana`)
   - `:collection` - Single collection name to search (string)
   - `:collections` - List of collection names to search
   - `:self_correct` - Enable self-correcting search (default: false)
@@ -460,6 +437,16 @@ defmodule Arcana.Agent do
       |> Agent.search(collection: "docs", self_correct: true)
       |> Agent.answer()
 
+  ## Custom Searcher
+
+      # Module implementing Arcana.Agent.Searcher behaviour
+      Agent.search(ctx, searcher: MyApp.ElasticsearchSearcher)
+
+      # Inline function
+      Agent.search(ctx, searcher: fn question, collection, opts ->
+        {:ok, my_search(question, collection, opts)}
+      end)
+
   ## Self-correcting search
 
   When `self_correct: true`, the agent will:
@@ -473,6 +460,7 @@ defmodule Arcana.Agent do
   def search(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
 
   def search(%Context{} = ctx, opts) do
+    searcher = Keyword.get(opts, :searcher, Arcana.Agent.Searcher.Arcana)
     self_correct = Keyword.get(opts, :self_correct, false)
     max_iterations = Keyword.get(opts, :max_iterations, 3)
     sufficient_prompt_fn = Keyword.get(opts, :sufficient_prompt)
@@ -491,13 +479,16 @@ defmodule Arcana.Agent do
       question: ctx.question,
       sub_questions: ctx.sub_questions,
       collections: collections,
+      searcher: searcher_name(searcher),
       self_correct: self_correct
     }
 
     :telemetry.span([:arcana, :agent, :search], start_metadata, fn ->
       questions = ctx.sub_questions || [ctx.expanded_query || ctx.question]
 
-      prompt_opts = %{
+      search_opts = %{
+        searcher: searcher,
+        searcher_opts: [repo: ctx.repo, limit: ctx.limit, threshold: ctx.threshold],
         sufficient_prompt: sufficient_prompt_fn,
         rewrite_prompt: rewrite_prompt_fn
       }
@@ -506,9 +497,9 @@ defmodule Arcana.Agent do
         for question <- questions,
             collection <- collections do
           if self_correct do
-            do_self_correcting_search(ctx, question, collection, max_iterations, prompt_opts)
+            do_self_correcting_search(ctx, question, collection, max_iterations, search_opts)
           else
-            chunks = do_simple_search(ctx, question, collection)
+            chunks = do_simple_search(searcher, question, collection, search_opts.searcher_opts)
             %{question: question, collection: collection, chunks: chunks, iterations: 1}
           end
         end
@@ -527,30 +518,38 @@ defmodule Arcana.Agent do
     end)
   end
 
-  defp do_simple_search(ctx, question, collection) do
-    Arcana.search(question,
-      repo: ctx.repo,
-      collection: collection,
-      limit: ctx.limit,
-      threshold: ctx.threshold
-    )
+  defp searcher_name(searcher) when is_atom(searcher), do: searcher
+  defp searcher_name(_searcher), do: :custom_function
+
+  defp do_simple_search(searcher, question, collection, opts) when is_atom(searcher) do
+    case searcher.search(question, collection, opts) do
+      {:ok, chunks} -> chunks
+      {:error, _} -> []
+    end
   end
 
-  defp do_self_correcting_search(ctx, question, collection, max_iterations, prompt_opts) do
-    do_self_correcting_search(ctx, question, collection, max_iterations, prompt_opts, 1)
+  defp do_simple_search(searcher, question, collection, opts) when is_function(searcher, 3) do
+    case searcher.(question, collection, opts) do
+      {:ok, chunks} -> chunks
+      {:error, _} -> []
+    end
+  end
+
+  defp do_self_correcting_search(ctx, question, collection, max_iterations, search_opts) do
+    do_self_correcting_search(ctx, question, collection, max_iterations, search_opts, 1)
   end
 
   defp do_self_correcting_search(
-         ctx,
+         _ctx,
          question,
          collection,
          max_iterations,
-         _prompt_opts,
+         search_opts,
          iteration
        )
        when iteration > max_iterations do
     # Max iterations reached, return best effort
-    chunks = do_simple_search(ctx, question, collection)
+    chunks = do_simple_search(search_opts.searcher, question, collection, search_opts.searcher_opts)
     %{question: question, collection: collection, chunks: chunks, iterations: max_iterations}
   end
 
@@ -559,22 +558,22 @@ defmodule Arcana.Agent do
          question,
          collection,
          max_iterations,
-         prompt_opts,
+         search_opts,
          iteration
        ) do
-    chunks = do_simple_search(ctx, question, collection)
+    chunks = do_simple_search(search_opts.searcher, question, collection, search_opts.searcher_opts)
 
-    if sufficient_results?(ctx, question, chunks, prompt_opts.sufficient_prompt) do
+    if sufficient_results?(ctx, question, chunks, search_opts.sufficient_prompt) do
       %{question: question, collection: collection, chunks: chunks, iterations: iteration}
     else
-      case rewrite_query(ctx, question, chunks, prompt_opts.rewrite_prompt) do
+      case rewrite_query(ctx, question, chunks, search_opts.rewrite_prompt) do
         {:ok, rewritten_query} ->
           do_self_correcting_search(
             ctx,
             rewritten_query,
             collection,
             max_iterations,
-            prompt_opts,
+            search_opts,
             iteration + 1
           )
 
@@ -765,8 +764,11 @@ defmodule Arcana.Agent do
 
   ## Options
 
+  - `:answerer` - Custom answerer module or function (default: `Arcana.Agent.Answerer.LLM`)
   - `:prompt` - Custom prompt function `fn question, chunks -> prompt_string end`
   - `:llm` - Override the LLM function for this step
+  - `:self_correct` - Enable self-correcting answers (default: false)
+  - `:max_corrections` - Max correction attempts (default: 2)
 
   ## Example
 
@@ -776,13 +778,30 @@ defmodule Arcana.Agent do
 
       ctx.answer
       # => "The answer based on retrieved context..."
+
+  ## Custom Answerer
+
+      # Module implementing Arcana.Agent.Answerer behaviour
+      Agent.answer(ctx, answerer: MyApp.TemplateAnswerer)
+
+      # Inline function
+      Agent.answer(ctx, answerer: fn question, chunks, opts ->
+        llm = Keyword.fetch!(opts, :llm)
+        prompt = "Q: " <> question <> "\nContext: " <> inspect(chunks)
+        llm.(prompt)
+      end)
   """
   def answer(ctx, opts \\ [])
 
   def answer(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
 
   def answer(%Context{} = ctx, opts) do
-    start_metadata = %{question: ctx.question}
+    answerer = Keyword.get(opts, :answerer, Arcana.Agent.Answerer.LLM)
+
+    start_metadata = %{
+      question: ctx.question,
+      answerer: answerer_name(answerer)
+    }
 
     :telemetry.span([:arcana, :agent, :answer], start_metadata, fn ->
       llm = Keyword.get(opts, :llm, ctx.llm)
@@ -795,10 +814,10 @@ defmodule Arcana.Agent do
         |> Enum.flat_map(& &1.chunks)
         |> Enum.uniq_by(& &1.id)
 
-      prompt = build_answer_prompt(custom_prompt_fn, ctx.question, all_chunks)
+      answerer_opts = Keyword.merge(opts, llm: llm)
 
       updated_ctx =
-        case llm.(prompt) do
+        case do_answer(answerer, ctx.question, all_chunks, answerer_opts) do
           {:ok, answer} ->
             base_ctx = %{ctx | answer: answer, context_used: all_chunks}
 
@@ -822,8 +841,16 @@ defmodule Arcana.Agent do
     end)
   end
 
-  defp build_answer_prompt(nil, question, chunks), do: default_answer_prompt(question, chunks)
-  defp build_answer_prompt(custom_fn, question, chunks), do: custom_fn.(question, chunks)
+  defp answerer_name(answerer) when is_atom(answerer), do: answerer
+  defp answerer_name(_answerer), do: :custom_function
+
+  defp do_answer(answerer, question, chunks, opts) when is_atom(answerer) do
+    answerer.answer(question, chunks, opts)
+  end
+
+  defp do_answer(answerer, question, chunks, opts) when is_function(answerer, 3) do
+    answerer.(question, chunks, opts)
+  end
 
   defp do_self_correct(ctx, llm, chunks, max_corrections, custom_prompt_fn) do
     do_self_correct_loop(ctx, llm, chunks, max_corrections, custom_prompt_fn, 0, [])
@@ -946,19 +973,6 @@ defmodule Arcana.Agent do
     #{feedback}
 
     Please provide an improved answer that addresses the feedback. Ensure your answer is well-grounded in the provided context.
-    """
-  end
-
-  defp default_answer_prompt(question, chunks) do
-    context = Enum.map_join(chunks, "\n\n---\n\n", & &1.text)
-
-    """
-    Question: "#{question}"
-
-    Context:
-    #{context}
-
-    Answer the question based on the context provided. If the context doesn't contain enough information, say so.
     """
   end
 end

@@ -1811,5 +1811,294 @@ defmodule Arcana.AgentTest do
     end
   end
 
+  describe "custom rewriter" do
+    test "accepts custom rewriter module" do
+      defmodule TestRewriter do
+        @behaviour Arcana.Agent.Rewriter
+
+        @impl true
+        def rewrite(question, _opts) do
+          {:ok, String.downcase(question)}
+        end
+      end
+
+      # LLM should not be called when using custom rewriter
+      llm = fn _prompt -> raise "LLM should not be called" end
+
+      ctx =
+        Agent.new("HELLO WORLD", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.rewrite(rewriter: TestRewriter)
+
+      assert ctx.rewritten_query == "hello world"
+    end
+
+    test "accepts custom rewriter function" do
+      llm = fn _prompt -> raise "LLM should not be called" end
+
+      custom_rewriter = fn question, _opts ->
+        {:ok, String.reverse(question)}
+      end
+
+      ctx =
+        Agent.new("hello", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.rewrite(rewriter: custom_rewriter)
+
+      assert ctx.rewritten_query == "olleh"
+    end
+
+    test "falls back to nil on rewriter error" do
+      custom_rewriter = fn _question, _opts ->
+        {:error, :rewrite_failed}
+      end
+
+      ctx =
+        Agent.new("test", repo: Arcana.TestRepo, llm: &mock_llm/1)
+        |> Agent.rewrite(rewriter: custom_rewriter)
+
+      assert is_nil(ctx.rewritten_query)
+    end
+  end
+
+  describe "custom expander" do
+    test "accepts custom expander module" do
+      defmodule TestExpander do
+        @behaviour Arcana.Agent.Expander
+
+        @impl true
+        def expand(question, _opts) do
+          {:ok, question <> " programming development"}
+        end
+      end
+
+      llm = fn _prompt -> raise "LLM should not be called" end
+
+      ctx =
+        Agent.new("Elixir", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.expand(expander: TestExpander)
+
+      assert ctx.expanded_query == "Elixir programming development"
+    end
+
+    test "accepts custom expander function" do
+      llm = fn _prompt -> raise "LLM should not be called" end
+
+      custom_expander = fn question, _opts ->
+        {:ok, question <> " synonyms related terms"}
+      end
+
+      ctx =
+        Agent.new("test", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.expand(expander: custom_expander)
+
+      assert ctx.expanded_query == "test synonyms related terms"
+    end
+  end
+
+  describe "custom decomposer" do
+    test "accepts custom decomposer module" do
+      defmodule TestDecomposer do
+        @behaviour Arcana.Agent.Decomposer
+
+        @impl true
+        def decompose(question, _opts) do
+          parts = String.split(question, " and ")
+          {:ok, parts}
+        end
+      end
+
+      llm = fn _prompt -> raise "LLM should not be called" end
+
+      ctx =
+        Agent.new("Elixir and Go", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.decompose(decomposer: TestDecomposer)
+
+      assert ctx.sub_questions == ["Elixir", "Go"]
+    end
+
+    test "accepts custom decomposer function" do
+      llm = fn _prompt -> raise "LLM should not be called" end
+
+      custom_decomposer = fn question, _opts ->
+        {:ok, [question, question <> " detailed"]}
+      end
+
+      ctx =
+        Agent.new("test", repo: Arcana.TestRepo, llm: llm)
+        |> Agent.decompose(decomposer: custom_decomposer)
+
+      assert ctx.sub_questions == ["test", "test detailed"]
+    end
+  end
+
+  describe "custom searcher" do
+    test "accepts custom searcher module" do
+      defmodule TestSearcher do
+        @behaviour Arcana.Agent.Searcher
+
+        @impl true
+        def search(_question, collection, _opts) do
+          chunks = [
+            %{id: "custom-1", text: "Custom search result", metadata: %{}, similarity: 0.9}
+          ]
+
+          {:ok, chunks}
+        end
+      end
+
+      ctx =
+        Agent.new("anything", repo: Arcana.TestRepo, llm: &mock_llm/1)
+        |> Agent.search(searcher: TestSearcher)
+
+      [result | _] = ctx.results
+      [chunk | _] = result.chunks
+      assert chunk.id == "custom-1"
+      assert chunk.text == "Custom search result"
+    end
+
+    test "accepts custom searcher function" do
+      custom_searcher = fn question, collection, _opts ->
+        {:ok, [%{id: "fn-1", text: "Function search: #{question}", metadata: %{}, similarity: 1.0}]}
+      end
+
+      ctx =
+        Agent.new("test query", repo: Arcana.TestRepo, llm: &mock_llm/1)
+        |> Agent.search(searcher: custom_searcher)
+
+      [result | _] = ctx.results
+      [chunk | _] = result.chunks
+      assert chunk.id == "fn-1"
+      assert chunk.text =~ "test query"
+    end
+
+    test "returns empty results on searcher error" do
+      custom_searcher = fn _question, _collection, _opts ->
+        {:error, :search_failed}
+      end
+
+      ctx =
+        Agent.new("test", repo: Arcana.TestRepo, llm: &mock_llm/1)
+        |> Agent.search(searcher: custom_searcher)
+
+      [result | _] = ctx.results
+      assert result.chunks == []
+    end
+  end
+
+  describe "custom answerer" do
+    test "accepts custom answerer module" do
+      defmodule TestAnswerer do
+        @behaviour Arcana.Agent.Answerer
+
+        @impl true
+        def answer(question, chunks, _opts) do
+          {:ok, "Custom answer for: #{question} with #{length(chunks)} chunks"}
+        end
+      end
+
+      ctx =
+        %Context{
+          question: "test question",
+          repo: Arcana.TestRepo,
+          llm: fn _ -> raise "LLM should not be called" end,
+          limit: 5,
+          threshold: 0.5,
+          results: [%{question: "test", collection: "default", chunks: [%{id: "1", text: "chunk"}]}]
+        }
+        |> Agent.answer(answerer: TestAnswerer)
+
+      assert ctx.answer == "Custom answer for: test question with 1 chunks"
+    end
+
+    test "accepts custom answerer function" do
+      custom_answerer = fn question, chunks, _opts ->
+        {:ok, "Function answer: #{length(chunks)} chunks"}
+      end
+
+      ctx =
+        %Context{
+          question: "test",
+          repo: Arcana.TestRepo,
+          llm: fn _ -> raise "LLM should not be called" end,
+          limit: 5,
+          threshold: 0.5,
+          results: [%{question: "test", collection: "default", chunks: [%{id: "1", text: "a"}, %{id: "2", text: "b"}]}]
+        }
+        |> Agent.answer(answerer: custom_answerer)
+
+      assert ctx.answer == "Function answer: 2 chunks"
+    end
+
+    test "sets error on answerer error" do
+      custom_answerer = fn _question, _chunks, _opts ->
+        {:error, :answer_failed}
+      end
+
+      ctx =
+        %Context{
+          question: "test",
+          repo: Arcana.TestRepo,
+          llm: &mock_llm/1,
+          limit: 5,
+          threshold: 0.5,
+          results: [%{question: "test", collection: "default", chunks: []}]
+        }
+        |> Agent.answer(answerer: custom_answerer)
+
+      assert ctx.error == :answer_failed
+    end
+
+    test "self_correct still works with custom answerer" do
+      eval_count = :counters.new(1, [:atomics])
+
+      # Custom answerer generates initial answer
+      custom_answerer = fn _question, _chunks, _opts ->
+        {:ok, "Initial answer from custom answerer"}
+      end
+
+      # LLM handles evaluation and correction
+      llm = fn prompt ->
+        cond do
+          prompt =~ "Evaluate if the following answer" ->
+            count = :counters.get(eval_count, 1)
+            :counters.add(eval_count, 1, 1)
+
+            if count == 0 do
+              # First evaluation - mark as not grounded
+              {:ok, ~s({"grounded": false, "feedback": "Please improve"})}
+            else
+              # Second evaluation - accept the corrected answer
+              {:ok, ~s({"grounded": true})}
+            end
+
+          prompt =~ "Please provide an improved answer" ->
+            # Correction prompt - LLM generates corrected answer
+            {:ok, "Corrected answer from LLM"}
+
+          true ->
+            {:ok, "response"}
+        end
+      end
+
+      ctx =
+        %Context{
+          question: "test",
+          repo: Arcana.TestRepo,
+          llm: llm,
+          limit: 5,
+          threshold: 0.5,
+          results: [%{question: "test", collection: "default", chunks: [%{id: "1", text: "context"}]}]
+        }
+        |> Agent.answer(answerer: custom_answerer, self_correct: true)
+
+      # Final answer is from the LLM correction, not the custom answerer
+      assert ctx.answer == "Corrected answer from LLM"
+      assert ctx.correction_count == 1
+      # History contains the original custom answerer output and feedback
+      assert [{original, feedback}] = ctx.corrections
+      assert original == "Initial answer from custom answerer"
+      assert feedback == "Please improve"
+    end
+  end
+
   defp mock_llm(_prompt), do: {:ok, "mock response"}
 end
