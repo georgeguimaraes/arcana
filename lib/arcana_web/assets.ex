@@ -283,6 +283,16 @@ defmodule ArcanaWeb.Assets do
     background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
     border-radius: 0.5rem;
     color: white;
+    align-items: center;
+  }
+
+  .arcana-brand {
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    padding-right: 1rem;
+    border-right: 1px solid rgba(255, 255, 255, 0.3);
+    margin-right: 0.5rem;
   }
 
   .arcana-stat {

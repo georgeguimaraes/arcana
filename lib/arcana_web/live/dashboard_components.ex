@@ -16,6 +16,7 @@ defmodule ArcanaWeb.DashboardComponents do
     <link rel="stylesheet" href={"/arcana/css-#{ArcanaWeb.Assets.current_hash(:css)}"} />
     <div class="arcana-dashboard">
       <div class="arcana-stats">
+        <div class="arcana-brand">Arcana</div>
         <div class="arcana-stat">
           <div class="arcana-stat-value"><%= @stats.documents %></div>
           <div class="arcana-stat-label">Documents</div>
