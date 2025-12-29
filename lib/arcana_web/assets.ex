@@ -736,6 +736,7 @@ defmodule ArcanaWeb.Assets do
     display: flex;
     gap: 0.25rem;
     align-items: center;
+    justify-content: center;
   }
 
   .arcana-icon-btn {
