@@ -7,7 +7,6 @@ defmodule Arcana.Embedder do
 
   - `Arcana.Embedder.Local` - Local Bumblebee models (e.g., `bge-small-en-v1.5`)
   - `Arcana.Embedder.OpenAI` - OpenAI embeddings via Req.LLM
-  - `Arcana.Embedder.Zai` - Z.ai embeddings (embedding-3 model)
 
   ## Configuration
 
@@ -22,10 +21,6 @@ defmodule Arcana.Embedder do
       # OpenAI via Req.LLM
       config :arcana, embedder: :openai
       config :arcana, embedder: {:openai, model: "text-embedding-3-large"}
-
-      # Z.ai (1536 dims by default)
-      config :arcana, embedder: :zai
-      config :arcana, embedder: {:zai, dimensions: 1024}
 
       # Custom function
       config :arcana, embedder: fn text -> {:ok, embedding} end

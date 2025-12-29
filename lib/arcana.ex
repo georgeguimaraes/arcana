@@ -35,10 +35,6 @@ defmodule Arcana do
       config :arcana, embedder: :openai
       config :arcana, embedder: {:openai, model: "text-embedding-3-large"}
 
-      # Z.ai (requires ZAI_API_KEY)
-      config :arcana, embedder: :zai
-      config :arcana, embedder: {:zai, dimensions: 1024}
-
       # Custom function
       config :arcana, embedder: fn text -> {:ok, embedding} end
 
@@ -104,9 +100,6 @@ defmodule Arcana do
   defp parse_embedder_config({:local, opts}), do: {Arcana.Embedder.Local, opts}
   defp parse_embedder_config(:openai), do: {Arcana.Embedder.OpenAI, []}
   defp parse_embedder_config({:openai, opts}), do: {Arcana.Embedder.OpenAI, opts}
-  defp parse_embedder_config(:zai), do: {Arcana.Embedder.Zai, []}
-  defp parse_embedder_config({:zai, opts}), do: {Arcana.Embedder.Zai, opts}
-
   defp parse_embedder_config(fun) when is_function(fun, 1),
     do: {Arcana.Embedder.Custom, [fun: fun]}
 

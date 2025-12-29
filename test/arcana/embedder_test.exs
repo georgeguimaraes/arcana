@@ -20,7 +20,6 @@ defmodule Arcana.EmbedderTest do
   alias Arcana.Embedder
   alias Arcana.Embedder.Local
   alias Arcana.Embedder.OpenAI
-  alias Arcana.Embedder.Zai
 
   describe "Arcana.Embedder behaviour with Custom (function wrapper)" do
     test "Custom embedder works with function" do
@@ -100,17 +99,6 @@ defmodule Arcana.EmbedderTest do
       assert OpenAI.dimensions(model: "text-embedding-3-small") == 1536
       assert OpenAI.dimensions(model: "text-embedding-3-large") == 3072
       assert OpenAI.dimensions(model: "text-embedding-ada-002") == 1536
-    end
-  end
-
-  describe "Zai" do
-    test "returns correct default dimensions" do
-      assert Zai.dimensions([]) == 1536
-    end
-
-    test "returns custom dimensions when provided" do
-      assert Zai.dimensions(dimensions: 1024) == 1024
-      assert Zai.dimensions(dimensions: 2048) == 2048
     end
   end
 

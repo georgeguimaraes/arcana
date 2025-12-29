@@ -15,18 +15,19 @@ defmodule Arcana.Maintenance do
 
   """
 
-  alias Arcana.{Chunk, Embedder}
+  alias Arcana.{Chunk, Chunker, Document, Embedder}
 
   import Ecto.Query
 
   @doc """
-  Re-embeds all chunks using the current embedding configuration.
+  Re-embeds all chunks and rechunks documents that have no chunks.
 
-  This is useful when switching embedding models or updating to a new version.
+  This is useful when switching embedding models or after a migration
+  that cleared chunks.
 
   ## Options
 
-    * `:batch_size` - Number of chunks to process at once (default: 50)
+    * `:batch_size` - Number of items to process at once (default: 50)
     * `:progress` - Function to call with progress updates `fn current, total -> :ok end`
 
   ## Examples
@@ -49,31 +50,88 @@ defmodule Arcana.Maintenance do
 
     embedder = Arcana.embedder()
 
-    # Get total count
-    total = repo.aggregate(Chunk, :count)
+    # First, rechunk documents that have no chunks
+    docs_without_chunks = repo.all(from d in Document, where: d.chunk_count == 0 or d.status == :pending)
 
-    if total == 0 do
-      {:ok, %{reembedded: 0, total: 0}}
-    else
-      # Process in batches
-      chunks_query = from(c in Chunk, order_by: c.id, select: [:id, :text])
-
-      result =
-        chunks_query
-        |> repo.stream(max_rows: batch_size)
-        |> Stream.with_index(1)
-        |> Enum.reduce({:ok, 0}, fn
-          {chunk, index}, {:ok, count} ->
-            reembed_chunk(chunk, embedder, repo, progress_fn, index, total, count)
-
-          _chunk, error ->
-            error
-        end)
-
-      case result do
-        {:ok, count} -> {:ok, %{reembedded: count, total: total}}
-        error -> error
+    rechunked =
+      if length(docs_without_chunks) > 0 do
+        rechunk_documents(docs_without_chunks, embedder, repo, progress_fn)
+      else
+        0
       end
+
+    # Then re-embed existing chunks
+    total_chunks = repo.aggregate(Chunk, :count)
+
+    reembedded =
+      if total_chunks > 0 do
+        reembed_chunks(repo, embedder, batch_size, progress_fn, total_chunks)
+      else
+        0
+      end
+
+    {:ok, %{rechunked_documents: rechunked, reembedded_chunks: reembedded, total_chunks: total_chunks}}
+  end
+
+  defp rechunk_documents(documents, embedder, repo, progress_fn) do
+    total = length(documents)
+
+    documents
+    |> Enum.with_index(1)
+    |> Enum.reduce(0, fn {doc, index}, count ->
+      progress_fn.(index, total)
+
+      chunks = Chunker.chunk(doc.content, [])
+
+      Enum.each(chunks, fn chunk ->
+        {:ok, embedding} = Embedder.embed(embedder, chunk.text)
+
+        %Chunk{}
+        |> Chunk.changeset(%{
+          text: chunk.text,
+          embedding: embedding,
+          chunk_index: chunk.chunk_index,
+          token_count: chunk.token_count,
+          document_id: doc.id
+        })
+        |> repo.insert!()
+      end)
+
+      # Update document status
+      doc
+      |> Document.changeset(%{status: :completed, chunk_count: length(chunks)})
+      |> repo.update!()
+
+      count + 1
+    end)
+  end
+
+  defp reembed_chunks(repo, embedder, batch_size, progress_fn, total) do
+    chunks_query = from(c in Chunk, order_by: c.id, select: [:id, :text])
+
+    repo.transaction(fn ->
+      chunks_query
+      |> repo.stream(max_rows: batch_size)
+      |> Stream.with_index(1)
+      |> Enum.reduce(0, fn {chunk, index}, count ->
+        case Embedder.embed(embedder, chunk.text) do
+          {:ok, embedding} ->
+            repo.update_all(
+              from(c in Chunk, where: c.id == ^chunk.id),
+              set: [embedding: embedding, updated_at: DateTime.utc_now()]
+            )
+
+            progress_fn.(index, total)
+            count + 1
+
+          {:error, reason} ->
+            raise "Failed to embed chunk #{chunk.id}: #{inspect(reason)}"
+        end
+      end)
+    end)
+    |> case do
+      {:ok, count} -> count
+      {:error, reason} -> raise reason
     end
   end
 
@@ -117,31 +175,11 @@ defmodule Arcana.Maintenance do
         model = Keyword.get(opts, :model, "text-embedding-3-small")
         %{type: :openai, model: model, dimensions: dimensions}
 
-      {Arcana.Embedder.Zai, opts} ->
-        dims = Keyword.get(opts, :dimensions, 1536)
-        %{type: :zai, model: "embedding-3", dimensions: dims}
-
       {Arcana.Embedder.Custom, _opts} ->
         %{type: :custom, dimensions: dimensions}
 
       {module, _opts} ->
         %{type: :custom, module: module, dimensions: dimensions}
-    end
-  end
-
-  defp reembed_chunk(chunk, embedder, repo, progress_fn, index, total, count) do
-    case Embedder.embed(embedder, chunk.text) do
-      {:ok, embedding} ->
-        repo.update_all(
-          from(c in Chunk, where: c.id == ^chunk.id),
-          set: [embedding: embedding, updated_at: DateTime.utc_now()]
-        )
-
-        progress_fn.(index, total)
-        {:ok, count + 1}
-
-      {:error, reason} ->
-        {:error, {:embed_failed, chunk.id, reason}}
     end
   end
 end
