@@ -30,64 +30,36 @@ Embeddable RAG library for Elixir/Phoenix. Add vector search, document retrieval
 
 ## Installation
 
+**With Igniter (recommended):**
+
+```bash
+mix igniter.install arcana
+mix ecto.migrate
+```
+
+This adds the dependency, creates migrations, configures your repo, and sets up the dashboard route.
+
+**Without Igniter:**
+
 Add `arcana` to your dependencies:
 
 ```elixir
 def deps do
   [
-    {:arcana, "~> 0.1.0"},
-    # Optional: for automatic setup (recommended)
-    {:igniter, "~> 0.5"}
+    {:arcana, "~> 0.1.0"}
   ]
 end
 ```
 
-## Setup
-
-### 1. Start PostgreSQL with pgvector
-
-```yaml
-# docker-compose.yml
-services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: myapp_dev
-```
-
-### 2. Run the installer
-
-**With Igniter (recommended):**
-
-```bash
-mix arcana.install
-```
-
-This automatically:
-
-- Creates the database migration
-- Adds the dashboard route to your router
-- Creates the Postgrex types module
-- Configures your repo
-
 Then run:
 
 ```bash
-mix ecto.migrate
-```
-
-**Without Igniter:**
-
-```bash
+mix deps.get
 mix arcana.install
 mix ecto.migrate
 ```
 
-Then follow the manual steps printed by the installer:
+And follow the manual steps printed by the installer:
 
 1. Create the Postgrex types module:
 
@@ -118,7 +90,24 @@ scope "/arcana" do
 end
 ```
 
-### 3. Add to supervision tree (for local embeddings)
+## Setup
+
+### Start PostgreSQL with pgvector
+
+```yaml
+# docker-compose.yml
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: myapp_dev
+```
+
+### Add to supervision tree (for local embeddings)
 
 If using local Bumblebee embeddings (the default), add the serving to your supervision tree:
 
@@ -137,7 +126,7 @@ end
 
 For OpenAI embeddings or custom providers, skip this step.
 
-### 4. Configure Nx backend (recommended)
+### Configure Nx backend (recommended)
 
 For better performance with local embeddings:
 
