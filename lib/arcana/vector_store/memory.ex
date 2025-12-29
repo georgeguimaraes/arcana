@@ -1,3 +1,4 @@
+# credo:disable-for-this-file Credo.Check.Refactor.Apply
 defmodule Arcana.VectorStore.Memory do
   @moduledoc """
   In-memory vector store using HNSWLib for approximate nearest neighbor search.

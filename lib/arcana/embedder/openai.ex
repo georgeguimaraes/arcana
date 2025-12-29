@@ -1,3 +1,4 @@
+# credo:disable-for-this-file Credo.Check.Refactor.Apply
 defmodule Arcana.Embedder.OpenAI do
   @moduledoc """
   OpenAI embedding provider using Req.LLM.
