@@ -61,12 +61,30 @@ defmodule Arcana.Agent.Decomposer.LLM do
   end
 
   defp parse_response(response, fallback_question) do
-    case JSON.decode(response) do
-      {:ok, %{"sub_questions" => questions}} when is_list(questions) ->
+    # Try to extract JSON from the response (LLM might include extra text)
+    json_string = extract_json(response)
+
+    case JSON.decode(json_string) do
+      {:ok, %{"sub_questions" => questions}} when is_list(questions) and length(questions) > 0 ->
+        {:ok, questions}
+
+      {:ok, %{"subquestions" => questions}} when is_list(questions) and length(questions) > 0 ->
+        {:ok, questions}
+
+      {:ok, %{"questions" => questions}} when is_list(questions) and length(questions) > 0 ->
         {:ok, questions}
 
       _ ->
+        # Fallback to original question if parsing fails
         {:ok, [fallback_question]}
+    end
+  end
+
+  defp extract_json(response) do
+    # Try to find JSON object in the response
+    case Regex.run(~r/\{[^{}]*"(?:sub_questions|subquestions|questions)"[^{}]*\}/s, response) do
+      [json] -> json
+      _ -> response
     end
   end
 end

@@ -202,12 +202,16 @@ defmodule Arcana.Telemetry.Logger do
   end
 
   defp extract_details("agent.expand", meta) do
-    count = length(meta[:queries] || [])
-    "(#{count} quer#{if count == 1, do: "y", else: "ies"})"
+    case meta[:expanded_query] do
+      nil -> "(no expansion)"
+      query when is_binary(query) ->
+        preview = String.slice(query, 0, 50)
+        if String.length(query) > 50, do: "(\"#{preview}...\")", else: "(\"#{preview}\")"
+    end
   end
 
   defp extract_details("agent.decompose", meta) do
-    count = length(meta[:subquestions] || [])
+    count = meta[:sub_question_count] || 0
     "(#{count} subquestion#{if count == 1, do: "", else: "s"})"
   end
 

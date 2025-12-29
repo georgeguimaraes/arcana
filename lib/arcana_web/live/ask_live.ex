@@ -387,22 +387,23 @@ defmodule ArcanaWeb.AskLive do
             <% end %>
 
             <%= if @ask_context.results && length(@ask_context.results) > 0 do %>
+              <% all_chunks = Enum.flat_map(@ask_context.results, & &1.chunks) %>
               <div class="arcana-ask-section">
-                <h4>Retrieved Chunks (<%= length(@ask_context.results) %>)</h4>
+                <h4>Retrieved Chunks (<%= length(all_chunks) %>)</h4>
                 <div class="arcana-search-results">
-                  <%= for result <- @ask_context.results do %>
+                  <%= for chunk <- all_chunks do %>
                     <div class="arcana-search-result">
                       <div class="arcana-result-header">
                         <div class="arcana-result-score">
-                          <span class="score-value"><%= Float.round(result.score, 4) %></span>
+                          <span class="score-value"><%= Float.round(chunk.score, 4) %></span>
                         </div>
                         <div class="arcana-result-meta">
-                          <code><%= result.document_id %></code>
-                          <span class="arcana-chunk-badge">Chunk <%= result.chunk_index %></span>
+                          <code><%= chunk.document_id %></code>
+                          <span class="arcana-chunk-badge">Chunk <%= chunk.chunk_index %></span>
                         </div>
                       </div>
                       <div class="arcana-result-text">
-                        <%= String.slice(result.text, 0, 300) %><%= if String.length(result.text) > 300, do: "...", else: "" %>
+                        <%= String.slice(chunk.text, 0, 300) %><%= if String.length(chunk.text) > 300, do: "...", else: "" %>
                       </div>
                     </div>
                   <% end %>
