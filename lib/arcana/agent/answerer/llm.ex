@@ -43,7 +43,7 @@ defmodule Arcana.Agent.Answerer.LLM do
       end
 
     case Arcana.LLM.complete(llm, prompt, [], []) do
-      {:ok, answer} -> {:ok, answer}
+      {:ok, answer} -> {:ok, String.trim(answer)}
       {:error, reason} -> {:error, reason}
     end
   end
