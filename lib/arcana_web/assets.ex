@@ -287,12 +287,15 @@ defmodule ArcanaWeb.Assets do
   }
 
   .arcana-brand {
-    font-size: 1.25rem;
+    font-size: 1.5rem;
     font-weight: 700;
     letter-spacing: -0.025em;
-    padding-right: 1rem;
+    padding-right: 1.5rem;
     border-right: 1px solid rgba(255, 255, 255, 0.3);
     margin-right: 0.5rem;
+    display: flex;
+    align-items: center;
+    align-self: center;
   }
 
   .arcana-stat {
