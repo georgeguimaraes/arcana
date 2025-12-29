@@ -301,7 +301,7 @@ defmodule ArcanaWeb.DocumentsLive do
                     <td><%= doc.source_id || "-" %></td>
                     <td><%= doc.chunk_count %></td>
                     <td><%= doc.inserted_at %></td>
-                    <td class="arcana-actions">
+                    <td>
                       <button
                         data-view-doc={doc.id}
                         class="arcana-view-btn"
