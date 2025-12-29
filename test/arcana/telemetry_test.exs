@@ -95,7 +95,7 @@ defmodule Arcana.TelemetryTest do
         {:ok, "Paris is the capital of France."}
       end
 
-      {:ok, answer} =
+      {:ok, answer, _results} =
         Arcana.ask("What is the capital of France?", repo: Arcana.TestRepo, llm: test_llm)
 
       assert_receive {:telemetry, [:arcana, :ask, :start], start_measurements, start_metadata}

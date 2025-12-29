@@ -130,7 +130,7 @@ defmodule ArcanaWeb.AskLive do
              question: question,
              answer: answer,
              results: results,
-             queries: nil,
+             expanded_query: nil,
              sub_questions: nil,
              selected_collections:
                if(selected_collections == [], do: nil, else: selected_collections)
@@ -212,9 +212,9 @@ defmodule ArcanaWeb.AskLive do
            question: question,
            answer: ctx.answer,
            results: ctx.results,
-           queries: ctx.queries,
+           expanded_query: ctx.expanded_query,
            sub_questions: ctx.sub_questions,
-           selected_collections: ctx.selected_collections
+           selected_collections: ctx.collections
          }}
       end
     rescue
@@ -357,14 +357,10 @@ defmodule ArcanaWeb.AskLive do
               </div>
             </div>
 
-            <%= if @ask_context.queries && length(@ask_context.queries) > 1 do %>
+            <%= if @ask_context.expanded_query do %>
               <div class="arcana-ask-section">
-                <h4>Expanded Queries</h4>
-                <ul class="arcana-query-list">
-                  <%= for query <- @ask_context.queries do %>
-                    <li><%= query %></li>
-                  <% end %>
-                </ul>
+                <h4>Expanded Query</h4>
+                <p class="arcana-expanded-query"><%= @ask_context.expanded_query %></p>
               </div>
             <% end %>
 

@@ -198,7 +198,7 @@ defmodule ArcanaTest do
         {:ok, "Answer to: #{prompt} with #{length(context)} chunks"}
       end
 
-      {:ok, answer} = Arcana.ask("What is the capital?", repo: Repo, llm: llm)
+      {:ok, answer, _results} = Arcana.ask("What is the capital?", repo: Repo, llm: llm)
 
       assert answer =~ "What is the capital?"
       assert answer =~ "chunks"
@@ -219,7 +219,7 @@ defmodule ArcanaTest do
         {:ok, "Answer based on: #{prompt}"}
       end
 
-      {:ok, answer} =
+      {:ok, answer, _results} =
         Arcana.ask("What is the capital of France?",
           repo: Repo,
           llm: test_llm
@@ -237,7 +237,7 @@ defmodule ArcanaTest do
         {:ok, "Test answer"}
       end
 
-      {:ok, _answer} =
+      {:ok, _answer, _results} =
         Arcana.ask("Tell me about Paris",
           repo: Repo,
           llm: test_llm
@@ -263,7 +263,7 @@ defmodule ArcanaTest do
         {:ok, "Answer"}
       end
 
-      {:ok, _} =
+      {:ok, _, _} =
         Arcana.ask("Paris",
           repo: Repo,
           llm: test_llm,
@@ -286,7 +286,7 @@ defmodule ArcanaTest do
         "CUSTOM SYSTEM: Answer '#{question}' using #{length(context)} sources"
       end
 
-      {:ok, _} =
+      {:ok, _, _} =
         Arcana.ask("What is Paris?",
           repo: Repo,
           llm: test_llm,
