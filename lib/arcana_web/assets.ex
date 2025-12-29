@@ -394,7 +394,7 @@ defmodule ArcanaWeb.Assets do
   }
 
   .arcana-doc-detail {
-    background: white;
+    /* No background - inherits from page */
   }
 
   .arcana-doc-header {
@@ -430,6 +430,7 @@ defmodule ArcanaWeb.Assets do
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 1rem;
     background: #f9fafb;
+    border: 1px solid #e5e7eb;
     padding: 1rem;
     border-radius: 0.5rem;
     margin-bottom: 1.5rem;
@@ -456,6 +457,7 @@ defmodule ArcanaWeb.Assets do
 
   .arcana-doc-content {
     background: #f9fafb;
+    border: 1px solid #e5e7eb;
     padding: 1rem;
     border-radius: 0.5rem;
     font-size: 0.875rem;
@@ -501,7 +503,7 @@ defmodule ArcanaWeb.Assets do
     font-size: 0.875rem;
     white-space: pre-wrap;
     word-wrap: break-word;
-    background: white;
+    background: #f9fafb;
   }
 
   .arcana-btn {
