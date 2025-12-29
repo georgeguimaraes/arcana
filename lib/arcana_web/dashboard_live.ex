@@ -21,10 +21,10 @@ defmodule ArcanaWeb.DashboardLive do
       |> assign(search_results: [], search_query: "")
       |> assign(expanded_result_id: nil, viewing_search_document: nil)
       |> assign(
-        agentic_question: "",
-        agentic_running: false,
-        agentic_context: nil,
-        agentic_error: nil
+        ask_question: "",
+        ask_running: false,
+        ask_context: nil,
+        ask_error: nil
       )
       |> assign(page: 1, per_page: 10)
       |> assign(viewing_document: nil)
@@ -204,7 +204,7 @@ defmodule ArcanaWeb.DashboardLive do
     {:noreply, assign(socket, viewing_search_document: nil)}
   end
 
-  def handle_event("agentic_search", params, socket) do
+  def handle_event("ask_submit", params, socket) do
     repo = socket.assigns.repo
     question = params["question"] || ""
 
@@ -212,15 +212,15 @@ defmodule ArcanaWeb.DashboardLive do
       nil ->
         {:noreply,
          assign(socket,
-           agentic_error: "No LLM configured. Set :arcana, :llm in your config.",
-           agentic_running: false
+           ask_error: "No LLM configured. Set :arcana, :llm in your config.",
+           ask_running: false
          )}
 
       llm ->
         if question == "" do
-          {:noreply, assign(socket, agentic_error: "Please enter a question")}
+          {:noreply, assign(socket, ask_error: "Please enter a question")}
         else
-          socket = assign(socket, agentic_running: true, agentic_error: nil, agentic_question: question)
+          socket = assign(socket, ask_running: true, ask_error: nil, ask_question: question)
           parent = self()
 
           # Parse options from form
@@ -231,7 +231,7 @@ defmodule ArcanaWeb.DashboardLive do
           self_correct = params["self_correct"] == "true"
 
           Task.start(fn ->
-            result = run_agentic_pipeline(
+            result = run_ask_pipeline(
               question,
               repo,
               llm,
@@ -242,7 +242,7 @@ defmodule ArcanaWeb.DashboardLive do
               use_rerank: use_rerank,
               self_correct: self_correct
             )
-            send(parent, {:agentic_complete, result})
+            send(parent, {:ask_complete, result})
           end)
 
           {:noreply, socket}
@@ -250,8 +250,8 @@ defmodule ArcanaWeb.DashboardLive do
     end
   end
 
-  def handle_event("agentic_clear", _params, socket) do
-    {:noreply, assign(socket, agentic_context: nil, agentic_error: nil, agentic_question: "")}
+  def handle_event("ask_clear", _params, socket) do
+    {:noreply, assign(socket, ask_context: nil, ask_error: nil, ask_question: "")}
   end
 
   def handle_event("eval_switch_view", %{"view" => view}, socket) do
@@ -466,14 +466,14 @@ defmodule ArcanaWeb.DashboardLive do
   end
 
   @impl true
-  def handle_info({:agentic_complete, result}, socket) do
+  def handle_info({:ask_complete, result}, socket) do
     socket =
       case result do
         {:ok, ctx} ->
-          assign(socket, agentic_running: false, agentic_context: ctx, agentic_error: nil)
+          assign(socket, ask_running: false, ask_context: ctx, ask_error: nil)
 
         {:error, reason} ->
-          assign(socket, agentic_running: false, agentic_error: inspect(reason))
+          assign(socket, ask_running: false, ask_error: inspect(reason))
       end
 
     {:noreply, socket}
@@ -547,7 +547,7 @@ defmodule ArcanaWeb.DashboardLive do
   defp error_to_string(:not_accepted), do: "File type not supported"
   defp error_to_string(err), do: "Error: #{inspect(err)}"
 
-  defp run_agentic_pipeline(question, repo, llm, collections, opts) do
+  defp run_ask_pipeline(question, repo, llm, collections, opts) do
     alias Arcana.Agent
 
     collection_names = Enum.map(collections, & &1.name)
@@ -1523,15 +1523,15 @@ defmodule ArcanaWeb.DashboardLive do
           phx-click="switch_tab"
           phx-value-tab="search"
         >
-          Retrieve
+          Search
         </button>
         <button
-          data-tab="agentic"
-          class={"arcana-tab #{if @tab == :agentic, do: "active", else: ""}"}
+          data-tab="ask"
+          class={"arcana-tab #{if @tab == :ask, do: "active", else: ""}"}
           phx-click="switch_tab"
-          phx-value-tab="agentic"
+          phx-value-tab="ask"
         >
-          Agentic
+          Ask
         </button>
         <button
           data-tab="evaluation"
@@ -1587,12 +1587,12 @@ defmodule ArcanaWeb.DashboardLive do
               expanded_result_id={@expanded_result_id}
               viewing_document={@viewing_search_document}
             />
-          <% :agentic -> %>
-            <.agentic_tab
-              question={@agentic_question}
-              running={@agentic_running}
-              context={@agentic_context}
-              error={@agentic_error}
+          <% :ask -> %>
+            <.ask_tab
+              question={@ask_question}
+              running={@ask_running}
+              context={@ask_context}
+              error={@ask_error}
               collections={@collections}
             />
           <% :evaluation -> %>
@@ -1626,6 +1626,9 @@ defmodule ArcanaWeb.DashboardLive do
         <.document_detail viewing={@viewing} />
       <% else %>
       <h2>Documents</h2>
+      <p class="arcana-tab-description">
+        Upload, view, and manage documents in your knowledge base.
+      </p>
 
       <div class="arcana-upload-section">
         <form id="upload-form" phx-submit="upload_files" phx-change="validate_upload">
@@ -1841,7 +1844,10 @@ defmodule ArcanaWeb.DashboardLive do
       <%= if @viewing_document do %>
         <.search_document_detail viewing={@viewing_document} />
       <% else %>
-        <h2>Retrieve</h2>
+        <h2>Search</h2>
+        <p class="arcana-tab-description">
+          Perform vector similarity search to retrieve relevant document chunks from your knowledge base.
+        </p>
 
         <form id="search-form" phx-submit="search" class="arcana-search-form">
           <div class="arcana-search-inputs">
@@ -1996,13 +2002,13 @@ defmodule ArcanaWeb.DashboardLive do
     """
   end
 
-  defp agentic_tab(assigns) do
+  defp ask_tab(assigns) do
     ~H"""
-    <div class="arcana-agentic">
-      <h2>Agentic Search</h2>
-      <p style="color: #6b7280; margin-bottom: 1rem; font-size: 0.875rem;">
-        Use the agentic pipeline for more sophisticated search with LLM-powered query expansion,
-        decomposition, and answer generation.
+    <div class="arcana-ask">
+      <h2>Ask</h2>
+      <p class="arcana-tab-description">
+        Ask questions about your documents using an agentic RAG pipeline.
+        The LLM searches your knowledge base, retrieves relevant chunks, and generates an answer.
       </p>
 
       <%= if @error do %>
@@ -2011,8 +2017,8 @@ defmodule ArcanaWeb.DashboardLive do
         </div>
       <% end %>
 
-      <form id="agentic-form" phx-submit="agentic_search" class="arcana-agentic-form">
-        <div class="arcana-agentic-input">
+      <form id="ask-form" phx-submit="ask_submit" class="arcana-ask-form">
+        <div class="arcana-ask-input">
           <textarea
             name="question"
             placeholder="Ask a question about your documents..."
@@ -2021,7 +2027,7 @@ defmodule ArcanaWeb.DashboardLive do
           ><%= @question %></textarea>
         </div>
 
-        <div class="arcana-agentic-options">
+        <div class="arcana-ask-options">
           <h4>Pipeline Options</h4>
           <div class="arcana-option-grid">
             <label class="arcana-checkbox-label">
@@ -2056,12 +2062,12 @@ defmodule ArcanaWeb.DashboardLive do
           </div>
         </div>
 
-        <div class="arcana-agentic-actions">
+        <div class="arcana-ask-actions">
           <button type="submit" disabled={@running}>
-            <%= if @running, do: "Searching...", else: "Ask" %>
+            <%= if @running, do: "Asking...", else: "Ask" %>
           </button>
           <%= if @context do %>
-            <button type="button" phx-click="agentic_clear" disabled={@running}>
+            <button type="button" phx-click="ask_clear" disabled={@running}>
               Clear
             </button>
           <% end %>
@@ -2069,15 +2075,15 @@ defmodule ArcanaWeb.DashboardLive do
       </form>
 
       <%= if @running do %>
-        <div class="arcana-agentic-loading">
+        <div class="arcana-ask-loading">
           <div class="arcana-spinner"></div>
-          <span>Running agentic pipeline...</span>
+          <span>Running pipeline...</span>
         </div>
       <% end %>
 
       <%= if @context do %>
-        <div class="arcana-agentic-results">
-          <div class="arcana-agentic-answer">
+        <div class="arcana-ask-results">
+          <div class="arcana-ask-answer">
             <h3>Answer</h3>
             <div class="arcana-answer-content">
               <%= if @context.answer do %>
@@ -2089,7 +2095,7 @@ defmodule ArcanaWeb.DashboardLive do
           </div>
 
           <%= if @context.queries && length(@context.queries) > 1 do %>
-            <div class="arcana-agentic-section">
+            <div class="arcana-ask-section">
               <h4>Expanded Queries</h4>
               <ul class="arcana-query-list">
                 <%= for query <- @context.queries do %>
@@ -2100,7 +2106,7 @@ defmodule ArcanaWeb.DashboardLive do
           <% end %>
 
           <%= if @context.sub_questions && length(@context.sub_questions) > 0 do %>
-            <div class="arcana-agentic-section">
+            <div class="arcana-ask-section">
               <h4>Sub-Questions</h4>
               <ul class="arcana-query-list">
                 <%= for sq <- @context.sub_questions do %>
@@ -2111,7 +2117,7 @@ defmodule ArcanaWeb.DashboardLive do
           <% end %>
 
           <%= if @context.selected_collections && length(@context.selected_collections) > 0 do %>
-            <div class="arcana-agentic-section">
+            <div class="arcana-ask-section">
               <h4>Selected Collections</h4>
               <div class="arcana-collection-badges">
                 <%= for coll <- @context.selected_collections do %>
@@ -2122,7 +2128,7 @@ defmodule ArcanaWeb.DashboardLive do
           <% end %>
 
           <%= if @context.results && length(@context.results) > 0 do %>
-            <div class="arcana-agentic-section">
+            <div class="arcana-ask-section">
               <h4>Retrieved Chunks (<%= length(@context.results) %>)</h4>
               <div class="arcana-search-results">
                 <%= for result <- @context.results do %>
@@ -2149,7 +2155,13 @@ defmodule ArcanaWeb.DashboardLive do
     </div>
 
     <style>
-      .arcana-agentic-form {
+      .arcana-tab-description {
+        color: #6b7280;
+        margin-bottom: 1rem;
+        font-size: 0.875rem;
+      }
+
+      .arcana-ask-form {
         background: #f9fafb;
         border: 1px solid #e5e7eb;
         border-radius: 0.5rem;
@@ -2157,7 +2169,7 @@ defmodule ArcanaWeb.DashboardLive do
         margin-bottom: 1.5rem;
       }
 
-      .arcana-agentic-input textarea {
+      .arcana-ask-input textarea {
         width: 100%;
         padding: 0.75rem;
         border: 1px solid #d1d5db;
@@ -2167,19 +2179,19 @@ defmodule ArcanaWeb.DashboardLive do
         box-sizing: border-box;
       }
 
-      .arcana-agentic-input textarea:focus {
+      .arcana-ask-input textarea:focus {
         outline: none;
         border-color: #7c3aed;
         box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
       }
 
-      .arcana-agentic-options {
+      .arcana-ask-options {
         margin-top: 1rem;
         padding-top: 1rem;
         border-top: 1px solid #e5e7eb;
       }
 
-      .arcana-agentic-options h4 {
+      .arcana-ask-options h4 {
         font-size: 0.875rem;
         font-weight: 600;
         color: #374151;
@@ -2240,13 +2252,13 @@ defmodule ArcanaWeb.DashboardLive do
         cursor: not-allowed;
       }
 
-      .arcana-agentic-actions {
+      .arcana-ask-actions {
         display: flex;
         gap: 0.5rem;
         margin-top: 1rem;
       }
 
-      .arcana-agentic-actions button {
+      .arcana-ask-actions button {
         background: #7c3aed;
         color: white;
         padding: 0.625rem 1.25rem;
@@ -2258,28 +2270,28 @@ defmodule ArcanaWeb.DashboardLive do
         transition: background-color 0.15s ease;
       }
 
-      .arcana-agentic-actions button:hover {
+      .arcana-ask-actions button:hover {
         background: #6d28d9;
       }
 
-      .arcana-agentic-actions button:disabled {
+      .arcana-ask-actions button:disabled {
         background: #9ca3af;
         cursor: not-allowed;
       }
 
-      .arcana-agentic-actions button[type="button"] {
+      .arcana-ask-actions button[type="button"] {
         background: transparent;
         color: #6b7280;
         border: 1px solid #d1d5db;
       }
 
-      .arcana-agentic-actions button[type="button"]:hover {
+      .arcana-ask-actions button[type="button"]:hover {
         border-color: #7c3aed;
         color: #7c3aed;
         background: transparent;
       }
 
-      .arcana-agentic-loading {
+      .arcana-ask-loading {
         display: flex;
         align-items: center;
         gap: 0.75rem;
@@ -2302,11 +2314,11 @@ defmodule ArcanaWeb.DashboardLive do
         to { transform: rotate(360deg); }
       }
 
-      .arcana-agentic-results {
+      .arcana-ask-results {
         margin-top: 1.5rem;
       }
 
-      .arcana-agentic-answer {
+      .arcana-ask-answer {
         background: white;
         border: 1px solid #e5e7eb;
         border-radius: 0.5rem;
@@ -2314,7 +2326,7 @@ defmodule ArcanaWeb.DashboardLive do
         margin-bottom: 1rem;
       }
 
-      .arcana-agentic-answer h3 {
+      .arcana-ask-answer h3 {
         margin: 0;
         padding: 0.75rem 1rem;
         background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
@@ -2330,7 +2342,7 @@ defmodule ArcanaWeb.DashboardLive do
         white-space: pre-wrap;
       }
 
-      .arcana-agentic-section {
+      .arcana-ask-section {
         background: #f9fafb;
         border: 1px solid #e5e7eb;
         border-radius: 0.5rem;
@@ -2338,7 +2350,7 @@ defmodule ArcanaWeb.DashboardLive do
         margin-bottom: 1rem;
       }
 
-      .arcana-agentic-section h4 {
+      .arcana-ask-section h4 {
         margin: 0 0 0.75rem 0;
         font-size: 0.875rem;
         font-weight: 600;
@@ -2377,7 +2389,10 @@ defmodule ArcanaWeb.DashboardLive do
   defp evaluation_tab(assigns) do
     ~H"""
     <div class="arcana-evaluation">
-      <h2>Retrieval Evaluation</h2>
+      <h2>Evaluation</h2>
+      <p class="arcana-tab-description">
+        Test retrieval quality with test cases and measure recall and precision metrics.
+      </p>
 
       <div class="arcana-eval-nav">
         <button
@@ -2594,6 +2609,9 @@ defmodule ArcanaWeb.DashboardLive do
     ~H"""
     <div class="arcana-maintenance">
       <h2>Maintenance</h2>
+      <p class="arcana-tab-description">
+        View embedding configuration and re-embed documents if settings change.
+      </p>
 
       <div class="arcana-maintenance-section">
         <h3>Embedding Configuration</h3>
@@ -2723,6 +2741,9 @@ defmodule ArcanaWeb.DashboardLive do
     ~H"""
     <div class="arcana-collections">
       <h2>Collections</h2>
+      <p class="arcana-tab-description">
+        Organize documents into collections for scoped searches and better organization.
+      </p>
 
       <div class="arcana-ingest-form">
         <h3>Create Collection</h3>
@@ -2861,7 +2882,10 @@ defmodule ArcanaWeb.DashboardLive do
   defp info_tab(assigns) do
     ~H"""
     <div class="arcana-info">
-      <h2>Configuration</h2>
+      <h2>Info</h2>
+      <p class="arcana-tab-description">
+        View current Arcana configuration including embedding, LLM, and chunking settings.
+      </p>
 
       <div class="arcana-info-section">
         <h3>Repository</h3>
