@@ -18,7 +18,7 @@ defmodule Arcana do
 
   """
 
-  alias Arcana.{Chunk, Chunker, Collection, Document, Embedding, LLM, Parser, VectorStore}
+  alias Arcana.{Chunk, Chunker, Collection, Document, Embedder, LLM, Parser, VectorStore}
 
   @doc """
   Returns the configured embedder as a `{module, opts}` tuple.
@@ -35,19 +35,23 @@ defmodule Arcana do
       config :arcana, embedding: :openai
       config :arcana, embedding: {:openai, model: "text-embedding-3-large"}
 
+      # Z.ai (requires ZAI_API_KEY)
+      config :arcana, embedding: :zai
+      config :arcana, embedding: {:zai, dimensions: 1024}
+
       # Custom function
       config :arcana, embedding: fn text -> {:ok, embedding} end
 
-      # Custom module implementing Arcana.Embedding behaviour
+      # Custom module implementing Arcana.Embedder behaviour
       config :arcana, embedding: MyApp.CohereEmbedder
       config :arcana, embedding: {MyApp.CohereEmbedder, api_key: "..."}
 
   ## Custom Embedding Modules
 
-  Implement the `Arcana.Embedding` behaviour:
+  Implement the `Arcana.Embedder` behaviour:
 
       defmodule MyApp.CohereEmbedder do
-        @behaviour Arcana.Embedding
+        @behaviour Arcana.Embedder
 
         @impl true
         def embed(text, opts) do
@@ -76,7 +80,7 @@ defmodule Arcana do
 
       Arcana.config()
       # => %{
-      #   embedding: %{module: Arcana.Embedding.Local, model: "BAAI/bge-small-en-v1.5", dimensions: 384},
+      #   embedding: %{module: Arcana.Embedder.Local, model: "BAAI/bge-small-en-v1.5", dimensions: 384},
       #   vector_store: :pgvector
       # }
 
@@ -89,20 +93,22 @@ defmodule Arcana do
       embedding: %{
         module: emb_module,
         model: model,
-        dimensions: Arcana.Embedding.dimensions(embedder())
+        dimensions: Arcana.Embedder.dimensions(embedder())
       },
       vector_store: Application.get_env(:arcana, :vector_store, :pgvector),
       reranker: Application.get_env(:arcana, :reranker, Arcana.Reranker.LLM)
     }
   end
 
-  defp parse_embedder_config(:local), do: {Arcana.Embedding.Local, []}
-  defp parse_embedder_config({:local, opts}), do: {Arcana.Embedding.Local, opts}
-  defp parse_embedder_config(:openai), do: {Arcana.Embedding.OpenAI, []}
-  defp parse_embedder_config({:openai, opts}), do: {Arcana.Embedding.OpenAI, opts}
+  defp parse_embedder_config(:local), do: {Arcana.Embedder.Local, []}
+  defp parse_embedder_config({:local, opts}), do: {Arcana.Embedder.Local, opts}
+  defp parse_embedder_config(:openai), do: {Arcana.Embedder.OpenAI, []}
+  defp parse_embedder_config({:openai, opts}), do: {Arcana.Embedder.OpenAI, opts}
+  defp parse_embedder_config(:zai), do: {Arcana.Embedder.Zai, []}
+  defp parse_embedder_config({:zai, opts}), do: {Arcana.Embedder.Zai, opts}
 
   defp parse_embedder_config(fun) when is_function(fun, 1),
-    do: {Arcana.Embedding.Custom, [fun: fun]}
+    do: {Arcana.Embedder.Custom, [fun: fun]}
 
   defp parse_embedder_config({module, opts}) when is_atom(module) and is_list(opts),
     do: {module, opts}
@@ -180,7 +186,7 @@ defmodule Arcana do
       chunk_records =
         chunks
         |> Enum.map(fn chunk ->
-          {:ok, embedding} = Embedding.embed(emb, chunk.text)
+          {:ok, embedding} = Embedder.embed(emb, chunk.text)
 
           %Chunk{}
           |> Chunk.changeset(%{
@@ -283,7 +289,7 @@ defmodule Arcana do
     chunk_records =
       chunks
       |> Enum.map(fn chunk ->
-        {:ok, embedding} = Embedding.embed(emb, chunk.text)
+        {:ok, embedding} = Embedder.embed(emb, chunk.text)
 
         %Chunk{}
         |> Chunk.changeset(%{
@@ -418,7 +424,7 @@ defmodule Arcana do
   end
 
   defp do_search(:semantic, query, params) do
-    {:ok, query_embedding} = Embedding.embed(embedder(), query)
+    {:ok, query_embedding} = Embedder.embed(embedder(), query)
 
     # Build VectorStore options
     vector_store_opts =

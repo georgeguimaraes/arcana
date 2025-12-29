@@ -1,8 +1,8 @@
-defmodule Arcana.Embedding.Custom do
+defmodule Arcana.Embedder.Custom do
   @moduledoc """
   Custom embedding provider using user-provided functions.
 
-  This module wraps a user-provided function to implement the `Arcana.Embedding`
+  This module wraps a user-provided function to implement the `Arcana.Embedder`
   behaviour. It's used internally when configuring a function as the embedder.
 
   ## Configuration
@@ -16,9 +16,9 @@ defmodule Arcana.Embedding.Custom do
 
   """
 
-  @behaviour Arcana.Embedding
+  @behaviour Arcana.Embedder
 
-  @impl Arcana.Embedding
+  @impl Arcana.Embedder
   def embed(text, opts) do
     fun = Keyword.fetch!(opts, :fun)
 
@@ -39,7 +39,7 @@ defmodule Arcana.Embedding.Custom do
     end)
   end
 
-  @impl Arcana.Embedding
+  @impl Arcana.Embedder
   def dimensions(opts) do
     case Keyword.get(opts, :dimensions) do
       nil -> detect_dimensions(opts)

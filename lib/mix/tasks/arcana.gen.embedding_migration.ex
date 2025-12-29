@@ -53,7 +53,7 @@ defmodule Mix.Tasks.Arcana.Gen.EmbeddingMigration do
 
   defp detect_dimensions do
     embedder = Arcana.embedder()
-    {:ok, Arcana.Embedding.dimensions(embedder)}
+    {:ok, Arcana.Embedder.dimensions(embedder)}
   rescue
     e -> {:error, e}
   end

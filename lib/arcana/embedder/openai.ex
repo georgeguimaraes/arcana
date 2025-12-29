@@ -1,4 +1,4 @@
-defmodule Arcana.Embedding.OpenAI do
+defmodule Arcana.Embedder.OpenAI do
   @moduledoc """
   OpenAI embedding provider using Req.LLM.
 
@@ -17,11 +17,11 @@ defmodule Arcana.Embedding.OpenAI do
   Requires the `req_llm` dependency and `OPENAI_API_KEY` environment variable.
   """
 
-  @behaviour Arcana.Embedding
+  @behaviour Arcana.Embedder
 
   @default_model "text-embedding-3-small"
 
-  @impl Arcana.Embedding
+  @impl Arcana.Embedder
   def embed(text, opts) do
     unless Code.ensure_loaded?(ReqLLM) do
       raise """
@@ -49,7 +49,7 @@ defmodule Arcana.Embedding.OpenAI do
     end)
   end
 
-  @impl Arcana.Embedding
+  @impl Arcana.Embedder
   def dimensions(opts) do
     model = Keyword.get(opts, :model, @default_model)
 

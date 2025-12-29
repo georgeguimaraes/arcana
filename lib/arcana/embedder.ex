@@ -1,12 +1,13 @@
-defmodule Arcana.Embedding do
+defmodule Arcana.Embedder do
   @moduledoc """
   Behaviour for embedding providers used by Arcana.
 
   Arcana accepts any module that implements this behaviour.
   Built-in implementations are provided for:
 
-  - `Arcana.Embedding.Local` - Local Bumblebee models (e.g., `bge-small-en-v1.5`)
-  - `Arcana.Embedding.OpenAI` - OpenAI embeddings via Req.LLM
+  - `Arcana.Embedder.Local` - Local Bumblebee models (e.g., `bge-small-en-v1.5`)
+  - `Arcana.Embedder.OpenAI` - OpenAI embeddings via Req.LLM
+  - `Arcana.Embedder.Zai` - Z.ai embeddings (embedding-3 model)
 
   ## Configuration
 
@@ -22,6 +23,10 @@ defmodule Arcana.Embedding do
       config :arcana, embedding: :openai
       config :arcana, embedding: {:openai, model: "text-embedding-3-large"}
 
+      # Z.ai (1536 dims by default)
+      config :arcana, embedding: :zai
+      config :arcana, embedding: {:zai, dimensions: 1024}
+
       # Custom function
       config :arcana, embedding: fn text -> {:ok, embedding} end
 
@@ -34,7 +39,7 @@ defmodule Arcana.Embedding do
   Create a module that implements this behaviour:
 
       defmodule MyApp.CohereEmbedder do
-        @behaviour Arcana.Embedding
+        @behaviour Arcana.Embedder
 
         @impl true
         def embed(text, opts) do

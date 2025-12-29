@@ -1,4 +1,4 @@
-defmodule Arcana.Embedding.Local do
+defmodule Arcana.Embedder.Local do
   @moduledoc """
   Local embedding provider using Bumblebee and Nx.Serving.
 
@@ -14,16 +14,16 @@ defmodule Arcana.Embedding.Local do
 
   ## Starting the Serving
 
-  Add `Arcana.Embedding.Local.child_spec/1` to your application supervision tree:
+  Add `Arcana.Embedder.Local.child_spec/1` to your application supervision tree:
 
       children = [
-        {Arcana.Embedding.Local, model: "BAAI/bge-small-en-v1.5"},
+        {Arcana.Embedder.Local, model: "BAAI/bge-small-en-v1.5"},
         # ... other children
       ]
 
   """
 
-  @behaviour Arcana.Embedding
+  @behaviour Arcana.Embedder
 
   alias Bumblebee.Text.TextEmbedding
 
@@ -86,7 +86,7 @@ defmodule Arcana.Embedding.Local do
 
   # Behaviour implementation
 
-  @impl Arcana.Embedding
+  @impl Arcana.Embedder
   def embed(text, opts) do
     model = Keyword.get(opts, :model, @default_model)
     serving_name = serving_name(model)
@@ -102,7 +102,7 @@ defmodule Arcana.Embedding.Local do
     end)
   end
 
-  @impl Arcana.Embedding
+  @impl Arcana.Embedder
   def dimensions(opts) do
     model = Keyword.get(opts, :model, @default_model)
     Map.get(@model_dimensions, model) || detect_dimensions(opts)

@@ -15,7 +15,7 @@ defmodule Arcana.Maintenance do
 
   """
 
-  alias Arcana.{Chunk, Embedding}
+  alias Arcana.{Chunk, Embedder}
 
   import Ecto.Query
 
@@ -90,7 +90,7 @@ defmodule Arcana.Maintenance do
   """
   def embedding_dimensions do
     embedder = Arcana.embedder()
-    {:ok, Embedding.dimensions(embedder)}
+    {:ok, Embedder.dimensions(embedder)}
   rescue
     e -> {:error, e}
   end
@@ -106,18 +106,22 @@ defmodule Arcana.Maintenance do
   """
   def embedding_info do
     embedder = Arcana.embedder()
-    dimensions = Embedding.dimensions(embedder)
+    dimensions = Embedder.dimensions(embedder)
 
     case embedder do
-      {Arcana.Embedding.Local, opts} ->
+      {Arcana.Embedder.Local, opts} ->
         model = Keyword.get(opts, :model, "BAAI/bge-small-en-v1.5")
         %{type: :local, model: model, dimensions: dimensions}
 
-      {Arcana.Embedding.OpenAI, opts} ->
+      {Arcana.Embedder.OpenAI, opts} ->
         model = Keyword.get(opts, :model, "text-embedding-3-small")
         %{type: :openai, model: model, dimensions: dimensions}
 
-      {Arcana.Embedding.Custom, _opts} ->
+      {Arcana.Embedder.Zai, opts} ->
+        dims = Keyword.get(opts, :dimensions, 1536)
+        %{type: :zai, model: "embedding-3", dimensions: dims}
+
+      {Arcana.Embedder.Custom, _opts} ->
         %{type: :custom, dimensions: dimensions}
 
       {module, _opts} ->
@@ -126,7 +130,7 @@ defmodule Arcana.Maintenance do
   end
 
   defp reembed_chunk(chunk, embedder, repo, progress_fn, index, total, count) do
-    case Embedding.embed(embedder, chunk.text) do
+    case Embedder.embed(embedder, chunk.text) do
       {:ok, embedding} ->
         repo.update_all(
           from(c in Chunk, where: c.id == ^chunk.id),

@@ -65,11 +65,11 @@ if Code.ensure_loaded?(Igniter) do
       Next steps:
       1. Run the migration: mix ecto.migrate
 
-      2. Add Arcana.Embedding.Local to your supervision tree (for local embeddings):
+      2. Add Arcana.Embedder.Local to your supervision tree (for local embeddings):
 
           children = [
             #{inspect(repo_module)},
-            Arcana.Embedding.Local
+            Arcana.Embedder.Local
           ]
 
          For in-memory vector store (no PostgreSQL required), also add:
@@ -393,11 +393,11 @@ else
       Next steps:
       1. Run the migration: mix ecto.migrate
 
-      2. Add Arcana.Embedding.Local to your supervision tree (for local embeddings):
+      2. Add Arcana.Embedder.Local to your supervision tree (for local embeddings):
 
           children = [
             MyApp.Repo,
-            Arcana.Embedding.Local
+            Arcana.Embedder.Local
           ]
 
          For in-memory vector store (no PostgreSQL required), also add:

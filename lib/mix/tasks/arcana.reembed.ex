@@ -82,6 +82,10 @@ defmodule Mix.Tasks.Arcana.Reembed do
     "openai (#{model}, #{dims} dims)"
   end
 
+  defp format_info(%{type: :zai, model: model, dimensions: dims}) do
+    "zai (#{model}, #{dims} dims)"
+  end
+
   defp format_info(%{type: :custom, dimensions: dims}) do
     "custom (#{dims} dims)"
   end

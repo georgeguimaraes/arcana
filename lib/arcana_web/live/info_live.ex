@@ -55,6 +55,7 @@ defmodule ArcanaWeb.InfoLive do
 
   defp format_embedding_config(:local), do: %{type: :local, model: "BAAI/bge-small-en-v1.5"}
   defp format_embedding_config(:openai), do: %{type: :openai, model: "text-embedding-3-small"}
+  defp format_embedding_config(:zai), do: %{type: :zai, model: "embedding-3", dimensions: 1536}
 
   defp format_embedding_config({:local, opts}) do
     %{type: :local, model: Keyword.get(opts, :model, "BAAI/bge-small-en-v1.5")}
@@ -62,6 +63,10 @@ defmodule ArcanaWeb.InfoLive do
 
   defp format_embedding_config({:openai, opts}) do
     %{type: :openai, model: Keyword.get(opts, :model, "text-embedding-3-small")}
+  end
+
+  defp format_embedding_config({:zai, opts}) do
+    %{type: :zai, model: "embedding-3", dimensions: Keyword.get(opts, :dimensions, 1536)}
   end
 
   defp format_embedding_config({:custom, _fun}), do: %{type: :custom}
