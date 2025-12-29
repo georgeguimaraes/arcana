@@ -90,12 +90,6 @@ defmodule ArcanaWeb.EvaluationLive do
     end
   end
 
-  defp build_run_opts(repo, mode, false, _llm), do: [repo: repo, mode: mode]
-
-  defp build_run_opts(repo, mode, true, llm) do
-    [repo: repo, mode: mode, evaluate_answers: true, llm: llm]
-  end
-
   def handle_event("eval_generate", params, socket) do
     repo = socket.assigns.repo
     sample_size = parse_int(params["sample_size"], 10)
@@ -161,6 +155,12 @@ defmodule ArcanaWeb.EvaluationLive do
       end
 
     {:noreply, socket}
+  end
+
+  defp build_run_opts(repo, mode, false, _llm), do: [repo: repo, mode: mode]
+
+  defp build_run_opts(repo, mode, true, llm) do
+    [repo: repo, mode: mode, evaluate_answers: true, llm: llm]
   end
 
   defp build_generate_opts(repo, llm, sample_size, nil) do

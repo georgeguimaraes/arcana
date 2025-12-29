@@ -122,6 +122,70 @@ defmodule Arcana.AgentTest do
       assert "default" in collections
       assert "other-langs" in collections
     end
+
+    test "uses :collection option to search specific collection" do
+      {:ok, _} =
+        Arcana.ingest("Ruby is a programming language.",
+          repo: Arcana.TestRepo,
+          collection: "ruby-docs"
+        )
+
+      ctx =
+        Agent.new("programming", repo: Arcana.TestRepo, llm: &mock_llm/1)
+        |> Agent.search(collection: "ruby-docs")
+
+      # Should only search the specified collection
+      assert length(ctx.results) == 1
+      [result] = ctx.results
+      assert result.collection == "ruby-docs"
+    end
+
+    test "uses :collections option to search multiple collections" do
+      {:ok, _} =
+        Arcana.ingest("Go is a systems language.",
+          repo: Arcana.TestRepo,
+          collection: "go-docs"
+        )
+
+      {:ok, _} =
+        Arcana.ingest("Rust is memory safe.",
+          repo: Arcana.TestRepo,
+          collection: "rust-docs"
+        )
+
+      ctx =
+        Agent.new("language", repo: Arcana.TestRepo, llm: &mock_llm/1)
+        |> Agent.search(collections: ["go-docs", "rust-docs"])
+
+      # Should search both collections
+      collections = Enum.map(ctx.results, & &1.collection)
+      assert "go-docs" in collections
+      assert "rust-docs" in collections
+    end
+
+    test "option takes priority over ctx.collections" do
+      {:ok, _} =
+        Arcana.ingest("Haskell is purely functional.",
+          repo: Arcana.TestRepo,
+          collection: "haskell-docs"
+        )
+
+      ctx =
+        %Context{
+          question: "functional",
+          repo: Arcana.TestRepo,
+          llm: &mock_llm/1,
+          limit: 5,
+          threshold: 0.5,
+          collections: ["default"]
+        }
+        |> Agent.search(collection: "haskell-docs")
+
+      # Option should override ctx.collections
+      assert length(ctx.results) == 1
+      [result] = ctx.results
+      assert result.collection == "haskell-docs"
+    end
   end
 
   describe "answer/1" do

@@ -620,6 +620,34 @@ end
 IO.puts("The full pipeline: select → expand → search → rerank → answer")
 ```
 
+### Explicit Collection Selection
+
+You can skip LLM-based collection selection by passing `:collection` or `:collections` directly to `search/2`:
+
+```elixir
+# Search a specific collection without using select/2
+# ctx = Agent.new("How do I deploy Phoenix?", repo: MyApp.Repo, llm: my_llm)
+#   |> Agent.search(collection: "deployment-docs")
+#   |> Agent.answer()
+
+# Search multiple specific collections
+# ctx = Agent.new("What are the best practices?", repo: MyApp.Repo, llm: my_llm)
+#   |> Agent.search(collections: ["docs", "tutorials"])
+#   |> Agent.answer()
+
+IO.puts("""
+Collection selection priority:
+1. :collection/:collections option passed to search/2
+2. ctx.collections (set by select/2)
+3. Falls back to "default" collection
+
+Use explicit collections when:
+- You have only one collection
+- User explicitly chooses the collection(s)
+- You want deterministic routing without LLM overhead
+""")
+```
+
 ## Summary
 
 | Concept | Description |

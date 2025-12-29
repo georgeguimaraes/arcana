@@ -82,6 +82,32 @@ ctx.results
 # => [%{question: "...", collection: "...", chunks: [...]}]
 ```
 
+#### Explicit Collection Selection
+
+Pass `:collection` or `:collections` to search specific collections without using `select/2`:
+
+```elixir
+# Search a single collection
+ctx
+|> Agent.search(collection: "technical_docs")
+|> Agent.answer()
+
+# Search multiple collections
+ctx
+|> Agent.search(collections: ["docs", "faq"])
+|> Agent.answer()
+```
+
+Collection selection priority:
+1. `:collection`/`:collections` option passed to `search/2`
+2. `ctx.collections` (set by `select/2`)
+3. Falls back to `"default"` collection
+
+This is useful when:
+- You have only one collection (no LLM selection needed)
+- The user explicitly chooses which collection(s) to search
+- You want deterministic routing without LLM overhead
+
 #### Self-Correcting Search
 
 Automatically retry with rewritten queries when results are insufficient:

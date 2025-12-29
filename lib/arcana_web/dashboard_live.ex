@@ -309,12 +309,6 @@ defmodule ArcanaWeb.DashboardLive do
     end
   end
 
-  defp build_run_opts(repo, mode, false, _llm), do: [repo: repo, mode: mode]
-
-  defp build_run_opts(repo, mode, true, llm) do
-    [repo: repo, mode: mode, evaluate_answers: true, llm: llm]
-  end
-
   def handle_event("eval_generate", params, socket) do
     repo = socket.assigns.repo
     sample_size = parse_int(params["sample_size"], 10)
@@ -515,6 +509,12 @@ defmodule ArcanaWeb.DashboardLive do
     {:noreply, socket}
   end
 
+  defp build_run_opts(repo, mode, false, _llm), do: [repo: repo, mode: mode]
+
+  defp build_run_opts(repo, mode, true, llm) do
+    [repo: repo, mode: mode, evaluate_answers: true, llm: llm]
+  end
+
   defp parse_int(nil, default), do: default
   defp parse_int("", default), do: default
 
@@ -595,20 +595,7 @@ defmodule ArcanaWeb.DashboardLive do
     use_llm_select = Keyword.get(opts, :use_llm_select, false)
 
     try do
-      # Initialize context, optionally with a specific collection
-      init_opts = [repo: repo, llm: llm]
-
-      init_opts =
-        cond do
-          # User selected a specific collection (not "All" and not "LLM select")
-          selected_collection != "" and selected_collection != "__llm_select__" ->
-            Keyword.put(init_opts, :collection, selected_collection)
-
-          true ->
-            init_opts
-        end
-
-      ctx = Agent.new(question, init_opts)
+      ctx = Agent.new(question, repo: repo, llm: llm)
 
       # LLM collection selection (only if "Let LLM select" was chosen)
       ctx =
@@ -634,8 +621,19 @@ defmodule ArcanaWeb.DashboardLive do
           ctx
         end
 
-      # Search with optional self-correction
-      ctx = Agent.search(ctx, self_correct: Keyword.get(opts, :self_correct, false))
+      # Build search options
+      search_opts = [self_correct: Keyword.get(opts, :self_correct, false)]
+
+      # Pass collection to search if user selected a specific one (not "All" and not "LLM select")
+      search_opts =
+        if selected_collection != "" and selected_collection != "__llm_select__" do
+          Keyword.put(search_opts, :collection, selected_collection)
+        else
+          search_opts
+        end
+
+      # Search with optional self-correction and collection
+      ctx = Agent.search(ctx, search_opts)
 
       # Optional reranking
       ctx =

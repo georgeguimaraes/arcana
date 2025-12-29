@@ -295,19 +295,43 @@ defmodule Arcana.Agent do
   Executes search and populates results in the context.
 
   Uses `sub_questions` if present (from decompose step), otherwise uses the original question.
-  Uses `collections` if present (from route step), otherwise searches the default collection.
+
+  ## Collection Selection
+
+  Collections are determined in this priority order:
+  1. `:collection` or `:collections` option passed to this function
+  2. `ctx.collections` (set by `select/2` if LLM selection was used)
+  3. Falls back to `"default"` collection
+
+  This allows you to explicitly specify a collection without using LLM-based selection:
+
+      # Search a specific collection
+      ctx |> Agent.search(collection: "technical_docs")
+
+      # Search multiple specific collections
+      ctx |> Agent.search(collections: ["docs", "faq"])
 
   ## Options
 
+  - `:collection` - Single collection name to search (string)
+  - `:collections` - List of collection names to search
   - `:self_correct` - Enable self-correcting search (default: false)
   - `:max_iterations` - Max retry attempts for self-correct (default: 3)
   - `:sufficient_prompt` - Custom prompt function `fn question, chunks -> prompt_string end`
   - `:rewrite_prompt` - Custom prompt function `fn question, chunks -> prompt_string end`
 
-  ## Example
+  ## Examples
 
+      # Basic search (uses default collection)
+      ctx |> Agent.search() |> Agent.answer()
+
+      # Search specific collection
+      ctx |> Agent.search(collection: "products") |> Agent.answer()
+
+      # With pipeline options
       ctx
-      |> Agent.search()
+      |> Agent.expand()
+      |> Agent.search(collection: "docs", self_correct: true)
       |> Agent.answer()
 
   ## Self-correcting search
@@ -328,16 +352,24 @@ defmodule Arcana.Agent do
     sufficient_prompt_fn = Keyword.get(opts, :sufficient_prompt)
     rewrite_prompt_fn = Keyword.get(opts, :rewrite_prompt)
 
+    # Collection priority: option > ctx.collections > default
+    collections =
+      cond do
+        Keyword.has_key?(opts, :collections) -> Keyword.get(opts, :collections)
+        Keyword.has_key?(opts, :collection) -> [Keyword.get(opts, :collection)]
+        ctx.collections != nil -> ctx.collections
+        true -> ["default"]
+      end
+
     start_metadata = %{
       question: ctx.question,
       sub_questions: ctx.sub_questions,
-      collections: ctx.collections,
+      collections: collections,
       self_correct: self_correct
     }
 
     :telemetry.span([:arcana, :agent, :search], start_metadata, fn ->
       questions = ctx.sub_questions || [ctx.expanded_query || ctx.question]
-      collections = ctx.collections || ["default"]
 
       prompt_opts = %{
         sufficient_prompt: sufficient_prompt_fn,

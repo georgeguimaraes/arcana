@@ -327,6 +327,34 @@ ctx.answer
 | `rerank/2` | Re-score and filter chunks by relevance |
 | `answer/2` | Generate final answer from retrieved context |
 
+**Explicit collection selection:**
+
+If you know which collection(s) to search, skip LLM-based selection by passing `:collection` or `:collections` directly to `search/2`:
+
+```elixir
+# Search a specific collection
+ctx =
+  Agent.new(question, repo: MyApp.Repo, llm: llm)
+  |> Agent.search(collection: "technical_docs")
+  |> Agent.answer()
+
+# Search multiple collections
+ctx =
+  Agent.new(question, repo: MyApp.Repo, llm: llm)
+  |> Agent.search(collections: ["docs", "faq"])
+  |> Agent.answer()
+```
+
+Collection selection priority:
+1. `:collection`/`:collections` option passed to `search/2`
+2. `ctx.collections` (set by `select/2`)
+3. Falls back to `"default"` collection
+
+This is useful when:
+- You have only one collection (no LLM selection needed)
+- The user explicitly chooses which collection(s) to search
+- You want deterministic routing without LLM overhead
+
 **Custom collection selection:**
 
 By default, `select/2` uses the LLM to pick collections. For deterministic routing based on user context or business logic, provide a custom selector:
