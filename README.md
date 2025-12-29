@@ -8,6 +8,7 @@ Embeddable RAG library for Elixir/Phoenix. Add vector search, document retrieval
 
 - **Simple API** - `ingest/2`, `search/2`, `ask/2` for basic RAG
 - **Agentic RAG** - Pipeline with query expansion, decomposition, re-ranking, and self-correction
+- **Pluggable components** - Replace any pipeline step with custom implementations (search backends, rerankers, etc.)
 - **Hybrid search** - Vector, full-text, or combined with Reciprocal Rank Fusion
 - **Multiple backends** - pgvector (default) or in-memory HNSWLib
 - **Configurable embeddings** - Local Bumblebee, OpenAI, or custom providers
@@ -472,6 +473,44 @@ When `self_correct: true`, the pipeline:
 
 Use self-correction when answer quality is critical and you want to reduce hallucinations.
 
+**Pluggable components:**
+
+Every pipeline step has a behaviour and can be replaced with custom implementations:
+
+| Step | Behaviour | Default | Option |
+|------|-----------|---------|--------|
+| `rewrite/2` | `Arcana.Agent.Rewriter` | LLM-based | `:rewriter` |
+| `select/2` | `Arcana.Agent.Selector` | LLM-based | `:selector` |
+| `expand/2` | `Arcana.Agent.Expander` | LLM-based | `:expander` |
+| `decompose/2` | `Arcana.Agent.Decomposer` | LLM-based | `:decomposer` |
+| `search/2` | `Arcana.Agent.Searcher` | pgvector | `:searcher` |
+| `rerank/2` | `Arcana.Agent.Reranker` | LLM-based | `:reranker` |
+| `answer/2` | `Arcana.Agent.Answerer` | LLM-based | `:answerer` |
+
+```elixir
+# Use Elasticsearch instead of pgvector
+defmodule MyApp.ElasticsearchSearcher do
+  @behaviour Arcana.Agent.Searcher
+
+  @impl true
+  def search(question, collection, opts) do
+    chunks = MyApp.Elasticsearch.search(collection, question)
+    {:ok, chunks}
+  end
+end
+
+ctx
+|> Agent.search(searcher: MyApp.ElasticsearchSearcher)
+|> Agent.answer()
+
+# Or use inline functions for quick customizations
+Agent.rewrite(ctx, rewriter: fn question, _opts ->
+  {:ok, String.downcase(question)}
+end)
+```
+
+See the [Agentic RAG Guide](guides/agentic-rag.md) for more examples.
+
 #### Custom Prompts
 
 All pipeline steps accept custom prompt functions:
@@ -867,6 +906,7 @@ config :nx, default_backend: EXLA.Backend
   - [x] Self-correcting answers (evaluate + refine)
   - [x] Question decomposition (multi-step)
   - [x] Collection selection
+  - [x] Pluggable components (custom behaviours for all steps)
 - [ ] E5 embedding model prefix support (`query:` / `passage:` prefixes)
 - [ ] Additional vector store backends
   - [ ] TurboPuffer (hybrid search)

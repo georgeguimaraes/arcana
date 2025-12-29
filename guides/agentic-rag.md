@@ -304,6 +304,234 @@ ctx
 |> Agent.answer()
 ```
 
+## Custom Implementations
+
+Every pipeline step has a behaviour and can be replaced with a custom implementation. This gives you full control over each component while keeping the pipeline composable.
+
+### Available Behaviours
+
+| Step | Behaviour | Default Implementation | Option |
+|------|-----------|----------------------|--------|
+| `rewrite/2` | `Arcana.Agent.Rewriter` | `Rewriter.LLM` | `:rewriter` |
+| `select/2` | `Arcana.Agent.Selector` | `Selector.LLM` | `:selector` |
+| `expand/2` | `Arcana.Agent.Expander` | `Expander.LLM` | `:expander` |
+| `decompose/2` | `Arcana.Agent.Decomposer` | `Decomposer.LLM` | `:decomposer` |
+| `search/2` | `Arcana.Agent.Searcher` | `Searcher.Arcana` | `:searcher` |
+| `rerank/2` | `Arcana.Agent.Reranker` | `Reranker.LLM` | `:reranker` |
+| `answer/2` | `Arcana.Agent.Answerer` | `Answerer.LLM` | `:answerer` |
+
+### Custom Rewriter
+
+Transform queries using your own logic:
+
+```elixir
+defmodule MyApp.SpellCheckRewriter do
+  @behaviour Arcana.Agent.Rewriter
+
+  @impl true
+  def rewrite(question, _opts) do
+    {:ok, MyApp.SpellChecker.correct(question)}
+  end
+end
+
+ctx
+|> Agent.rewrite(rewriter: MyApp.SpellCheckRewriter)
+|> Agent.search()
+```
+
+### Custom Expander
+
+Expand queries with domain-specific knowledge:
+
+```elixir
+defmodule MyApp.MedicalExpander do
+  @behaviour Arcana.Agent.Expander
+
+  @impl true
+  def expand(question, _opts) do
+    terms = MyApp.MedicalThesaurus.expand_terms(question)
+    {:ok, question <> " " <> Enum.join(terms, " ")}
+  end
+end
+
+Agent.expand(ctx, expander: MyApp.MedicalExpander)
+```
+
+### Custom Decomposer
+
+Break questions into sub-questions with custom logic:
+
+```elixir
+defmodule MyApp.SimpleDecomposer do
+  @behaviour Arcana.Agent.Decomposer
+
+  @impl true
+  def decompose(question, _opts) do
+    sub_questions =
+      question
+      |> String.split(~r/ and | or /i)
+      |> Enum.map(&String.trim/1)
+
+    {:ok, sub_questions}
+  end
+end
+
+Agent.decompose(ctx, decomposer: MyApp.SimpleDecomposer)
+```
+
+### Custom Searcher
+
+Replace the default pgvector search with any backend:
+
+```elixir
+defmodule MyApp.ElasticsearchSearcher do
+  @behaviour Arcana.Agent.Searcher
+
+  @impl true
+  def search(question, collection, opts) do
+    limit = Keyword.get(opts, :limit, 5)
+
+    chunks =
+      MyApp.Elasticsearch.search(collection, question, size: limit)
+      |> Enum.map(fn hit ->
+        %{
+          id: hit["_id"],
+          text: hit["_source"]["text"],
+          document_id: hit["_source"]["document_id"],
+          score: hit["_score"]
+        }
+      end)
+
+    {:ok, chunks}
+  end
+end
+
+# Use Elasticsearch instead of pgvector
+ctx
+|> Agent.search(searcher: MyApp.ElasticsearchSearcher)
+|> Agent.answer()
+```
+
+Other search backend examples:
+- Meilisearch for fast typo-tolerant search
+- Pinecone for managed vector search
+- Weaviate for hybrid search
+- OpenSearch for enterprise deployments
+
+### Custom Reranker
+
+Use a cross-encoder or other scoring model:
+
+```elixir
+defmodule MyApp.CrossEncoderReranker do
+  @behaviour Arcana.Agent.Reranker
+
+  @impl true
+  def rerank(question, chunks, opts) do
+    threshold = Keyword.get(opts, :threshold, 0.5)
+
+    scored_chunks =
+      chunks
+      |> Enum.map(fn chunk ->
+        score = MyApp.CrossEncoder.score(question, chunk.text)
+        Map.put(chunk, :rerank_score, score)
+      end)
+      |> Enum.filter(&(&1.rerank_score >= threshold))
+      |> Enum.sort_by(& &1.rerank_score, :desc)
+
+    {:ok, scored_chunks}
+  end
+end
+
+Agent.rerank(ctx, reranker: MyApp.CrossEncoderReranker)
+```
+
+### Custom Answerer
+
+Generate answers with your own approach:
+
+```elixir
+defmodule MyApp.TemplateAnswerer do
+  @behaviour Arcana.Agent.Answerer
+
+  @impl true
+  def answer(question, chunks, _opts) do
+    context = Enum.map_join(chunks, "\n\n", & &1.text)
+
+    answer = """
+    Based on #{length(chunks)} sources:
+
+    #{context}
+
+    ---
+    Question: #{question}
+    """
+
+    {:ok, answer}
+  end
+end
+
+# Skip LLM entirely, just concatenate chunks
+Agent.answer(ctx, answerer: MyApp.TemplateAnswerer)
+```
+
+### Inline Functions
+
+For quick customizations, pass a function instead of a module:
+
+```elixir
+# Inline rewriter
+Agent.rewrite(ctx, rewriter: fn question, _opts ->
+  {:ok, String.downcase(question)}
+end)
+
+# Inline expander
+Agent.expand(ctx, expander: fn question, _opts ->
+  {:ok, question <> " programming language"}
+end)
+
+# Inline searcher
+Agent.search(ctx, searcher: fn question, collection, opts ->
+  # Your search logic
+  {:ok, chunks}
+end)
+
+# Inline answerer
+Agent.answer(ctx, answerer: fn question, chunks, _opts ->
+  {:ok, "Found #{length(chunks)} relevant chunks for: #{question}"}
+end)
+```
+
+### Combining Custom Implementations
+
+Mix and match custom components:
+
+```elixir
+ctx =
+  Agent.new(question, repo: repo, llm: llm)
+  |> Agent.rewrite(rewriter: MyApp.SpellCheckRewriter)
+  |> Agent.expand()  # Use default LLM expander
+  |> Agent.search(searcher: MyApp.ElasticsearchSearcher)
+  |> Agent.rerank(reranker: MyApp.CrossEncoderReranker)
+  |> Agent.answer()  # Use default LLM answerer
+```
+
+### Per-Step LLM Override
+
+Override the LLM for specific steps without changing the implementation:
+
+```elixir
+fast_llm = fn prompt -> {:ok, OpenAI.chat("gpt-4o-mini", prompt)} end
+smart_llm = fn prompt -> {:ok, OpenAI.chat("gpt-4o", prompt)} end
+
+ctx =
+  Agent.new(question, repo: repo, llm: fast_llm)
+  |> Agent.expand()  # Uses fast_llm
+  |> Agent.search()
+  |> Agent.rerank()  # Uses fast_llm
+  |> Agent.answer(llm: smart_llm)  # Override with smart_llm
+```
+
 ## Context Struct
 
 The `Arcana.Agent.Context` struct carries all state:
