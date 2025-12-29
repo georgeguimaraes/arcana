@@ -49,15 +49,15 @@ defmodule Arcana.Agent.Answerer.LLM do
   end
 
   defp default_prompt(question, chunks) do
-    context = Enum.map_join(chunks, "\n\n---\n\n", & &1.text)
+    reference_material = Enum.map_join(chunks, "\n\n---\n\n", & &1.text)
 
     """
+    Reference material:
+    #{reference_material}
+
     Question: "#{question}"
 
-    Context:
-    #{context}
-
-    Answer the question based on the context provided. If the context doesn't contain enough information, say so.
+    Answer the question directly and naturally. Use the reference material to inform your answer, but don't mention or reference it explicitly. If you don't have enough information to answer, simply say you don't know.
     """
   end
 end
