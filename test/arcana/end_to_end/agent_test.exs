@@ -88,8 +88,7 @@ defmodule Arcana.EndToEnd.AgentTest do
         |> Agent.answer()
 
       assert is_nil(ctx.error)
-      assert is_list(ctx.sub_questions)
-      assert length(ctx.sub_questions) >= 1
+      assert [_ | _] = ctx.sub_questions
       assert is_binary(ctx.answer)
     end
 

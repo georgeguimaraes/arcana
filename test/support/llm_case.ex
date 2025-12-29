@@ -30,6 +30,8 @@ defmodule Arcana.LLMCase do
 
   use ExUnit.CaseTemplate
 
+  alias Ecto.Adapters.SQL.Sandbox
+
   using do
     quote do
       import Arcana.LLMCase
@@ -37,8 +39,8 @@ defmodule Arcana.LLMCase do
   end
 
   setup tags do
-    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Arcana.TestRepo, shared: not tags[:async])
-    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
+    pid = Sandbox.start_owner!(Arcana.TestRepo, shared: not tags[:async])
+    on_exit(fn -> Sandbox.stop_owner(pid) end)
     :ok
   end
 

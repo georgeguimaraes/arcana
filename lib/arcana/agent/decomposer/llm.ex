@@ -65,13 +65,13 @@ defmodule Arcana.Agent.Decomposer.LLM do
     json_string = extract_json(response)
 
     case JSON.decode(json_string) do
-      {:ok, %{"sub_questions" => questions}} when is_list(questions) and length(questions) > 0 ->
+      {:ok, %{"sub_questions" => [_ | _] = questions}} ->
         {:ok, questions}
 
-      {:ok, %{"subquestions" => questions}} when is_list(questions) and length(questions) > 0 ->
+      {:ok, %{"subquestions" => [_ | _] = questions}} ->
         {:ok, questions}
 
-      {:ok, %{"questions" => questions}} when is_list(questions) and length(questions) > 0 ->
+      {:ok, %{"questions" => [_ | _] = questions}} ->
         {:ok, questions}
 
       _ ->

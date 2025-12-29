@@ -54,7 +54,7 @@ defmodule Arcana.Maintenance do
     docs_without_chunks = repo.all(from d in Document, where: d.chunk_count == 0 or d.status == :pending)
 
     rechunked =
-      if length(docs_without_chunks) > 0 do
+      if docs_without_chunks != [] do
         rechunk_documents(docs_without_chunks, embedder, repo, progress_fn)
       else
         0

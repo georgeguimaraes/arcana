@@ -111,37 +111,35 @@ defmodule ArcanaWeb.AskLive do
   end
 
   defp run_simple_ask(question, repo, llm, selected_collections) do
-    try do
-      opts = [repo: repo, llm: llm]
+    opts = [repo: repo, llm: llm]
 
-      # Add collection(s) option if user selected any
-      opts =
-        case selected_collections do
-          [] -> opts
-          [single] -> Keyword.put(opts, :collection, single)
-          multiple -> Keyword.put(opts, :collections, multiple)
-        end
-
-      case Arcana.ask(question, opts) do
-        {:ok, answer, results} ->
-          # Build a context-like struct for consistent UI display
-          {:ok,
-           %{
-             question: question,
-             answer: answer,
-             results: results,
-             expanded_query: nil,
-             sub_questions: nil,
-             selected_collections:
-               if(selected_collections == [], do: nil, else: selected_collections)
-           }}
-
-        {:error, reason} ->
-          {:error, reason}
+    # Add collection(s) option if user selected any
+    opts =
+      case selected_collections do
+        [] -> opts
+        [single] -> Keyword.put(opts, :collection, single)
+        multiple -> Keyword.put(opts, :collections, multiple)
       end
-    rescue
-      e -> {:error, Exception.message(e)}
+
+    case Arcana.ask(question, opts) do
+      {:ok, answer, results} ->
+        # Build a context-like struct for consistent UI display
+        {:ok,
+         %{
+           question: question,
+           answer: answer,
+           results: results,
+           expanded_query: nil,
+           sub_questions: nil,
+           selected_collections:
+             if(selected_collections == [], do: nil, else: selected_collections)
+         }}
+
+      {:error, reason} ->
+        {:error, reason}
     end
+  rescue
+    e -> {:error, Exception.message(e)}
   end
 
   defp run_agentic_ask(question, repo, llm, all_collections, opts) do
