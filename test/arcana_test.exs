@@ -145,6 +145,40 @@ defmodule ArcanaTest do
         Arcana.search("test", repo: Repo, mode: :invalid_mode)
       end
     end
+
+    test "filters by single collection" do
+      # Collection is auto-created on ingest
+      {:ok, _doc} =
+        Arcana.ingest("Ruby is a dynamic programming language", repo: Repo, collection: "search-coll")
+
+      results = Arcana.search("programming", repo: Repo, collection: "search-coll")
+
+      refute Enum.empty?(results)
+      assert Enum.all?(results, fn r -> String.contains?(r.text, "Ruby") end)
+    end
+
+    test "filters by multiple collections using :collections option" do
+      # Collections are auto-created on ingest
+      {:ok, _doc1} =
+        Arcana.ingest("Go is a statically typed language", repo: Repo, collection: "search-coll-a")
+
+      {:ok, _doc2} =
+        Arcana.ingest("Rust is a systems programming language", repo: Repo, collection: "search-coll-b")
+
+      {:ok, _doc3} =
+        Arcana.ingest("JavaScript is a web language", repo: Repo, collection: "search-coll-c")
+
+      # Search only in collections a and b
+      results = Arcana.search("language", repo: Repo, collections: ["search-coll-a", "search-coll-b"])
+
+      refute Enum.empty?(results)
+      texts = Enum.map(results, & &1.text)
+
+      # Should find Go and Rust but not JavaScript
+      assert Enum.any?(texts, &String.contains?(&1, "Go"))
+      assert Enum.any?(texts, &String.contains?(&1, "Rust"))
+      refute Enum.any?(texts, &String.contains?(&1, "JavaScript"))
+    end
   end
 
   describe "ask/2" do

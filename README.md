@@ -239,6 +239,12 @@ results = Arcana.search("query",
   threshold: 0.5,
   collection: "products"  # Filter by collection
 )
+
+# Search multiple collections
+results = Arcana.search("query",
+  repo: MyApp.Repo,
+  collections: ["products", "faq"]  # Search across specific collections
+)
 ```
 
 #### Search Modes

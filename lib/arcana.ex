@@ -365,8 +365,15 @@ defmodule Arcana do
     threshold = Keyword.get(opts, :threshold, 0.0)
     mode = Keyword.get(opts, :mode, :semantic)
     rewriter = Keyword.get(opts, :rewriter)
-    collection_name = Keyword.get(opts, :collection)
     vector_store_opt = Keyword.get(opts, :vector_store)
+
+    # Determine collection(s) to search
+    collections =
+      cond do
+        Keyword.has_key?(opts, :collections) -> Keyword.get(opts, :collections)
+        Keyword.has_key?(opts, :collection) -> [Keyword.get(opts, :collection)]
+        true -> [nil]
+      end
 
     unless mode in @valid_modes do
       raise ArgumentError,
@@ -385,15 +392,21 @@ defmodule Arcana do
     :telemetry.span([:arcana, :search], start_metadata, fn ->
       search_query = maybe_rewrite_query(query, rewriter)
 
+      # Search each collection and combine results
       results =
-        do_search(mode, search_query, %{
-          repo: repo,
-          limit: limit,
-          source_id: source_id,
-          threshold: threshold,
-          collection: collection_name,
-          vector_store: vector_store_opt
-        })
+        collections
+        |> Enum.flat_map(fn collection_name ->
+          do_search(mode, search_query, %{
+            repo: repo,
+            limit: limit,
+            source_id: source_id,
+            threshold: threshold,
+            collection: collection_name,
+            vector_store: vector_store_opt
+          })
+        end)
+        |> Enum.sort_by(& &1.score, :desc)
+        |> Enum.take(limit)
 
       stop_metadata = %{
         results: results,
@@ -595,7 +608,7 @@ defmodule Arcana do
         :telemetry.span([:arcana, :ask], start_metadata, fn ->
           search_opts =
             opts
-            |> Keyword.take([:repo, :limit, :source_id, :threshold, :mode])
+            |> Keyword.take([:repo, :limit, :source_id, :threshold, :mode, :collection, :collections])
             |> Keyword.put_new(:limit, 5)
 
           context = search(question, search_opts)

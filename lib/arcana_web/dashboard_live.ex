@@ -162,14 +162,21 @@ defmodule ArcanaWeb.DashboardLive do
     limit = parse_int(params["limit"], 10)
     threshold = parse_float(params["threshold"], 0.0)
     source_id = if params["source_id"] in [nil, ""], do: nil, else: params["source_id"]
-    collection = if params["collection"] in [nil, ""], do: nil, else: params["collection"]
+    selected_collections = params["collections"] || []
     mode = parse_mode(params["mode"])
 
     results =
       if query != "" do
         opts = [repo: repo, limit: limit, threshold: threshold, mode: mode]
         opts = if source_id, do: Keyword.put(opts, :source_id, source_id), else: opts
-        opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
+
+        opts =
+          case selected_collections do
+            [] -> opts
+            [single] -> Keyword.put(opts, :collection, single)
+            multiple -> Keyword.put(opts, :collections, multiple)
+          end
+
         Arcana.search(query, opts)
       else
         []
@@ -209,7 +216,9 @@ defmodule ArcanaWeb.DashboardLive do
     repo = socket.assigns.repo
     question = params["question"] || ""
     mode = params["mode"] || "simple"
-    collection = params["collection"] || ""
+    # Parse multiple collections from checkbox array
+    selected_collections = params["collections"] || []
+    use_llm_select = params["llm_select"] == "true"
 
     case Application.get_env(:arcana, :llm) do
       nil ->
@@ -229,10 +238,9 @@ defmodule ArcanaWeb.DashboardLive do
           Task.start(fn ->
             result =
               if mode == "simple" do
-                run_simple_ask(question, repo, llm, collection)
+                run_simple_ask(question, repo, llm, selected_collections)
               else
                 # Agentic mode with pipeline options
-                use_llm_select = collection == "__llm_select__"
                 use_expand = params["use_expand"] == "true"
                 use_decompose = params["use_decompose"] == "true"
                 use_rerank = params["use_rerank"] == "true"
@@ -243,7 +251,7 @@ defmodule ArcanaWeb.DashboardLive do
                   repo,
                   llm,
                   socket.assigns.collections,
-                  collection: collection,
+                  collections: selected_collections,
                   use_llm_select: use_llm_select,
                   use_expand: use_expand,
                   use_decompose: use_decompose,
@@ -561,10 +569,17 @@ defmodule ArcanaWeb.DashboardLive do
   defp error_to_string(:not_accepted), do: "File type not supported"
   defp error_to_string(err), do: "Error: #{inspect(err)}"
 
-  defp run_simple_ask(question, repo, llm, collection) do
+  defp run_simple_ask(question, repo, llm, selected_collections) do
     try do
       opts = [repo: repo, llm: llm]
-      opts = if collection != "", do: Keyword.put(opts, :collection, collection), else: opts
+
+      # Add collection(s) option if user selected any
+      opts =
+        case selected_collections do
+          [] -> opts
+          [single] -> Keyword.put(opts, :collection, single)
+          multiple -> Keyword.put(opts, :collections, multiple)
+        end
 
       case Arcana.ask(question, opts) do
         {:ok, answer, results} ->
@@ -576,7 +591,7 @@ defmodule ArcanaWeb.DashboardLive do
              results: results,
              queries: nil,
              sub_questions: nil,
-             selected_collections: nil
+             selected_collections: if(selected_collections == [], do: nil, else: selected_collections)
            }}
 
         {:error, reason} ->
@@ -587,20 +602,20 @@ defmodule ArcanaWeb.DashboardLive do
     end
   end
 
-  defp run_agentic_ask(question, repo, llm, collections, opts) do
+  defp run_agentic_ask(question, repo, llm, all_collections, opts) do
     alias Arcana.Agent
 
-    collection_names = Enum.map(collections, & &1.name)
-    selected_collection = Keyword.get(opts, :collection, "")
+    all_collection_names = Enum.map(all_collections, & &1.name)
+    selected_collections = Keyword.get(opts, :collections, [])
     use_llm_select = Keyword.get(opts, :use_llm_select, false)
 
     try do
       ctx = Agent.new(question, repo: repo, llm: llm)
 
-      # LLM collection selection (only if "Let LLM select" was chosen)
+      # LLM collection selection (only if "Let LLM select" was checked)
       ctx =
-        if use_llm_select and length(collection_names) > 1 do
-          Agent.select(ctx, collections: collection_names)
+        if use_llm_select and length(all_collection_names) > 1 do
+          Agent.select(ctx, collections: all_collection_names)
         else
           ctx
         end
@@ -624,15 +639,16 @@ defmodule ArcanaWeb.DashboardLive do
       # Build search options
       search_opts = [self_correct: Keyword.get(opts, :self_correct, false)]
 
-      # Pass collection to search if user selected a specific one (not "All" and not "LLM select")
+      # Pass collection(s) to search if user selected specific ones (not using LLM select)
       search_opts =
-        if selected_collection != "" and selected_collection != "__llm_select__" do
-          Keyword.put(search_opts, :collection, selected_collection)
-        else
-          search_opts
+        case {use_llm_select, selected_collections} do
+          {true, _} -> search_opts
+          {false, []} -> search_opts
+          {false, [single]} -> Keyword.put(search_opts, :collection, single)
+          {false, multiple} -> Keyword.put(search_opts, :collections, multiple)
         end
 
-      # Search with optional self-correction and collection
+      # Search with optional self-correction and collection(s)
       ctx = Agent.search(ctx, search_opts)
 
       # Optional reranking
@@ -1944,15 +1960,19 @@ defmodule ArcanaWeb.DashboardLive do
                 </select>
               </label>
 
-              <label>
-                Collection
-                <select name="collection">
-                  <option value="">All collections</option>
-                  <%= for collection <- @collections do %>
-                    <option value={collection.name}><%= collection.name %></option>
-                  <% end %>
-                </select>
-              </label>
+            </div>
+
+            <div class="arcana-ask-collections" style="margin: 0;">
+              <label style="margin-bottom: 0.25rem;">Collections</label>
+              <div class="arcana-collection-checkboxes">
+                <%= for collection <- @collections do %>
+                  <label class="arcana-collection-check">
+                    <input type="checkbox" name="collections[]" value={collection.name} />
+                    <span><%= collection.name %></span>
+                  </label>
+                <% end %>
+              </div>
+              <small class="arcana-collection-hint">Select none for all collections</small>
             </div>
           </div>
 
@@ -2109,17 +2129,23 @@ defmodule ArcanaWeb.DashboardLive do
           ><%= @question %></textarea>
         </div>
 
-        <div class="arcana-ask-collection">
-          <label>Collection</label>
-          <select name="collection" disabled={@running}>
-            <option value="">All collections</option>
+        <div class="arcana-ask-collections">
+          <label>Collections</label>
+          <div class="arcana-collection-checkboxes">
             <%= if @mode == :agentic and length(@collections) > 1 do %>
-              <option value="__llm_select__">Let LLM select</option>
+              <label class="arcana-collection-check">
+                <input type="checkbox" name="llm_select" value="true" disabled={@running} />
+                <span>Let LLM select</span>
+              </label>
             <% end %>
             <%= for coll <- @collections do %>
-              <option value={coll.name}><%= coll.name %></option>
+              <label class="arcana-collection-check">
+                <input type="checkbox" name="collections[]" value={coll.name} disabled={@running} />
+                <span><%= coll.name %></span>
+              </label>
             <% end %>
-          </select>
+          </div>
+          <small class="arcana-collection-hint">Select none for all collections</small>
         </div>
 
         <%= if @mode == :agentic do %>
@@ -2289,32 +2315,57 @@ defmodule ArcanaWeb.DashboardLive do
         font-style: italic;
       }
 
-      .arcana-ask-collection {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
+      .arcana-ask-collections {
         margin: 1rem 0;
       }
 
-      .arcana-ask-collection label {
+      .arcana-ask-collections > label {
+        display: block;
         font-size: 0.875rem;
         font-weight: 500;
         color: #374151;
+        margin-bottom: 0.5rem;
       }
 
-      .arcana-ask-collection select {
-        padding: 0.5rem 0.75rem;
+      .arcana-collection-checkboxes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+
+      .arcana-collection-check {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.375rem 0.75rem;
+        background: white;
         border: 1px solid #d1d5db;
         border-radius: 0.375rem;
-        font-size: 0.875rem;
-        background: white;
-        min-width: 200px;
+        font-size: 0.8125rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
       }
 
-      .arcana-ask-collection select:focus {
-        outline: none;
+      .arcana-collection-check:hover {
         border-color: #7c3aed;
-        box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+        background: #faf5ff;
+      }
+
+      .arcana-collection-check:has(input:checked) {
+        border-color: #7c3aed;
+        background: #ede9fe;
+        color: #5b21b6;
+      }
+
+      .arcana-collection-check input {
+        accent-color: #7c3aed;
+      }
+
+      .arcana-collection-hint {
+        display: block;
+        margin-top: 0.375rem;
+        font-size: 0.75rem;
+        color: #6b7280;
       }
 
       .arcana-ask-form {
