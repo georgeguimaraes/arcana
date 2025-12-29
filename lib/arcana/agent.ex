@@ -817,19 +817,15 @@ defmodule Arcana.Agent do
       answerer_opts = Keyword.merge(opts, llm: llm)
 
       updated_ctx =
-        case do_answer(answerer, ctx.question, all_chunks, answerer_opts) do
-          {:ok, answer} ->
-            base_ctx = %{ctx | answer: answer, context_used: all_chunks}
-
-            if self_correct do
-              do_self_correct(base_ctx, llm, all_chunks, max_corrections, custom_prompt_fn)
-            else
-              %{base_ctx | correction_count: 0, corrections: []}
-            end
-
-          {:error, reason} ->
-            %{ctx | error: reason}
-        end
+        handle_answer_result(
+          do_answer(answerer, ctx.question, all_chunks, answerer_opts),
+          ctx,
+          all_chunks,
+          self_correct,
+          llm,
+          max_corrections,
+          custom_prompt_fn
+        )
 
       stop_metadata = %{
         context_chunk_count: length(all_chunks),
@@ -844,6 +840,20 @@ defmodule Arcana.Agent do
   defp answerer_name(answerer) when is_atom(answerer), do: answerer
   defp answerer_name(_answerer), do: :custom_function
 
+  defp handle_answer_result({:ok, answer}, ctx, chunks, self_correct, llm, max_corrections, custom_prompt_fn) do
+    base_ctx = %{ctx | answer: answer, context_used: chunks}
+
+    if self_correct do
+      do_self_correct(base_ctx, llm, chunks, max_corrections, custom_prompt_fn)
+    else
+      %{base_ctx | correction_count: 0, corrections: []}
+    end
+  end
+
+  defp handle_answer_result({:error, reason}, ctx, _chunks, _self_correct, _llm, _max, _prompt_fn) do
+    %{ctx | error: reason}
+  end
+
   defp do_answer(answerer, question, chunks, opts) when is_atom(answerer) do
     answerer.answer(question, chunks, opts)
   end
@@ -853,53 +863,49 @@ defmodule Arcana.Agent do
   end
 
   defp do_self_correct(ctx, llm, chunks, max_corrections, custom_prompt_fn) do
-    do_self_correct_loop(ctx, llm, chunks, max_corrections, custom_prompt_fn, 0, [])
+    correction_opts = %{llm: llm, chunks: chunks, max: max_corrections, prompt_fn: custom_prompt_fn}
+    do_self_correct_loop(ctx, correction_opts, 0, [])
   end
 
-  defp do_self_correct_loop(ctx, _llm, _chunks, max_corrections, _custom_prompt_fn, count, history)
-       when count >= max_corrections do
+  defp do_self_correct_loop(ctx, %{max: max}, count, history) when count >= max do
     %{ctx | correction_count: count, corrections: Enum.reverse(history)}
   end
 
-  defp do_self_correct_loop(ctx, llm, chunks, max_corrections, custom_prompt_fn, count, history) do
+  defp do_self_correct_loop(ctx, correction_opts, count, history) do
+    %{llm: llm, chunks: chunks} = correction_opts
+
     :telemetry.span([:arcana, :agent, :self_correct], %{attempt: count + 1}, fn ->
-      case evaluate_answer(llm, ctx.question, ctx.answer, chunks) do
-        {:ok, :grounded} ->
-          result = %{ctx | correction_count: count, corrections: Enum.reverse(history)}
-          {result, %{result: :accepted, attempt: count + 1}}
-
-        {:ok, {:needs_improvement, feedback}} ->
-          correction_prompt = build_correction_prompt(ctx.question, chunks, ctx.answer, feedback)
-
-          case llm.(correction_prompt) do
-            {:ok, new_answer} ->
-              new_history = [{ctx.answer, feedback} | history]
-              new_ctx = %{ctx | answer: new_answer}
-
-              result =
-                do_self_correct_loop(
-                  new_ctx,
-                  llm,
-                  chunks,
-                  max_corrections,
-                  custom_prompt_fn,
-                  count + 1,
-                  new_history
-                )
-
-              {result, %{result: :corrected, attempt: count + 1}}
-
-            {:error, reason} ->
-              result = %{ctx | error: reason, correction_count: count, corrections: Enum.reverse(history)}
-              {result, %{result: :error, attempt: count + 1}}
-          end
-
-        {:error, _reason} ->
-          # If evaluation fails, accept the current answer
-          result = %{ctx | correction_count: count, corrections: Enum.reverse(history)}
-          {result, %{result: :eval_failed, attempt: count + 1}}
-      end
+      evaluate_answer(llm, ctx.question, ctx.answer, chunks)
+      |> handle_evaluation_result(ctx, correction_opts, count, history)
     end)
+  end
+
+  defp handle_evaluation_result({:ok, :grounded}, ctx, _opts, count, history) do
+    result = %{ctx | correction_count: count, corrections: Enum.reverse(history)}
+    {result, %{result: :accepted, attempt: count + 1}}
+  end
+
+  defp handle_evaluation_result({:ok, {:needs_improvement, feedback}}, ctx, opts, count, history) do
+    %{llm: llm, chunks: chunks} = opts
+    correction_prompt = build_correction_prompt(ctx.question, chunks, ctx.answer, feedback)
+
+    case llm.(correction_prompt) do
+      {:ok, new_answer} ->
+        new_history = [{ctx.answer, feedback} | history]
+        new_ctx = %{ctx | answer: new_answer}
+        result = do_self_correct_loop(new_ctx, opts, count + 1, new_history)
+        {result, %{result: :corrected, attempt: count + 1}}
+
+      {:error, reason} ->
+        result = %{ctx | error: reason, correction_count: count, corrections: Enum.reverse(history)}
+        {result, %{result: :error, attempt: count + 1}}
+    end
+  end
+
+  defp handle_evaluation_result({:error, _reason}, ctx, _opts, count, history) do
+    # If evaluation fails, accept the current answer
+    result = %{ctx | correction_count: count, corrections: Enum.reverse(history)}
+    {result, %{result: :eval_failed, attempt: count + 1}}
   end
 
   defp evaluate_answer(llm, question, answer, chunks) do

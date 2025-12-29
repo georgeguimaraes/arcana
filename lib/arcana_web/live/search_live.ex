@@ -35,35 +35,8 @@ defmodule ArcanaWeb.SearchLive do
 
   @impl true
   def handle_event("search", params, socket) do
-    repo = socket.assigns.repo
     query = params["query"] || ""
-    limit = parse_int(params["limit"], 10)
-    threshold = parse_float(params["threshold"], 0.0)
-    source_id = if params["source_id"] in [nil, ""], do: nil, else: params["source_id"]
-    mode = parse_mode(params["mode"])
-
-    # Handle multi-collection checkboxes
-    collections = params["collections"] || []
-    collections = if is_list(collections), do: collections, else: [collections]
-    collections = Enum.filter(collections, &(&1 != ""))
-
-    results =
-      if query != "" do
-        opts = [repo: repo, limit: limit, threshold: threshold, mode: mode]
-        opts = if source_id, do: Keyword.put(opts, :source_id, source_id), else: opts
-
-        opts =
-          case collections do
-            [] -> opts
-            [single] -> Keyword.put(opts, :collection, single)
-            multiple -> Keyword.put(opts, :collection, multiple)
-          end
-
-        Arcana.search(query, opts)
-      else
-        []
-      end
-
+    results = run_search(query, params, socket.assigns.repo)
     {:noreply, assign(socket, search_results: results, search_query: query, expanded_result_id: nil)}
   end
 
@@ -93,6 +66,37 @@ defmodule ArcanaWeb.SearchLive do
   def handle_event("close_search_document", _params, socket) do
     {:noreply, assign(socket, viewing_document: nil)}
   end
+
+  defp run_search("", _params, _repo), do: []
+
+  defp run_search(query, params, repo) do
+    params
+    |> build_search_opts(repo)
+    |> then(&Arcana.search(query, &1))
+  end
+
+  defp build_search_opts(params, repo) do
+    [
+      repo: repo,
+      limit: parse_int(params["limit"], 10),
+      threshold: parse_float(params["threshold"], 0.0),
+      mode: parse_mode(params["mode"])
+    ]
+    |> add_source_id_opt(params["source_id"])
+    |> add_collection_opt(normalize_collections(params["collections"]))
+  end
+
+  defp add_source_id_opt(opts, nil), do: opts
+  defp add_source_id_opt(opts, ""), do: opts
+  defp add_source_id_opt(opts, source_id), do: Keyword.put(opts, :source_id, source_id)
+
+  defp add_collection_opt(opts, []), do: opts
+  defp add_collection_opt(opts, [single]), do: Keyword.put(opts, :collection, single)
+  defp add_collection_opt(opts, multiple), do: Keyword.put(opts, :collection, multiple)
+
+  defp normalize_collections(nil), do: []
+  defp normalize_collections(collections) when is_list(collections), do: Enum.filter(collections, &(&1 != ""))
+  defp normalize_collections(collection), do: [collection]
 
   @impl true
   def render(assigns) do

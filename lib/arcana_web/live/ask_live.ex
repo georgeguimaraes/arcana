@@ -33,58 +33,23 @@ defmodule ArcanaWeb.AskLive do
 
   @impl true
   def handle_event("ask_submit", params, socket) do
-    repo = socket.assigns.repo
     question = params["question"] || ""
-    mode = params["mode"] || "simple"
-    # Parse multiple collections from checkbox array
-    selected_collections = params["collections"] || []
-    use_llm_select = params["llm_select"] == "true"
 
-    case Application.get_env(:arcana, :llm) do
-      nil ->
+    case {Application.get_env(:arcana, :llm), question} do
+      {nil, _} ->
         {:noreply,
          assign(socket,
            ask_error: "No LLM configured. Set :arcana, :llm in your config.",
            ask_running: false
          )}
 
-      llm ->
-        if question == "" do
-          {:noreply, assign(socket, ask_error: "Please enter a question")}
-        else
-          socket = assign(socket, ask_running: true, ask_error: nil, ask_question: question)
-          parent = self()
+      {_, ""} ->
+        {:noreply, assign(socket, ask_error: "Please enter a question")}
 
-          Task.start(fn ->
-            result =
-              if mode == "simple" do
-                run_simple_ask(question, repo, llm, selected_collections)
-              else
-                # Agentic mode with pipeline options
-                use_expand = params["use_expand"] == "true"
-                use_decompose = params["use_decompose"] == "true"
-                use_rerank = params["use_rerank"] == "true"
-                self_correct = params["self_correct"] == "true"
-
-                run_agentic_ask(
-                  question,
-                  repo,
-                  llm,
-                  socket.assigns.collections,
-                  collections: selected_collections,
-                  use_llm_select: use_llm_select,
-                  use_expand: use_expand,
-                  use_decompose: use_decompose,
-                  use_rerank: use_rerank,
-                  self_correct: self_correct
-                )
-              end
-
-            send(parent, {:ask_complete, result})
-          end)
-
-          {:noreply, socket}
-        end
+      {llm, question} ->
+        socket = assign(socket, ask_running: true, ask_error: nil, ask_question: question)
+        start_ask_task(socket, params, llm, question)
+        {:noreply, socket}
     end
   end
 
@@ -94,6 +59,37 @@ defmodule ArcanaWeb.AskLive do
 
   def handle_event("ask_switch_mode", %{"mode" => mode}, socket) do
     {:noreply, assign(socket, ask_mode: String.to_existing_atom(mode))}
+  end
+
+  defp start_ask_task(socket, params, llm, question) do
+    repo = socket.assigns.repo
+    mode = params["mode"] || "simple"
+    selected_collections = params["collections"] || []
+    parent = self()
+
+    Task.start(fn ->
+      result = run_ask(mode, question, repo, llm, socket.assigns.collections, params, selected_collections)
+      send(parent, {:ask_complete, result})
+    end)
+  end
+
+  defp run_ask("simple", question, repo, llm, _all_collections, _params, selected_collections) do
+    run_simple_ask(question, repo, llm, selected_collections)
+  end
+
+  defp run_ask(_mode, question, repo, llm, all_collections, params, selected_collections) do
+    run_agentic_ask(
+      question,
+      repo,
+      llm,
+      all_collections,
+      collections: selected_collections,
+      use_llm_select: params["llm_select"] == "true",
+      use_expand: params["use_expand"] == "true",
+      use_decompose: params["use_decompose"] == "true",
+      use_rerank: params["use_rerank"] == "true",
+      self_correct: params["self_correct"] == "true"
+    )
   end
 
   @impl true
@@ -146,78 +142,69 @@ defmodule ArcanaWeb.AskLive do
     alias Arcana.Agent
 
     all_collection_names = Enum.map(all_collections, & &1.name)
-    selected_collections = Keyword.get(opts, :collections, [])
+    search_opts = build_search_opts(opts, all_collection_names)
+
+    Agent.new(question, repo: repo, llm: llm)
+    |> maybe_select(opts, all_collection_names)
+    |> maybe_expand(opts)
+    |> maybe_decompose(opts)
+    |> Agent.search(search_opts)
+    |> maybe_rerank(opts)
+    |> Agent.answer()
+    |> format_agentic_result(question)
+  rescue
+    e -> {:error, Exception.message(e)}
+  end
+
+  defp maybe_select(ctx, opts, all_collection_names) do
+    if Keyword.get(opts, :use_llm_select, false) and length(all_collection_names) > 1 do
+      Arcana.Agent.select(ctx, collections: all_collection_names)
+    else
+      ctx
+    end
+  end
+
+  defp maybe_expand(ctx, opts) do
+    if Keyword.get(opts, :use_expand, false), do: Arcana.Agent.expand(ctx), else: ctx
+  end
+
+  defp maybe_decompose(ctx, opts) do
+    if Keyword.get(opts, :use_decompose, false), do: Arcana.Agent.decompose(ctx), else: ctx
+  end
+
+  defp maybe_rerank(ctx, opts) do
+    if Keyword.get(opts, :use_rerank, false), do: Arcana.Agent.rerank(ctx), else: ctx
+  end
+
+  defp build_search_opts(opts, all_collection_names) do
+    base = [self_correct: Keyword.get(opts, :self_correct, false)]
     use_llm_select = Keyword.get(opts, :use_llm_select, false)
 
-    try do
-      ctx = Agent.new(question, repo: repo, llm: llm)
-
-      # LLM collection selection (only if "Let LLM select" was checked)
-      ctx =
-        if use_llm_select and length(all_collection_names) > 1 do
-          Agent.select(ctx, collections: all_collection_names)
-        else
-          ctx
-        end
-
-      # Query expansion
-      ctx =
-        if Keyword.get(opts, :use_expand, false) do
-          Agent.expand(ctx)
-        else
-          ctx
-        end
-
-      # Question decomposition
-      ctx =
-        if Keyword.get(opts, :use_decompose, false) do
-          Agent.decompose(ctx)
-        else
-          ctx
-        end
-
-      # Build search options
-      search_opts = [self_correct: Keyword.get(opts, :self_correct, false)]
-
-      # Pass collection(s) to search if user selected specific ones (not using LLM select)
-      search_opts =
-        case {use_llm_select, selected_collections} do
-          {true, _} -> search_opts
-          {false, []} -> search_opts
-          {false, [single]} -> Keyword.put(search_opts, :collection, single)
-          {false, multiple} -> Keyword.put(search_opts, :collections, multiple)
-        end
-
-      # Search with optional self-correction and collection(s)
-      ctx = Agent.search(ctx, search_opts)
-
-      # Optional reranking
-      ctx =
-        if Keyword.get(opts, :use_rerank, false) do
-          Agent.rerank(ctx)
-        else
-          ctx
-        end
-
-      # Generate answer
-      ctx = Agent.answer(ctx)
-
-      if ctx.error do
-        {:error, ctx.error}
-      else
-        {:ok,
-         %{
-           question: question,
-           answer: ctx.answer,
-           results: ctx.results,
-           expanded_query: ctx.expanded_query,
-           sub_questions: ctx.sub_questions,
-           selected_collections: ctx.collections
-         }}
-      end
-    rescue
-      e -> {:error, Exception.message(e)}
+    if use_llm_select and length(all_collection_names) > 1 do
+      base
+    else
+      add_collection_opts(base, Keyword.get(opts, :collections, []))
     end
+  end
+
+  defp add_collection_opts(opts, []), do: opts
+  defp add_collection_opts(opts, [single]), do: Keyword.put(opts, :collection, single)
+  defp add_collection_opts(opts, multiple), do: Keyword.put(opts, :collections, multiple)
+
+  defp format_agentic_result(%{error: error}, _question) when not is_nil(error) do
+    {:error, error}
+  end
+
+  defp format_agentic_result(ctx, question) do
+    {:ok,
+     %{
+       question: question,
+       answer: ctx.answer,
+       results: ctx.results,
+       expanded_query: ctx.expanded_query,
+       sub_questions: ctx.sub_questions,
+       selected_collections: ctx.collections
+     }}
   end
 
   @impl true

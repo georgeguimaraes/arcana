@@ -114,24 +114,28 @@ defmodule Arcana.Maintenance do
       |> repo.stream(max_rows: batch_size)
       |> Stream.with_index(1)
       |> Enum.reduce(0, fn {chunk, index}, count ->
-        case Embedder.embed(embedder, chunk.text) do
-          {:ok, embedding} ->
-            repo.update_all(
-              from(c in Chunk, where: c.id == ^chunk.id),
-              set: [embedding: embedding, updated_at: DateTime.utc_now()]
-            )
-
-            progress_fn.(index, total)
-            count + 1
-
-          {:error, reason} ->
-            raise "Failed to embed chunk #{chunk.id}: #{inspect(reason)}"
-        end
+        reembed_single_chunk(repo, embedder, chunk, index, total, progress_fn, count)
       end)
     end)
     |> case do
       {:ok, count} -> count
       {:error, reason} -> raise reason
+    end
+  end
+
+  defp reembed_single_chunk(repo, embedder, chunk, index, total, progress_fn, count) do
+    case Embedder.embed(embedder, chunk.text) do
+      {:ok, embedding} ->
+        repo.update_all(
+          from(c in Chunk, where: c.id == ^chunk.id),
+          set: [embedding: embedding, updated_at: DateTime.utc_now()]
+        )
+
+        progress_fn.(index, total)
+        count + 1
+
+      {:error, reason} ->
+        raise "Failed to embed chunk #{chunk.id}: #{inspect(reason)}"
     end
   end
 

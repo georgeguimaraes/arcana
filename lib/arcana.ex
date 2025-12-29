@@ -614,12 +614,7 @@ defmodule Arcana do
           prompt_fn = Keyword.get(opts, :prompt, &default_ask_prompt/2)
           llm_opts = [system_prompt: prompt_fn.(question, context)]
 
-          result =
-            case LLM.complete(llm, question, context, llm_opts) do
-              {:ok, answer} -> {:ok, answer, context}
-              {:error, reason} -> {:error, reason}
-            end
-
+          result = do_ask_llm(llm, question, context, llm_opts)
           stop_metadata = ask_stop_metadata(result, context)
 
           {result, stop_metadata}
@@ -681,6 +676,13 @@ defmodule Arcana do
 
   defp ask_stop_metadata({:error, _}, context) do
     %{context_count: length(context)}
+  end
+
+  defp do_ask_llm(llm, question, context, llm_opts) do
+    case LLM.complete(llm, question, context, llm_opts) do
+      {:ok, answer} -> {:ok, answer, context}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   # Merges application config defaults with provided options.
