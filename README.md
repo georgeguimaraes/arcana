@@ -61,6 +61,7 @@ mix arcana.install
 ```
 
 This automatically:
+
 - Creates the database migration
 - Adds the dashboard route to your router
 - Creates the Postgrex types module
@@ -358,11 +359,13 @@ ctx =
 ```
 
 Collection selection priority:
+
 1. `:collection`/`:collections` option passed to `search/2`
 2. `ctx.collections` (set by `select/2`)
 3. Falls back to `"default"` collection
 
 This is useful when:
+
 - You have only one collection (no LLM selection needed)
 - The user explicitly chooses which collection(s) to search
 - You want deterministic routing without LLM overhead
@@ -469,6 +472,7 @@ ctx.corrections      # List of {previous_answer, feedback} tuples
 ```
 
 When `self_correct: true`, the pipeline:
+
 1. Generates an initial answer
 2. Evaluates if the answer is grounded in the context
 3. If not grounded, regenerates with feedback
@@ -709,6 +713,7 @@ All local models run via Bumblebee with no API keys required. Models are downloa
 | **MiniLM** | `{:local, model: "sentence-transformers/all-MiniLM-L6-v2"}` | 384 | 91MB | Lightweight, fast |
 
 **Recommendations:**
+
 - **Getting started:** Use default (`bge-small-en-v1.5`) - good quality, reasonable size
 - **Resource constrained:** Use `gte-small` (67MB) or `all-MiniLM-L6-v2` (91MB)
 - **Best accuracy:** Use `bge-large-en-v1.5` or `e5-large-v2` (1024 dimensions)
@@ -876,18 +881,18 @@ config :nx, default_backend: EXLA.Backend
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                     Your Phoenix App                     │
+│                     Your Phoenix App                    │
 ├─────────────────────────────────────────────────────────┤
-│                    Arcana.Agent                          │
+│                    Arcana.Agent                         │
 │  (rewrite → select → expand → search → rerank → answer) │
 ├─────────────────────────────────────────────────────────┤
 │  Arcana.ask/2   │  Arcana.search/2  │  Arcana.ingest/2  │
 ├─────────────────┴───────────────────┴───────────────────┤
 │                                                         │
-│  ┌─────────────┐  ┌─────────────────┐  ┌─────────────┐ │
-│  │   Chunker   │  │ Embeddings      │  │   Search    │ │
-│  │ (splitting) │  │ (Bumblebee)     │  │ (pgvector)  │ │
-│  └─────────────┘  └─────────────────┘  └─────────────┘ │
+│  ┌─────────────┐  ┌─────────────────┐  ┌─────────────┐  │
+│  │   Chunker   │  │   Embeddings    │  │   Search    │  │
+│  │ (splitting) │  │   (Bumblebee)   │  │ (pgvector)  │  │
+│  └─────────────┘  └─────────────────┘  └─────────────┘  │
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
 │              Your Existing Ecto Repo                    │
