@@ -1,6 +1,6 @@
 # Dashboard
 
-A web UI for managing documents and testing search.
+A web UI for managing documents and testing search. The dashboard consists of multiple pages accessible via sidebar navigation.
 
 ## Setup
 
@@ -17,7 +17,7 @@ scope "/" do
 end
 ```
 
-Visit `http://localhost:4000/arcana` to access the dashboard.
+Visit `http://localhost:4000/arcana` to access the dashboard (redirects to Documents page).
 
 ## Options
 
@@ -37,31 +37,51 @@ arcana_dashboard "/arcana",
   on_mount: [MyAppWeb.RequireAdmin]
 ```
 
-## Features
+## Pages
 
-### Documents Tab
+### Documents (`/arcana/documents`)
 
-- **View documents** - Browse all ingested documents
+- **View documents** - Browse all ingested documents with pagination
 - **View chunks** - See how documents are chunked
-- **Ingest text** - Paste content directly
+- **Ingest text** - Paste content directly with format selection
 - **Upload files** - Upload `.txt`, `.md`, or `.pdf` files
-- **Manage collections** - Organize documents into collections
 - **Filter by collection** - View documents from specific collections
 
-### Search Tab
+### Ask (`/arcana/ask`)
+
+- **Simple mode** - Basic RAG question answering
+- **Agentic mode** - Full pipeline with query expansion, decomposition, and self-correction
+- **Collection selection** - Choose which collections to search (or let the LLM select)
+- **Pipeline options** - Toggle expand, decompose, rerank, and self-correct steps
+
+### Search (`/arcana/search`)
 
 - **Test queries** - Try searches against your documents
-- **View results** - See retrieved chunks with similarity scores
+- **View results** - See retrieved chunks with similarity scores and expandable details
 - **Compare modes** - Test semantic, full-text, and hybrid search
+- **Filter by collection** - Search within specific collections
 
-### Evaluation Tab
+### Collections (`/arcana/collections`)
+
+- **View collections** - Browse all collections with document counts
+- **Create collections** - Add new collections with descriptions
+- **Edit collections** - Update collection descriptions
+- **Delete collections** - Remove empty collections
+
+### Evaluation (`/arcana/evaluation`)
 
 - **View test cases** - See questions and their relevant chunks
 - **Run evaluations** - Execute evaluation runs
 - **View metrics** - See MRR, Precision, Recall scores
 - **Compare runs** - Track changes over time
 
-### Info Tab
+### Maintenance (`/arcana/maintenance`)
+
+- **Rebuild embeddings** - Re-embed all chunks (useful after model changes)
+- **Orphan cleanup** - Find and remove chunks without parent documents
+- **Database operations** - Maintenance tasks for the vector store
+
+### Info (`/arcana/info`)
 
 - **Configuration** - View current Arcana settings
 - **Embedding model** - See which model is in use
