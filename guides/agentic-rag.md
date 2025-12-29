@@ -122,23 +122,6 @@ This is useful when:
 - The user explicitly chooses which collection(s) to search
 - You want deterministic routing without LLM overhead
 
-#### Self-Correcting Search
-
-Automatically retry with rewritten queries when results are insufficient:
-
-```elixir
-ctx = Agent.search(ctx,
-  self_correct: true,
-  max_iterations: 3
-)
-```
-
-The agent will:
-1. Execute the search
-2. Ask the LLM if results are sufficient
-3. If not, rewrite the query and retry
-4. Repeat until sufficient or max iterations reached
-
 ### rerank/2 - Re-rank Results
 
 Score and filter chunks by relevance:
@@ -161,6 +144,26 @@ ctx.answer
 ctx.context_used
 # => [%Arcana.Chunk{...}, ...]
 ```
+
+#### Self-Correcting Answers
+
+Enable self-correction to evaluate and refine answers:
+
+```elixir
+ctx = Agent.answer(ctx, self_correct: true, max_corrections: 2)
+
+ctx.answer           # Final (possibly refined) answer
+ctx.correction_count # Number of corrections made
+ctx.corrections      # List of {previous_answer, feedback} tuples
+```
+
+When `self_correct: true`, the pipeline:
+1. Generates an initial answer
+2. Evaluates if the answer is grounded in the retrieved context
+3. If not grounded, regenerates with feedback
+4. Repeats up to `max_corrections` times (default: 2)
+
+This reduces hallucinations by ensuring answers are well-supported by the context.
 
 ## Custom Prompts
 
@@ -233,6 +236,7 @@ Each step emits telemetry events:
 [:arcana, :agent, :search, :start | :stop | :exception]
 [:arcana, :agent, :rerank, :start | :stop | :exception]
 [:arcana, :agent, :answer, :start | :stop | :exception]
+[:arcana, :agent, :self_correct, :start | :stop | :exception]  # Per correction attempt
 ```
 
 Example handler:
@@ -277,9 +281,9 @@ ctx =
   |> Agent.select(collections: ["docs", "api"])
   |> Agent.expand()
   |> Agent.decompose()
-  |> Agent.search(self_correct: true)
+  |> Agent.search()
   |> Agent.rerank(threshold: 7)
-  |> Agent.answer()
+  |> Agent.answer(self_correct: true)
 ```
 
 ### Conditional Steps
@@ -317,4 +321,6 @@ The `Arcana.Agent.Context` struct carries all state:
 | `rerank_scores` | Scores from re-ranking |
 | `answer` | Final generated answer |
 | `context_used` | Chunks used for answer |
+| `correction_count` | Number of self-corrections made |
+| `corrections` | List of `{answer, feedback}` tuples |
 | `error` | Error if any step failed |

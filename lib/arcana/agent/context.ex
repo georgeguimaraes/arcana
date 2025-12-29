@@ -38,6 +38,8 @@ defmodule Arcana.Agent.Context do
   ### Populated by `answer/1`
   - `:answer` - The generated answer
   - `:context_used` - Chunks used to generate the answer
+  - `:correction_count` - Number of self-corrections performed (0 if disabled)
+  - `:corrections` - List of `{answer, feedback}` tuples showing correction history
 
   ### Error handling
   - `:error` - Error reason if any step fails
@@ -75,6 +77,8 @@ defmodule Arcana.Agent.Context do
     # Populated by answer/1
     :answer,
     :context_used,
+    :correction_count,
+    :corrections,
 
     # Error handling
     :error

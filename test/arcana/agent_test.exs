@@ -303,6 +303,177 @@ defmodule Arcana.AgentTest do
 
       assert ctx.answer == "override llm answer"
     end
+
+    test "self_correct accepts answer when grounded" do
+      llm = fn prompt ->
+        cond do
+          prompt =~ "Answer the question" ->
+            {:ok, "Elixir is a functional language."}
+
+          prompt =~ "Evaluate if the following answer" ->
+            {:ok, ~s({"grounded": true})}
+
+          true ->
+            {:ok, "response"}
+        end
+      end
+
+      ctx = %Context{
+        question: "What is Elixir?",
+        repo: Arcana.TestRepo,
+        llm: llm,
+        results: [
+          %{
+            question: "What is Elixir?",
+            collection: "default",
+            chunks: [%{id: "1", text: "Elixir is a functional programming language.", score: 0.9}]
+          }
+        ]
+      }
+
+      ctx = Agent.answer(ctx, self_correct: true)
+
+      assert ctx.answer == "Elixir is a functional language."
+      assert ctx.correction_count == 0
+      assert ctx.corrections == []
+    end
+
+    test "self_correct corrects answer when not grounded" do
+      call_count = :counters.new(1, [:atomics])
+
+      llm = fn prompt ->
+        cond do
+          prompt =~ "Answer the question" ->
+            {:ok, "Initial incorrect answer."}
+
+          prompt =~ "Evaluate if the following answer" ->
+            count = :counters.get(call_count, 1)
+            :counters.add(call_count, 1, 1)
+
+            if count == 0 do
+              {:ok, ~s({"grounded": false, "feedback": "Answer should mention functional programming."})}
+            else
+              {:ok, ~s({"grounded": true})}
+            end
+
+          prompt =~ "Please provide an improved answer" ->
+            {:ok, "Elixir is a functional programming language."}
+
+          true ->
+            {:ok, "response"}
+        end
+      end
+
+      ctx = %Context{
+        question: "What is Elixir?",
+        repo: Arcana.TestRepo,
+        llm: llm,
+        results: [
+          %{
+            question: "What is Elixir?",
+            collection: "default",
+            chunks: [%{id: "1", text: "Elixir is a functional programming language.", score: 0.9}]
+          }
+        ]
+      }
+
+      ctx = Agent.answer(ctx, self_correct: true)
+
+      assert ctx.answer == "Elixir is a functional programming language."
+      assert ctx.correction_count == 1
+      assert length(ctx.corrections) == 1
+      [{old_answer, feedback}] = ctx.corrections
+      assert old_answer == "Initial incorrect answer."
+      assert feedback =~ "functional programming"
+    end
+
+    test "self_correct respects max_corrections limit" do
+      llm = fn prompt ->
+        cond do
+          prompt =~ "Answer the question" ->
+            {:ok, "Answer v1"}
+
+          prompt =~ "Evaluate if the following answer" ->
+            {:ok, ~s({"grounded": false, "feedback": "needs more detail"})}
+
+          prompt =~ "Please provide an improved answer" ->
+            {:ok, "Answer v2"}
+
+          true ->
+            {:ok, "response"}
+        end
+      end
+
+      ctx = %Context{
+        question: "test",
+        repo: Arcana.TestRepo,
+        llm: llm,
+        results: [
+          %{question: "test", collection: "default", chunks: [%{id: "1", text: "context", score: 0.9}]}
+        ]
+      }
+
+      ctx = Agent.answer(ctx, self_correct: true, max_corrections: 1)
+
+      # Should stop after 1 correction even if still not grounded
+      assert ctx.correction_count == 1
+      assert length(ctx.corrections) == 1
+    end
+
+    test "self_correct emits telemetry events" do
+      test_pid = self()
+      ref = make_ref()
+
+      :telemetry.attach_many(
+        ref,
+        [
+          [:arcana, :agent, :self_correct, :start],
+          [:arcana, :agent, :self_correct, :stop]
+        ],
+        fn event, measurements, metadata, _ ->
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      llm = fn prompt ->
+        cond do
+          prompt =~ "Answer the question" -> {:ok, "answer"}
+          prompt =~ "Evaluate" -> {:ok, ~s({"grounded": true})}
+          true -> {:ok, "response"}
+        end
+      end
+
+      ctx = %Context{
+        question: "test",
+        repo: Arcana.TestRepo,
+        llm: llm,
+        results: [%{question: "test", collection: "default", chunks: [%{id: "1", text: "ctx", score: 0.9}]}]
+      }
+
+      Agent.answer(ctx, self_correct: true)
+
+      assert_receive {:telemetry, [:arcana, :agent, :self_correct, :start], _, %{attempt: 1}}
+      assert_receive {:telemetry, [:arcana, :agent, :self_correct, :stop], _, %{result: :accepted}}
+
+      :telemetry.detach(ref)
+    end
+
+    test "without self_correct sets correction_count to 0" do
+      llm = fn _prompt -> {:ok, "answer"} end
+
+      ctx = %Context{
+        question: "test",
+        repo: Arcana.TestRepo,
+        llm: llm,
+        results: [%{question: "test", collection: "default", chunks: []}]
+      }
+
+      ctx = Agent.answer(ctx)
+
+      assert ctx.correction_count == 0
+      assert ctx.corrections == []
+    end
   end
 
   describe "pipeline" do
@@ -686,6 +857,22 @@ defmodule Arcana.AgentTest do
 
       assert ctx.collections == ["docs"]
       assert ctx.selection_reasoning == "LLM selected"
+    end
+
+    test "accepts custom llm option" do
+      default_llm = fn _prompt -> raise "default LLM should not be called" end
+
+      custom_llm = fn prompt ->
+        assert prompt =~ "Which collection"
+        {:ok, ~s({"collections": ["api"], "reasoning": "Custom LLM selected"})}
+      end
+
+      ctx =
+        Agent.new("question", repo: Arcana.TestRepo, llm: default_llm)
+        |> Agent.select(collections: ["docs", "api"], llm: custom_llm)
+
+      assert ctx.collections == ["api"]
+      assert ctx.selection_reasoning == "Custom LLM selected"
     end
   end
 
@@ -1078,6 +1265,42 @@ defmodule Arcana.AgentTest do
 
       assert ctx.rewritten_query == "compare Elixir and Go"
       assert ctx.sub_questions == ["What is Elixir?", "What is Go?"]
+    end
+
+    test "expanded query is used by decompose/2 (full chain)" do
+      llm = fn prompt ->
+        cond do
+          prompt =~ "rewrite this input" ->
+            {:ok, "compare ML and DL"}
+
+          prompt =~ "expand this query" ->
+            {:ok, "compare ML machine learning and DL deep learning"}
+
+          prompt =~ "decompose this question" ->
+            # Should receive the expanded query with synonyms
+            if prompt =~ "machine learning" and prompt =~ "deep learning" do
+              {:ok, ~s({"sub_questions": ["What is ML machine learning?", "What is DL deep learning?"]})}
+            else
+              {:ok, ~s({"sub_questions": ["missing expansions"]})}
+            end
+
+          true ->
+            {:ok, "response"}
+        end
+      end
+
+      ctx =
+        Agent.new("Hey, compare ML and DL for me",
+          repo: Arcana.TestRepo,
+          llm: llm
+        )
+        |> Agent.rewrite()
+        |> Agent.expand()
+        |> Agent.decompose()
+
+      assert ctx.rewritten_query == "compare ML and DL"
+      assert ctx.expanded_query == "compare ML machine learning and DL deep learning"
+      assert ctx.sub_questions == ["What is ML machine learning?", "What is DL deep learning?"]
     end
 
     test "handles LLM error gracefully" do
@@ -1557,6 +1780,34 @@ defmodule Arcana.AgentTest do
 
       assert is_map(ctx.rerank_scores)
       refute Enum.empty?(ctx.rerank_scores)
+    end
+
+    test "accepts custom llm option" do
+      default_llm = fn _prompt -> raise "default LLM should not be called" end
+
+      custom_llm = fn prompt ->
+        if prompt =~ "Rate how relevant" do
+          {:ok, ~s({"score": 9, "reasoning": "custom llm scored"})}
+        else
+          {:ok, "response"}
+        end
+      end
+
+      ctx =
+        %Context{
+          question: "Elixir",
+          repo: Arcana.TestRepo,
+          llm: default_llm,
+          limit: 10,
+          threshold: 0.0,
+          collections: ["test-rerank"]
+        }
+        |> Agent.search()
+        |> Agent.rerank(llm: custom_llm)
+
+      # Rerank should succeed using custom LLM
+      refute Enum.empty?(ctx.results)
+      assert is_map(ctx.rerank_scores)
     end
   end
 

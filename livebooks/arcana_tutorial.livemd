@@ -668,14 +668,37 @@ end
 ```elixir
 # Complete agentic RAG pipeline:
 # ctx = Agent.new("What is Elixir?", repo: MyApp.Repo, llm: my_llm)
-#   |> Agent.rewrite()    # Clean up conversational input
-#   |> Agent.select()     # Choose collections
-#   |> Agent.expand()     # Add synonyms
-#   |> Agent.search()     # Retrieve chunks
-#   |> Agent.rerank()     # Filter by relevance
-#   |> Agent.answer()     # Generate answer
+#   |> Agent.rewrite()                    # Clean up conversational input
+#   |> Agent.select()                     # Choose collections
+#   |> Agent.expand()                     # Add synonyms
+#   |> Agent.search()                     # Retrieve chunks
+#   |> Agent.rerank()                     # Filter by relevance
+#   |> Agent.answer(self_correct: true)   # Generate and refine answer
 
 IO.puts("The full pipeline: rewrite → select → expand → search → rerank → answer")
+```
+
+### Self-Correcting Answers
+
+The `answer/2` step can evaluate and refine answers to ensure they're grounded in the context:
+
+```elixir
+# ctx = Agent.new("What is Elixir?", repo: MyApp.Repo, llm: my_llm)
+#   |> Agent.search()
+#   |> Agent.rerank()
+#   |> Agent.answer(self_correct: true, max_corrections: 2)
+#
+# ctx.answer            # Final (possibly refined) answer
+# ctx.correction_count  # Number of corrections made
+# ctx.corrections       # List of {previous_answer, feedback} tuples
+
+IO.puts("""
+Self-correction flow:
+1. Generate initial answer
+2. Evaluate if grounded in context
+3. If not grounded, regenerate with feedback
+4. Repeat up to max_corrections times
+""")
 ```
 
 ### Explicit Collection Selection
@@ -718,6 +741,7 @@ Use explicit collections when:
 | **Query Rewriting** | Clean conversational input into clear queries |
 | **Query Expansion** | Add synonyms for better recall |
 | **Re-ranking** | Filter chunks by LLM-scored relevance |
+| **Self-Correction** | Evaluate and refine answers for grounding |
 | **Agent Pipeline** | Rewrite → Select → Expand → Search → Rerank → Answer |
 
 ### Next Steps

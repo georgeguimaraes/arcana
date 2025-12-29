@@ -145,7 +145,9 @@ defmodule Arcana.Agent do
     String.replace(@default_rewrite_prompt, "{query}", question)
   end
 
-  # Returns the effective query to use: rewritten_query if available, else question
+  # Returns the effective query to use, chaining through the pipeline:
+  # expanded_query → rewritten_query → question
+  defp effective_query(%Context{expanded_query: expanded}) when is_binary(expanded), do: expanded
   defp effective_query(%Context{rewritten_query: rewritten}) when is_binary(rewritten), do: rewritten
   defp effective_query(%Context{question: question}), do: question
 
@@ -205,7 +207,8 @@ defmodule Arcana.Agent do
     }
 
     :telemetry.span([:arcana, :agent, :select], start_metadata, fn ->
-      selector_opts = Keyword.merge(opts, llm: ctx.llm)
+      llm = Keyword.get(opts, :llm, ctx.llm)
+      selector_opts = Keyword.merge(opts, llm: llm)
 
       {collections, reasoning} =
         do_select(selector, ctx.question, collections_with_descriptions, selector_opts)
@@ -708,7 +711,8 @@ defmodule Arcana.Agent do
         ctx.results
         |> Enum.flat_map(& &1.chunks)
 
-      reranker_opts = [llm: ctx.llm, threshold: threshold, prompt: prompt_fn]
+      llm = Keyword.get(opts, :llm, ctx.llm)
+      reranker_opts = [llm: llm, threshold: threshold, prompt: prompt_fn]
 
       {reranked_chunks, scores} =
         case do_rerank(reranker, ctx.question, all_chunks_before, reranker_opts) do
@@ -782,22 +786,27 @@ defmodule Arcana.Agent do
 
     :telemetry.span([:arcana, :agent, :answer], start_metadata, fn ->
       llm = Keyword.get(opts, :llm, ctx.llm)
+      self_correct = Keyword.get(opts, :self_correct, false)
+      max_corrections = Keyword.get(opts, :max_corrections, 2)
+      custom_prompt_fn = Keyword.get(opts, :prompt)
 
       all_chunks =
         ctx.results
         |> Enum.flat_map(& &1.chunks)
         |> Enum.uniq_by(& &1.id)
 
-      prompt =
-        case Keyword.get(opts, :prompt) do
-          nil -> default_answer_prompt(ctx.question, all_chunks)
-          custom_fn -> custom_fn.(ctx.question, all_chunks)
-        end
+      prompt = build_answer_prompt(custom_prompt_fn, ctx.question, all_chunks)
 
       updated_ctx =
         case llm.(prompt) do
           {:ok, answer} ->
-            %{ctx | answer: answer, context_used: all_chunks}
+            base_ctx = %{ctx | answer: answer, context_used: all_chunks}
+
+            if self_correct do
+              do_self_correct(base_ctx, llm, all_chunks, max_corrections, custom_prompt_fn)
+            else
+              %{base_ctx | correction_count: 0, corrections: []}
+            end
 
           {:error, reason} ->
             %{ctx | error: reason}
@@ -805,11 +814,139 @@ defmodule Arcana.Agent do
 
       stop_metadata = %{
         context_chunk_count: length(all_chunks),
+        correction_count: updated_ctx.correction_count || 0,
         success: is_nil(updated_ctx.error)
       }
 
       {updated_ctx, stop_metadata}
     end)
+  end
+
+  defp build_answer_prompt(nil, question, chunks), do: default_answer_prompt(question, chunks)
+  defp build_answer_prompt(custom_fn, question, chunks), do: custom_fn.(question, chunks)
+
+  defp do_self_correct(ctx, llm, chunks, max_corrections, custom_prompt_fn) do
+    do_self_correct_loop(ctx, llm, chunks, max_corrections, custom_prompt_fn, 0, [])
+  end
+
+  defp do_self_correct_loop(ctx, _llm, _chunks, max_corrections, _custom_prompt_fn, count, history)
+       when count >= max_corrections do
+    %{ctx | correction_count: count, corrections: Enum.reverse(history)}
+  end
+
+  defp do_self_correct_loop(ctx, llm, chunks, max_corrections, custom_prompt_fn, count, history) do
+    :telemetry.span([:arcana, :agent, :self_correct], %{attempt: count + 1}, fn ->
+      case evaluate_answer(llm, ctx.question, ctx.answer, chunks) do
+        {:ok, :grounded} ->
+          result = %{ctx | correction_count: count, corrections: Enum.reverse(history)}
+          {result, %{result: :accepted, attempt: count + 1}}
+
+        {:ok, {:needs_improvement, feedback}} ->
+          correction_prompt = build_correction_prompt(ctx.question, chunks, ctx.answer, feedback)
+
+          case llm.(correction_prompt) do
+            {:ok, new_answer} ->
+              new_history = [{ctx.answer, feedback} | history]
+              new_ctx = %{ctx | answer: new_answer}
+
+              result =
+                do_self_correct_loop(
+                  new_ctx,
+                  llm,
+                  chunks,
+                  max_corrections,
+                  custom_prompt_fn,
+                  count + 1,
+                  new_history
+                )
+
+              {result, %{result: :corrected, attempt: count + 1}}
+
+            {:error, reason} ->
+              result = %{ctx | error: reason, correction_count: count, corrections: Enum.reverse(history)}
+              {result, %{result: :error, attempt: count + 1}}
+          end
+
+        {:error, _reason} ->
+          # If evaluation fails, accept the current answer
+          result = %{ctx | correction_count: count, corrections: Enum.reverse(history)}
+          {result, %{result: :eval_failed, attempt: count + 1}}
+      end
+    end)
+  end
+
+  defp evaluate_answer(llm, question, answer, chunks) do
+    context = Enum.map_join(chunks, "\n\n", & &1.text)
+
+    prompt = """
+    Evaluate if the following answer is well-grounded in the provided context.
+
+    Question: "#{question}"
+
+    Context:
+    #{context}
+
+    Answer to evaluate:
+    #{answer}
+
+    Respond with JSON:
+    - If the answer is well-grounded and accurate: {"grounded": true}
+    - If the answer needs improvement: {"grounded": false, "feedback": "specific feedback on what to improve"}
+
+    Only mark as not grounded if there are clear issues like:
+    - Claims not supported by the context
+    - Missing key information from the context
+    - Factual errors
+
+    JSON response:
+    """
+
+    case llm.(prompt) do
+      {:ok, response} ->
+        parse_evaluation_response(response)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp parse_evaluation_response(response) do
+    case Jason.decode(response) do
+      {:ok, %{"grounded" => true}} ->
+        {:ok, :grounded}
+
+      {:ok, %{"grounded" => false, "feedback" => feedback}} ->
+        {:ok, {:needs_improvement, feedback}}
+
+      {:ok, %{"grounded" => false}} ->
+        {:ok, {:needs_improvement, "Please ensure the answer is well-grounded in the provided context."}}
+
+      {:error, _} ->
+        # Try to extract JSON from response
+        case Regex.run(~r/\{[^}]+\}/, response) do
+          [json_str] -> parse_evaluation_response(json_str)
+          _ -> {:ok, :grounded}
+        end
+    end
+  end
+
+  defp build_correction_prompt(question, chunks, previous_answer, feedback) do
+    context = Enum.map_join(chunks, "\n\n---\n\n", & &1.text)
+
+    """
+    Question: "#{question}"
+
+    Context:
+    #{context}
+
+    Your previous answer:
+    #{previous_answer}
+
+    Feedback on your answer:
+    #{feedback}
+
+    Please provide an improved answer that addresses the feedback. Ensure your answer is well-grounded in the provided context.
+    """
   end
 
   defp default_answer_prompt(question, chunks) do

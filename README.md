@@ -305,7 +305,7 @@ end
 
 ### Agentic RAG
 
-For complex questions, use the Agent pipeline with self-correcting search, question decomposition, and collection selection:
+For complex questions, use the Agent pipeline with question decomposition, re-ranking, and self-correcting answers:
 
 ```elixir
 llm = fn prompt -> {:ok, "LLM response"} end
@@ -314,8 +314,9 @@ ctx =
   Arcana.Agent.new("Compare Elixir and Erlang features", repo: MyApp.Repo, llm: llm)
   |> Arcana.Agent.select(collections: ["elixir-docs", "erlang-docs"])
   |> Arcana.Agent.expand()
-  |> Arcana.Agent.search(self_correct: true)
-  |> Arcana.Agent.answer()
+  |> Arcana.Agent.search()
+  |> Arcana.Agent.rerank()
+  |> Arcana.Agent.answer(self_correct: true)
 
 ctx.answer
 # => "Generated answer based on retrieved context..."
@@ -330,9 +331,9 @@ ctx.answer
 | `select/2` | Select relevant collections (LLM or custom selector) |
 | `expand/2` | Expand query with synonyms and related terms |
 | `decompose/2` | Break complex questions into sub-questions |
-| `search/2` | Execute search (with optional self-correction) |
+| `search/2` | Execute search across collections |
 | `rerank/2` | Re-score and filter chunks by relevance |
-| `answer/2` | Generate final answer from retrieved context |
+| `answer/2` | Generate final answer (with optional self-correction) |
 
 **Explicit collection selection:**
 
@@ -447,6 +448,30 @@ Agent.rerank(ctx, reranker: fn question, chunks, _opts ->
 end)
 ```
 
+**Self-correcting answers:**
+
+`answer/2` can evaluate and refine answers to ensure they're grounded in the retrieved context:
+
+```elixir
+ctx
+|> Agent.search()
+|> Agent.rerank()
+|> Agent.answer(self_correct: true, max_corrections: 2)
+
+# After answering:
+ctx.answer           # Final answer (possibly refined)
+ctx.correction_count # Number of corrections made (0 if grounded on first try)
+ctx.corrections      # List of {previous_answer, feedback} tuples
+```
+
+When `self_correct: true`, the pipeline:
+1. Generates an initial answer
+2. Evaluates if the answer is grounded in the context
+3. If not grounded, regenerates with feedback
+4. Repeats up to `max_corrections` times (default: 2)
+
+Use self-correction when answer quality is critical and you want to reduce hallucinations.
+
 #### Custom Prompts
 
 All pipeline steps accept custom prompt functions:
@@ -457,11 +482,7 @@ ctx
 |> Agent.select(collections: [...], prompt: fn question, collections -> "..." end)
 |> Agent.expand(prompt: fn question -> "..." end)
 |> Agent.decompose(prompt: fn question -> "..." end)
-|> Agent.search(
-  self_correct: true,
-  sufficient_prompt: fn question, chunks -> "..." end,
-  rewrite_prompt: fn question, chunks -> "..." end
-)
+|> Agent.search()
 |> Agent.rerank(prompt: fn question, chunk_text -> "..." end)
 |> Agent.answer(prompt: fn question, chunks -> "..." end)
 ```
@@ -843,7 +864,7 @@ config :nx, default_backend: EXLA.Backend
 - [x] Re-ranking (Agent.rerank/2)
 - [x] Agentic RAG
   - [x] Agent pipeline with context struct
-  - [x] Self-correcting search (evaluate + retry)
+  - [x] Self-correcting answers (evaluate + refine)
   - [x] Question decomposition (multi-step)
   - [x] Collection selection
 - [ ] E5 embedding model prefix support (`query:` / `passage:` prefixes)
