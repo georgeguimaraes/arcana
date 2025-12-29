@@ -66,9 +66,18 @@ defmodule Arcana.Telemetry do
     * Measurement: `%{duration: integer}`
     * Metadata: `%{kind: atom(), reason: term(), stacktrace: list()}`
 
-  ## Example Handler
+  ## Quick Start with Built-in Logger
 
-  Here's how to attach a simple logging handler:
+  For quick setup, use the built-in logger:
+
+      # In your application's start/2
+      Arcana.Telemetry.Logger.attach()
+
+  This logs all events with timing info. See `Arcana.Telemetry.Logger` for options.
+
+  ## Custom Handler
+
+  For custom handling, attach your own handler:
 
       defmodule MyApp.ArcanaLogger do
         require Logger
