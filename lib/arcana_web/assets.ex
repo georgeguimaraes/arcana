@@ -828,6 +828,7 @@ defmodule ArcanaWeb.Assets do
 
   /* Upload styles */
   .arcana-dropzone {
+    position: relative;
     border: 2px dashed #d1d5db;
     border-radius: 0.5rem;
     padding: 2rem;
@@ -853,7 +854,10 @@ defmodule ArcanaWeb.Assets do
   }
 
   .arcana-file-input {
-    display: none;
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
   }
 
   .arcana-upload-entry {
