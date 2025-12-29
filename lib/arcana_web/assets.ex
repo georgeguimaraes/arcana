@@ -208,8 +208,18 @@ defmodule ArcanaWeb.Assets do
     vertical-align: middle;
   }
 
+  .arcana-documents-table td:nth-child(1) {
+    max-width: 120px;
+    word-break: break-all;
+  }
+
+  .arcana-documents-table td:nth-child(2) {
+    max-width: 300px;
+  }
+
   .arcana-documents-table td:nth-child(5),
-  .arcana-documents-table td:nth-child(6) {
+  .arcana-documents-table td:nth-child(6),
+  .arcana-documents-table td:nth-child(7) {
     white-space: nowrap;
   }
 
@@ -232,17 +242,27 @@ defmodule ArcanaWeb.Assets do
 
   .arcana-documents-table button {
     background: transparent;
-    color: #dc2626;
-    border: 1px solid #dc2626;
     padding: 0.375rem 0.75rem;
     border-radius: 0.25rem;
     font-size: 0.75rem;
     cursor: pointer;
     transition: all 0.15s ease;
+    color: #dc2626;
+    border: 1px solid #dc2626;
   }
 
   .arcana-documents-table button:hover {
     background: #dc2626;
+    color: white;
+  }
+
+  .arcana-documents-table .arcana-view-btn {
+    color: #7c3aed;
+    border-color: #7c3aed;
+  }
+
+  .arcana-documents-table .arcana-view-btn:hover {
+    background: #7c3aed;
     color: white;
   }
 
