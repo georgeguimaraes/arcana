@@ -79,7 +79,7 @@ defmodule Arcana.MixProject do
       {:igniter, "~> 0.5", optional: true},
 
       # LLM integrations via Req.LLM
-      {:req_llm, github: "georgeguimaraes/req_llm", ref: "781b623a3621175bf1e3f24e2c44e6eb1982608b"},
+      {:req_llm, github: "agentjido/req_llm", ref: "56660898e3097026e64654cdd2c2c5372c9899c6"},
 
       # Optional: In-memory vector store with HNSW
       {:hnswlib, github: "elixir-nx/hnswlib", optional: true},
