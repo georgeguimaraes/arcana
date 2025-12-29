@@ -743,6 +743,30 @@ defmodule ArcanaWeb.Assets do
     color: #1e40af;
   }
 
+  .arcana-actions-cell {
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
+  }
+
+  .arcana-icon-btn {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.375rem;
+    background: transparent;
+    color: #9ca3af;
+    border: none;
+    border-radius: 0.25rem;
+    cursor: pointer;
+  }
+
+  .arcana-icon-btn:hover {
+    color: #7c3aed;
+    background: #f3f4f6;
+  }
+
   .arcana-delete-btn {
     flex-shrink: 0;
     display: flex;
