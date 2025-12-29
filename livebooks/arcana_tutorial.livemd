@@ -42,10 +42,10 @@ Arcana uses Bumblebee to generate embeddings locally with `bge-small-en-v1.5`. T
 ```elixir
 # Start the local embedding model
 # This downloads the model on first run (~100MB)
-{:ok, _} = Arcana.Embedding.Local.start_link([])
+{:ok, _} = Arcana.Embedder.Local.start_link([])
 
 # Verify it's working
-{:ok, embedding} = Arcana.Embedding.embed(Arcana.embedder(), "Hello, world!")
+{:ok, embedding} = Arcana.Embedder.embed(Arcana.embedder(), "Hello, world!")
 IO.puts("Embedding dimensions: #{length(embedding)}")
 ```
 
@@ -88,7 +88,7 @@ docs = [
 
 # Store each document
 for doc <- docs do
-  {:ok, embedding} = Arcana.Embedding.embed(Arcana.embedder(), doc.text)
+  {:ok, embedding} = Arcana.Embedder.embed(Arcana.embedder(), doc.text)
 
   :ok = VectorStore.store(
     "languages",           # collection name
@@ -110,7 +110,7 @@ Semantic search finds documents with similar **meaning**, not just matching keyw
 # Search for documents about concurrent programming
 query = "concurrent programming with message passing"
 
-{:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), query)
+{:ok, query_embedding} = Arcana.Embedder.embed(Arcana.embedder(), query)
 
 results = VectorStore.search(
   "languages",
@@ -167,7 +167,7 @@ test_queries = [
 
 comparison_data =
   for query <- test_queries do
-    {:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), query)
+    {:ok, query_embedding} = Arcana.Embedder.embed(Arcana.embedder(), query)
 
     # Semantic search
     semantic = VectorStore.search("languages", query_embedding,
@@ -204,7 +204,7 @@ frameworks = [
 ]
 
 for doc <- frameworks do
-  {:ok, embedding} = Arcana.Embedding.embed(Arcana.embedder(), doc.text)
+  {:ok, embedding} = Arcana.Embedder.embed(Arcana.embedder(), doc.text)
   :ok = VectorStore.store("frameworks", doc.id, embedding, %{text: doc.text},
     vector_store: {:memory, pid: memory_pid})
 end
@@ -215,7 +215,7 @@ IO.puts("Stored #{length(frameworks)} documents in 'frameworks' collection")
 ```elixir
 # Search only in frameworks collection
 query = "real-time web applications"
-{:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), query)
+{:ok, query_embedding} = Arcana.Embedder.embed(Arcana.embedder(), query)
 
 framework_results = VectorStore.search("frameworks", query_embedding,
   vector_store: {:memory, pid: memory_pid}, limit: 2)
@@ -247,8 +247,8 @@ heatmap_data =
   for query <- queries,
       doc <- all_docs,
       doc.id in doc_ids do
-    {:ok, q_emb} = Arcana.Embedding.embed(Arcana.embedder(), query)
-    {:ok, d_emb} = Arcana.Embedding.embed(Arcana.embedder(), doc.text)
+    {:ok, q_emb} = Arcana.Embedder.embed(Arcana.embedder(), query)
+    {:ok, d_emb} = Arcana.Embedder.embed(Arcana.embedder(), doc.text)
 
     # Cosine similarity
     dot = Enum.zip_with(q_emb, d_emb, &(&1 * &2)) |> Enum.sum()
@@ -324,7 +324,7 @@ ctx =
   )
 
 # Manual search since we're using custom vector store
-{:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), ctx.question)
+{:ok, query_embedding} = Arcana.Embedder.embed(Arcana.embedder(), ctx.question)
 
 lang_results = VectorStore.search("languages", query_embedding,
   vector_store: {:memory, pid: memory_pid}, limit: 2)
@@ -379,7 +379,7 @@ defmodule HybridSearch do
     k = 60
 
     # Get query embedding for semantic search
-    {:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), query)
+    {:ok, query_embedding} = Arcana.Embedder.embed(Arcana.embedder(), query)
 
     # Semantic results
     semantic = Arcana.VectorStore.search(collection, query_embedding,
@@ -422,7 +422,7 @@ end
 # Compare hybrid vs semantic only
 query = "BEAM concurrency"
 
-{:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), query)
+{:ok, query_embedding} = Arcana.Embedder.embed(Arcana.embedder(), query)
 
 semantic_only = VectorStore.search("languages", query_embedding,
   vector_store: {:memory, pid: memory_pid}, limit: 3)
@@ -444,7 +444,7 @@ for r <- hybrid, do: IO.puts("  #{r.id}: #{Float.round(r.score, 4)}")
 ```elixir
 # Get all scores for a query
 query = "programming language features"
-{:ok, query_embedding} = Arcana.Embedding.embed(Arcana.embedder(), query)
+{:ok, query_embedding} = Arcana.Embedder.embed(Arcana.embedder(), query)
 
 all_scores = VectorStore.search("languages", query_embedding,
   vector_store: {:memory, pid: memory_pid}, limit: 10)
@@ -636,13 +636,13 @@ IO.puts("Re-ranking filters out irrelevant chunks")
 
 ### Custom Reranker
 
-Implement the `Arcana.Reranker` behaviour for custom scoring logic:
+Implement the `Arcana.Agent.Reranker` behaviour for custom scoring logic:
 
 ```elixir
 defmodule MyKeywordReranker do
-  @behaviour Arcana.Reranker
+  @behaviour Arcana.Agent.Reranker
 
-  @impl Arcana.Reranker
+  @impl Arcana.Agent.Reranker
   def rerank(_question, chunks, opts) do
     threshold = Keyword.get(opts, :threshold, 5)
 

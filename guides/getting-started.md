@@ -34,10 +34,10 @@ Arcana uses local embeddings by default via Bumblebee. No API keys needed.
 # config/config.exs
 
 # Default - BGE Small (384 dimensions, 133MB)
-config :arcana, embedding: :local
+config :arcana, embedder: :local
 
 # Use a different model
-config :arcana, embedding: {:local, model: "BAAI/bge-base-en-v1.5"}
+config :arcana, embedder: {:local, model: "BAAI/bge-base-en-v1.5"}
 ```
 
 Add the embedding model to your supervision tree:
@@ -46,7 +46,7 @@ Add the embedding model to your supervision tree:
 # application.ex
 children = [
   MyApp.Repo,
-  {Arcana.Embedding.Local, model: "BAAI/bge-small-en-v1.5"},
+  {Arcana.Embedder.Local, model: "BAAI/bge-small-en-v1.5"},
   # ...
 ]
 ```
@@ -247,7 +247,7 @@ For custom re-ranking logic (e.g., cross-encoder models):
 ```elixir
 # Custom reranker module
 defmodule MyApp.CrossEncoderReranker do
-  @behaviour Arcana.Reranker
+  @behaviour Arcana.Agent.Reranker
 
   @impl true
   def rerank(question, chunks, _opts) do

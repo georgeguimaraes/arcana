@@ -21,6 +21,13 @@ Embeddable RAG library for Elixir/Phoenix. Add vector search, document retrieval
 - **LiveView Dashboard** - Optional web UI for managing documents and searching
 - **Telemetry** - Built-in observability for all operations
 
+## How it works
+
+1. **Ingest**: Text is split into overlapping chunks (default 450 tokens, 50 overlap)
+2. **Embed**: Each chunk is embedded using `bge-small-en-v1.5` (384 dimensions)
+3. **Store**: Chunks are stored in PostgreSQL with pgvector
+4. **Search**: Query is embedded and compared using cosine similarity via HNSW index
+
 ## Installation
 
 Add `arcana` to your dependencies:
@@ -120,7 +127,7 @@ If using local Bumblebee embeddings (the default), add the serving to your super
 def start(_type, _args) do
   children = [
     MyApp.Repo,
-    Arcana.Embedding.Local  # Starts the local embedding model
+    Arcana.Embedder.Local  # Starts the local embedding model
   ]
 
   opts = [strategy: :one_for_one, name: MyApp.Supervisor]
@@ -129,6 +136,15 @@ end
 ```
 
 For OpenAI embeddings or custom providers, skip this step.
+
+### 4. Configure Nx backend (recommended)
+
+For better performance with local embeddings:
+
+```elixir
+# config/config.exs
+config :nx, default_backend: EXLA.Backend
+```
 
 ## Usage
 
@@ -669,22 +685,22 @@ Arcana supports multiple embedding providers:
 # config/config.exs
 
 # Local Bumblebee (default) - no API keys needed
-config :arcana, embedding: :local
-config :arcana, embedding: {:local, model: "BAAI/bge-large-en-v1.5"}
+config :arcana, embedder: :local
+config :arcana, embedder: {:local, model: "BAAI/bge-large-en-v1.5"}
 
 # OpenAI (requires req_llm and OPENAI_API_KEY)
-config :arcana, embedding: :openai
-config :arcana, embedding: {:openai, model: "text-embedding-3-large"}
+config :arcana, embedder: :openai
+config :arcana, embedder: {:openai, model: "text-embedding-3-large"}
 
 # Custom function
-config :arcana, embedding: fn text ->
+config :arcana, embedder: fn text ->
   # Your embedding logic
   {:ok, embedding_vector}
 end
 
-# Custom module implementing Arcana.Embedding behaviour
-config :arcana, embedding: MyApp.CohereEmbedder
-config :arcana, embedding: {MyApp.CohereEmbedder, api_key: "..."}
+# Custom module implementing Arcana.Embedder behaviour
+config :arcana, embedder: MyApp.CohereEmbedder
+config :arcana, embedder: {MyApp.CohereEmbedder, api_key: "..."}
 ```
 
 #### Built-in Providers
@@ -720,11 +736,11 @@ All local models run via Bumblebee with no API keys required. Models are downloa
 
 #### Custom Embedding Module
 
-Implement the `Arcana.Embedding` behaviour:
+Implement the `Arcana.Embedder` behaviour:
 
 ```elixir
 defmodule MyApp.CohereEmbedder do
-  @behaviour Arcana.Embedding
+  @behaviour Arcana.Embedder
 
   @impl true
   def embed(text, opts) do
@@ -741,7 +757,7 @@ end
 Then configure:
 
 ```elixir
-config :arcana, embedding: {MyApp.CohereEmbedder, api_key: "..."}
+config :arcana, embedder: {MyApp.CohereEmbedder, api_key: "..."}
 ```
 
 ### Vector Store Backends
@@ -860,22 +876,6 @@ results = VectorStore.search("products", query_embedding,
   limit: 10
 )
 ```
-
-### Other Settings
-
-```elixir
-# config/config.exs
-
-# Use EXLA backend for Nx (recommended for performance)
-config :nx, default_backend: EXLA.Backend
-```
-
-## How it works
-
-1. **Ingest**: Text is split into overlapping chunks (default 450 tokens, 50 overlap)
-2. **Embed**: Each chunk is embedded using `bge-small-en-v1.5` (384 dimensions)
-3. **Store**: Chunks are stored in PostgreSQL with pgvector
-4. **Search**: Query is embedded and compared using cosine similarity via HNSW index
 
 ## Architecture
 

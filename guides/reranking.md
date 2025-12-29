@@ -62,13 +62,13 @@ Agent.rerank(ctx, prompt: custom_prompt)
 
 ### Implementing the Behaviour
 
-Create a custom reranker by implementing `Arcana.Reranker`:
+Create a custom reranker by implementing `Arcana.Agent.Reranker`:
 
 ```elixir
 defmodule MyApp.CrossEncoderReranker do
-  @behaviour Arcana.Reranker
+  @behaviour Arcana.Agent.Reranker
 
-  @impl Arcana.Reranker
+  @impl Arcana.Agent.Reranker
   def rerank(question, chunks, opts) do
     threshold = Keyword.get(opts, :threshold, 0.5)
 
@@ -112,7 +112,7 @@ end)
 
 ## Built-in Rerankers
 
-### Arcana.Reranker.LLM (Default)
+### Arcana.Agent.Reranker.LLM (Default)
 
 Uses your LLM to score each chunk:
 
