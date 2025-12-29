@@ -8,7 +8,7 @@ defmodule Arcana.Embedder.Custom do
   ## Configuration
 
       # Function that returns {:ok, embedding}
-      config :arcana, embedding: fn text -> {:ok, List.duplicate(0.1, 384)} end
+      config :arcana, embedder: fn text -> {:ok, List.duplicate(0.1, 384)} end
 
   The function must:
   - Accept a single text string

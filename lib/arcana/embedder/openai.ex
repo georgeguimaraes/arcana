@@ -7,10 +7,10 @@ defmodule Arcana.Embedder.OpenAI do
   ## Configuration
 
       # Default OpenAI model
-      config :arcana, embedding: :openai
+      config :arcana, embedder: :openai
 
       # Custom OpenAI model
-      config :arcana, embedding: {:openai, model: "text-embedding-3-large"}
+      config :arcana, embedder: {:openai, model: "text-embedding-3-large"}
 
   ## Requirements
 

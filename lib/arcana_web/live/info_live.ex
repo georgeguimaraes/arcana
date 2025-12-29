@@ -28,7 +28,7 @@ defmodule ArcanaWeb.InfoLive do
     %{
       repo: Application.get_env(:arcana, :repo),
       llm: format_llm_config(Application.get_env(:arcana, :llm)),
-      embedding: format_embedding_config(Application.get_env(:arcana, :embedding, :local)),
+      embedding: format_embedding_config(Application.get_env(:arcana, :embedder, :local)),
       reranker: format_reranker_config(Application.get_env(:arcana, :reranker))
     }
   end
@@ -186,7 +186,7 @@ defmodule ArcanaWeb.InfoLive do
           <h3>Raw Configuration</h3>
           <pre class="arcana-doc-content" style="font-size: 0.75rem;">config :arcana,
     repo: <%= inspect(@config_info.repo) %>,
-    embedding: <%= inspect(Application.get_env(:arcana, :embedding, :local)) %>,
+    embedding: <%= inspect(Application.get_env(:arcana, :embedder, :local)) %>,
     llm: <%= if Application.get_env(:arcana, :llm), do: inspect(Application.get_env(:arcana, :llm)), else: "nil" %>,
     reranker: <%= if Application.get_env(:arcana, :reranker), do: inspect(Application.get_env(:arcana, :reranker)), else: "Arcana.Reranker.LLM (default)" %></pre>
         </div>

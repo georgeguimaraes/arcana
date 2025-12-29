@@ -5,7 +5,7 @@ config :arcana, repo: Arcana.TestRepo
 # Use a mock embedding function for tests (384 dimensions like bge-small-en-v1.5)
 # Creates pseudo-embeddings where similar words produce similar vectors
 config :arcana,
-  embedding: fn text ->
+  embedder: fn text ->
     # Normalize and tokenize
     words =
       text

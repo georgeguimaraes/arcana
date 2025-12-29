@@ -7,10 +7,10 @@ defmodule Arcana.Embedder.Local do
   ## Configuration
 
       # Default model
-      config :arcana, embedding: :local
+      config :arcana, embedder: :local
 
       # Custom HuggingFace model
-      config :arcana, embedding: {:local, model: "BAAI/bge-large-en-v1.5"}
+      config :arcana, embedder: {:local, model: "BAAI/bge-large-en-v1.5"}
 
   ## Starting the Serving
 

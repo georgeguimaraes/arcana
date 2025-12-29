@@ -26,25 +26,25 @@ defmodule Arcana do
   The embedder is configured via application config:
 
       # Default: Local Bumblebee with bge-small-en-v1.5
-      config :arcana, embedding: :local
+      config :arcana, embedder: :local
 
       # Local with different model
-      config :arcana, embedding: {:local, model: "BAAI/bge-large-en-v1.5"}
+      config :arcana, embedder: {:local, model: "BAAI/bge-large-en-v1.5"}
 
       # OpenAI (requires req_llm and OPENAI_API_KEY)
-      config :arcana, embedding: :openai
-      config :arcana, embedding: {:openai, model: "text-embedding-3-large"}
+      config :arcana, embedder: :openai
+      config :arcana, embedder: {:openai, model: "text-embedding-3-large"}
 
       # Z.ai (requires ZAI_API_KEY)
-      config :arcana, embedding: :zai
-      config :arcana, embedding: {:zai, dimensions: 1024}
+      config :arcana, embedder: :zai
+      config :arcana, embedder: {:zai, dimensions: 1024}
 
       # Custom function
-      config :arcana, embedding: fn text -> {:ok, embedding} end
+      config :arcana, embedder: fn text -> {:ok, embedding} end
 
       # Custom module implementing Arcana.Embedder behaviour
-      config :arcana, embedding: MyApp.CohereEmbedder
-      config :arcana, embedding: {MyApp.CohereEmbedder, api_key: "..."}
+      config :arcana, embedder: MyApp.CohereEmbedder
+      config :arcana, embedder: {MyApp.CohereEmbedder, api_key: "..."}
 
   ## Custom Embedding Modules
 
@@ -66,7 +66,7 @@ defmodule Arcana do
 
   """
   def embedder do
-    Application.get_env(:arcana, :embedding, :local)
+    Application.get_env(:arcana, :embedder, :local)
     |> parse_embedder_config()
   end
 

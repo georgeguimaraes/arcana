@@ -125,11 +125,11 @@ defmodule Arcana.EmbedderTest do
 
   describe "custom module config" do
     test "embedder/0 supports {module, opts} config" do
-      original = Application.get_env(:arcana, :embedding)
+      original = Application.get_env(:arcana, :embedder)
 
       Application.put_env(
         :arcana,
-        :embedding,
+        :embedder,
         {Arcana.EmbedderTest.MockEmbedder, dimensions: 128, api_key: "test-key"}
       )
 
@@ -140,21 +140,21 @@ defmodule Arcana.EmbedderTest do
         assert Keyword.get(opts, :dimensions) == 128
         assert Keyword.get(opts, :api_key) == "test-key"
       after
-        Application.put_env(:arcana, :embedding, original)
+        Application.put_env(:arcana, :embedder, original)
       end
     end
 
     test "embedder/0 supports bare module config" do
-      original = Application.get_env(:arcana, :embedding)
+      original = Application.get_env(:arcana, :embedder)
 
-      Application.put_env(:arcana, :embedding, Arcana.EmbedderTest.MockEmbedder)
+      Application.put_env(:arcana, :embedder, Arcana.EmbedderTest.MockEmbedder)
 
       try do
         embedder = Arcana.embedder()
 
         assert {Arcana.EmbedderTest.MockEmbedder, []} = embedder
       after
-        Application.put_env(:arcana, :embedding, original)
+        Application.put_env(:arcana, :embedder, original)
       end
     end
 

@@ -1,15 +1,15 @@
 defmodule Arcana.LLMCase do
   @moduledoc """
-  Test case for LLM integration tests.
+  Test case for end-to-end integration tests with real APIs.
 
-  These tests call real LLM APIs and are excluded by default.
-  Run with: `mix test --include llm`
+  These tests call real LLM and embedding APIs and are excluded by default.
+  Run with: `mix test --include end_to_end`
 
   ## Environment Variables
 
   Tests require API keys to be set as environment variables:
 
-  - `ZAI_API_KEY` - Z.ai API key (for zai:* models)
+  - `ZAI_API_KEY` - Z.ai API key (for LLM and embeddings)
 
   Future providers (add as needed):
   - `OPENAI_API_KEY` - OpenAI API key
@@ -17,13 +17,14 @@ defmodule Arcana.LLMCase do
 
   ## Usage
 
-      defmodule MyLLMTest do
+      defmodule MyEndToEndTest do
         use Arcana.LLMCase, async: false
 
-        @tag :llm
-        test "calls real LLM" do
+        @tag :end_to_end
+        test "calls real LLM and embeddings" do
           llm = llm_config(:zai)
-          # ... test with real LLM
+          embedder = embedder_config(:zai)
+          # ... test with real APIs
         end
       end
   """
@@ -78,8 +79,37 @@ defmodule Arcana.LLMCase do
   # end
 
   @doc """
+  Returns embedder configuration for the given provider.
+
+  ## Providers
+
+  - `:zai` - Z.ai with embedding-3 model (1536 dimensions)
+  - `:local` - Local Bumblebee (requires Arcana.Embeddings.Serving to be running)
+
+  ## Examples
+
+      embedder = embedder_config(:zai)
+      # Use with ingest or search
+  """
+  def embedder_config(:zai) do
+    api_key = System.get_env("ZAI_API_KEY") || raise "ZAI_API_KEY not set"
+    {Arcana.Embedder.Zai, api_key: api_key}
+  end
+
+  def embedder_config(:local) do
+    {Arcana.Embedder.Local, []}
+  end
+
+  @doc """
   Checks if the given LLM provider is available (API key is set).
   """
   def llm_available?(:zai), do: System.get_env("ZAI_API_KEY") != nil
   def llm_available?(_), do: false
+
+  @doc """
+  Checks if the given embedder provider is available.
+  """
+  def embedder_available?(:zai), do: System.get_env("ZAI_API_KEY") != nil
+  def embedder_available?(:local), do: true
+  def embedder_available?(_), do: false
 end

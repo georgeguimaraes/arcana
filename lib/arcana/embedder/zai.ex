@@ -8,13 +8,13 @@ defmodule Arcana.Embedder.Zai do
   ## Configuration
 
       # Default Z.ai model (embedding-3, 1536 dims)
-      config :arcana, embedding: :zai
+      config :arcana, embedder: :zai
 
       # With custom dimensions
-      config :arcana, embedding: {:zai, dimensions: 1024}
+      config :arcana, embedder: {:zai, dimensions: 1024}
 
       # With API key (otherwise uses ZAI_API_KEY env var)
-      config :arcana, embedding: {:zai, api_key: "your-api-key"}
+      config :arcana, embedder: {:zai, api_key: "your-api-key"}
 
   ## Requirements
 

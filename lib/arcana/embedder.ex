@@ -14,25 +14,25 @@ defmodule Arcana.Embedder do
   Configure your embedding provider in `config.exs`:
 
       # Default: Local Bumblebee with bge-small-en-v1.5 (384 dims)
-      config :arcana, embedding: :local
+      config :arcana, embedder: :local
 
       # Local with different HuggingFace model
-      config :arcana, embedding: {:local, model: "BAAI/bge-large-en-v1.5"}
+      config :arcana, embedder: {:local, model: "BAAI/bge-large-en-v1.5"}
 
       # OpenAI via Req.LLM
-      config :arcana, embedding: :openai
-      config :arcana, embedding: {:openai, model: "text-embedding-3-large"}
+      config :arcana, embedder: :openai
+      config :arcana, embedder: {:openai, model: "text-embedding-3-large"}
 
       # Z.ai (1536 dims by default)
-      config :arcana, embedding: :zai
-      config :arcana, embedding: {:zai, dimensions: 1024}
+      config :arcana, embedder: :zai
+      config :arcana, embedder: {:zai, dimensions: 1024}
 
       # Custom function
-      config :arcana, embedding: fn text -> {:ok, embedding} end
+      config :arcana, embedder: fn text -> {:ok, embedding} end
 
       # Custom module implementing this behaviour
-      config :arcana, embedding: MyApp.CohereEmbedder
-      config :arcana, embedding: {MyApp.CohereEmbedder, api_key: "..."}
+      config :arcana, embedder: MyApp.CohereEmbedder
+      config :arcana, embedder: {MyApp.CohereEmbedder, api_key: "..."}
 
   ## Implementing a Custom Embedder
 
@@ -54,7 +54,7 @@ defmodule Arcana.Embedder do
 
   Then configure:
 
-      config :arcana, embedding: {MyApp.CohereEmbedder, api_key: "..."}
+      config :arcana, embedder: {MyApp.CohereEmbedder, api_key: "..."}
 
   """
 
