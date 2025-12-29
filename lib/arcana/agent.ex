@@ -271,12 +271,22 @@ defmodule Arcana.Agent do
 
   defp default_decompose_prompt(question) do
     """
-    Break this question into simpler sub-questions that can be answered independently:
+    You are an AI assistant that breaks down complex questions into simpler sub-questions for a search system.
 
+    Rules:
+    - Generate 2-4 sub-questions that can be answered independently
+    - Each sub-question should retrieve different information from the knowledge base
+    - Do NOT rephrase acronyms or technical terms you don't recognize
+    - If the question is already simple, return it unchanged
+
+    Example:
+    Question: "How does Phoenix LiveView compare to React for real-time features?"
+    {"sub_questions": ["How does Phoenix LiveView handle real-time updates?", "How does React handle real-time updates?", "What are the performance characteristics of Phoenix LiveView?"]}
+
+    Now decompose this question:
     "#{question}"
 
-    Return JSON only: {"sub_questions": ["q1", "q2", ...], "reasoning": "..."}
-    If the question is already simple, return: {"sub_questions": ["#{question}"], "reasoning": "simple question"}
+    Return JSON only: {"sub_questions": ["q1", "q2", ...]}
     """
   end
 

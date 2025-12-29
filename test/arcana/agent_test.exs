@@ -670,9 +670,8 @@ defmodule Arcana.AgentTest do
   describe "decompose/1" do
     test "breaks complex question into sub-questions" do
       llm = fn prompt ->
-        if prompt =~ "Break this question" do
-          {:ok,
-           ~s({"sub_questions": ["What is Elixir?", "What is its syntax?"], "reasoning": "Split by topic"})}
+        if prompt =~ "decompose this question" do
+          {:ok, ~s({"sub_questions": ["What is Elixir?", "What is its syntax?"]})}
         else
           {:ok, "response"}
         end
@@ -687,8 +686,8 @@ defmodule Arcana.AgentTest do
 
     test "keeps simple questions unchanged" do
       llm = fn prompt ->
-        if prompt =~ "Break this question" do
-          {:ok, ~s({"sub_questions": ["What is Elixir?"], "reasoning": "Already simple"})}
+        if prompt =~ "decompose this question" do
+          {:ok, ~s({"sub_questions": ["What is Elixir?"]})}
         else
           {:ok, "response"}
         end
