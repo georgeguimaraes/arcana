@@ -591,7 +591,7 @@ defmodule Arcana.Agent do
         fn_ref -> fn_ref.(question, chunks)
       end
 
-    case ctx.llm.(prompt) do
+    case Arcana.LLM.complete(ctx.llm, prompt, [], []) do
       {:ok, response} ->
         case JSON.decode(response) do
           {:ok, %{"sufficient" => true}} -> true
@@ -626,7 +626,7 @@ defmodule Arcana.Agent do
         fn_ref -> fn_ref.(question, chunks)
       end
 
-    case ctx.llm.(prompt) do
+    case Arcana.LLM.complete(ctx.llm, prompt, [], []) do
       {:ok, response} ->
         case JSON.decode(response) do
           {:ok, %{"query" => rewritten}} -> {:ok, rewritten}
@@ -788,7 +788,7 @@ defmodule Arcana.Agent do
       Agent.answer(ctx, answerer: fn question, chunks, opts ->
         llm = Keyword.fetch!(opts, :llm)
         prompt = "Q: " <> question <> "\nContext: " <> inspect(chunks)
-        llm.(prompt)
+        Arcana.LLM.complete(llm, prompt, [], [])
       end)
   """
   def answer(ctx, opts \\ [])
@@ -928,7 +928,7 @@ defmodule Arcana.Agent do
     JSON response:
     """
 
-    case llm.(prompt) do
+    case Arcana.LLM.complete(llm, prompt, [], []) do
       {:ok, response} ->
         parse_evaluation_response(response)
 

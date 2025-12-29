@@ -57,7 +57,7 @@ defmodule Arcana.Agent.Expander.LLM do
         custom_fn -> custom_fn.(question)
       end
 
-    case llm.(prompt) do
+    case Arcana.LLM.complete(llm, prompt, [], []) do
       {:ok, expanded} -> {:ok, String.trim(expanded)}
       {:error, reason} -> {:error, reason}
     end

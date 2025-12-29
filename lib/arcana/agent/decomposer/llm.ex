@@ -33,7 +33,7 @@ defmodule Arcana.Agent.Decomposer.LLM do
         custom_fn -> custom_fn.(question)
       end
 
-    case llm.(prompt) do
+    case Arcana.LLM.complete(llm, prompt, [], []) do
       {:ok, response} -> parse_response(response, question)
       {:error, reason} -> {:error, reason}
     end

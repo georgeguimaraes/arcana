@@ -61,7 +61,7 @@ defmodule Arcana.Agent.Rewriter.LLM do
         custom_fn -> custom_fn.(question)
       end
 
-    case llm.(prompt) do
+    case Arcana.LLM.complete(llm, prompt, [], []) do
       {:ok, rewritten} -> {:ok, String.trim(rewritten)}
       {:error, reason} -> {:error, reason}
     end

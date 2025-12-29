@@ -42,7 +42,7 @@ defmodule Arcana.Agent.Answerer.LLM do
         custom_fn -> custom_fn.(question, chunks)
       end
 
-    case llm.(prompt) do
+    case Arcana.LLM.complete(llm, prompt, [], []) do
       {:ok, answer} -> {:ok, answer}
       {:error, reason} -> {:error, reason}
     end

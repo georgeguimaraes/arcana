@@ -23,7 +23,7 @@ defmodule Arcana.Agent.Selector.LLM do
         custom_fn -> custom_fn.(question, collections)
       end
 
-    case llm.(prompt) do
+    case Arcana.LLM.complete(llm, prompt, [], []) do
       {:ok, response} -> parse_response(response, collections)
       {:error, reason} -> {:error, reason}
     end

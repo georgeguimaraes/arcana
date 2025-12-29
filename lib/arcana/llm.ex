@@ -6,6 +6,7 @@ defprotocol Arcana.LLM do
   are provided for:
 
   - Model strings via Req.LLM (e.g., `"openai:gpt-4o-mini"`, `"anthropic:claude-sonnet-4-20250514"`)
+  - Tuples of `{model_string, opts}` for passing options like `:api_key`
   - Anonymous functions (for testing and simple use cases)
 
   ## Examples
@@ -16,6 +17,10 @@ defprotocol Arcana.LLM do
 
       # Or with Anthropic
       Arcana.ask("question", llm: "anthropic:claude-sonnet-4-20250514", repo: MyApp.Repo)
+
+  Using a tuple with options (e.g., custom API key):
+
+      Arcana.ask("question", llm: {"zai:glm-4.7", api_key: "your-api-key"}, repo: MyApp.Repo)
 
   Using an anonymous function:
 
@@ -63,7 +68,15 @@ defimpl Arcana.LLM, for: Function do
 end
 
 # Req.LLM implementation for model strings like "openai:gpt-4o-mini"
+# Also supports tuples like {"openai:gpt-4o-mini", api_key: "..."}
 if Code.ensure_loaded?(ReqLLM) do
+  defimpl Arcana.LLM, for: Tuple do
+    def complete({model, llm_opts}, prompt, context, opts) when is_binary(model) do
+      merged_opts = Keyword.merge(llm_opts, opts)
+      Arcana.LLM.complete(model, prompt, context, merged_opts)
+    end
+  end
+
   defimpl Arcana.LLM, for: BitString do
     def complete(model, prompt, context, opts) when is_binary(model) do
       system_message =
@@ -78,8 +91,11 @@ if Code.ensure_loaded?(ReqLLM) do
           ReqLLM.Context.user(prompt)
         ])
 
-      case ReqLLM.generate_text(model, llm_context) do
-        {:ok, response} -> {:ok, response.text}
+      # Pass through ReqLLM options like :api_key
+      reqllm_opts = Keyword.take(opts, [:api_key, :temperature, :max_tokens])
+
+      case ReqLLM.generate_text(model, llm_context, reqllm_opts) do
+        {:ok, response} -> {:ok, ReqLLM.Response.text(response)}
         {:error, reason} -> {:error, reason}
       end
     rescue

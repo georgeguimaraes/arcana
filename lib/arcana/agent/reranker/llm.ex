@@ -73,7 +73,7 @@ defmodule Arcana.Agent.Reranker.LLM do
   end
 
   defp get_score(llm, prompt) do
-    case llm.(prompt) do
+    case Arcana.LLM.complete(llm, prompt, [], []) do
       {:ok, response} -> parse_score(response)
       {:error, _} -> 0
     end

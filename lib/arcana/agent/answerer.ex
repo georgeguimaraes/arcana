@@ -34,7 +34,7 @@ defmodule Arcana.Agent.Answerer do
         answerer: fn question, chunks, opts ->
           llm = Keyword.fetch!(opts, :llm)
           prompt = build_my_prompt(question, chunks)
-          llm.(prompt)
+          Arcana.LLM.complete(llm, prompt, [], [])
         end
       )
   """

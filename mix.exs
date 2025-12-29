@@ -78,8 +78,8 @@ defmodule Arcana.MixProject do
       # Optional: Enhanced installer
       {:igniter, "~> 0.5", optional: true},
 
-      # Optional: Req.LLM for LLM integrations
-      {:req_llm, "~> 1.2", optional: true},
+      # LLM integrations via Req.LLM
+      {:req_llm, "~> 1.2"},
 
       # Optional: In-memory vector store with HNSW
       {:hnswlib, github: "elixir-nx/hnswlib", optional: true},

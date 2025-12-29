@@ -615,7 +615,12 @@ defmodule Arcana do
           prompt_fn = Keyword.get(opts, :prompt, &default_ask_prompt/2)
           llm_opts = [system_prompt: prompt_fn.(question, context)]
 
-          result = LLM.complete(llm, question, context, llm_opts)
+          result =
+            case LLM.complete(llm, question, context, llm_opts) do
+              {:ok, answer} -> {:ok, answer, context}
+              {:error, reason} -> {:error, reason}
+            end
+
           stop_metadata = ask_stop_metadata(result, context)
 
           {result, stop_metadata}
@@ -671,7 +676,7 @@ defmodule Arcana do
     end
   end
 
-  defp ask_stop_metadata({:ok, answer}, context) do
+  defp ask_stop_metadata({:ok, answer, _context}, context) do
     %{answer: answer, context_count: length(context)}
   end
 
