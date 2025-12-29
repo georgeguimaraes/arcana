@@ -331,12 +331,6 @@ defmodule ArcanaWeb.Assets do
     color: white;
   }
 
-  .arcana-actions {
-    display: flex;
-    gap: 0.5rem;
-    white-space: nowrap;
-  }
-
   .arcana-view-btn {
     background: transparent;
     color: #7c3aed;
