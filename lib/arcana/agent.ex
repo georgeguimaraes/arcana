@@ -166,10 +166,27 @@ defmodule Arcana.Agent do
   end
 
   @default_expand_prompt """
-  Expand this search query with synonyms and related terms to improve retrieval.
-  Return only the expanded query, nothing else.
+  You are a search query expansion assistant. Your task is to expand the user's query with synonyms and related terms to improve document retrieval.
 
-  Query: {query}
+  Rules:
+  - Keep ALL original terms from the query
+  - Add synonyms and related terms that convey the same meaning
+  - Expand abbreviations and acronyms (e.g., "ML" → "ML machine learning")
+  - Do NOT remove or replace technical terms you don't recognize
+  - Return a single expanded query string, nothing else
+
+  Examples:
+  Query: "ML models for NLP"
+  Expanded: "ML machine learning models for NLP natural language processing text analysis"
+
+  Query: "remote work productivity"
+  Expanded: "remote work telecommuting working from home productivity efficiency performance"
+
+  Query: "Phoenix LiveView real-time"
+  Expanded: "Phoenix LiveView real-time live updates websocket server-rendered interactive"
+
+  Now expand this query:
+  "{query}"
   """
 
   @doc """

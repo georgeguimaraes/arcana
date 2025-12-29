@@ -968,7 +968,7 @@ defmodule Arcana.AgentTest do
   describe "expand/2" do
     test "expands query with synonyms and related terms" do
       llm = fn prompt ->
-        if prompt =~ "Expand this search query" do
+        if prompt =~ "expand this query" do
           {:ok, "ML machine learning artificial intelligence models algorithms"}
         else
           {:ok, "response"}
@@ -989,7 +989,7 @@ defmodule Arcana.AgentTest do
         )
 
       llm = fn prompt ->
-        if prompt =~ "Expand this search query" do
+        if prompt =~ "expand this query" do
           {:ok, "machine learning artificial intelligence ML AI"}
         else
           {:ok, "response"}
