@@ -109,7 +109,9 @@ if Code.ensure_loaded?(ReqLLM) do
             ReqLLM.Context.user(prompt)
           ])
 
-        reqllm_opts = Keyword.take(opts, [:api_key, :temperature, :max_tokens])
+        # Pass through common LLM options plus provider-specific ones
+        # Use :provider_options for provider-specific params like Z.ai's :thinking
+        reqllm_opts = Keyword.take(opts, [:api_key, :temperature, :max_tokens, :provider_options])
 
         case ReqLLM.generate_text(model, llm_context, reqllm_opts) do
           {:ok, response} -> {:ok, ReqLLM.Response.text(response)}
