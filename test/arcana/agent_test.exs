@@ -1936,7 +1936,7 @@ defmodule Arcana.AgentTest do
         @behaviour Arcana.Agent.Searcher
 
         @impl true
-        def search(_question, collection, _opts) do
+        def search(_question, _collection, _opts) do
           chunks = [
             %{id: "custom-1", text: "Custom search result", metadata: %{}, similarity: 0.9}
           ]
@@ -1956,7 +1956,7 @@ defmodule Arcana.AgentTest do
     end
 
     test "accepts custom searcher function" do
-      custom_searcher = fn question, collection, _opts ->
+      custom_searcher = fn question, _collection, _opts ->
         {:ok, [%{id: "fn-1", text: "Function search: #{question}", metadata: %{}, similarity: 1.0}]}
       end
 
@@ -2010,7 +2010,7 @@ defmodule Arcana.AgentTest do
     end
 
     test "accepts custom answerer function" do
-      custom_answerer = fn question, chunks, _opts ->
+      custom_answerer = fn _question, chunks, _opts ->
         {:ok, "Function answer: #{length(chunks)} chunks"}
       end
 
