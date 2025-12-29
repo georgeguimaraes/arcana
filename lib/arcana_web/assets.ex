@@ -240,32 +240,6 @@ defmodule ArcanaWeb.Assets do
     border-radius: 0.25rem;
   }
 
-  .arcana-documents-table button {
-    background: transparent;
-    padding: 0.375rem 0.75rem;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    color: #dc2626;
-    border: 1px solid #dc2626;
-  }
-
-  .arcana-documents-table button:hover {
-    background: #dc2626;
-    color: white;
-  }
-
-  .arcana-documents-table .arcana-view-btn {
-    color: #7c3aed;
-    border-color: #7c3aed;
-  }
-
-  .arcana-documents-table .arcana-view-btn:hover {
-    background: #7c3aed;
-    color: white;
-  }
-
   .arcana-metadata {
     font-size: 0.75rem;
     color: #6b7280;
