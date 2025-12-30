@@ -382,7 +382,7 @@ defmodule ArcanaWeb.AskLive do
             <% end %>
 
             <%= if @ask_context.results && length(@ask_context.results) > 0 do %>
-              <% all_chunks = Enum.flat_map(@ask_context.results, & &1.chunks) %>
+              <% all_chunks = @ask_context.results %>
               <div class="arcana-ask-section">
                 <h4>Retrieved Chunks (<%= length(all_chunks) %>)</h4>
                 <div class="arcana-search-results">
