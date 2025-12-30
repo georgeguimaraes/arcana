@@ -171,6 +171,36 @@ end
 
 See the [Getting Started Guide](guides/getting-started.md) for all embedding model options.
 
+### LLM configuration
+
+Configure the LLM for `ask/2` and the Agent pipeline:
+
+```elixir
+# config/config.exs
+
+# Model string (requires req_llm dependency)
+config :arcana, llm: "openai:gpt-4o-mini"
+config :arcana, llm: "anthropic:claude-sonnet-4-20250514"
+
+# Function that takes a prompt and returns {:ok, response}
+config :arcana, llm: fn prompt ->
+  {:ok, MyApp.LLM.complete(prompt)}
+end
+
+# Custom module implementing Arcana.LLM behaviour
+config :arcana, llm: MyApp.CustomLLM
+```
+
+You can also pass `:llm` directly to functions:
+
+```elixir
+Arcana.ask("What is Elixir?", repo: MyApp.Repo, llm: "openai:gpt-4o")
+
+Agent.new(question, repo: MyApp.Repo, llm: fn prompt -> ... end)
+```
+
+See the [LLM Integration Guide](guides/llm-integration.md) for detailed examples.
+
 ## Usage
 
 ### Ingest documents
