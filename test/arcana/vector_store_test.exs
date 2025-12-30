@@ -10,6 +10,7 @@ defmodule Arcana.VectorStoreTest do
       %{pid: pid}
     end
 
+    @tag :memory
     test "search uses {:memory, pid: pid} to override config", %{pid: pid} do
       embedding = List.duplicate(0.5, 384)
 
@@ -27,6 +28,7 @@ defmodule Arcana.VectorStoreTest do
       assert hd(results).id == "id-1"
     end
 
+    @tag :memory
     test "store uses {:memory, pid: pid} to override config", %{pid: pid} do
       embedding = List.duplicate(0.5, 384)
 
@@ -41,6 +43,7 @@ defmodule Arcana.VectorStoreTest do
       assert length(results) == 1
     end
 
+    @tag :memory
     test "delete uses {:memory, pid: pid} to override config", %{pid: pid} do
       embedding = List.duplicate(0.5, 384)
       :ok = Memory.store(pid, "test", "id-1", embedding, %{text: "hello"})
@@ -53,6 +56,7 @@ defmodule Arcana.VectorStoreTest do
       assert results == []
     end
 
+    @tag :memory
     test "clear uses {:memory, pid: pid} to override config", %{pid: pid} do
       embedding = List.duplicate(0.5, 384)
       :ok = Memory.store(pid, "test", "id-1", embedding, %{text: "hello"})
