@@ -1,8 +1,7 @@
 import Config
 
 config :arcana,
-  repo: Arcana.TestRepo,
-  llm: fn _prompt -> {:ok, "test response"} end
+  repo: Arcana.TestRepo
 
 # Use a mock embedding function for tests (384 dimensions like bge-small-en-v1.5)
 # Creates pseudo-embeddings where similar words produce similar vectors

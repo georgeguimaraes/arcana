@@ -34,13 +34,12 @@ defmodule Arcana.AgentTest do
       assert ctx.threshold == 0.7
     end
 
-    test "uses config defaults for repo and llm" do
+    test "uses config defaults for repo" do
       ctx = Agent.new("test")
 
-      # Uses Application.get_env(:arcana, :repo) and :llm from test config
+      # Uses Application.get_env(:arcana, :repo) from test config
       assert ctx.repo == Arcana.TestRepo
-      assert is_function(ctx.llm, 1)
-      assert ctx.llm.("test") == {:ok, "test response"}
+      assert ctx.llm == nil
     end
 
     test "explicit options override config defaults" do

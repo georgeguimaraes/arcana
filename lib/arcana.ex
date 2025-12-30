@@ -139,8 +139,7 @@ defmodule Arcana do
 
   """
   def ingest(text, opts) when is_binary(text) do
-    opts = merge_defaults(opts)
-    repo = Keyword.fetch!(opts, :repo)
+    repo = opts[:repo] || Application.get_env(:arcana, :repo) || raise ArgumentError, "repo is required"
     source_id = Keyword.get(opts, :source_id)
     metadata = Keyword.get(opts, :metadata, %{})
 
@@ -248,8 +247,7 @@ defmodule Arcana do
   end
 
   defp ingest_with_attrs(text, opts) do
-    opts = merge_defaults(opts)
-    repo = Keyword.fetch!(opts, :repo)
+    repo = opts[:repo] || Application.get_env(:arcana, :repo) || raise ArgumentError, "repo is required"
     source_id = Keyword.get(opts, :source_id)
     metadata = Keyword.get(opts, :metadata, %{})
     file_path = Keyword.get(opts, :file_path)
@@ -358,8 +356,7 @@ defmodule Arcana do
 
   """
   def search(query, opts) when is_binary(query) do
-    opts = merge_defaults(opts)
-    repo = Keyword.get(opts, :repo)
+    repo = opts[:repo] || Application.get_env(:arcana, :repo)
     limit = Keyword.get(opts, :limit, 10)
     source_id = Keyword.get(opts, :source_id)
     threshold = Keyword.get(opts, :threshold, 0.0)
@@ -592,10 +589,10 @@ defmodule Arcana do
 
   """
   def ask(question, opts) when is_binary(question) do
-    opts = merge_defaults(opts)
-    repo = Keyword.get(opts, :repo)
+    repo = opts[:repo] || Application.get_env(:arcana, :repo)
+    llm = opts[:llm] || Application.get_env(:arcana, :llm)
 
-    case Keyword.get(opts, :llm) do
+    case llm do
       nil ->
         {:error, :no_llm_configured}
 
@@ -645,8 +642,7 @@ defmodule Arcana do
 
   """
   def delete(document_id, opts) do
-    opts = merge_defaults(opts)
-    repo = Keyword.fetch!(opts, :repo)
+    repo = opts[:repo] || Application.get_env(:arcana, :repo) || raise ArgumentError, "repo is required"
 
     case repo.get(Document, document_id) do
       nil ->
@@ -694,16 +690,7 @@ defmodule Arcana do
     end
   end
 
-  # Merges application config defaults with provided options.
-  # Options passed explicitly take precedence over config.
   defp parse_collection_opt(name) when is_binary(name), do: {name, nil}
   defp parse_collection_opt(%{name: name, description: desc}), do: {name, desc}
   defp parse_collection_opt(%{name: name}), do: {name, nil}
-
-  defp merge_defaults(opts) do
-    Keyword.merge([
-      repo: Application.get_env(:arcana, :repo),
-      llm: Application.get_env(:arcana, :llm)
-    ], opts)
-  end
 end
