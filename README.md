@@ -11,7 +11,7 @@ Embeddable RAG library for Elixir/Phoenix. Add vector search, document retrieval
 
 - **Simple API** - `ingest/2`, `search/2`, `ask/2` for basic RAG
 - **Agentic RAG** - Pipeline with query expansion, decomposition, re-ranking, and self-correction
-- **Pluggable components** - Replace any pipeline step with custom implementations (search backends, rerankers, etc.)
+- **Pluggable components** - Replace any pipeline step with custom implementations
 - **Hybrid search** - Vector, full-text, or combined with Reciprocal Rank Fusion
 - **Multiple backends** - pgvector (default) or in-memory HNSWLib
 - **Configurable embeddings** - Local Bumblebee, OpenAI, or custom providers
@@ -59,36 +59,7 @@ mix arcana.install
 mix ecto.migrate
 ```
 
-And follow the manual steps printed by the installer:
-
-1. Create the Postgrex types module:
-
-```elixir
-# lib/my_app/postgrex_types.ex
-Postgrex.Types.define(
-  MyApp.PostgrexTypes,
-  [Pgvector.Extensions.Vector] ++ Ecto.Adapters.Postgres.extensions(),
-  []
-)
-```
-
-2. Add to your repo config:
-
-```elixir
-# config/config.exs
-config :my_app, MyApp.Repo,
-  types: MyApp.PostgrexTypes
-```
-
-3. (Optional) Mount the dashboard:
-
-```elixir
-# lib/my_app_web/router.ex
-scope "/arcana" do
-  pipe_through [:browser]
-  forward "/", ArcanaWeb.Router
-end
-```
+And follow the manual steps printed by the installer.
 
 ## Setup
 
@@ -124,8 +95,6 @@ def start(_type, _args) do
 end
 ```
 
-For OpenAI embeddings or custom providers, skip this step.
-
 ### Configure Nx backend (recommended)
 
 For better performance with local embeddings:
@@ -135,21 +104,7 @@ For better performance with local embeddings:
 config :nx, default_backend: EXLA.Backend
 ```
 
-### Changing embedding models
-
-When switching to an embedding model with different dimensions (e.g., from `bge-small` with 384 dims to `bge-large` with 1024 dims), you need to resize the vector column:
-
-```bash
-# 1. Update your config to use the new model
-# 2. Generate a migration to resize the vector column
-mix arcana.gen.embedding_migration
-
-# 3. Run the migration
-mix ecto.migrate
-
-# 4. Re-embed all documents with the new model
-mix arcana.reembed
-```
+See the [Getting Started Guide](guides/getting-started.md) for embedding model options and configuration.
 
 ## Usage
 
@@ -159,190 +114,61 @@ mix arcana.reembed
 # Basic ingestion
 {:ok, document} = Arcana.ingest("Your document content here", repo: MyApp.Repo)
 
-# With source_id for scoping
+# With metadata and collection
 {:ok, document} = Arcana.ingest(content,
   repo: MyApp.Repo,
-  source_id: "user-123"
-)
-
-# With metadata
-{:ok, document} = Arcana.ingest(content,
-  repo: MyApp.Repo,
-  metadata: %{"title" => "My Doc", "author" => "Jane"}
-)
-
-# Markdown-aware chunking
-{:ok, document} = Arcana.ingest(markdown_content,
-  repo: MyApp.Repo,
-  format: :markdown
-)
-
-# Custom chunk size (in tokens, default: 512)
-{:ok, document} = Arcana.ingest(content,
-  repo: MyApp.Repo,
-  chunk_size: 256,
-  chunk_overlap: 25
-)
-
-# Ingest from file
-{:ok, document} = Arcana.ingest_file("path/to/document.pdf", repo: MyApp.Repo)
-
-# With collection for segmentation
-{:ok, document} = Arcana.ingest(content,
-  repo: MyApp.Repo,
+  metadata: %{"title" => "My Doc", "author" => "Jane"},
   collection: "products"
 )
 
-# With collection description (helps Agent.select/2 route to the right collection)
-{:ok, document} = Arcana.ingest(content,
-  repo: MyApp.Repo,
-  collection: %{name: "api", description: "REST API reference documentation"}
-)
+# Ingest from file (supports .txt, .md, .pdf)
+{:ok, document} = Arcana.ingest_file("path/to/document.pdf", repo: MyApp.Repo)
 ```
-
-#### Chunking Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `:format` | `:plaintext` | Text format: `:plaintext`, `:markdown`, `:elixir`, etc. |
-| `:chunk_size` | `450` | Maximum chunk size in tokens |
-| `:chunk_overlap` | `50` | Overlap between chunks in tokens |
-| `:size_unit` | `:tokens` | Size measurement: `:tokens` or `:characters` |
-| `:collection` | `"default"` | Collection name (string) or map with `:name` and `:description` |
-
-#### Supported File Formats
-
-| Extension | Content Type |
-|-----------|--------------|
-| `.txt` | text/plain |
-| `.md`, `.markdown` | text/markdown |
-| `.pdf` | application/pdf (requires poppler) |
-
-#### PDF Support (Optional)
-
-PDF parsing requires `pdftotext` from the Poppler library. Install it for your platform:
-
-```bash
-# macOS
-brew install poppler
-
-# Ubuntu/Debian
-apt-get install poppler-utils
-
-# Fedora
-dnf install poppler-utils
-```
-
-Check if PDF support is available:
-
-```elixir
-Arcana.Parser.pdf_support_available?()
-# => true or false
-```
-
-If poppler is not installed, `ingest_file/2` returns `{:error, :pdf_support_not_available}` for PDF files.
 
 ### Search
 
 ```elixir
-# Basic search (semantic by default)
+# Semantic search (default)
 results = Arcana.search("your query", repo: MyApp.Repo)
 
-# Returns list of:
-# %{
-#   id: "chunk-uuid",
-#   text: "matching chunk text...",
-#   document_id: "doc-uuid",
-#   chunk_index: 0,
-#   score: 0.89
-# }
+# Hybrid search (combines semantic + fulltext with RRF)
+results = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)
 
-# With options
+# With filters
 results = Arcana.search("query",
   repo: MyApp.Repo,
   limit: 5,
-  source_id: "user-123",
-  threshold: 0.5,
-  collection: "products"  # Filter by collection
-)
-
-# Search multiple collections
-results = Arcana.search("query",
-  repo: MyApp.Repo,
-  collections: ["products", "faq"]  # Search across specific collections
+  collection: "products"
 )
 ```
 
-#### Search Modes
-
-Arcana supports three search modes, all working with both pgvector and memory backends:
-
-```elixir
-# Semantic search (default) - finds similar meaning
-results = Arcana.search("query", repo: MyApp.Repo, mode: :semantic)
-
-# Full-text search - finds exact keyword matches
-results = Arcana.search("query", repo: MyApp.Repo, mode: :fulltext)
-
-# Hybrid search - combines both with RRF fusion
-results = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)
-
-# Override vector store per-call (useful for testing)
-results = Arcana.search("query",
-  vector_store: {:memory, pid: memory_pid},
-  mode: :semantic
-)
-```
-
-| Mode | Best for | pgvector | memory |
-|------|----------|----------|--------|
-| `:semantic` | Conceptual queries | Cosine similarity via HNSW | HNSWLib approximate k-NN |
-| `:fulltext` | Exact terms, names | PostgreSQL tsvector/tsquery | TF-IDF term matching |
-| `:hybrid` | General purpose | Reciprocal Rank Fusion of both | RRF of both |
-
-**Hybrid search** uses [Reciprocal Rank Fusion (RRF)](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf) to combine results. RRF scores by rank position (`1/(k + rank)`) rather than raw scores, making it robust when combining different scoring scales.
-
-### Delete
-
-```elixir
-:ok = Arcana.delete(document_id, repo: MyApp.Repo)
-{:error, :not_found} = Arcana.delete(invalid_id, repo: MyApp.Repo)
-```
+See the [Search Algorithms Guide](guides/search-algorithms.md) for details on search modes.
 
 ### Ask (Simple RAG)
 
 ```elixir
-# Using a model string (requires req_llm dependency)
 {:ok, answer} = Arcana.ask("What is Elixir?",
   repo: MyApp.Repo,
   llm: "openai:gpt-4o-mini"
-)
-
-# With custom prompt
-custom_prompt = fn question, context ->
-  "Answer '#{question}' using: #{Enum.map_join(context, ", ", & &1.text)}"
-end
-{:ok, answer} = Arcana.ask("What is Elixir?",
-  repo: MyApp.Repo,
-  llm: "openai:gpt-4o-mini",
-  prompt: custom_prompt
 )
 ```
 
 ### Agentic RAG
 
-For complex questions, use the Agent pipeline with question decomposition, re-ranking, and self-correcting answers:
+For complex questions, use the Agent pipeline with query expansion, re-ranking, and self-correcting answers:
 
 ```elixir
+alias Arcana.Agent
+
 llm = fn prompt -> {:ok, "LLM response"} end
 
 ctx =
-  Arcana.Agent.new("Compare Elixir and Erlang features", repo: MyApp.Repo, llm: llm)
-  |> Arcana.Agent.select(collections: ["elixir-docs", "erlang-docs"])
-  |> Arcana.Agent.expand()
-  |> Arcana.Agent.search()
-  |> Arcana.Agent.rerank()
-  |> Arcana.Agent.answer(self_correct: true)
+  Agent.new("Compare Elixir and Erlang features", repo: MyApp.Repo, llm: llm)
+  |> Agent.select(collections: ["elixir-docs", "erlang-docs"])
+  |> Agent.expand()
+  |> Agent.search()
+  |> Agent.rerank()
+  |> Agent.answer(self_correct: true)
 
 ctx.answer
 # => "Generated answer based on retrieved context..."
@@ -350,537 +176,88 @@ ctx.answer
 
 #### Pipeline Steps
 
-| Step | Description |
-|------|-------------|
-| `new/2` | Initialize context with question and options |
-| `rewrite/2` | Clean up conversational input into clear search queries |
-| `select/2` | Select relevant collections (LLM or custom selector) |
-| `expand/2` | Expand query with synonyms and related terms |
-| `decompose/2` | Break complex questions into sub-questions |
-| `search/2` | Execute search across collections |
-| `rerank/2` | Re-score and filter chunks by relevance |
-| `answer/2` | Generate final answer (with optional self-correction) |
+| Step | What it does |
+|------|--------------|
+| `new/2` | Initialize context with question, repo, and LLM function |
+| `rewrite/2` | Clean up conversational input ("Hey, can you tell me about X?" → "about X") |
+| `select/2` | Choose which collections to search (LLM picks based on collection descriptions) |
+| `expand/2` | Add synonyms and related terms ("ML models" → "ML machine learning models algorithms") |
+| `decompose/2` | Split complex questions ("What is X and how does Y work?" → ["What is X?", "How does Y work?"]) |
+| `search/2` | Execute vector search across selected collections |
+| `rerank/2` | Score each chunk's relevance (0-10) and filter below threshold |
+| `answer/2` | Generate final answer; with `self_correct: true`, evaluates and refines if not grounded |
 
-**Explicit collection selection:**
-
-If you know which collection(s) to search, skip LLM-based selection by passing `:collection` or `:collections` directly to `search/2`:
+#### Example: Building a Pipeline
 
 ```elixir
-# Search a specific collection
+# Simple pipeline - just search and answer
 ctx =
   Agent.new(question, repo: MyApp.Repo, llm: llm)
-  |> Agent.search(collection: "technical_docs")
+  |> Agent.search(collection: "docs")
   |> Agent.answer()
 
-# Search multiple collections
+# Full pipeline with all steps
 ctx =
   Agent.new(question, repo: MyApp.Repo, llm: llm)
-  |> Agent.search(collections: ["docs", "faq"])
-  |> Agent.answer()
+  |> Agent.rewrite()                              # Clean up conversational input
+  |> Agent.select(collections: available_collections)  # Pick relevant collections
+  |> Agent.expand()                               # Add synonyms
+  |> Agent.decompose()                            # Split multi-part questions
+  |> Agent.search()                               # Search each sub-question
+  |> Agent.rerank(threshold: 7)                   # Keep chunks scoring 7+/10
+  |> Agent.answer(self_correct: true)             # Generate and verify answer
+
+# Access results
+ctx.answer           # Final answer
+ctx.chunks           # Retrieved chunks after reranking
+ctx.sub_questions    # Sub-questions from decomposition
+ctx.correction_count # Number of self-correction iterations
 ```
 
-Collection selection priority:
+#### Custom Components
 
-1. `:collection`/`:collections` option passed to `search/2`
-2. `ctx.collections` (set by `select/2`)
-3. Falls back to `"default"` collection
-
-This is useful when:
-
-- You have only one collection (no LLM selection needed)
-- The user explicitly chooses which collection(s) to search
-- You want deterministic routing without LLM overhead
-
-**Custom collection selection:**
-
-By default, `select/2` uses the LLM to pick collections. For deterministic routing based on user context or business logic, provide a custom selector:
+Every pipeline step can be replaced with a custom module or function:
 
 ```elixir
-# Custom selector module
-defmodule MyApp.TeamBasedSelector do
-  @behaviour Arcana.Agent.Selector
-
-  @impl true
-  def select(_question, _collections, opts) do
-    case opts[:context][:team] do
-      "api" -> {:ok, ["api-reference"], "API team routing"}
-      "mobile" -> {:ok, ["mobile-docs"], "Mobile team routing"}
-      _ -> {:ok, ["general"], "Default routing"}
-    end
-  end
-end
-
-ctx
-|> Agent.select(
-  collections: ["api-reference", "mobile-docs", "general"],
-  selector: MyApp.TeamBasedSelector,
-  context: %{team: current_user.team}
-)
-
-# Or inline function
-ctx
-|> Agent.select(
-  collections: ["docs", "api"],
-  selector: fn question, _collections, _opts ->
-    if question =~ "API", do: {:ok, ["api"], "API query"}, else: {:ok, ["docs"], nil}
-  end
-)
-```
-
-**Query rewriting:**
-
-`rewrite/2` cleans up conversational input into clear search queries. It removes noise like greetings and filler phrases while preserving entity names and technical terms:
-
-- "Hey, I want to compare Elixir and Go lang" → "compare Elixir and Go"
-- "Can you tell me about GenServer?" → "about GenServer"
-
-Use `rewrite/2` as the first step when questions come from conversational interfaces (chatbots, voice assistants).
-
-**Query expansion vs. decomposition:**
-
-- `expand/2` adds synonyms to a single query: "ML models" → "ML machine learning artificial intelligence models"
-- `decompose/2` splits into multiple queries: "What is X and how does it compare to Y?" → ["What is X?", "How does it compare to Y?"]
-
-Use `expand/2` when queries use jargon or abbreviations. Use `decompose/2` for multi-part questions.
-
-**Re-ranking:**
-
-`rerank/2` improves result quality by scoring each chunk's relevance using the LLM, then filtering by threshold:
-
-```elixir
-ctx
-|> Agent.search()
-|> Agent.rerank(threshold: 7)  # Keep chunks scoring 7+/10
-|> Agent.answer()
-```
-
-For custom re-ranking logic, provide a module or function:
-
-```elixir
-# Custom reranker module
+# Custom reranker using a cross-encoder model
 defmodule MyApp.CrossEncoderReranker do
   @behaviour Arcana.Agent.Reranker
 
   @impl true
   def rerank(question, chunks, _opts) do
-    # Your cross-encoder logic here
-    {:ok, scored_and_filtered_chunks}
+    scored = Enum.map(chunks, fn chunk ->
+      score = MyApp.CrossEncoder.score(question, chunk.text)
+      {chunk, score}
+    end)
+    |> Enum.filter(fn {_, score} -> score > 0.5 end)
+    |> Enum.sort_by(fn {_, score} -> score end, :desc)
+    |> Enum.map(fn {chunk, _} -> chunk end)
+
+    {:ok, scored}
   end
 end
 
-Agent.rerank(ctx, reranker: MyApp.CrossEncoderReranker)
+ctx |> Agent.rerank(reranker: MyApp.CrossEncoderReranker)
 
-# Or inline function
-Agent.rerank(ctx, reranker: fn question, chunks, _opts ->
-  {:ok, filter_by_custom_logic(question, chunks)}
+# Or use an inline function
+ctx |> Agent.rerank(reranker: fn question, chunks, _opts ->
+  {:ok, Enum.filter(chunks, &relevant?(&1, question))}
 end)
 ```
 
-**Self-correcting answers:**
-
-`answer/2` can evaluate and refine answers to ensure they're grounded in the retrieved context:
-
-```elixir
-ctx
-|> Agent.search()
-|> Agent.rerank()
-|> Agent.answer(self_correct: true, max_corrections: 2)
-
-# After answering:
-ctx.answer           # Final answer (possibly refined)
-ctx.correction_count # Number of corrections made (0 if grounded on first try)
-ctx.corrections      # List of {previous_answer, feedback} tuples
-```
-
-When `self_correct: true`, the pipeline:
-
-1. Generates an initial answer
-2. Evaluates if the answer is grounded in the context
-3. If not grounded, regenerates with feedback
-4. Repeats up to `max_corrections` times (default: 2)
-
-Use self-correction when answer quality is critical and you want to reduce hallucinations.
-
-**Pluggable components:**
-
-Every pipeline step has a behaviour and can be replaced with custom implementations:
-
-| Step | Behaviour | Default | Option |
-|------|-----------|---------|--------|
-| `rewrite/2` | `Arcana.Agent.Rewriter` | LLM-based | `:rewriter` |
-| `select/2` | `Arcana.Agent.Selector` | LLM-based | `:selector` |
-| `expand/2` | `Arcana.Agent.Expander` | LLM-based | `:expander` |
-| `decompose/2` | `Arcana.Agent.Decomposer` | LLM-based | `:decomposer` |
-| `search/2` | `Arcana.Agent.Searcher` | pgvector | `:searcher` |
-| `rerank/2` | `Arcana.Agent.Reranker` | LLM-based | `:reranker` |
-| `answer/2` | `Arcana.Agent.Answerer` | LLM-based | `:answerer` |
-
-```elixir
-# Use Elasticsearch instead of pgvector
-defmodule MyApp.ElasticsearchSearcher do
-  @behaviour Arcana.Agent.Searcher
-
-  @impl true
-  def search(question, collection, opts) do
-    chunks = MyApp.Elasticsearch.search(collection, question)
-    {:ok, chunks}
-  end
-end
-
-ctx
-|> Agent.search(searcher: MyApp.ElasticsearchSearcher)
-|> Agent.answer()
-
-# Or use inline functions for quick customizations
-Agent.rewrite(ctx, rewriter: fn question, _opts ->
-  {:ok, String.downcase(question)}
-end)
-```
-
-See the [Agentic RAG Guide](guides/agentic-rag.md) for more examples.
-
-#### Custom Prompts
-
-All pipeline steps accept custom prompt functions:
-
-```elixir
-ctx
-|> Agent.rewrite(prompt: fn question -> "..." end)
-|> Agent.select(collections: [...], prompt: fn question, collections -> "..." end)
-|> Agent.expand(prompt: fn question -> "..." end)
-|> Agent.decompose(prompt: fn question -> "..." end)
-|> Agent.search()
-|> Agent.rerank(prompt: fn question, chunk_text -> "..." end)
-|> Agent.answer(prompt: fn question, chunks -> "..." end)
-```
-
-## Evaluation
-
-Measure and improve your retrieval quality with Arcana's evaluation system.
-
-### Test Cases
-
-Create test cases that pair questions with their known relevant chunks:
-
-```elixir
-# Manual test case
-{:ok, test_case} = Arcana.Evaluation.create_test_case(
-  repo: MyApp.Repo,
-  question: "How do you manage state in Elixir?",
-  relevant_chunk_ids: [chunk.id]
-)
-
-# Generate synthetic test cases using LLM
-{:ok, test_cases} = Arcana.Evaluation.generate_test_cases(
-  repo: MyApp.Repo,
-  llm: Application.get_env(:arcana, :llm),
-  sample_size: 50,
-  collection: "elixir-docs"  # optional: filter by collection
-)
-```
-
-Or use the mix task:
-
-```bash
-mix arcana.eval.generate --sample-size 50 --collection elixir-docs
-```
-
-### Running Evaluations
-
-```elixir
-{:ok, run} = Arcana.Evaluation.run(repo: MyApp.Repo, mode: :semantic)
-
-run.metrics
-# => %{
-#   mrr: 0.76,
-#   recall_at_5: 0.84,
-#   precision_at_5: 0.68,
-#   hit_rate_at_5: 0.91
-# }
-```
-
-Or use the mix task:
-
-```bash
-mix arcana.eval.run --mode hybrid
-```
-
-### Evaluating Answer Quality
-
-For end-to-end RAG evaluation, measure how faithful generated answers are:
-
-```elixir
-{:ok, run} = Arcana.Evaluation.run(
-  repo: MyApp.Repo,
-  mode: :semantic,
-  evaluate_answers: true,
-  llm: Application.get_env(:arcana, :llm)
-)
-
-run.metrics.faithfulness  # => 7.8 (0-10 scale)
-```
-
-### Metrics
-
-| Metric | Description |
-|--------|-------------|
-| **MRR** | Mean Reciprocal Rank - average of 1/rank for first relevant result |
-| **Recall@K** | Fraction of relevant chunks found in top K |
-| **Precision@K** | Fraction of top K results that are relevant |
-| **Hit Rate@K** | Fraction of queries with at least one relevant in top K |
-| **Faithfulness** | How well answers are grounded in retrieved context (0-10) |
-
-See the [Evaluation Guide](guides/evaluation.md) for more details.
-
-## Telemetry
-
-Arcana emits telemetry events for observability. All operations use `:telemetry.span/3` which automatically emits `:start`, `:stop`, and `:exception` events.
-
-### Events
-
-| Event | Description |
-|-------|-------------|
-| `[:arcana, :ingest, :*]` | Document ingestion |
-| `[:arcana, :search, :*]` | Search queries |
-| `[:arcana, :ask, :*]` | RAG question answering |
-| `[:arcana, :embed, :*]` | Embedding generation |
-
-### Example Handler
-
-```elixir
-defmodule MyApp.ArcanaLogger do
-  require Logger
-
-  def setup do
-    events = [
-      [:arcana, :ingest, :stop],
-      [:arcana, :search, :stop],
-      [:arcana, :ask, :stop]
-    ]
-
-    :telemetry.attach_many("arcana-logger", events, &handle_event/4, nil)
-  end
-
-  def handle_event([:arcana, :ingest, :stop], measurements, metadata, _) do
-    ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
-    Logger.info("Ingested document #{metadata.document.id} in #{ms}ms")
-  end
-
-  def handle_event([:arcana, :search, :stop], measurements, metadata, _) do
-    ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
-    Logger.info("Search returned #{metadata.result_count} results in #{ms}ms")
-  end
-
-  def handle_event([:arcana, :ask, :stop], measurements, metadata, _) do
-    ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
-    Logger.info("RAG answered with #{metadata.context_count} chunks in #{ms}ms")
-  end
-end
-```
-
-See `Arcana.Telemetry` module docs for complete event documentation.
-
-## Configuration
-
-### Embedding Providers
-
-Arcana supports multiple embedding providers:
-
-```elixir
-# config/config.exs
-
-# Local Bumblebee (default) - no API keys needed
-config :arcana, embedder: :local
-config :arcana, embedder: {:local, model: "BAAI/bge-large-en-v1.5"}
-
-# OpenAI (requires req_llm and OPENAI_API_KEY)
-config :arcana, embedder: :openai
-config :arcana, embedder: {:openai, model: "text-embedding-3-large"}
-
-# Custom function
-config :arcana, embedder: fn text ->
-  # Your embedding logic
-  {:ok, embedding_vector}
-end
-
-# Custom module implementing Arcana.Embedder behaviour
-config :arcana, embedder: MyApp.CohereEmbedder
-config :arcana, embedder: {MyApp.CohereEmbedder, api_key: "..."}
-```
-
-#### Built-in Providers
-
-| Provider | Dimensions | Notes |
-|----------|------------|-------|
-| `:local` (default) | 384 | `bge-small-en-v1.5`, no API key needed |
-| `:openai` | 1536 | `text-embedding-3-small`, requires API key |
-| `{:openai, model: "text-embedding-3-large"}` | 3072 | Higher quality |
-
-#### Local Model Options
-
-All local models run via Bumblebee with no API keys required. Models are downloaded from HuggingFace on first use.
-
-| Model | Config | Dims | Size | Notes |
-|-------|--------|------|------|-------|
-| **BGE Small** | `{:local, model: "BAAI/bge-small-en-v1.5"}` | 384 | 133MB | Default, best balance |
-| **BGE Base** | `{:local, model: "BAAI/bge-base-en-v1.5"}` | 768 | 438MB | Better accuracy |
-| **BGE Large** | `{:local, model: "BAAI/bge-large-en-v1.5"}` | 1024 | 1.3GB | Best BGE accuracy |
-| **E5 Small** | `{:local, model: "intfloat/e5-small-v2"}` | 384 | 133MB | Microsoft, comparable to BGE |
-| **E5 Base** | `{:local, model: "intfloat/e5-base-v2"}` | 768 | 438MB | Strong all-rounder |
-| **E5 Large** | `{:local, model: "intfloat/e5-large-v2"}` | 1024 | 1.3GB | Best E5 accuracy |
-| **GTE Small** | `{:local, model: "thenlper/gte-small"}` | 384 | 67MB | Smallest, fastest |
-| **GTE Base** | `{:local, model: "thenlper/gte-base"}` | 768 | 220MB | Alibaba |
-| **GTE Large** | `{:local, model: "thenlper/gte-large"}` | 1024 | 670MB | Best GTE accuracy |
-| **MiniLM** | `{:local, model: "sentence-transformers/all-MiniLM-L6-v2"}` | 384 | 91MB | Lightweight, fast |
-
-**Recommendations:**
-
-- **Getting started:** Use default (`bge-small-en-v1.5`) - good quality, reasonable size
-- **Resource constrained:** Use `gte-small` (67MB) or `all-MiniLM-L6-v2` (91MB)
-- **Best accuracy:** Use `bge-large-en-v1.5` or `e5-large-v2` (1024 dimensions)
-
-#### Custom Embedding Module
-
-Implement the `Arcana.Embedder` behaviour:
-
-```elixir
-defmodule MyApp.CohereEmbedder do
-  @behaviour Arcana.Embedder
-
-  @impl true
-  def embed(text, opts) do
-    api_key = opts[:api_key] || System.get_env("COHERE_API_KEY")
-    # Call Cohere API...
-    {:ok, embedding}
-  end
-
-  @impl true
-  def dimensions(_opts), do: 1024
-end
-```
-
-Then configure:
-
-```elixir
-config :arcana, embedder: {MyApp.CohereEmbedder, api_key: "..."}
-```
-
-### Vector Store Backends
-
-Arcana supports multiple vector storage backends:
-
-```elixir
-# config/config.exs
-
-# Use pgvector (default) - requires PostgreSQL with pgvector
-config :arcana, vector_store: :pgvector
-
-# Use in-memory storage with HNSWLib - no database needed
-config :arcana, vector_store: :memory
-```
-
-#### Memory Backend
-
-The memory backend uses [hnswlib](https://github.com/elixir-nx/hnswlib) for fast approximate nearest neighbor search. It supports all three search modes:
-
-- **Semantic**: HNSWLib with cosine similarity
-- **Fulltext**: TF-IDF-like term matching with length normalization
-- **Hybrid**: RRF fusion of both
-
-Useful for:
-
-- Testing embedding models without database migrations
-- Smaller RAGs where pgvector overhead isn't justified
-- Development and experimentation workflows
-
-Add to your supervision tree:
-
-```elixir
-# lib/my_app/application.ex
-children = [
-  MyApp.Repo,
-  {Arcana.VectorStore.Memory, name: Arcana.VectorStore.Memory}
-]
-```
-
-**Note:** Data is not persisted - all vectors are lost when the process stops.
-
-#### Custom Vector Store
-
-Implement the `Arcana.VectorStore` behaviour for custom backends (e.g., Weaviate, Pinecone, Qdrant):
-
-```elixir
-defmodule MyApp.WeaviateStore do
-  @behaviour Arcana.VectorStore
-
-  @impl true
-  def store(collection, id, embedding, metadata, opts) do
-    # Store vector in Weaviate
-    :ok
-  end
-
-  @impl true
-  def search(collection, query_embedding, opts) do
-    limit = Keyword.get(opts, :limit, 10)
-    # Query Weaviate for similar vectors
-    [%{id: "...", metadata: %{text: "..."}, score: 0.95}]
-  end
-
-  @impl true
-  def search_text(collection, query_text, opts) do
-    limit = Keyword.get(opts, :limit, 10)
-    # Query Weaviate for keyword matches
-    [%{id: "...", metadata: %{text: "..."}, score: 0.85}]
-  end
-
-  @impl true
-  def delete(collection, id, opts) do
-    # Delete from Weaviate
-    :ok
-  end
-
-  @impl true
-  def clear(collection, opts) do
-    # Clear collection in Weaviate
-    :ok
-  end
-end
-```
-
-Then configure:
-
-```elixir
-config :arcana, vector_store: MyApp.WeaviateStore
-```
-
-#### Direct VectorStore API
-
-For low-level vector operations, use the VectorStore API directly:
-
-```elixir
-alias Arcana.VectorStore
-
-# Store a vector
-:ok = VectorStore.store("products", "item-1", embedding, %{text: "Widget", name: "Widget"}, repo: MyApp.Repo)
-
-# Semantic search (cosine similarity)
-results = VectorStore.search("products", query_embedding, limit: 10, repo: MyApp.Repo)
-
-# Fulltext search (keyword matching)
-results = VectorStore.search_text("products", "widget", limit: 10, repo: MyApp.Repo)
-
-# Delete a vector
-:ok = VectorStore.delete("products", "item-1", repo: MyApp.Repo)
-
-# Clear a collection
-:ok = VectorStore.clear("products", repo: MyApp.Repo)
-
-# Per-call backend override
-results = VectorStore.search("products", query_embedding,
-  vector_store: {:memory, pid: memory_pid},
-  limit: 10
-)
-```
+All steps support custom implementations via behaviours:
+
+| Step | Behaviour | Option |
+|------|-----------|--------|
+| `rewrite/2` | `Arcana.Agent.Rewriter` | `:rewriter` |
+| `select/2` | `Arcana.Agent.Selector` | `:selector` |
+| `expand/2` | `Arcana.Agent.Expander` | `:expander` |
+| `decompose/2` | `Arcana.Agent.Decomposer` | `:decomposer` |
+| `search/2` | `Arcana.Agent.Searcher` | `:searcher` |
+| `rerank/2` | `Arcana.Agent.Reranker` | `:reranker` |
+| `answer/2` | `Arcana.Agent.Answerer` | `:answerer` |
+
+See the [Agentic RAG Guide](guides/agentic-rag.md) for detailed examples.
 
 ## Architecture
 
@@ -904,6 +281,16 @@ results = VectorStore.search("products", query_embedding,
 │         PostgreSQL + pgvector extension                 │
 └─────────────────────────────────────────────────────────┘
 ```
+
+## Guides
+
+- [Getting Started](guides/getting-started.md) - Installation, embedding models, basic usage
+- [Agentic RAG](guides/agentic-rag.md) - Build sophisticated RAG pipelines
+- [LLM Integration](guides/llm-integration.md) - Connect to OpenAI, Anthropic, or custom LLMs
+- [Search Algorithms](guides/search-algorithms.md) - Semantic, fulltext, and hybrid search
+- [Re-ranking](guides/reranking.md) - Improve retrieval quality
+- [Evaluation](guides/evaluation.md) - Measure and improve retrieval quality
+- [Dashboard](guides/dashboard.md) - Web UI setup
 
 ## Roadmap
 
