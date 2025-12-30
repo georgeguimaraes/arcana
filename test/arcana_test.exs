@@ -262,7 +262,8 @@ defmodule ArcanaTest do
     end
 
     test "returns error when no LLM configured" do
-      assert {:error, :no_llm_configured} = Arcana.ask("test", repo: Repo)
+      # Explicitly pass llm: nil to override config default
+      assert {:error, :no_llm_configured} = Arcana.ask("test", repo: Repo, llm: nil)
     end
 
     test "respects search options like limit and threshold" do

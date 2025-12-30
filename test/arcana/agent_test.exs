@@ -34,16 +34,21 @@ defmodule Arcana.AgentTest do
       assert ctx.threshold == 0.7
     end
 
-    test "raises without repo" do
-      assert_raise KeyError, fn ->
-        Agent.new("test", llm: &mock_llm/1)
-      end
+    test "uses config defaults for repo and llm" do
+      ctx = Agent.new("test")
+
+      # Uses Application.get_env(:arcana, :repo) and :llm from test config
+      assert ctx.repo == Arcana.TestRepo
+      assert is_function(ctx.llm, 1)
+      assert ctx.llm.("test") == {:ok, "test response"}
     end
 
-    test "raises without llm" do
-      assert_raise KeyError, fn ->
-        Agent.new("test", repo: Arcana.TestRepo)
-      end
+    test "explicit options override config defaults" do
+      custom_llm = fn _ -> {:ok, "custom"} end
+      ctx = Agent.new("test", llm: custom_llm)
+
+      assert ctx.repo == Arcana.TestRepo
+      assert ctx.llm == custom_llm
     end
   end
 

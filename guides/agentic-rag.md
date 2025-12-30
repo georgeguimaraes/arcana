@@ -9,10 +9,8 @@ The `Arcana.Agent` module provides a pipeline-based approach to RAG where a cont
 ```elixir
 alias Arcana.Agent
 
-llm = fn prompt -> {:ok, LangChain.chat(prompt)} end
-
 ctx =
-  Agent.new("Compare Elixir and Erlang", repo: MyApp.Repo, llm: llm)
+  Agent.new("Compare Elixir and Erlang")
   |> Agent.rewrite()     # Clean up conversational input
   |> Agent.expand()      # Expand query with synonyms
   |> Agent.decompose()   # Break into sub-questions
@@ -23,18 +21,39 @@ ctx =
 ctx.answer
 ```
 
-## Pipeline Steps
+## Configuration
 
-### new/2 - Initialize Context
-
-Creates the context with your question and configuration:
+Configure defaults in your config so you don't have to pass them every time:
 
 ```elixir
+# config/config.exs
+config :arcana,
+  repo: MyApp.Repo,
+  llm: &MyApp.LLM.complete/1
+```
+
+You can still override per-call if needed:
+
+```elixir
+Agent.new("Question", repo: OtherRepo, llm: other_llm)
+```
+
+## Pipeline Steps
+
+### new/1,2 - Initialize Context
+
+Creates the context with your question and optional overrides:
+
+```elixir
+# Uses config defaults
+ctx = Agent.new("What is Elixir?")
+
+# With explicit options
 ctx = Agent.new("What is Elixir?",
   repo: MyApp.Repo,
   llm: llm,
-  limit: 5,        # Max chunks per search
-  threshold: 0.5   # Minimum similarity
+  limit: 5,        # Max chunks per search (default: 5)
+  threshold: 0.5   # Minimum similarity (default: 0.5)
 )
 ```
 

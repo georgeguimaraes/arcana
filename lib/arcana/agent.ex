@@ -4,7 +4,7 @@ defmodule Arcana.Agent do
 
   Compose steps via pipes with a context struct flowing through each transformation:
 
-      Arcana.Agent.new(question, repo: MyRepo, llm: llm_fn)
+      Arcana.Agent.new(question, llm: llm_fn)
       |> Arcana.Agent.search()
       |> Arcana.Agent.answer()
 
@@ -15,19 +15,22 @@ defmodule Arcana.Agent do
 
   ## Steps
 
-  - `new/2` - Initialize context with question and options
+  - `new/1,2` - Initialize context with question and options
   - `search/2` - Execute search, populate results
   - `answer/1` - Generate final answer from results
 
+  ## Configuration
+
+  Set defaults in your config to avoid passing options every time:
+
+      config :arcana,
+        repo: MyApp.Repo,
+        llm: &MyApp.LLM.complete/1
+
   ## Example
 
-      llm = fn prompt ->
-        # Call your LLM API
-        {:ok, "Generated answer"}
-      end
-
       ctx =
-        Arcana.Agent.new("What is Elixir?", repo: MyApp.Repo, llm: llm)
+        Arcana.Agent.new("What is Elixir?")
         |> Arcana.Agent.search()
         |> Arcana.Agent.answer()
 
@@ -42,20 +45,27 @@ defmodule Arcana.Agent do
 
   ## Options
 
-  - `:repo` (required) - The Ecto repo to use
-  - `:llm` (required) - Function that takes a prompt and returns `{:ok, response}` or `{:error, reason}`
+  - `:repo` - The Ecto repo to use (defaults to `Application.get_env(:arcana, :repo)`)
+  - `:llm` - Function that takes a prompt and returns `{:ok, response}` or `{:error, reason}`
+    (defaults to `Application.get_env(:arcana, :llm)`)
   - `:limit` - Maximum chunks to retrieve (default: 5)
   - `:threshold` - Minimum similarity threshold (default: 0.5)
 
   ## Example
 
+      # With config defaults
+      config :arcana, repo: MyApp.Repo, llm: &MyApp.LLM.complete/1
+
+      Agent.new("What is Elixir?")
+
+      # Or with explicit options
       Agent.new("What is Elixir?", repo: MyApp.Repo, llm: &my_llm/1)
   """
-  def new(question, opts) when is_binary(question) do
+  def new(question, opts \\ []) when is_binary(question) do
     %Context{
       question: question,
-      repo: Keyword.fetch!(opts, :repo),
-      llm: Keyword.fetch!(opts, :llm),
+      repo: opts[:repo] || Application.get_env(:arcana, :repo),
+      llm: opts[:llm] || Application.get_env(:arcana, :llm),
       limit: Keyword.get(opts, :limit, 5),
       threshold: Keyword.get(opts, :threshold, 0.5)
     }
