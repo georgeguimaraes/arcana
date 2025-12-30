@@ -135,6 +135,22 @@ For better performance with local embeddings:
 config :nx, default_backend: EXLA.Backend
 ```
 
+### Changing embedding models
+
+When switching to an embedding model with different dimensions (e.g., from `bge-small` with 384 dims to `bge-large` with 1024 dims), you need to resize the vector column:
+
+```bash
+# 1. Update your config to use the new model
+# 2. Generate a migration to resize the vector column
+mix arcana.gen.embedding_migration
+
+# 3. Run the migration
+mix ecto.migrate
+
+# 4. Re-embed all documents with the new model
+mix arcana.reembed
+```
+
 ## Usage
 
 ### Ingest documents

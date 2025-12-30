@@ -65,6 +65,22 @@ children = [
 | `thenlper/gte-small` | 384 | 67MB | Smallest, fastest |
 | `sentence-transformers/all-MiniLM-L6-v2` | 384 | 91MB | Lightweight |
 
+### Changing Embedding Models
+
+When switching to a model with different dimensions, you need to resize the vector column:
+
+```bash
+# 1. Update your config to use the new model
+# 2. Generate a migration to resize the vector column
+mix arcana.gen.embedding_migration
+
+# 3. Run the migration
+mix ecto.migrate
+
+# 4. Re-embed all documents with the new model
+mix arcana.reembed
+```
+
 For OpenAI embeddings or custom providers, see the [LLM Integration](llm-integration.md) guide.
 
 ## Basic Usage
