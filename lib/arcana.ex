@@ -701,11 +701,9 @@ defmodule Arcana do
   defp parse_collection_opt(%{name: name}), do: {name, nil}
 
   defp merge_defaults(opts) do
-    defaults =
-      [:repo, :llm]
-      |> Enum.map(fn key -> {key, Application.get_env(:arcana, key)} end)
-      |> Enum.reject(fn {_, v} -> is_nil(v) end)
-
-    Keyword.merge(defaults, opts)
+    Keyword.merge([
+      repo: Application.get_env(:arcana, :repo),
+      llm: Application.get_env(:arcana, :llm)
+    ], opts)
   end
 end
