@@ -29,9 +29,20 @@ defmodule ArcanaWeb.InfoLive do
       repo: Application.get_env(:arcana, :repo),
       llm: format_llm_config(Application.get_env(:arcana, :llm)),
       embedding: format_embedding_config(Application.get_env(:arcana, :embedder, :local)),
-      reranker: format_reranker_config(Application.get_env(:arcana, :reranker))
+      reranker: format_reranker_config(Application.get_env(:arcana, :reranker)),
+      raw: %{
+        embedder: redact_config(Application.get_env(:arcana, :embedder, :local)),
+        llm: redact_config(Application.get_env(:arcana, :llm)),
+        reranker: redact_config(Application.get_env(:arcana, :reranker))
+      }
     }
   end
+
+  defp redact_config(nil), do: nil
+  defp redact_config(val) when is_atom(val), do: val
+  defp redact_config(fun) when is_function(fun), do: "#Function<...>"
+  defp redact_config({module, opts}) when is_atom(module), do: {module, redact_sensitive(opts)}
+  defp redact_config(other), do: redact_sensitive(other)
 
   defp format_llm_config(nil), do: %{configured: false}
 
@@ -49,7 +60,7 @@ defmodule ArcanaWeb.InfoLive do
         }
 
       _ ->
-        %{configured: true, type: inspect(llm)}
+        %{configured: true, type: redact_sensitive(llm)}
     end
   end
 
@@ -68,7 +79,7 @@ defmodule ArcanaWeb.InfoLive do
   defp format_embedding_config({:custom, _fun, _opts}), do: %{type: :custom}
 
   defp format_embedding_config({module, opts}) when is_atom(module) and is_list(opts) do
-    %{type: :custom_module, module: module, opts: opts}
+    %{type: :custom_module, module: module, opts: redact_sensitive(opts)}
   end
 
   defp format_embedding_config(module) when is_atom(module) do
@@ -83,14 +94,31 @@ defmodule ArcanaWeb.InfoLive do
     do: %{module: module, configured: true}
 
   defp format_reranker_config({module, opts}) when is_atom(module) and is_list(opts) do
-    %{module: module, opts: opts, configured: true}
+    %{module: module, opts: redact_sensitive(opts), configured: true}
   end
 
   defp format_reranker_config(fun) when is_function(fun) do
     %{type: :function, configured: true}
   end
 
-  defp format_reranker_config(other), do: %{type: :unknown, raw: inspect(other), configured: true}
+  defp format_reranker_config(other),
+    do: %{type: :unknown, raw: redact_sensitive(other), configured: true}
+
+  @sensitive_keys [:api_key, :api_secret, :secret_key, :access_key, :token, :password]
+
+  defp redact_sensitive(opts) when is_list(opts) do
+    for {k, v} <- opts do
+      if k in @sensitive_keys, do: {k, "[REDACTED]"}, else: {k, v}
+    end
+  end
+
+  defp redact_sensitive(%{} = map) do
+    for {k, v} <- map, into: %{} do
+      if k in @sensitive_keys, do: {k, "[REDACTED]"}, else: {k, v}
+    end
+  end
+
+  defp redact_sensitive(other), do: inspect(other)
 
   @impl true
   def render(assigns) do
@@ -181,9 +209,9 @@ defmodule ArcanaWeb.InfoLive do
           <h3>Raw Configuration</h3>
           <pre class="arcana-doc-content" style="font-size: 0.75rem;">config :arcana,
     repo: <%= inspect(@config_info.repo) %>,
-    embedding: <%= inspect(Application.get_env(:arcana, :embedder, :local)) %>,
-    llm: <%= if Application.get_env(:arcana, :llm), do: inspect(Application.get_env(:arcana, :llm)), else: "nil" %>,
-    reranker: <%= if Application.get_env(:arcana, :reranker), do: inspect(Application.get_env(:arcana, :reranker)), else: "Arcana.Reranker.LLM (default)" %></pre>
+    embedder: <%= inspect(@config_info.raw.embedder) %>,
+    llm: <%= inspect(@config_info.raw.llm) %>,
+    reranker: <%= inspect(@config_info.raw.reranker) || "Arcana.Reranker.LLM (default)" %></pre>
         </div>
       </div>
     </.dashboard_layout>
