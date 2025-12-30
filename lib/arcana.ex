@@ -139,7 +139,10 @@ defmodule Arcana do
 
   """
   def ingest(text, opts) when is_binary(text) do
-    repo = opts[:repo] || Application.get_env(:arcana, :repo) || raise ArgumentError, "repo is required"
+    repo =
+      opts[:repo] || Application.get_env(:arcana, :repo) ||
+        raise ArgumentError, "repo is required"
+
     source_id = Keyword.get(opts, :source_id)
     metadata = Keyword.get(opts, :metadata, %{})
 
@@ -247,7 +250,10 @@ defmodule Arcana do
   end
 
   defp ingest_with_attrs(text, opts) do
-    repo = opts[:repo] || Application.get_env(:arcana, :repo) || raise ArgumentError, "repo is required"
+    repo =
+      opts[:repo] || Application.get_env(:arcana, :repo) ||
+        raise ArgumentError, "repo is required"
+
     source_id = Keyword.get(opts, :source_id)
     metadata = Keyword.get(opts, :metadata, %{})
     file_path = Keyword.get(opts, :file_path)
@@ -642,7 +648,9 @@ defmodule Arcana do
 
   """
   def delete(document_id, opts) do
-    repo = opts[:repo] || Application.get_env(:arcana, :repo) || raise ArgumentError, "repo is required"
+    repo =
+      opts[:repo] || Application.get_env(:arcana, :repo) ||
+        raise ArgumentError, "repo is required"
 
     case repo.get(Document, document_id) do
       nil ->
