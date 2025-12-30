@@ -32,6 +32,7 @@ defmodule Arcana.MixProject do
         "guides/reranking.md",
         "guides/search-algorithms.md",
         "guides/evaluation.md",
+        "guides/telemetry.md",
         "guides/dashboard.md"
       ],
       groups_for_extras: [

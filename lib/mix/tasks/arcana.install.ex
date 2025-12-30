@@ -78,7 +78,14 @@ if Code.ensure_loaded?(Igniter) do
 
          And configure: config :arcana, vector_store: :memory
 
-      3. Start using Arcana:
+      3. (Optional) Enable telemetry logging for observability:
+
+          # In your application's start/2, before Supervisor.start_link
+          Arcana.Telemetry.Logger.attach()
+
+         See the Telemetry guide for Prometheus/LiveDashboard integration.
+
+      4. Start using Arcana:
 
           Arcana.ingest("Your content", repo: #{inspect(repo_module)})
           Arcana.search("query", repo: #{inspect(repo_module)})
@@ -431,6 +438,13 @@ else
 
             arcana_dashboard "/arcana"
           end
+
+      6. (Optional) Enable telemetry logging for observability:
+
+          # In your application's start/2, before Supervisor.start_link
+          Arcana.Telemetry.Logger.attach()
+
+         See the Telemetry guide for Prometheus/LiveDashboard integration.
 
       TIP: For automatic setup, add {:igniter, "~> 0.5"} to your deps
            and re-run mix arcana.install

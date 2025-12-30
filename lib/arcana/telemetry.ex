@@ -80,6 +80,34 @@ defmodule Arcana.Telemetry do
     * Measurement: `%{duration: integer}`
     * Metadata: `%{kind: atom(), reason: term(), stacktrace: list()}`
 
+  ### Agent Pipeline Events
+
+  Each step in the Agent pipeline emits `:start`, `:stop`, and `:exception` events:
+
+  * `[:arcana, :agent, :rewrite, :*]` - Query rewriting step.
+    * Stop metadata: `%{query: String.t()}`
+
+  * `[:arcana, :agent, :select, :*]` - Collection selection step.
+    * Stop metadata: `%{selected: [String.t()]}`
+
+  * `[:arcana, :agent, :expand, :*]` - Query expansion step.
+    * Stop metadata: `%{expanded_query: String.t()}`
+
+  * `[:arcana, :agent, :decompose, :*]` - Question decomposition step.
+    * Stop metadata: `%{sub_question_count: integer}`
+
+  * `[:arcana, :agent, :search, :*]` - Vector search step.
+    * Stop metadata: `%{total_chunks: integer}`
+
+  * `[:arcana, :agent, :rerank, :*]` - Chunk reranking step.
+    * Stop metadata: `%{kept: integer, original: integer}`
+
+  * `[:arcana, :agent, :answer, :*]` - Answer generation step.
+    * Stop metadata: `%{}`
+
+  * `[:arcana, :agent, :self_correct, :*]` - Self-correction iteration.
+    * Stop metadata: `%{attempt: integer}`
+
   ## Quick Start with Built-in Logger
 
   For quick setup, use the built-in logger:

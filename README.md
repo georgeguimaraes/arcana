@@ -385,6 +385,7 @@ See the [Agentic RAG Guide](guides/agentic-rag.md) for detailed examples.
 - [Search Algorithms](guides/search-algorithms.md) - Semantic, fulltext, and hybrid search
 - [Re-ranking](guides/reranking.md) - Improve retrieval quality
 - [Evaluation](guides/evaluation.md) - Measure and improve retrieval quality
+- [Telemetry](guides/telemetry.md) - Observability, metrics, and debugging
 - [Dashboard](guides/dashboard.md) - Web UI setup
 
 ## Roadmap
