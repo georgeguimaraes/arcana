@@ -59,7 +59,36 @@ mix arcana.install
 mix ecto.migrate
 ```
 
-And follow the manual steps printed by the installer.
+And follow the manual steps printed by the installer:
+
+1. Create the Postgrex types module:
+
+```elixir
+# lib/my_app/postgrex_types.ex
+Postgrex.Types.define(
+  MyApp.PostgrexTypes,
+  [Pgvector.Extensions.Vector] ++ Ecto.Adapters.Postgres.extensions(),
+  []
+)
+```
+
+2. Add to your repo config:
+
+```elixir
+# config/config.exs
+config :my_app, MyApp.Repo,
+  types: MyApp.PostgrexTypes
+```
+
+3. (Optional) Mount the dashboard:
+
+```elixir
+# lib/my_app_web/router.ex
+scope "/arcana" do
+  pipe_through [:browser]
+  forward "/", ArcanaWeb.Router
+end
+```
 
 ## Setup
 
