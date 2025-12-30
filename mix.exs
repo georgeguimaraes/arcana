@@ -82,8 +82,7 @@ defmodule Arcana.MixProject do
       {:req_llm, github: "agentjido/req_llm", ref: "56660898e3097026e64654cdd2c2c5372c9899c6"},
 
       # Optional: In-memory vector store with HNSW
-      {:hnswlib, github: "elixir-nx/hnswlib", optional: true},
-      {:elixir_make, "~> 0.9", override: true}
+      {:hnswlib, github: "elixir-nx/hnswlib", optional: true}
     ]
   end
 end
