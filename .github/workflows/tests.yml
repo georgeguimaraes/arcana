@@ -36,6 +36,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - name: Install cmake (for hnswlib)
+        run: sudo apt-get update && sudo apt-get install -y cmake
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
         with:
