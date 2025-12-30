@@ -133,7 +133,43 @@ For better performance with local embeddings:
 config :nx, default_backend: EXLA.Backend
 ```
 
-See the [Getting Started Guide](guides/getting-started.md) for embedding model options and configuration.
+### Embedding providers
+
+Arcana supports multiple embedding providers:
+
+```elixir
+# config/config.exs
+
+# Local Bumblebee (default) - no API keys needed
+config :arcana, embedder: :local
+config :arcana, embedder: {:local, model: "BAAI/bge-large-en-v1.5"}
+
+# OpenAI (requires OPENAI_API_KEY)
+config :arcana, embedder: :openai
+config :arcana, embedder: {:openai, model: "text-embedding-3-large"}
+
+# Custom module implementing Arcana.Embedder behaviour
+config :arcana, embedder: MyApp.CohereEmbedder
+```
+
+Implement custom embedders with the `Arcana.Embedder` behaviour:
+
+```elixir
+defmodule MyApp.CohereEmbedder do
+  @behaviour Arcana.Embedder
+
+  @impl true
+  def embed(text, opts) do
+    # Call your embedding API
+    {:ok, embedding_vector}
+  end
+
+  @impl true
+  def dimensions(_opts), do: 1024
+end
+```
+
+See the [Getting Started Guide](guides/getting-started.md) for all embedding model options.
 
 ## Usage
 
