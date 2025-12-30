@@ -55,13 +55,16 @@ jobs:
         run: mix credo --strict
       - name: Create database
         env:
+          MIX_ENV: test
           POSTGRES_PORT: "5432"
         run: mix ecto.create -r Arcana.TestRepo
       - name: Run migrations
         env:
+          MIX_ENV: test
           POSTGRES_PORT: "5432"
         run: mix ecto.migrate -r Arcana.TestRepo
       - name: Run tests
         env:
+          MIX_ENV: test
           POSTGRES_PORT: "5432"
         run: mix test
