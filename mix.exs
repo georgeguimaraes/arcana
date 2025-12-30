@@ -83,7 +83,7 @@ defmodule Arcana.MixProject do
       {:req_llm, "~> 1.2"},
 
       # Optional: In-memory vector store with HNSW
-      {:hnswlib, github: "elixir-nx/hnswlib", optional: true}
+      {:hnswlib, "~> 0.1", optional: true}
     ]
   end
 end
