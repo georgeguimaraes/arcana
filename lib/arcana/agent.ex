@@ -138,7 +138,10 @@ defmodule Arcana.Agent do
   # Returns the effective query to use, chaining through the pipeline:
   # expanded_query → rewritten_query → question
   defp effective_query(%Context{expanded_query: expanded}) when is_binary(expanded), do: expanded
-  defp effective_query(%Context{rewritten_query: rewritten}) when is_binary(rewritten), do: rewritten
+
+  defp effective_query(%Context{rewritten_query: rewritten}) when is_binary(rewritten),
+    do: rewritten
+
   defp effective_query(%Context{question: question}), do: question
 
   @doc """
@@ -549,7 +552,9 @@ defmodule Arcana.Agent do
        )
        when iteration > max_iterations do
     # Max iterations reached, return best effort
-    chunks = do_simple_search(search_opts.searcher, question, collection, search_opts.searcher_opts)
+    chunks =
+      do_simple_search(search_opts.searcher, question, collection, search_opts.searcher_opts)
+
     %{question: question, collection: collection, chunks: chunks, iterations: max_iterations}
   end
 
@@ -561,7 +566,8 @@ defmodule Arcana.Agent do
          search_opts,
          iteration
        ) do
-    chunks = do_simple_search(search_opts.searcher, question, collection, search_opts.searcher_opts)
+    chunks =
+      do_simple_search(search_opts.searcher, question, collection, search_opts.searcher_opts)
 
     if sufficient_results?(ctx, question, chunks, search_opts.sufficient_prompt) do
       %{question: question, collection: collection, chunks: chunks, iterations: iteration}
@@ -840,7 +846,15 @@ defmodule Arcana.Agent do
   defp answerer_name(answerer) when is_atom(answerer), do: answerer
   defp answerer_name(_answerer), do: :custom_function
 
-  defp handle_answer_result({:ok, answer}, ctx, chunks, self_correct, llm, max_corrections, custom_prompt_fn) do
+  defp handle_answer_result(
+         {:ok, answer},
+         ctx,
+         chunks,
+         self_correct,
+         llm,
+         max_corrections,
+         custom_prompt_fn
+       ) do
     base_ctx = %{ctx | answer: answer, context_used: chunks}
 
     if self_correct do
@@ -863,7 +877,13 @@ defmodule Arcana.Agent do
   end
 
   defp do_self_correct(ctx, llm, chunks, max_corrections, custom_prompt_fn) do
-    correction_opts = %{llm: llm, chunks: chunks, max: max_corrections, prompt_fn: custom_prompt_fn}
+    correction_opts = %{
+      llm: llm,
+      chunks: chunks,
+      max: max_corrections,
+      prompt_fn: custom_prompt_fn
+    }
+
     do_self_correct_loop(ctx, correction_opts, 0, [])
   end
 
@@ -897,7 +917,13 @@ defmodule Arcana.Agent do
         {result, %{result: :corrected, attempt: count + 1}}
 
       {:error, reason} ->
-        result = %{ctx | error: reason, correction_count: count, corrections: Enum.reverse(history)}
+        result = %{
+          ctx
+          | error: reason,
+            correction_count: count,
+            corrections: Enum.reverse(history)
+        }
+
         {result, %{result: :error, attempt: count + 1}}
     end
   end
@@ -952,7 +978,9 @@ defmodule Arcana.Agent do
         {:ok, {:needs_improvement, feedback}}
 
       {:ok, %{"grounded" => false}} ->
-        {:ok, {:needs_improvement, "Please ensure the answer is well-grounded in the provided context."}}
+        {:ok,
+         {:needs_improvement,
+          "Please ensure the answer is well-grounded in the provided context."}}
 
       {:error, _} ->
         # Try to extract JSON from response

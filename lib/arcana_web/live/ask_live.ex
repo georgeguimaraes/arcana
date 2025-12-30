@@ -68,7 +68,17 @@ defmodule ArcanaWeb.AskLive do
     parent = self()
 
     Task.start(fn ->
-      result = run_ask(mode, question, repo, llm, socket.assigns.collections, params, selected_collections)
+      result =
+        run_ask(
+          mode,
+          question,
+          repo,
+          llm,
+          socket.assigns.collections,
+          params,
+          selected_collections
+        )
+
       send(parent, {:ask_complete, result})
     end)
   end

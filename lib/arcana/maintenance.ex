@@ -51,7 +51,8 @@ defmodule Arcana.Maintenance do
     embedder = Arcana.embedder()
 
     # First, rechunk documents that have no chunks
-    docs_without_chunks = repo.all(from d in Document, where: d.chunk_count == 0 or d.status == :pending)
+    docs_without_chunks =
+      repo.all(from(d in Document, where: d.chunk_count == 0 or d.status == :pending))
 
     rechunked =
       if docs_without_chunks != [] do
@@ -70,7 +71,8 @@ defmodule Arcana.Maintenance do
         0
       end
 
-    {:ok, %{rechunked_documents: rechunked, reembedded_chunks: reembedded, total_chunks: total_chunks}}
+    {:ok,
+     %{rechunked_documents: rechunked, reembedded_chunks: reembedded, total_chunks: total_chunks}}
   end
 
   defp rechunk_documents(documents, embedder, repo, progress_fn) do

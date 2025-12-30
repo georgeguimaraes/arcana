@@ -37,7 +37,9 @@ defmodule ArcanaWeb.SearchLive do
   def handle_event("search", params, socket) do
     query = params["query"] || ""
     results = run_search(query, params, socket.assigns.repo)
-    {:noreply, assign(socket, search_results: results, search_query: query, expanded_result_id: nil)}
+
+    {:noreply,
+     assign(socket, search_results: results, search_query: query, expanded_result_id: nil)}
   end
 
   def handle_event("toggle_result", %{"id" => id}, socket) do
@@ -95,7 +97,10 @@ defmodule ArcanaWeb.SearchLive do
   defp add_collection_opt(opts, multiple), do: Keyword.put(opts, :collection, multiple)
 
   defp normalize_collections(nil), do: []
-  defp normalize_collections(collections) when is_list(collections), do: Enum.filter(collections, &(&1 != ""))
+
+  defp normalize_collections(collections) when is_list(collections),
+    do: Enum.filter(collections, &(&1 != ""))
+
   defp normalize_collections(collection), do: [collection]
 
   @impl true

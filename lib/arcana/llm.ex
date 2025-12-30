@@ -103,7 +103,8 @@ if Code.ensure_loaded?(ReqLLM) do
 
     def complete(model, prompt, context, opts) do
       Helpers.with_telemetry(model, prompt, context, fn ->
-        system_prompt = Keyword.get(opts, :system_prompt) || Helpers.default_system_prompt(context)
+        system_prompt =
+          Keyword.get(opts, :system_prompt) || Helpers.default_system_prompt(context)
 
         llm_context =
           ReqLLM.Context.new([

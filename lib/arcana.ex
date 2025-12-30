@@ -100,6 +100,7 @@ defmodule Arcana do
   defp parse_embedder_config({:local, opts}), do: {Arcana.Embedder.Local, opts}
   defp parse_embedder_config(:openai), do: {Arcana.Embedder.OpenAI, []}
   defp parse_embedder_config({:openai, opts}), do: {Arcana.Embedder.OpenAI, opts}
+
   defp parse_embedder_config(fun) when is_function(fun, 1),
     do: {Arcana.Embedder.Custom, [fun: fun]}
 
@@ -607,7 +608,15 @@ defmodule Arcana do
         :telemetry.span([:arcana, :ask], start_metadata, fn ->
           search_opts =
             opts
-            |> Keyword.take([:repo, :limit, :source_id, :threshold, :mode, :collection, :collections])
+            |> Keyword.take([
+              :repo,
+              :limit,
+              :source_id,
+              :threshold,
+              :mode,
+              :collection,
+              :collections
+            ])
             |> Keyword.put_new(:limit, 5)
 
           context = search(question, search_opts)

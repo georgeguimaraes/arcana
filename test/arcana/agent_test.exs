@@ -351,7 +351,8 @@ defmodule Arcana.AgentTest do
             :counters.add(call_count, 1, 1)
 
             if count == 0 do
-              {:ok, ~s({"grounded": false, "feedback": "Answer should mention functional programming."})}
+              {:ok,
+               ~s({"grounded": false, "feedback": "Answer should mention functional programming."})}
             else
               {:ok, ~s({"grounded": true})}
             end
@@ -409,7 +410,11 @@ defmodule Arcana.AgentTest do
         repo: Arcana.TestRepo,
         llm: llm,
         results: [
-          %{question: "test", collection: "default", chunks: [%{id: "1", text: "context", score: 0.9}]}
+          %{
+            question: "test",
+            collection: "default",
+            chunks: [%{id: "1", text: "context", score: 0.9}]
+          }
         ]
       }
 
@@ -448,13 +453,21 @@ defmodule Arcana.AgentTest do
         question: "test",
         repo: Arcana.TestRepo,
         llm: llm,
-        results: [%{question: "test", collection: "default", chunks: [%{id: "1", text: "ctx", score: 0.9}]}]
+        results: [
+          %{
+            question: "test",
+            collection: "default",
+            chunks: [%{id: "1", text: "ctx", score: 0.9}]
+          }
+        ]
       }
 
       Agent.answer(ctx, self_correct: true)
 
       assert_receive {:telemetry, [:arcana, :agent, :self_correct, :start], _, %{attempt: 1}}
-      assert_receive {:telemetry, [:arcana, :agent, :self_correct, :stop], _, %{result: :accepted}}
+
+      assert_receive {:telemetry, [:arcana, :agent, :self_correct, :stop], _,
+                      %{result: :accepted}}
 
       :telemetry.detach(ref)
     end
@@ -1279,7 +1292,8 @@ defmodule Arcana.AgentTest do
           prompt =~ "decompose this question" ->
             # Should receive the expanded query with synonyms
             if prompt =~ "machine learning" and prompt =~ "deep learning" do
-              {:ok, ~s({"sub_questions": ["What is ML machine learning?", "What is DL deep learning?"]})}
+              {:ok,
+               ~s({"sub_questions": ["What is ML machine learning?", "What is DL deep learning?"]})}
             else
               {:ok, ~s({"sub_questions": ["missing expansions"]})}
             end
@@ -1957,7 +1971,8 @@ defmodule Arcana.AgentTest do
 
     test "accepts custom searcher function" do
       custom_searcher = fn question, _collection, _opts ->
-        {:ok, [%{id: "fn-1", text: "Function search: #{question}", metadata: %{}, similarity: 1.0}]}
+        {:ok,
+         [%{id: "fn-1", text: "Function search: #{question}", metadata: %{}, similarity: 1.0}]}
       end
 
       ctx =
@@ -2002,7 +2017,9 @@ defmodule Arcana.AgentTest do
           llm: fn _ -> raise "LLM should not be called" end,
           limit: 5,
           threshold: 0.5,
-          results: [%{question: "test", collection: "default", chunks: [%{id: "1", text: "chunk"}]}]
+          results: [
+            %{question: "test", collection: "default", chunks: [%{id: "1", text: "chunk"}]}
+          ]
         }
         |> Agent.answer(answerer: TestAnswerer)
 
@@ -2021,7 +2038,13 @@ defmodule Arcana.AgentTest do
           llm: fn _ -> raise "LLM should not be called" end,
           limit: 5,
           threshold: 0.5,
-          results: [%{question: "test", collection: "default", chunks: [%{id: "1", text: "a"}, %{id: "2", text: "b"}]}]
+          results: [
+            %{
+              question: "test",
+              collection: "default",
+              chunks: [%{id: "1", text: "a"}, %{id: "2", text: "b"}]
+            }
+          ]
         }
         |> Agent.answer(answerer: custom_answerer)
 
@@ -2086,7 +2109,9 @@ defmodule Arcana.AgentTest do
           llm: llm,
           limit: 5,
           threshold: 0.5,
-          results: [%{question: "test", collection: "default", chunks: [%{id: "1", text: "context"}]}]
+          results: [
+            %{question: "test", collection: "default", chunks: [%{id: "1", text: "context"}]}
+          ]
         }
         |> Agent.answer(answerer: custom_answerer, self_correct: true)
 

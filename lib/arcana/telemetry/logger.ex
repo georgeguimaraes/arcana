@@ -181,7 +181,11 @@ defmodule Arcana.Telemetry.Logger do
       else
         error_str = meta[:error] || "unknown error"
         # Truncate long errors to keep logs readable
-        truncated = if String.length(error_str) > 100, do: String.slice(error_str, 0, 100) <> "...", else: error_str
+        truncated =
+          if String.length(error_str) > 100,
+            do: String.slice(error_str, 0, 100) <> "...",
+            else: error_str
+
         "(#{truncated})"
       end
 
@@ -206,7 +210,9 @@ defmodule Arcana.Telemetry.Logger do
 
   defp extract_details("agent.expand", meta) do
     case meta[:expanded_query] do
-      nil -> "(no expansion)"
+      nil ->
+        "(no expansion)"
+
       query when is_binary(query) ->
         preview = String.slice(query, 0, 50)
         if String.length(query) > 50, do: "(\"#{preview}...\")", else: "(\"#{preview}\")"

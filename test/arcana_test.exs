@@ -149,7 +149,10 @@ defmodule ArcanaTest do
     test "filters by single collection" do
       # Collection is auto-created on ingest
       {:ok, _doc} =
-        Arcana.ingest("Ruby is a dynamic programming language", repo: Repo, collection: "search-coll")
+        Arcana.ingest("Ruby is a dynamic programming language",
+          repo: Repo,
+          collection: "search-coll"
+        )
 
       results = Arcana.search("programming", repo: Repo, collection: "search-coll")
 
@@ -160,16 +163,23 @@ defmodule ArcanaTest do
     test "filters by multiple collections using :collections option" do
       # Collections are auto-created on ingest
       {:ok, _doc1} =
-        Arcana.ingest("Go is a statically typed language", repo: Repo, collection: "search-coll-a")
+        Arcana.ingest("Go is a statically typed language",
+          repo: Repo,
+          collection: "search-coll-a"
+        )
 
       {:ok, _doc2} =
-        Arcana.ingest("Rust is a systems programming language", repo: Repo, collection: "search-coll-b")
+        Arcana.ingest("Rust is a systems programming language",
+          repo: Repo,
+          collection: "search-coll-b"
+        )
 
       {:ok, _doc3} =
         Arcana.ingest("JavaScript is a web language", repo: Repo, collection: "search-coll-c")
 
       # Search only in collections a and b
-      results = Arcana.search("language", repo: Repo, collections: ["search-coll-a", "search-coll-b"])
+      results =
+        Arcana.search("language", repo: Repo, collections: ["search-coll-a", "search-coll-b"])
 
       refute Enum.empty?(results)
       texts = Enum.map(results, & &1.text)

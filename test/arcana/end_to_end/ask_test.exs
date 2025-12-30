@@ -41,7 +41,9 @@ defmodule Arcana.EndToEnd.AskTest do
 
       # Answer should mention something relevant
       answer_lower = String.downcase(answer)
-      assert answer_lower =~ "elixir" or answer_lower =~ "programming" or answer_lower =~ "language"
+
+      assert answer_lower =~ "elixir" or answer_lower =~ "programming" or
+               answer_lower =~ "language"
     end
 
     @tag :end_to_end
