@@ -1,6 +1,9 @@
 defmodule Arcana.VectorStore.MemoryTest do
   use ExUnit.Case, async: true
 
+  # Tag for CI exclusion - hnswlib NIFs timeout on GitHub Actions runners
+  @moduletag :memory
+
   alias Arcana.VectorStore.Memory
 
   setup do
