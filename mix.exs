@@ -13,11 +13,19 @@ defmodule Arcana.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
 
-      # Docs
+      # Hex
       name: "Arcana",
       description: "RAG (Retrieval Augmented Generation) library for Elixir",
       source_url: @source_url,
+      package: package(),
       docs: docs()
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["Apache-2.0"],
+      links: %{"GitHub" => @source_url}
     ]
   end
 
