@@ -238,35 +238,7 @@ defmodule Arcana do
       chunks = Chunker.chunk(chunker_config, text, chunk_opts)
 
       # Embed and store chunks
-      emb = embedder()
-
-      result =
-        chunks
-        |> Enum.reduce_while({:ok, []}, fn chunk, {:ok, acc} ->
-          case Embedder.embed(emb, chunk.text) do
-            {:ok, embedding} ->
-              chunk_record =
-                %Chunk{}
-                |> Chunk.changeset(%{
-                  text: chunk.text,
-                  embedding: embedding,
-                  chunk_index: chunk.chunk_index,
-                  token_count: chunk.token_count,
-                  document_id: document.id
-                })
-                |> repo.insert!()
-
-              {:cont, {:ok, [chunk_record | acc]}}
-
-            {:error, reason} ->
-              # Mark document as failed
-              document
-              |> Document.changeset(%{status: :failed})
-              |> repo.update()
-
-              {:halt, {:error, {:embedding_failed, reason}}}
-          end
-        end)
+      result = embed_and_store_chunks(chunks, document, repo)
 
       case result do
         {:ok, chunk_records} ->
@@ -287,6 +259,39 @@ defmodule Arcana do
           {{:error, reason}, %{error: reason}}
       end
     end)
+  end
+
+  defp embed_and_store_chunks(chunks, document, repo) do
+    emb = embedder()
+
+    Enum.reduce_while(chunks, {:ok, []}, fn chunk, {:ok, acc} ->
+      embed_single_chunk(emb, chunk, document, repo, acc)
+    end)
+  end
+
+  defp embed_single_chunk(emb, chunk, document, repo, acc) do
+    case Embedder.embed(emb, chunk.text) do
+      {:ok, embedding} ->
+        chunk_record =
+          %Chunk{}
+          |> Chunk.changeset(%{
+            text: chunk.text,
+            embedding: embedding,
+            chunk_index: chunk.chunk_index,
+            token_count: chunk.token_count,
+            document_id: document.id
+          })
+          |> repo.insert!()
+
+        {:cont, {:ok, [chunk_record | acc]}}
+
+      {:error, reason} ->
+        document
+        |> Document.changeset(%{status: :failed})
+        |> repo.update()
+
+        {:halt, {:error, {:embedding_failed, reason}}}
+    end
   end
 
   @doc """
@@ -506,33 +511,36 @@ defmodule Arcana do
         fulltext_weight: Keyword.get(opts, :fulltext_weight, 0.5)
       }
 
-      # Search each collection and combine results
-      collection_results =
-        Enum.reduce_while(collections, {:ok, []}, fn collection_name, {:ok, acc} ->
-          case do_search(mode, search_query, Map.put(params, :collection, collection_name)) do
-            {:ok, results} -> {:cont, {:ok, acc ++ results}}
-            {:error, reason} -> {:halt, {:error, reason}}
-          end
-        end)
-
-      case collection_results do
-        {:ok, all_results} ->
-          results =
-            all_results
-            |> Enum.sort_by(& &1.score, :desc)
-            |> Enum.take(limit)
-
-          stop_metadata = %{
-            results: results,
-            result_count: length(results)
-          }
-
-          {{:ok, results}, stop_metadata}
-
-        {:error, reason} ->
-          {{:error, reason}, %{error: reason}}
-      end
+      collection_results = search_collections(collections, mode, search_query, params)
+      format_search_results(collection_results, limit)
     end)
+  end
+
+  defp search_collections(collections, mode, search_query, params) do
+    Enum.reduce_while(collections, {:ok, []}, fn collection_name, {:ok, acc} ->
+      search_single_collection(mode, search_query, params, collection_name, acc)
+    end)
+  end
+
+  defp search_single_collection(mode, search_query, params, collection_name, acc) do
+    case do_search(mode, search_query, Map.put(params, :collection, collection_name)) do
+      {:ok, results} -> {:cont, {:ok, acc ++ results}}
+      {:error, reason} -> {:halt, {:error, reason}}
+    end
+  end
+
+  defp format_search_results({:ok, all_results}, limit) do
+    results =
+      all_results
+      |> Enum.sort_by(& &1.score, :desc)
+      |> Enum.take(limit)
+
+    stop_metadata = %{results: results, result_count: length(results)}
+    {{:ok, results}, stop_metadata}
+  end
+
+  defp format_search_results({:error, reason}, _limit) do
+    {{:error, reason}, %{error: reason}}
   end
 
   defp do_search(:semantic, query, params) do
@@ -775,45 +783,36 @@ defmodule Arcana do
     repo = opts[:repo] || Application.get_env(:arcana, :repo)
     llm = opts[:llm] || Application.get_env(:arcana, :llm)
 
-    case llm do
-      nil ->
-        {:error, :no_llm_configured}
+    if is_nil(llm), do: {:error, :no_llm_configured}, else: do_ask(question, opts, repo, llm)
+  end
 
-      llm ->
-        start_metadata = %{
-          question: question,
-          repo: repo
-        }
+  defp do_ask(question, opts, repo, llm) do
+    start_metadata = %{question: question, repo: repo}
 
-        :telemetry.span([:arcana, :ask], start_metadata, fn ->
-          search_opts =
-            opts
-            |> Keyword.take([
-              :repo,
-              :limit,
-              :source_id,
-              :threshold,
-              :mode,
-              :collection,
-              :collections
-            ])
-            |> Keyword.put_new(:limit, 5)
+    :telemetry.span([:arcana, :ask], start_metadata, fn ->
+      search_opts = build_search_opts(opts)
 
-          case search(question, search_opts) do
-            {:ok, context} ->
-              prompt_fn = Keyword.get(opts, :prompt, &default_ask_prompt/2)
-              llm_opts = [system_prompt: prompt_fn.(question, context)]
+      case search(question, search_opts) do
+        {:ok, context} -> ask_with_context(question, context, opts, llm)
+        {:error, reason} -> {{:error, {:search_failed, reason}}, %{error: reason}}
+      end
+    end)
+  end
 
-              result = do_ask_llm(llm, question, context, llm_opts)
-              stop_metadata = ask_stop_metadata(result, context)
+  defp build_search_opts(opts) do
+    opts
+    |> Keyword.take([:repo, :limit, :source_id, :threshold, :mode, :collection, :collections])
+    |> Keyword.put_new(:limit, 5)
+  end
 
-              {result, stop_metadata}
+  defp ask_with_context(question, context, opts, llm) do
+    prompt_fn = Keyword.get(opts, :prompt, &default_ask_prompt/2)
+    llm_opts = [system_prompt: prompt_fn.(question, context)]
 
-            {:error, reason} ->
-              {{:error, {:search_failed, reason}}, %{error: reason}}
-          end
-        end)
-    end
+    result = do_ask_llm(llm, question, context, llm_opts)
+    stop_metadata = ask_stop_metadata(result, context)
+
+    {result, stop_metadata}
   end
 
   @doc """
