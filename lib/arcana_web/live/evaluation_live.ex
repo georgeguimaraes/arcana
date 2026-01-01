@@ -79,23 +79,14 @@ defmodule ArcanaWeb.EvaluationLive do
       socket = assign(socket, eval_running: true, eval_message: nil)
       opts = build_run_opts(repo, mode, evaluate_answers, llm)
 
-      case Evaluation.run(opts) do
-        {:ok, _run} ->
-          socket =
-            socket
-            |> assign(eval_running: false, eval_message: {:success, "Evaluation completed!"})
-            |> load_evaluation_data()
-            |> assign(eval_view: :history)
+      parent = self()
 
-          {:noreply, socket}
+      Task.start(fn ->
+        result = Evaluation.run(opts)
+        send(parent, {:eval_run_complete, result})
+      end)
 
-        {:error, :no_test_cases} ->
-          {:noreply,
-           assign(socket,
-             eval_running: false,
-             eval_message: {:error, "No test cases. Generate some first."}
-           )}
-      end
+      {:noreply, socket}
     end
   end
 
@@ -145,6 +136,25 @@ defmodule ArcanaWeb.EvaluationLive do
   end
 
   @impl true
+  def handle_info({:eval_run_complete, result}, socket) do
+    socket =
+      case result do
+        {:ok, _run} ->
+          socket
+          |> assign(eval_running: false, eval_message: {:success, "Evaluation completed!"})
+          |> load_evaluation_data()
+          |> assign(eval_view: :history)
+
+        {:error, :no_test_cases} ->
+          assign(socket,
+            eval_running: false,
+            eval_message: {:error, "No test cases. Generate some first."}
+          )
+      end
+
+    {:noreply, socket}
+  end
+
   def handle_info({:eval_generate_complete, result}, socket) do
     socket =
       case result do
