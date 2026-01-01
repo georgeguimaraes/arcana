@@ -150,6 +150,19 @@ defmodule Arcana.VectorStore.PgvectorTest do
 
       assert results == []
     end
+
+    test "search_text handles tsquery special characters safely" do
+      repo = Arcana.TestRepo
+
+      {:ok, _collection} = Collection.get_or_create("tsquery-test", repo)
+
+      # These should not crash - tsquery operators are sanitized
+      assert [] = Pgvector.search_text("tsquery-test", "foo | bar", repo: repo)
+      assert [] = Pgvector.search_text("tsquery-test", "foo & bar", repo: repo)
+      assert [] = Pgvector.search_text("tsquery-test", "!foo", repo: repo)
+      assert [] = Pgvector.search_text("tsquery-test", "foo:*", repo: repo)
+      assert [] = Pgvector.search_text("tsquery-test", "(foo)", repo: repo)
+    end
   end
 
   describe "delete/3" do

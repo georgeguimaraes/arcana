@@ -136,15 +136,16 @@ defmodule Arcana.VectorStore.Pgvector do
         end
       end
 
-    # Convert query to tsquery format
-    tsquery = to_tsquery(query_text)
-
     base_query =
       from(c in Chunk,
         join: d in Document,
         on: c.document_id == d.id,
         where:
-          fragment("to_tsvector('english', ?) @@ to_tsquery('english', ?)", c.text, ^tsquery),
+          fragment(
+            "to_tsvector('english', ?) @@ plainto_tsquery('english', ?)",
+            c.text,
+            ^query_text
+          ),
         select: %{
           id: c.id,
           metadata:
@@ -155,17 +156,17 @@ defmodule Arcana.VectorStore.Pgvector do
             }),
           score:
             fragment(
-              "ts_rank(to_tsvector('english', ?), to_tsquery('english', ?))",
+              "ts_rank(to_tsvector('english', ?), plainto_tsquery('english', ?))",
               c.text,
-              ^tsquery
+              ^query_text
             )
         },
         order_by: [
           desc:
             fragment(
-              "ts_rank(to_tsvector('english', ?), to_tsquery('english', ?))",
+              "ts_rank(to_tsvector('english', ?), plainto_tsquery('english', ?))",
               c.text,
-              ^tsquery
+              ^query_text
             )
         ],
         limit: ^limit
@@ -177,12 +178,6 @@ defmodule Arcana.VectorStore.Pgvector do
       |> maybe_filter_collection_id(collection_id)
 
     repo.all(final_query)
-  end
-
-  defp to_tsquery(query) do
-    query
-    |> String.split(~r/\s+/, trim: true)
-    |> Enum.join(" & ")
   end
 
   @doc """
@@ -229,8 +224,6 @@ defmodule Arcana.VectorStore.Pgvector do
         end
       end
 
-    tsquery = to_tsquery(query_text)
-
     # Use raw SQL for the hybrid query with CTEs for proper normalization
     sql = """
     WITH base_scores AS (
@@ -241,7 +234,7 @@ defmodule Arcana.VectorStore.Pgvector do
         c.document_id,
         c.metadata,
         1 - (c.embedding <=> $1) AS semantic_score,
-        COALESCE(ts_rank(to_tsvector('english', c.text), to_tsquery('english', $2)), 0) AS fulltext_score
+        COALESCE(ts_rank(to_tsvector('english', c.text), plainto_tsquery('english', $2)), 0) AS fulltext_score
       FROM arcana_chunks c
       JOIN arcana_documents d ON c.document_id = d.id
       WHERE ($3::uuid IS NULL OR d.collection_id = $3::uuid)
@@ -284,7 +277,7 @@ defmodule Arcana.VectorStore.Pgvector do
     result =
       repo.query!(sql, [
         embedding_vector,
-        tsquery,
+        query_text,
         collection_id,
         source_id,
         semantic_weight,
