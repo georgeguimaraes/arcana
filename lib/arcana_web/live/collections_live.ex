@@ -16,7 +16,12 @@ defmodule ArcanaWeb.CollectionsLive do
      socket
      |> assign(repo: repo)
      |> assign(editing_collection: nil, confirm_delete_collection: nil)
-     |> load_data()}
+     |> assign(stats: nil, collections: [])}
+  end
+
+  @impl true
+  def handle_params(_params, _uri, socket) do
+    {:noreply, load_data(socket)}
   end
 
   defp load_data(socket) do

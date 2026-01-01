@@ -18,9 +18,15 @@ defmodule ArcanaWeb.AskLive do
        ask_question: "",
        ask_running: false,
        ask_context: nil,
-       ask_error: nil
-     )
-     |> load_data()}
+       ask_error: nil,
+       stats: nil,
+       collections: []
+     )}
+  end
+
+  @impl true
+  def handle_params(_params, _uri, socket) do
+    {:noreply, load_data(socket)}
   end
 
   defp load_data(socket) do

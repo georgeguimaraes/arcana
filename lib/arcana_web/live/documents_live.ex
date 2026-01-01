@@ -19,12 +19,17 @@ defmodule ArcanaWeb.DocumentsLive do
      |> assign(viewing_document: nil)
      |> assign(upload_error: nil)
      |> assign(filter_collection: nil)
+     |> assign(stats: nil, collections: [], documents: [], total_pages: 1, total_count: 0)
      |> allow_upload(:files,
        accept: ~w(.txt .md .markdown .pdf),
        max_entries: 10,
        max_file_size: 10_000_000
-     )
-     |> load_data()}
+     )}
+  end
+
+  @impl true
+  def handle_params(_params, _uri, socket) do
+    {:noreply, load_data(socket)}
   end
 
   defp load_data(socket) do

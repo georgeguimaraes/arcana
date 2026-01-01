@@ -19,9 +19,18 @@ defmodule ArcanaWeb.EvaluationLive do
        eval_view: :test_cases,
        eval_running: false,
        eval_generating: false,
-       eval_message: nil
-     )
-     |> load_data()}
+       eval_message: nil,
+       stats: nil,
+       eval_test_cases: [],
+       eval_runs: [],
+       eval_test_case_count: 0,
+       collections: []
+     )}
+  end
+
+  @impl true
+  def handle_params(_params, _uri, socket) do
+    {:noreply, load_data(socket)}
   end
 
   defp load_data(socket) do

@@ -14,7 +14,12 @@ defmodule ArcanaWeb.InfoLive do
      socket
      |> assign(repo: repo)
      |> assign(config_info: get_config_info())
-     |> load_data()}
+     |> assign(stats: nil)}
+  end
+
+  @impl true
+  def handle_params(_params, _uri, socket) do
+    {:noreply, load_data(socket)}
   end
 
   defp load_data(socket) do

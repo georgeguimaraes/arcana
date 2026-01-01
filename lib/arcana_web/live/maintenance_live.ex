@@ -16,9 +16,14 @@ defmodule ArcanaWeb.MaintenanceLive do
      |> assign(
        reembed_running: false,
        reembed_progress: nil,
-       embedding_info: get_embedding_info()
-     )
-     |> load_data()}
+       embedding_info: get_embedding_info(),
+       stats: nil
+     )}
+  end
+
+  @impl true
+  def handle_params(_params, _uri, socket) do
+    {:noreply, load_data(socket)}
   end
 
   defp load_data(socket) do

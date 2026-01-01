@@ -19,9 +19,16 @@ defmodule ArcanaWeb.SearchLive do
        search_results: [],
        search_query: "",
        expanded_result_id: nil,
-       viewing_document: nil
-     )
-     |> load_data()}
+       viewing_document: nil,
+       stats: nil,
+       collections: [],
+       source_ids: []
+     )}
+  end
+
+  @impl true
+  def handle_params(_params, _uri, socket) do
+    {:noreply, load_data(socket)}
   end
 
   defp load_data(socket) do
