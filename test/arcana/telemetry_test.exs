@@ -56,7 +56,7 @@ defmodule Arcana.TelemetryTest do
       )
 
       {:ok, _} = Arcana.ingest("Elixir programming language", repo: Arcana.TestRepo)
-      results = Arcana.search("Elixir", repo: Arcana.TestRepo)
+      {:ok, results} = Arcana.search("Elixir", repo: Arcana.TestRepo)
 
       assert_receive {:telemetry, [:arcana, :search, :start], start_measurements, start_metadata}
       assert is_integer(start_measurements.system_time)

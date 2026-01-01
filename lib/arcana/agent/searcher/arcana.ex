@@ -33,14 +33,11 @@ defmodule Arcana.Agent.Searcher.Arcana do
     limit = Keyword.get(opts, :limit, 5)
     threshold = Keyword.get(opts, :threshold, 0.5)
 
-    chunks =
-      Arcana.search(question,
-        repo: repo,
-        collection: collection,
-        limit: limit,
-        threshold: threshold
-      )
-
-    {:ok, chunks}
+    Arcana.search(question,
+      repo: repo,
+      collection: collection,
+      limit: limit,
+      threshold: threshold
+    )
   end
 end

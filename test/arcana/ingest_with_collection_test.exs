@@ -67,8 +67,8 @@ defmodule Arcana.IngestWithCollectionTest do
       {:ok, _} = Arcana.ingest("Elixir programming", repo: Arcana.TestRepo, collection: "docs")
       {:ok, _} = Arcana.ingest("Elixir syntax", repo: Arcana.TestRepo, collection: "tutorials")
 
-      docs_results = Arcana.search("Elixir", repo: Arcana.TestRepo, collection: "docs")
-      tutorials_results = Arcana.search("Elixir", repo: Arcana.TestRepo, collection: "tutorials")
+      {:ok, docs_results} = Arcana.search("Elixir", repo: Arcana.TestRepo, collection: "docs")
+      {:ok, tutorials_results} = Arcana.search("Elixir", repo: Arcana.TestRepo, collection: "tutorials")
 
       assert length(docs_results) == 1
       assert length(tutorials_results) == 1
@@ -78,7 +78,7 @@ defmodule Arcana.IngestWithCollectionTest do
       {:ok, _} = Arcana.ingest("Elixir programming", repo: Arcana.TestRepo, collection: "docs")
       {:ok, _} = Arcana.ingest("Elixir syntax", repo: Arcana.TestRepo, collection: "tutorials")
 
-      results = Arcana.search("Elixir", repo: Arcana.TestRepo)
+      {:ok, results} = Arcana.search("Elixir", repo: Arcana.TestRepo)
 
       assert length(results) == 2
     end

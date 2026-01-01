@@ -172,13 +172,13 @@ Single-query evaluates **all** chunks, ensuring nothing is missed.
 
 ```elixir
 # Equal weight (default)
-Arcana.search("query", repo: Repo, mode: :hybrid)
+{:ok, results} = Arcana.search("query", repo: Repo, mode: :hybrid)
 
 # Favor semantic similarity
-Arcana.search("query", repo: Repo, mode: :hybrid, semantic_weight: 0.7, fulltext_weight: 0.3)
+{:ok, results} = Arcana.search("query", repo: Repo, mode: :hybrid, semantic_weight: 0.7, fulltext_weight: 0.3)
 
 # Favor keyword matches
-Arcana.search("query", repo: Repo, mode: :hybrid, semantic_weight: 0.3, fulltext_weight: 0.7)
+{:ok, results} = Arcana.search("query", repo: Repo, mode: :hybrid, semantic_weight: 0.3, fulltext_weight: 0.7)
 ```
 
 Results include individual scores for debugging:

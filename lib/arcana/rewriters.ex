@@ -9,7 +9,7 @@ defmodule Arcana.Rewriters do
 
   2. As a rewriter function for `Arcana.search/2`:
       rewriter = Rewriters.expand(llm: my_llm_fn)
-      Arcana.search("ML models", repo: Repo, rewriter: rewriter)
+      {:ok, results} = Arcana.search("ML models", repo: Repo, rewriter: rewriter)
 
   The `:llm` option accepts any type implementing the `Arcana.LLM` protocol,
   including anonymous functions and LangChain chat models.
@@ -56,7 +56,7 @@ defmodule Arcana.Rewriters do
 
       # As rewriter function
       rewriter = Rewriters.expand(llm: my_llm)
-      Arcana.search("ML", repo: Repo, rewriter: rewriter)
+      {:ok, results} = Arcana.search("ML", repo: Repo, rewriter: rewriter)
 
   """
   def expand(query, opts) when is_binary(query) do

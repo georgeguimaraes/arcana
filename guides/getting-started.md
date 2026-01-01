@@ -182,16 +182,16 @@ Arcana.ingest(text, repo: MyApp.Repo, chunker: MyApp.SemanticChunker)
 
 ```elixir
 # Semantic search (default)
-results = Arcana.search("functional programming", repo: MyApp.Repo)
+{:ok, results} = Arcana.search("functional programming", repo: MyApp.Repo)
 
 # Full-text search
-results = Arcana.search("Elixir", repo: MyApp.Repo, mode: :fulltext)
+{:ok, results} = Arcana.search("Elixir", repo: MyApp.Repo, mode: :fulltext)
 
 # Hybrid search (combines semantic + fulltext)
-results = Arcana.search("Elixir patterns", repo: MyApp.Repo, mode: :hybrid)
+{:ok, results} = Arcana.search("Elixir patterns", repo: MyApp.Repo, mode: :hybrid)
 
 # Hybrid with custom weights (pgvector backend)
-results = Arcana.search("Elixir patterns",
+{:ok, results} = Arcana.search("Elixir patterns",
   repo: MyApp.Repo,
   mode: :hybrid,
   semantic_weight: 0.7,  # Weight for semantic similarity
@@ -199,7 +199,7 @@ results = Arcana.search("Elixir patterns",
 )
 
 # With filters
-results = Arcana.search("query",
+{:ok, results} = Arcana.search("query",
   repo: MyApp.Repo,
   limit: 5,
   threshold: 0.7,

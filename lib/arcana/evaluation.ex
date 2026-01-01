@@ -132,7 +132,7 @@ defmodule Arcana.Evaluation do
   end
 
   defp evaluate_test_case(test_case, repo, mode, evaluate_answers, llm) do
-    search_results = Arcana.search(test_case.question, repo: repo, mode: mode, limit: 10)
+    {:ok, search_results} = Arcana.search(test_case.question, repo: repo, mode: mode, limit: 10)
     retrieval_metrics = Metrics.evaluate_case(test_case, search_results)
 
     if evaluate_answers do

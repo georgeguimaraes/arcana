@@ -87,8 +87,8 @@ if Code.ensure_loaded?(Igniter) do
 
       4. Start using Arcana:
 
-          Arcana.ingest("Your content", repo: #{inspect(repo_module)})
-          Arcana.search("query", repo: #{inspect(repo_module)})
+          {:ok, doc} = Arcana.ingest("Your content", repo: #{inspect(repo_module)})
+          {:ok, results} = Arcana.search("query", repo: #{inspect(repo_module)})
       """)
     end
 

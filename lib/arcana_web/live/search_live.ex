@@ -79,9 +79,10 @@ defmodule ArcanaWeb.SearchLive do
   defp run_search("", _params, _repo), do: []
 
   defp run_search(query, params, repo) do
-    params
-    |> build_search_opts(repo)
-    |> then(&Arcana.search(query, &1))
+    case params |> build_search_opts(repo) |> then(&Arcana.search(query, &1)) do
+      {:ok, results} -> results
+      {:error, _reason} -> []
+    end
   end
 
   defp build_search_opts(params, repo) do

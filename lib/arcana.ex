@@ -11,7 +11,7 @@ defmodule Arcana do
       {:ok, document} = Arcana.ingest("Your text content", repo: MyApp.Repo)
 
       # Search for relevant chunks
-      results = Arcana.search("your query", repo: MyApp.Repo)
+      {:ok, results} = Arcana.search("your query", repo: MyApp.Repo)
 
       # Delete a document
       :ok = Arcana.delete(document.id, repo: MyApp.Repo)
@@ -240,34 +240,52 @@ defmodule Arcana do
       # Embed and store chunks
       emb = embedder()
 
-      chunk_records =
+      result =
         chunks
-        |> Enum.map(fn chunk ->
-          {:ok, embedding} = Embedder.embed(emb, chunk.text)
+        |> Enum.reduce_while({:ok, []}, fn chunk, {:ok, acc} ->
+          case Embedder.embed(emb, chunk.text) do
+            {:ok, embedding} ->
+              chunk_record =
+                %Chunk{}
+                |> Chunk.changeset(%{
+                  text: chunk.text,
+                  embedding: embedding,
+                  chunk_index: chunk.chunk_index,
+                  token_count: chunk.token_count,
+                  document_id: document.id
+                })
+                |> repo.insert!()
 
-          %Chunk{}
-          |> Chunk.changeset(%{
-            text: chunk.text,
-            embedding: embedding,
-            chunk_index: chunk.chunk_index,
-            token_count: chunk.token_count,
-            document_id: document.id
-          })
-          |> repo.insert!()
+              {:cont, {:ok, [chunk_record | acc]}}
+
+            {:error, reason} ->
+              # Mark document as failed
+              document
+              |> Document.changeset(%{status: :failed})
+              |> repo.update()
+
+              {:halt, {:error, {:embedding_failed, reason}}}
+          end
         end)
 
-      # Update document status
-      {:ok, document} =
-        document
-        |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
-        |> repo.update()
+      case result do
+        {:ok, chunk_records} ->
+          # Update document status
+          {:ok, document} =
+            document
+            |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
+            |> repo.update()
 
-      stop_metadata = %{
-        document: document,
-        chunk_count: length(chunk_records)
-      }
+          stop_metadata = %{
+            document: document,
+            chunk_count: length(chunk_records)
+          }
 
-      {{:ok, document}, stop_metadata}
+          {{:ok, document}, stop_metadata}
+
+        {:error, reason} ->
+          {{:error, reason}, %{error: reason}}
+      end
     end)
   end
 
@@ -346,29 +364,47 @@ defmodule Arcana do
     # Embed and store chunks
     emb = embedder()
 
-    chunk_records =
+    result =
       chunks
-      |> Enum.map(fn chunk ->
-        {:ok, embedding} = Embedder.embed(emb, chunk.text)
+      |> Enum.reduce_while({:ok, []}, fn chunk, {:ok, acc} ->
+        case Embedder.embed(emb, chunk.text) do
+          {:ok, embedding} ->
+            chunk_record =
+              %Chunk{}
+              |> Chunk.changeset(%{
+                text: chunk.text,
+                embedding: embedding,
+                chunk_index: chunk.chunk_index,
+                token_count: chunk.token_count,
+                document_id: document.id
+              })
+              |> repo.insert!()
 
-        %Chunk{}
-        |> Chunk.changeset(%{
-          text: chunk.text,
-          embedding: embedding,
-          chunk_index: chunk.chunk_index,
-          token_count: chunk.token_count,
-          document_id: document.id
-        })
-        |> repo.insert!()
+            {:cont, {:ok, [chunk_record | acc]}}
+
+          {:error, reason} ->
+            # Mark document as failed
+            document
+            |> Document.changeset(%{status: :failed})
+            |> repo.update()
+
+            {:halt, {:error, {:embedding_failed, reason}}}
+        end
       end)
 
-    # Update document status
-    {:ok, document} =
-      document
-      |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
-      |> repo.update()
+    case result do
+      {:ok, chunk_records} ->
+        # Update document status
+        {:ok, document} =
+          document
+          |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
+          |> repo.update()
 
-    {:ok, document}
+        {:ok, document}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp content_type_for_path(path) do
@@ -386,7 +422,8 @@ defmodule Arcana do
   @doc """
   Searches for chunks similar to the query.
 
-  Returns a list of maps containing chunk information and similarity scores.
+  Returns `{:ok, results}` where results is a list of maps containing chunk
+  information and similarity scores, or `{:error, reason}` on failure.
 
   ## Options
 
@@ -412,17 +449,17 @@ defmodule Arcana do
   You can override the vector store per-call:
 
       # Use a specific memory server
-      Arcana.search("query", vector_store: {:memory, pid: memory_pid})
+      {:ok, results} = Arcana.search("query", vector_store: {:memory, pid: memory_pid})
 
       # Use a specific repo with pgvector
-      Arcana.search("query", vector_store: {:pgvector, repo: OtherRepo})
+      {:ok, results} = Arcana.search("query", vector_store: {:pgvector, repo: OtherRepo})
 
   ## Examples
 
-      results = Arcana.search("functional programming", repo: MyApp.Repo)
-      results = Arcana.search("query", repo: MyApp.Repo, limit: 5, source_id: "doc-123")
-      results = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)
-      results = Arcana.search("query", repo: MyApp.Repo, collection: "products")
+      {:ok, results} = Arcana.search("functional programming", repo: MyApp.Repo)
+      {:ok, results} = Arcana.search("query", repo: MyApp.Repo, limit: 5, source_id: "doc-123")
+      {:ok, results} = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)
+      {:ok, results} = Arcana.search("query", repo: MyApp.Repo, collection: "products")
 
   """
   def search(query, opts) when is_binary(query) do
@@ -459,61 +496,78 @@ defmodule Arcana do
     :telemetry.span([:arcana, :search], start_metadata, fn ->
       search_query = maybe_rewrite_query(query, rewriter)
 
-      # Search each collection and combine results
-      results =
-        collections
-        |> Enum.flat_map(fn collection_name ->
-          do_search(mode, search_query, %{
-            repo: repo,
-            limit: limit,
-            source_id: source_id,
-            threshold: threshold,
-            collection: collection_name,
-            vector_store: vector_store_opt,
-            semantic_weight: Keyword.get(opts, :semantic_weight, 0.5),
-            fulltext_weight: Keyword.get(opts, :fulltext_weight, 0.5)
-          })
-        end)
-        |> Enum.sort_by(& &1.score, :desc)
-        |> Enum.take(limit)
-
-      stop_metadata = %{
-        results: results,
-        result_count: length(results)
+      params = %{
+        repo: repo,
+        limit: limit,
+        source_id: source_id,
+        threshold: threshold,
+        vector_store: vector_store_opt,
+        semantic_weight: Keyword.get(opts, :semantic_weight, 0.5),
+        fulltext_weight: Keyword.get(opts, :fulltext_weight, 0.5)
       }
 
-      {results, stop_metadata}
+      # Search each collection and combine results
+      collection_results =
+        Enum.reduce_while(collections, {:ok, []}, fn collection_name, {:ok, acc} ->
+          case do_search(mode, search_query, Map.put(params, :collection, collection_name)) do
+            {:ok, results} -> {:cont, {:ok, acc ++ results}}
+            {:error, reason} -> {:halt, {:error, reason}}
+          end
+        end)
+
+      case collection_results do
+        {:ok, all_results} ->
+          results =
+            all_results
+            |> Enum.sort_by(& &1.score, :desc)
+            |> Enum.take(limit)
+
+          stop_metadata = %{
+            results: results,
+            result_count: length(results)
+          }
+
+          {{:ok, results}, stop_metadata}
+
+        {:error, reason} ->
+          {{:error, reason}, %{error: reason}}
+      end
     end)
   end
 
   defp do_search(:semantic, query, params) do
-    {:ok, query_embedding} = Embedder.embed(embedder(), query)
+    case Embedder.embed(embedder(), query) do
+      {:ok, query_embedding} ->
+        # Build VectorStore options
+        vector_store_opts =
+          [
+            limit: params.limit,
+            threshold: params.threshold,
+            source_id: params.source_id
+          ]
+          |> maybe_add_repo(params.repo)
+          |> maybe_add_vector_store(params.vector_store)
 
-    # Build VectorStore options
-    vector_store_opts =
-      [
-        limit: params.limit,
-        threshold: params.threshold,
-        source_id: params.source_id
-      ]
-      |> maybe_add_repo(params.repo)
-      |> maybe_add_vector_store(params.vector_store)
+        # Use VectorStore for semantic search (supports memory and pgvector)
+        results = VectorStore.search(params.collection, query_embedding, vector_store_opts)
 
-    # Use VectorStore for semantic search (supports memory and pgvector)
-    results = VectorStore.search(params.collection, query_embedding, vector_store_opts)
+        # Transform VectorStore result format to Arcana.search format
+        {:ok,
+         Enum.map(results, fn result ->
+           metadata = result.metadata || %{}
 
-    # Transform VectorStore result format to Arcana.search format
-    Enum.map(results, fn result ->
-      metadata = result.metadata || %{}
+           %{
+             id: result.id,
+             text: metadata[:text] || "",
+             document_id: metadata[:document_id],
+             chunk_index: metadata[:chunk_index],
+             score: result.score
+           }
+         end)}
 
-      %{
-        id: result.id,
-        text: metadata[:text] || "",
-        document_id: metadata[:document_id],
-        chunk_index: metadata[:chunk_index],
-        score: result.score
-      }
-    end)
+      {:error, reason} ->
+        {:error, {:embedding_failed, reason}}
+    end
   end
 
   defp do_search(:fulltext, query, params) do
@@ -530,17 +584,18 @@ defmodule Arcana do
     results = VectorStore.search_text(params.collection, query, vector_store_opts)
 
     # Transform VectorStore result format to Arcana.search format
-    Enum.map(results, fn result ->
-      metadata = result.metadata || %{}
+    {:ok,
+     Enum.map(results, fn result ->
+       metadata = result.metadata || %{}
 
-      %{
-        id: result.id,
-        text: metadata[:text] || "",
-        document_id: metadata[:document_id],
-        chunk_index: metadata[:chunk_index],
-        score: result.score
-      }
-    end)
+       %{
+         id: result.id,
+         text: metadata[:text] || "",
+         document_id: metadata[:document_id],
+         chunk_index: metadata[:chunk_index],
+         score: result.score
+       }
+     end)}
   end
 
   defp do_search(:hybrid, query, params) do
@@ -559,39 +614,44 @@ defmodule Arcana do
   end
 
   defp do_hybrid_pgvector(query, params) do
-    {:ok, query_embedding} = Embedder.embed(embedder(), query)
+    case Embedder.embed(embedder(), query) do
+      {:ok, query_embedding} ->
+        opts = [
+          repo: params.repo,
+          limit: params.limit,
+          source_id: params.source_id,
+          threshold: params.threshold,
+          semantic_weight: Map.get(params, :semantic_weight, 0.5),
+          fulltext_weight: Map.get(params, :fulltext_weight, 0.5)
+        ]
 
-    opts = [
-      repo: params.repo,
-      limit: params.limit,
-      source_id: params.source_id,
-      threshold: params.threshold,
-      semantic_weight: Map.get(params, :semantic_weight, 0.5),
-      fulltext_weight: Map.get(params, :fulltext_weight, 0.5)
-    ]
+        results =
+          Pgvector.search_hybrid(
+            params.collection,
+            query_embedding,
+            query,
+            opts
+          )
 
-    results =
-      Pgvector.search_hybrid(
-        params.collection,
-        query_embedding,
-        query,
-        opts
-      )
+        # Transform to Arcana.search format
+        {:ok,
+         Enum.map(results, fn result ->
+           metadata = result.metadata || %{}
 
-    # Transform to Arcana.search format
-    Enum.map(results, fn result ->
-      metadata = result.metadata || %{}
+           %{
+             id: result.id,
+             text: metadata[:text] || "",
+             document_id: metadata[:document_id],
+             chunk_index: metadata[:chunk_index],
+             score: result.score,
+             semantic_score: metadata[:semantic_score],
+             fulltext_score: metadata[:fulltext_score]
+           }
+         end)}
 
-      %{
-        id: result.id,
-        text: metadata[:text] || "",
-        document_id: metadata[:document_id],
-        chunk_index: metadata[:chunk_index],
-        score: result.score,
-        semantic_score: metadata[:semantic_score],
-        fulltext_score: metadata[:fulltext_score]
-      }
-    end)
+      {:error, reason} ->
+        {:error, {:embedding_failed, reason}}
+    end
   end
 
   defp do_hybrid_rrf(query, params) do
@@ -599,11 +659,11 @@ defmodule Arcana do
     semantic_params = %{params | limit: params.limit * 2}
     fulltext_params = %{params | limit: params.limit * 2}
 
-    semantic_results = do_search(:semantic, query, semantic_params)
-    fulltext_results = do_search(:fulltext, query, fulltext_params)
-
-    # Combine using Reciprocal Rank Fusion (RRF)
-    rrf_combine(semantic_results, fulltext_results, params.limit)
+    with {:ok, semantic_results} <- do_search(:semantic, query, semantic_params),
+         {:ok, fulltext_results} <- do_search(:fulltext, query, fulltext_params) do
+      # Combine using Reciprocal Rank Fusion (RRF)
+      {:ok, rrf_combine(semantic_results, fulltext_results, params.limit)}
+    end
   end
 
   defp maybe_add_repo(opts, nil), do: opts
@@ -739,14 +799,19 @@ defmodule Arcana do
             ])
             |> Keyword.put_new(:limit, 5)
 
-          context = search(question, search_opts)
-          prompt_fn = Keyword.get(opts, :prompt, &default_ask_prompt/2)
-          llm_opts = [system_prompt: prompt_fn.(question, context)]
+          case search(question, search_opts) do
+            {:ok, context} ->
+              prompt_fn = Keyword.get(opts, :prompt, &default_ask_prompt/2)
+              llm_opts = [system_prompt: prompt_fn.(question, context)]
 
-          result = do_ask_llm(llm, question, context, llm_opts)
-          stop_metadata = ask_stop_metadata(result, context)
+              result = do_ask_llm(llm, question, context, llm_opts)
+              stop_metadata = ask_stop_metadata(result, context)
 
-          {result, stop_metadata}
+              {result, stop_metadata}
+
+            {:error, reason} ->
+              {{:error, {:search_failed, reason}}, %{error: reason}}
+          end
         end)
     end
   end

@@ -262,13 +262,13 @@ See the [LLM Integration Guide](guides/llm-integration.md) for detailed examples
 
 ```elixir
 # Semantic search (default)
-results = Arcana.search("your query", repo: MyApp.Repo)
+{:ok, results} = Arcana.search("your query", repo: MyApp.Repo)
 
 # Hybrid search (combines semantic + fulltext)
-results = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)
+{:ok, results} = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)
 
 # Hybrid with custom weights (pgvector only)
-results = Arcana.search("query",
+{:ok, results} = Arcana.search("query",
   repo: MyApp.Repo,
   mode: :hybrid,
   semantic_weight: 0.7,
@@ -276,7 +276,7 @@ results = Arcana.search("query",
 )
 
 # With filters
-results = Arcana.search("query",
+{:ok, results} = Arcana.search("query",
   repo: MyApp.Repo,
   limit: 5,
   collection: "products"

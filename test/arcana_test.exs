@@ -81,7 +81,7 @@ defmodule ArcanaTest do
     end
 
     test "finds relevant chunks", %{doc1: doc1} do
-      results = Arcana.search("functional programming", repo: Repo)
+      {:ok, results} = Arcana.search("functional programming", repo: Repo)
 
       refute Enum.empty?(results)
       # First result should be from the Elixir document
@@ -91,7 +91,7 @@ defmodule ArcanaTest do
     end
 
     test "respects limit option" do
-      results = Arcana.search("programming", repo: Repo, limit: 2)
+      {:ok, results} = Arcana.search("programming", repo: Repo, limit: 2)
 
       assert length(results) <= 2
     end
@@ -100,7 +100,7 @@ defmodule ArcanaTest do
       {:ok, _scoped_doc} =
         Arcana.ingest("Ruby programming language", repo: Repo, source_id: "scope-a")
 
-      results = Arcana.search("programming", repo: Repo, source_id: "scope-a")
+      {:ok, results} = Arcana.search("programming", repo: Repo, source_id: "scope-a")
 
       refute Enum.empty?(results)
 
@@ -112,7 +112,7 @@ defmodule ArcanaTest do
 
     test "fulltext mode finds exact keyword matches" do
       # Search for exact word "Elixir" - fulltext should find it
-      results = Arcana.search("Elixir", repo: Repo, mode: :fulltext)
+      {:ok, results} = Arcana.search("Elixir", repo: Repo, mode: :fulltext)
 
       refute Enum.empty?(results)
       # Verify the result contains the exact word
@@ -121,7 +121,7 @@ defmodule ArcanaTest do
 
     test "fulltext mode uses ts_rank scoring" do
       # Fulltext should return results with rank-based scoring
-      results = Arcana.search("functional programming language", repo: Repo, mode: :fulltext)
+      {:ok, results} = Arcana.search("functional programming language", repo: Repo, mode: :fulltext)
 
       refute Enum.empty?(results)
       # ts_rank scores are typically small positive numbers
@@ -131,7 +131,7 @@ defmodule ArcanaTest do
     end
 
     test "hybrid mode combines vector and fulltext with RRF" do
-      results = Arcana.search("Elixir functional", repo: Repo, mode: :hybrid)
+      {:ok, results} = Arcana.search("Elixir functional", repo: Repo, mode: :hybrid)
 
       refute Enum.empty?(results)
       # RRF scores are in range 0-1
@@ -141,7 +141,7 @@ defmodule ArcanaTest do
     end
 
     test "hybrid mode returns individual semantic and fulltext scores" do
-      results = Arcana.search("Elixir functional", repo: Repo, mode: :hybrid)
+      {:ok, results} = Arcana.search("Elixir functional", repo: Repo, mode: :hybrid)
 
       refute Enum.empty?(results)
       first = hd(results)
@@ -155,7 +155,7 @@ defmodule ArcanaTest do
 
     test "hybrid mode respects semantic_weight and fulltext_weight options" do
       # Test with heavily weighted semantic
-      semantic_heavy =
+      {:ok, semantic_heavy} =
         Arcana.search("Elixir",
           repo: Repo,
           mode: :hybrid,
@@ -164,7 +164,7 @@ defmodule ArcanaTest do
         )
 
       # Test with heavily weighted fulltext
-      fulltext_heavy =
+      {:ok, fulltext_heavy} =
         Arcana.search("Elixir",
           repo: Repo,
           mode: :hybrid,
@@ -190,7 +190,7 @@ defmodule ArcanaTest do
           collection: "search-coll"
         )
 
-      results = Arcana.search("programming", repo: Repo, collection: "search-coll")
+      {:ok, results} = Arcana.search("programming", repo: Repo, collection: "search-coll")
 
       refute Enum.empty?(results)
       assert Enum.all?(results, fn r -> String.contains?(r.text, "Ruby") end)
@@ -214,7 +214,7 @@ defmodule ArcanaTest do
         Arcana.ingest("JavaScript is a web language", repo: Repo, collection: "search-coll-c")
 
       # Search only in collections a and b
-      results =
+      {:ok, results} =
         Arcana.search("language", repo: Repo, collections: ["search-coll-a", "search-coll-b"])
 
       refute Enum.empty?(results)
@@ -385,7 +385,7 @@ defmodule ArcanaTest do
         {:ok, "functional programming language"}
       end
 
-      results = Arcana.search("xyz123", repo: Repo, rewriter: rewriter)
+      {:ok, results} = Arcana.search("xyz123", repo: Repo, rewriter: rewriter)
 
       # Verify rewriter was called with original query
       assert_receive {:rewriter_called, "xyz123"}
@@ -400,7 +400,7 @@ defmodule ArcanaTest do
       end
 
       # Should fall back to original query, still find results
-      results = Arcana.search("Elixir", repo: Repo, rewriter: rewriter)
+      {:ok, results} = Arcana.search("Elixir", repo: Repo, rewriter: rewriter)
 
       refute Enum.empty?(results)
     end

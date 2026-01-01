@@ -101,7 +101,10 @@ defmodule MyApp.RAG do
     repo = Keyword.get(opts, :repo, MyApp.Repo)
     limit = Keyword.get(opts, :limit, @default_limit)
 
-    Arcana.search(query, repo: repo, limit: limit, mode: :hybrid)
+    case Arcana.search(query, repo: repo, limit: limit, mode: :hybrid) do
+      {:ok, results} -> results
+      {:error, _reason} -> []
+    end
   end
 end
 ```
@@ -116,7 +119,7 @@ defmodule MyAppWeb.ChatLive do
 
   def handle_event("ask", %{"question" => question}, socket) do
     # Get context from Arcana
-    context = Arcana.search(question, repo: MyApp.Repo, limit: 5)
+    {:ok, context} = Arcana.search(question, repo: MyApp.Repo, limit: 5)
     context_text = Enum.map_join(context, "\n\n", & &1.text)
 
     # Stream the response
