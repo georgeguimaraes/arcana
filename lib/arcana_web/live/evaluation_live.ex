@@ -81,7 +81,7 @@ defmodule ArcanaWeb.EvaluationLive do
 
       parent = self()
 
-      Task.start(fn ->
+      Task.Supervisor.start_child(Arcana.TaskSupervisor, fn ->
         result = Evaluation.run(opts)
         send(parent, {:eval_run_complete, result})
       end)
@@ -108,7 +108,7 @@ defmodule ArcanaWeb.EvaluationLive do
         parent = self()
         opts = build_generate_opts(repo, llm, sample_size, collection)
 
-        Task.start(fn ->
+        Task.Supervisor.start_child(Arcana.TaskSupervisor, fn ->
           result = Evaluation.generate_test_cases(opts)
           send(parent, {:eval_generate_complete, result})
         end)
