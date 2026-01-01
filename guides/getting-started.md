@@ -83,6 +83,56 @@ mix arcana.reembed
 
 For OpenAI embeddings or custom providers, see the [LLM Integration](llm-integration.md) guide.
 
+## Chunking Configuration
+
+Arcana uses the default text chunker which splits documents into overlapping chunks:
+
+```elixir
+# config/config.exs
+
+# Default - 450 tokens with 50 token overlap
+config :arcana, chunker: :default
+
+# Custom chunk sizes
+config :arcana, chunker: {:default, chunk_size: 512, chunk_overlap: 100}
+```
+
+### Available Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:chunk_size` | 450 | Maximum tokens per chunk |
+| `:chunk_overlap` | 50 | Overlapping tokens between chunks |
+| `:format` | `:plaintext` | Text format (`:plaintext`, `:markdown`, `:elixir`) |
+| `:size_unit` | `:tokens` | How to measure size (`:tokens`, `:characters`) |
+
+### Custom Chunkers
+
+For semantic chunking or domain-specific splitting, implement the `Arcana.Chunker` behaviour:
+
+```elixir
+defmodule MyApp.SemanticChunker do
+  @behaviour Arcana.Chunker
+
+  @impl true
+  def chunk(text, opts) do
+    # Split on semantic boundaries (paragraphs, sections, etc.)
+    text
+    |> split_semantically()
+    |> Enum.with_index()
+    |> Enum.map(fn {text, index} ->
+      %{text: text, chunk_index: index, token_count: estimate_tokens(text)}
+    end)
+  end
+end
+
+# Configure globally
+config :arcana, chunker: MyApp.SemanticChunker
+
+# Or per-ingest
+Arcana.ingest(text, repo: MyApp.Repo, chunker: MyApp.SemanticChunker)
+```
+
 ## Basic Usage
 
 ### Ingesting Documents

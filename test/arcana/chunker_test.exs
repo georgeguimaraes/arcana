@@ -1,7 +1,7 @@
 defmodule Arcana.ChunkerTest do
   use ExUnit.Case, async: true
 
-  alias Arcana.Chunker
+  alias Arcana.Chunker.Default, as: Chunker
 
   describe "chunk/2" do
     test "splits text into chunks of specified size" do

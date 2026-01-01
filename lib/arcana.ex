@@ -67,6 +67,46 @@ defmodule Arcana do
   end
 
   @doc """
+  Returns the configured chunker as a `{module, opts}` tuple.
+
+  The chunker is configured via application config:
+
+      # Default: text_chunker-based chunking
+      config :arcana, chunker: :default
+
+      # Default chunker with custom options
+      config :arcana, chunker: {:default, chunk_size: 512, chunk_overlap: 100}
+
+      # Custom function (receives text, opts; returns list of chunk maps)
+      config :arcana, chunker: fn text, _opts ->
+        [%{text: text, chunk_index: 0, token_count: 10}]
+      end
+
+      # Custom module implementing Arcana.Chunker behaviour
+      config :arcana, chunker: MyApp.SemanticChunker
+      config :arcana, chunker: {MyApp.SemanticChunker, model: "..."}
+
+  ## Custom Chunking Modules
+
+  Implement the `Arcana.Chunker` behaviour:
+
+      defmodule MyApp.SemanticChunker do
+        @behaviour Arcana.Chunker
+
+        @impl true
+        def chunk(text, opts) do
+          # Custom chunking logic...
+          [%{text: text, chunk_index: 0, token_count: estimate_tokens(text)}]
+        end
+      end
+
+  """
+  def chunker do
+    Application.get_env(:arcana, :chunker, :text)
+    |> parse_chunker_config()
+  end
+
+  @doc """
   Returns the current Arcana configuration.
 
   Useful for logging, debugging, and storing with evaluation runs
@@ -113,6 +153,25 @@ defmodule Arcana do
     raise ArgumentError, "invalid embedding config: #{inspect(other)}"
   end
 
+  defp parse_chunker_config(:default), do: {Arcana.Chunker.Default, []}
+  defp parse_chunker_config({:default, opts}), do: {Arcana.Chunker.Default, opts}
+
+  defp parse_chunker_config(fun) when is_function(fun, 2),
+    do: {Arcana.Chunker.Custom, [fun: fun]}
+
+  defp parse_chunker_config({module, opts}) when is_atom(module) and is_list(opts),
+    do: {module, opts}
+
+  defp parse_chunker_config(module) when is_atom(module), do: {module, []}
+
+  defp parse_chunker_config(other) do
+    raise ArgumentError, "invalid chunker config: #{inspect(other)}"
+  end
+
+  defp resolve_chunker(opts) do
+    Keyword.get(opts, :chunker, :default) |> parse_chunker_config()
+  end
+
   @doc """
   Ingests text content, creating a document with embedded chunks.
 
@@ -149,7 +208,8 @@ defmodule Arcana do
     {collection_name, collection_description} =
       parse_collection_opt(Keyword.get(opts, :collection, "default"))
 
-    chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap])
+    chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap, :format, :size_unit])
+    chunker_config = resolve_chunker(opts)
 
     start_metadata = %{
       text: text,
@@ -174,7 +234,7 @@ defmodule Arcana do
         |> repo.insert()
 
       # Chunk the text
-      chunks = Chunker.chunk(text, chunk_opts)
+      chunks = Chunker.chunk(chunker_config, text, chunk_opts)
 
       # Embed and store chunks
       emb = embedder()
@@ -259,7 +319,8 @@ defmodule Arcana do
     file_path = Keyword.get(opts, :file_path)
     content_type = Keyword.get(opts, :content_type, "text/plain")
     collection_name = Keyword.get(opts, :collection, "default")
-    chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap])
+    chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap, :format, :size_unit])
+    chunker_config = resolve_chunker(opts)
 
     # Get or create collection
     {:ok, collection} = Collection.get_or_create(collection_name, repo)
@@ -279,7 +340,7 @@ defmodule Arcana do
       |> repo.insert()
 
     # Chunk the text
-    chunks = Chunker.chunk(text, chunk_opts)
+    chunks = Chunker.chunk(chunker_config, text, chunk_opts)
 
     # Embed and store chunks
     emb = embedder()

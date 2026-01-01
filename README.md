@@ -171,6 +171,44 @@ end
 
 See the [Getting Started Guide](guides/getting-started.md) for all embedding model options.
 
+### Chunking providers
+
+Arcana supports pluggable chunking strategies:
+
+```elixir
+# config/config.exs
+
+# Default text chunker (uses text_chunker library)
+config :arcana, chunker: :default
+config :arcana, chunker: {:default, chunk_size: 512, chunk_overlap: 100}
+
+# Custom module implementing Arcana.Chunker behaviour
+config :arcana, chunker: MyApp.SemanticChunker
+```
+
+Implement custom chunkers with the `Arcana.Chunker` behaviour:
+
+```elixir
+defmodule MyApp.SemanticChunker do
+  @behaviour Arcana.Chunker
+
+  @impl true
+  def chunk(text, opts) do
+    # Custom chunking logic (e.g., semantic boundaries)
+    [
+      %{text: "chunk 1", chunk_index: 0, token_count: 50},
+      %{text: "chunk 2", chunk_index: 1, token_count: 45}
+    ]
+  end
+end
+```
+
+You can also pass `:chunker` directly to `ingest/2`:
+
+```elixir
+Arcana.ingest(text, repo: MyApp.Repo, chunker: MyApp.SemanticChunker)
+```
+
 ### LLM configuration
 
 Configure the LLM for `ask/2` and the Agent pipeline:

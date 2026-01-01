@@ -1,80 +1,102 @@
 defmodule Arcana.Chunker do
   @moduledoc """
-  Splits text into overlapping chunks using text_chunker library.
+  Behaviour for text chunking providers used by Arcana.
 
-  Supports multiple formats (plaintext, markdown, etc.) and can size chunks
-  by characters or tokens.
+  Arcana accepts any module that implements this behaviour.
+  Built-in implementations are provided for:
+
+  - `Arcana.Chunker.Default` - Default chunking using text_chunker library
+
+  ## Configuration
+
+  Configure your chunking provider in `config.exs`:
+
+      # Default: text_chunker-based chunking
+      config :arcana, chunker: :default
+
+      # Default chunker with custom options
+      config :arcana, chunker: {:default, chunk_size: 512, chunk_overlap: 100}
+
+      # Custom function
+      config :arcana, chunker: fn text, opts -> [%{text: text, chunk_index: 0, token_count: 10}] end
+
+      # Custom module implementing this behaviour
+      config :arcana, chunker: MyApp.SemanticChunker
+      config :arcana, chunker: {MyApp.SemanticChunker, model: "..."}
+
+  ## Implementing a Custom Chunker
+
+  Create a module that implements this behaviour:
+
+      defmodule MyApp.SemanticChunker do
+        @behaviour Arcana.Chunker
+
+        @impl true
+        def chunk(text, opts) do
+          # Custom chunking logic...
+          # Return list of chunk maps
+          [
+            %{text: "chunk 1", chunk_index: 0, token_count: 50},
+            %{text: "chunk 2", chunk_index: 1, token_count: 45}
+          ]
+        end
+      end
+
+  Then configure:
+
+      config :arcana, chunker: {MyApp.SemanticChunker, model: "..."}
+
+  ## Chunk Format
+
+  Each chunk returned must be a map with at minimum:
+
+    * `:text` - The chunk text content (required)
+    * `:chunk_index` - Zero-based index of this chunk (required)
+    * `:token_count` - Estimated token count (required)
+
+  Additional keys may be included and will be passed through to storage.
   """
 
-  # Safe buffer under 512 model max
-  @default_chunk_size 450
-  @default_chunk_overlap 50
-  @default_format :plaintext
-  @default_size_unit :tokens
+  @type chunk :: %{
+          required(:text) => String.t(),
+          required(:chunk_index) => non_neg_integer(),
+          required(:token_count) => pos_integer()
+        }
 
   @doc """
   Splits text into chunks.
 
-  Returns a list of maps with :text, :chunk_index, and :token_count.
+  Returns a list of chunk maps, each containing at minimum `:text`,
+  `:chunk_index`, and `:token_count`.
 
   ## Options
 
-    * `:chunk_size` - Maximum chunk size (default: 512)
-    * `:chunk_overlap` - Overlap between chunks (default: 50)
-    * `:format` - Text format: `:plaintext`, `:markdown`, `:elixir`, etc. (default: :plaintext)
-    * `:size_unit` - How to measure size: `:characters` or `:tokens` (default: :tokens)
+  Options are implementation-specific. Common options include:
 
-  ## Examples
-
-      Chunker.chunk("Hello world", chunk_size: 100)
-      Chunker.chunk(markdown_text, format: :markdown, chunk_size: 512)
-      Chunker.chunk(text, size_unit: :tokens, chunk_size: 256)
+    * `:chunk_size` - Maximum chunk size
+    * `:chunk_overlap` - Overlap between chunks
+    * `:format` - Text format hint (`:plaintext`, `:markdown`, etc.)
 
   """
-  def chunk(text, opts \\ [])
+  @callback chunk(text :: String.t(), opts :: keyword()) :: [chunk()]
 
-  def chunk("", _opts), do: []
+  @doc """
+  Chunks text using the configured chunker.
 
-  def chunk(text, opts) do
-    chunk_size = Keyword.get(opts, :chunk_size, @default_chunk_size)
-    chunk_overlap = Keyword.get(opts, :chunk_overlap, @default_chunk_overlap)
-    format = Keyword.get(opts, :format, @default_format)
-    size_unit = Keyword.get(opts, :size_unit, @default_size_unit)
-
-    # Convert token-based sizes to character-based for text_chunker
-    # (text_chunker's merge logic doesn't use get_chunk_size properly)
-    {effective_chunk_size, effective_overlap} =
-      case size_unit do
-        :tokens -> {chunk_size * 4, chunk_overlap * 4}
-        :characters -> {chunk_size, chunk_overlap}
-      end
-
-    text_chunker_opts = [
-      chunk_size: effective_chunk_size,
-      chunk_overlap: effective_overlap,
-      format: format
-    ]
-
-    text
-    |> TextChunker.split(text_chunker_opts)
-    |> Enum.map(& &1.text)
-    |> Enum.reject(&blank?/1)
-    |> Enum.with_index()
-    |> Enum.map(fn {text, index} ->
-      %{
-        text: text,
-        chunk_index: index,
-        token_count: estimate_tokens(text)
-      }
-    end)
+  The chunker is a `{module, opts}` tuple where module implements
+  this behaviour.
+  """
+  def chunk({module, opts}, text) when is_atom(module) do
+    module.chunk(text, opts)
   end
 
-  defp blank?(nil), do: true
-  defp blank?(str) when is_binary(str), do: String.trim(str) == ""
+  @doc """
+  Chunks text using the configured chunker, merging additional options.
 
-  defp estimate_tokens(text) do
-    # Rough estimate: ~4 chars per token for English
-    # This matches typical BPE tokenizer behavior
-    max(1, div(String.length(text), 4))
+  Useful when you need to override chunker defaults at call time.
+  """
+  def chunk({module, default_opts}, text, extra_opts) when is_atom(module) do
+    merged_opts = Keyword.merge(default_opts, extra_opts)
+    module.chunk(text, merged_opts)
   end
 end

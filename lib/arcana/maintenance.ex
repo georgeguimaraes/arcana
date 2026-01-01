@@ -77,13 +77,14 @@ defmodule Arcana.Maintenance do
 
   defp rechunk_documents(documents, embedder, repo, progress_fn) do
     total = length(documents)
+    chunker = Arcana.chunker()
 
     documents
     |> Enum.with_index(1)
     |> Enum.reduce(0, fn {doc, index}, count ->
       progress_fn.(index, total)
 
-      chunks = Chunker.chunk(doc.content, [])
+      chunks = Chunker.chunk(chunker, doc.content)
 
       Enum.each(chunks, fn chunk ->
         {:ok, embedding} = Embedder.embed(embedder, chunk.text)
