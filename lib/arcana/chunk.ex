@@ -25,12 +25,22 @@ defmodule Arcana.Chunk do
   end
 
   @required_fields [:text, :embedding]
-  @optional_fields [:chunk_index, :token_count, :metadata, :document_id]
+  @optional_fields [:id, :chunk_index, :token_count, :metadata, :document_id]
 
   def changeset(chunk, attrs) do
     chunk
     |> cast(attrs, @required_fields ++ @optional_fields)
     |> validate_required(@required_fields)
+    |> validate_uuid(:id)
     |> foreign_key_constraint(:document_id)
+  end
+
+  defp validate_uuid(changeset, field) do
+    validate_change(changeset, field, fn _, value ->
+      case Ecto.UUID.cast(value) do
+        {:ok, _} -> []
+        :error -> [{field, "must be a valid UUID"}]
+      end
+    end)
   end
 end
