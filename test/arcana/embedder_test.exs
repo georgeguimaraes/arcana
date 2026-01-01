@@ -112,6 +112,23 @@ defmodule Arcana.EmbedderTest do
   end
 
   describe "custom module config" do
+    test "custom module implementing behaviour works with Embedder functions" do
+      embedder = {Arcana.EmbedderTest.MockEmbedder, dimensions: 256}
+
+      {:ok, embedding} = Embedder.embed(embedder, "hello world")
+      assert length(embedding) == 256
+
+      assert Embedder.dimensions(embedder) == 256
+    end
+  end
+end
+
+# Separate module for tests that modify global Application config.
+# Must be async: false to prevent race conditions with other tests.
+defmodule Arcana.EmbedderConfigTest do
+  use ExUnit.Case, async: false
+
+  describe "custom module config via Application.put_env" do
     test "embedder/0 supports {module, opts} config" do
       original = Application.get_env(:arcana, :embedder)
 
@@ -144,15 +161,6 @@ defmodule Arcana.EmbedderTest do
       after
         Application.put_env(:arcana, :embedder, original)
       end
-    end
-
-    test "custom module implementing behaviour works with Embedder functions" do
-      embedder = {Arcana.EmbedderTest.MockEmbedder, dimensions: 256}
-
-      {:ok, embedding} = Embedder.embed(embedder, "hello world")
-      assert length(embedding) == 256
-
-      assert Embedder.dimensions(embedder) == 256
     end
   end
 end
