@@ -1,5 +1,6 @@
 name: Release
 
+# Triggers when a release PR is merged with the 'autorelease: pending' label
 on:
   pull_request:
     types: [closed]
