@@ -18,7 +18,7 @@ defmodule Arcana.LLMCase do
   ## Usage
 
       defmodule MyEndToEndTest do
-        use Arcana.LLMCase, async: false
+        use Arcana.LLMCase, async: true
 
         @tag :end_to_end
         test "calls real LLM" do

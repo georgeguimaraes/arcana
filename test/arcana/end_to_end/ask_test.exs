@@ -7,7 +7,7 @@ defmodule Arcana.EndToEnd.AskTest do
 
   Requires ZAI_API_KEY environment variable.
   """
-  use Arcana.LLMCase, async: false
+  use Arcana.LLMCase, async: true
 
   # LLM calls can be slow
   @moduletag timeout: :timer.minutes(2)

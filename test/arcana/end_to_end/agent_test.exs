@@ -7,7 +7,7 @@ defmodule Arcana.EndToEnd.AgentTest do
 
   Requires ZAI_API_KEY environment variable.
   """
-  use Arcana.LLMCase, async: false
+  use Arcana.LLMCase, async: true
 
   # LLM calls can be slow, especially when chaining multiple calls
   @moduletag timeout: :timer.minutes(5)
