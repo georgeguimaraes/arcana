@@ -155,20 +155,22 @@ defmodule ArcanaTest do
 
     test "hybrid mode respects semantic_weight and fulltext_weight options" do
       # Test with heavily weighted semantic
-      semantic_heavy = Arcana.search("Elixir",
-        repo: Repo,
-        mode: :hybrid,
-        semantic_weight: 0.9,
-        fulltext_weight: 0.1
-      )
+      semantic_heavy =
+        Arcana.search("Elixir",
+          repo: Repo,
+          mode: :hybrid,
+          semantic_weight: 0.9,
+          fulltext_weight: 0.1
+        )
 
       # Test with heavily weighted fulltext
-      fulltext_heavy = Arcana.search("Elixir",
-        repo: Repo,
-        mode: :hybrid,
-        semantic_weight: 0.1,
-        fulltext_weight: 0.9
-      )
+      fulltext_heavy =
+        Arcana.search("Elixir",
+          repo: Repo,
+          mode: :hybrid,
+          semantic_weight: 0.1,
+          fulltext_weight: 0.9
+        )
 
       refute Enum.empty?(semantic_heavy)
       refute Enum.empty?(fulltext_heavy)

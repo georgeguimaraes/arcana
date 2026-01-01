@@ -313,7 +313,8 @@ defmodule Arcana.VectorStore.PgvectorTest do
           "hybrid-test",
           query_embedding,
           "Elixir",
-          repo: repo, limit: 10
+          repo: repo,
+          limit: 10
         )
 
       assert length(results) == 2
@@ -356,7 +357,9 @@ defmodule Arcana.VectorStore.PgvectorTest do
           "weight-test",
           embedding,
           "test",
-          repo: repo, semantic_weight: 0.9, fulltext_weight: 0.1
+          repo: repo,
+          semantic_weight: 0.9,
+          fulltext_weight: 0.1
         )
 
       fulltext_heavy =
@@ -364,7 +367,9 @@ defmodule Arcana.VectorStore.PgvectorTest do
           "weight-test",
           embedding,
           "test",
-          repo: repo, semantic_weight: 0.1, fulltext_weight: 0.9
+          repo: repo,
+          semantic_weight: 0.1,
+          fulltext_weight: 0.9
         )
 
       assert length(semantic_heavy) == 1
@@ -413,7 +418,8 @@ defmodule Arcana.VectorStore.PgvectorTest do
           "threshold-hybrid-test",
           query,
           "unrelated",
-          repo: repo, threshold: 0.9
+          repo: repo,
+          threshold: 0.9
         )
 
       # Combined score unlikely to exceed 0.9 threshold
@@ -425,7 +431,8 @@ defmodule Arcana.VectorStore.PgvectorTest do
           "threshold-hybrid-test",
           query,
           "unrelated",
-          repo: repo, threshold: 0.0
+          repo: repo,
+          threshold: 0.0
         )
 
       assert length(results_low) == 1

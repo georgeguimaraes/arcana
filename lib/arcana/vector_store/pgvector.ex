@@ -220,7 +220,9 @@ defmodule Arcana.VectorStore.Pgvector do
     collection_id =
       if collection do
         case repo.get_by(Collection, name: collection) do
-          nil -> nil
+          nil ->
+            nil
+
           coll ->
             {:ok, binary_id} = Ecto.UUID.dump(coll.id)
             binary_id
@@ -293,7 +295,17 @@ defmodule Arcana.VectorStore.Pgvector do
 
     # Transform rows to result maps
     Enum.map(result.rows, fn row ->
-      [id, text, chunk_index, document_id, metadata, semantic_score, fulltext_score, _ft_norm, hybrid_score] =
+      [
+        id,
+        text,
+        chunk_index,
+        document_id,
+        metadata,
+        semantic_score,
+        fulltext_score,
+        _ft_norm,
+        hybrid_score
+      ] =
         row
 
       %{
