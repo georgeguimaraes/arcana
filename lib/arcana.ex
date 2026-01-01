@@ -396,6 +396,8 @@ defmodule Arcana do
     * `:mode` - Search mode: `:semantic` (default), `:fulltext`, or `:hybrid`
     * `:collection` - Filter results to a specific collection by name
     * `:vector_store` - Override the configured vector store backend. See `Arcana.VectorStore`
+    * `:semantic_weight` - Weight for semantic scores in hybrid mode (default: 0.5)
+    * `:fulltext_weight` - Weight for fulltext scores in hybrid mode (default: 0.5)
 
   ## Vector Store Backend
 
@@ -466,7 +468,9 @@ defmodule Arcana do
             source_id: source_id,
             threshold: threshold,
             collection: collection_name,
-            vector_store: vector_store_opt
+            vector_store: vector_store_opt,
+            semantic_weight: Keyword.get(opts, :semantic_weight, 0.5),
+            fulltext_weight: Keyword.get(opts, :fulltext_weight, 0.5)
           })
         end)
         |> Enum.sort_by(& &1.score, :desc)
@@ -539,6 +543,57 @@ defmodule Arcana do
   end
 
   defp do_search(:hybrid, query, params) do
+    # Determine which backend to use
+    backend = params.vector_store || VectorStore.backend()
+
+    case backend do
+      :pgvector ->
+        # Use single-query hybrid search for better result coverage
+        do_hybrid_pgvector(query, params)
+
+      _ ->
+        # Fall back to two-query approach with RRF for other backends
+        do_hybrid_rrf(query, params)
+    end
+  end
+
+  defp do_hybrid_pgvector(query, params) do
+    {:ok, query_embedding} = Embedder.embed(embedder(), query)
+
+    opts = [
+      repo: params.repo,
+      limit: params.limit,
+      source_id: params.source_id,
+      threshold: params.threshold,
+      semantic_weight: Map.get(params, :semantic_weight, 0.5),
+      fulltext_weight: Map.get(params, :fulltext_weight, 0.5)
+    ]
+
+    results =
+      Arcana.VectorStore.Pgvector.search_hybrid(
+        params.collection,
+        query_embedding,
+        query,
+        opts
+      )
+
+    # Transform to Arcana.search format
+    Enum.map(results, fn result ->
+      metadata = result.metadata || %{}
+
+      %{
+        id: result.id,
+        text: metadata[:text] || "",
+        document_id: metadata[:document_id],
+        chunk_index: metadata[:chunk_index],
+        score: result.score,
+        semantic_score: metadata[:semantic_score],
+        fulltext_score: metadata[:fulltext_score]
+      }
+    end)
+  end
+
+  defp do_hybrid_rrf(query, params) do
     # Get results from both methods
     semantic_params = %{params | limit: params.limit * 2}
     fulltext_params = %{params | limit: params.limit * 2}

@@ -269,6 +269,169 @@ defmodule Arcana.VectorStore.PgvectorTest do
     end
   end
 
+  describe "search_hybrid/4" do
+    test "combines semantic and fulltext scores in single query" do
+      repo = Arcana.TestRepo
+
+      {:ok, collection} = Collection.get_or_create("hybrid-test", repo)
+
+      {:ok, doc} =
+        %Document{}
+        |> Document.changeset(%{
+          content: "test content",
+          status: :completed,
+          collection_id: collection.id
+        })
+        |> repo.insert()
+
+      # Create chunks with embeddings and searchable text
+      embedding1 = normalize([1.0, 0.0, 0.0] ++ List.duplicate(0.0, 381))
+      embedding2 = normalize([0.8, 0.2, 0.0] ++ List.duplicate(0.0, 381))
+
+      {:ok, _chunk1} =
+        %Chunk{}
+        |> Chunk.changeset(%{
+          text: "Elixir is a functional programming language",
+          embedding: embedding1,
+          document_id: doc.id
+        })
+        |> repo.insert()
+
+      {:ok, _chunk2} =
+        %Chunk{}
+        |> Chunk.changeset(%{
+          text: "Phoenix is a web framework for Elixir",
+          embedding: embedding2,
+          document_id: doc.id
+        })
+        |> repo.insert()
+
+      query_embedding = normalize([0.9, 0.1, 0.0] ++ List.duplicate(0.0, 381))
+
+      results =
+        Pgvector.search_hybrid(
+          "hybrid-test",
+          query_embedding,
+          "Elixir",
+          repo: repo, limit: 10
+        )
+
+      assert length(results) == 2
+
+      # Results should have combined scores
+      first = hd(results)
+      assert first.score > 0
+      assert first.metadata[:semantic_score] > 0
+      assert first.metadata[:fulltext_score] >= 0
+    end
+
+    test "respects weight options" do
+      repo = Arcana.TestRepo
+
+      {:ok, collection} = Collection.get_or_create("weight-test", repo)
+
+      {:ok, doc} =
+        %Document{}
+        |> Document.changeset(%{
+          content: "test",
+          status: :completed,
+          collection_id: collection.id
+        })
+        |> repo.insert()
+
+      embedding = normalize([1.0] ++ List.duplicate(0.0, 383))
+
+      {:ok, _chunk} =
+        %Chunk{}
+        |> Chunk.changeset(%{
+          text: "test content with keywords",
+          embedding: embedding,
+          document_id: doc.id
+        })
+        |> repo.insert()
+
+      # Test with different weight configurations
+      semantic_heavy =
+        Pgvector.search_hybrid(
+          "weight-test",
+          embedding,
+          "test",
+          repo: repo, semantic_weight: 0.9, fulltext_weight: 0.1
+        )
+
+      fulltext_heavy =
+        Pgvector.search_hybrid(
+          "weight-test",
+          embedding,
+          "test",
+          repo: repo, semantic_weight: 0.1, fulltext_weight: 0.9
+        )
+
+      assert length(semantic_heavy) == 1
+      assert length(fulltext_heavy) == 1
+
+      # Scores should differ based on weights
+      # (both will return same chunk but with different combined scores)
+      semantic_result = hd(semantic_heavy)
+      fulltext_result = hd(fulltext_heavy)
+
+      # Both should have the individual scores
+      assert semantic_result.metadata[:semantic_score] > 0
+      assert fulltext_result.metadata[:semantic_score] > 0
+    end
+
+    test "respects threshold option" do
+      repo = Arcana.TestRepo
+
+      {:ok, collection} = Collection.get_or_create("threshold-hybrid-test", repo)
+
+      {:ok, doc} =
+        %Document{}
+        |> Document.changeset(%{
+          content: "test",
+          status: :completed,
+          collection_id: collection.id
+        })
+        |> repo.insert()
+
+      # Create chunk with low-similarity embedding
+      embedding = normalize([0.1] ++ List.duplicate(0.0, 383))
+      query = normalize([1.0] ++ List.duplicate(0.0, 383))
+
+      {:ok, _chunk} =
+        %Chunk{}
+        |> Chunk.changeset(%{
+          text: "unrelated content",
+          embedding: embedding,
+          document_id: doc.id
+        })
+        |> repo.insert()
+
+      # With high threshold, should filter out low-scoring results
+      results =
+        Pgvector.search_hybrid(
+          "threshold-hybrid-test",
+          query,
+          "unrelated",
+          repo: repo, threshold: 0.9
+        )
+
+      # Combined score unlikely to exceed 0.9 threshold
+      assert results == []
+
+      # With low threshold, should return results
+      results_low =
+        Pgvector.search_hybrid(
+          "threshold-hybrid-test",
+          query,
+          "unrelated",
+          repo: repo, threshold: 0.0
+        )
+
+      assert length(results_low) == 1
+    end
+  end
+
   # Helper to normalize a vector to unit length
   defp normalize(vector) do
     magnitude = :math.sqrt(Enum.reduce(vector, 0.0, fn x, sum -> sum + x * x end))

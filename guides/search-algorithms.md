@@ -8,7 +8,7 @@ Arcana supports three search modes across two vector store backends. This guide 
 |------|---------|----------------|------------------|
 | `:semantic` | Find similar meaning | HNSWLib cosine similarity | pgvector HNSW index |
 | `:fulltext` | Find keyword matches | TF-IDF-like scoring | PostgreSQL tsvector |
-| `:hybrid` | Combine both | RRF fusion | RRF fusion |
+| `:hybrid` | Combine both | Two queries + RRF | Single-query with weights |
 
 ## Semantic Search
 
@@ -120,11 +120,84 @@ ORDER BY score DESC
 - Proximity scoring
 - Language-aware processing
 
-## Hybrid Search: Reciprocal Rank Fusion (RRF)
+## Hybrid Search
 
-Hybrid mode combines semantic and fulltext results using [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf).
+Hybrid mode combines semantic and fulltext search. The implementation differs by backend:
 
-### The Problem
+| Backend | Approach | Advantages |
+|---------|----------|------------|
+| PgVector | Single-query weighted combination | Better coverage, configurable weights |
+| Memory | Two queries + RRF | Simple, rank-based fusion |
+
+### PgVector Backend: Single-Query Hybrid
+
+The pgvector backend uses a single SQL query that combines both scores:
+
+```sql
+WITH base_scores AS (
+  SELECT
+    id, text, embedding,
+    1 - (embedding <=> query_embedding) AS semantic_score,
+    ts_rank(to_tsvector('english', text), query) AS fulltext_score
+  FROM arcana_chunks
+),
+normalized AS (
+  SELECT *,
+    (fulltext_score - MIN(fulltext_score) OVER ()) /
+    NULLIF(MAX(fulltext_score) OVER () - MIN(fulltext_score) OVER (), 0)
+    AS fulltext_normalized
+  FROM base_scores
+)
+SELECT *,
+  (semantic_weight * semantic_score + fulltext_weight * fulltext_normalized) AS hybrid_score
+FROM normalized
+ORDER BY hybrid_score DESC
+```
+
+**Why single-query is better:**
+
+With separate queries, items ranking moderately in both lists might be missed. For example:
+- Semantic search fetches top 20
+- Fulltext search fetches top 20
+- An item ranking #15 in both could be highly relevant overall, but RRF only sees it at position 15
+
+Single-query evaluates **all** chunks, ensuring nothing is missed.
+
+**Score normalization:**
+- Semantic scores (cosine similarity) naturally range 0-1
+- Fulltext scores (ts_rank) vary widely based on document content
+- The query normalizes fulltext scores using min-max scaling within the result set
+
+**Configurable weights:**
+
+```elixir
+# Equal weight (default)
+Arcana.search("query", repo: Repo, mode: :hybrid)
+
+# Favor semantic similarity
+Arcana.search("query", repo: Repo, mode: :hybrid, semantic_weight: 0.7, fulltext_weight: 0.3)
+
+# Favor keyword matches
+Arcana.search("query", repo: Repo, mode: :hybrid, semantic_weight: 0.3, fulltext_weight: 0.7)
+```
+
+Results include individual scores for debugging:
+
+```elixir
+%{
+  id: "...",
+  text: "...",
+  score: 0.75,           # Combined hybrid score
+  semantic_score: 0.82,  # Cosine similarity
+  fulltext_score: 0.68   # Raw ts_rank score
+}
+```
+
+### Memory Backend: Reciprocal Rank Fusion (RRF)
+
+For the memory backend (and other custom backends), hybrid search uses [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf) to combine results from separate queries.
+
+**The Problem:**
 
 Semantic and fulltext searches return scores on different scales:
 - Semantic: 0.0 to 1.0 (cosine similarity)
@@ -132,7 +205,7 @@ Semantic and fulltext searches return scores on different scales:
 
 Naively averaging scores would bias toward one method.
 
-### The Solution: RRF
+**The Solution: RRF**
 
 RRF scores by **rank position**, not raw score:
 
@@ -144,7 +217,7 @@ end
 
 Where `k` is a constant (default 60) that prevents top-ranked items from dominating.
 
-### Algorithm
+**Algorithm:**
 
 ```elixir
 def rrf_combine(semantic_results, fulltext_results, limit) do
@@ -169,30 +242,15 @@ def rrf_combine(semantic_results, fulltext_results, limit) do
 end
 ```
 
-### Example
+**Example:**
 
 Query: `"BEAM virtual machine"`
 
-**Semantic results:**
-| Rank | Document | Semantic Score |
-|------|----------|----------------|
-| 1 | "Erlang runs on the BEAM VM" | 0.89 |
-| 2 | "The BEAM is Erlang's runtime" | 0.85 |
-| 3 | "Virtual machines explained" | 0.72 |
-
-**Fulltext results:**
-| Rank | Document | Fulltext Score |
-|------|----------|----------------|
-| 1 | "The BEAM virtual machine architecture" | 4.2 |
-| 2 | "Erlang runs on the BEAM VM" | 3.8 |
-| 3 | "BEAM internals" | 2.1 |
-
-**RRF Combined (k=60):**
-| Document | Semantic RRF | Fulltext RRF | Combined | Final Rank |
-|----------|--------------|--------------|----------|------------|
-| "Erlang runs on the BEAM VM" | 1/61 = 0.016 | 1/62 = 0.016 | 0.032 | 1 |
-| "The BEAM virtual machine architecture" | 1/1060 ≈ 0 | 1/61 = 0.016 | 0.017 | 2 |
-| "The BEAM is Erlang's runtime" | 1/62 = 0.016 | 1/1060 ≈ 0 | 0.016 | 3 |
+| Document | Semantic Rank | Fulltext Rank | Semantic RRF | Fulltext RRF | Combined |
+|----------|---------------|---------------|--------------|--------------|----------|
+| "Erlang runs on the BEAM VM" | 1 | 2 | 0.016 | 0.016 | 0.032 |
+| "The BEAM virtual machine" | - | 1 | 0.001 | 0.016 | 0.017 |
+| "The BEAM is Erlang's runtime" | 2 | - | 0.016 | 0.001 | 0.017 |
 
 Documents appearing in **both** result sets get boosted to the top.
 

@@ -185,6 +185,132 @@ defmodule Arcana.VectorStore.Pgvector do
     |> Enum.join(" & ")
   end
 
+  @doc """
+  Performs hybrid search combining semantic and fulltext search in a single query.
+
+  This approach retrieves all results in one database query, avoiding the issue where
+  items ranking moderately in both semantic and fulltext searches might be missed
+  by separate queries.
+
+  ## Options
+
+    * `:repo` - The Ecto repo to use (required)
+    * `:limit` - Maximum number of results (default: 10)
+    * `:source_id` - Filter results to a specific source
+    * `:semantic_weight` - Weight for semantic score (default: 0.5)
+    * `:fulltext_weight` - Weight for fulltext score (default: 0.5)
+    * `:threshold` - Minimum combined score threshold (default: 0.0)
+
+  ## Score Normalization
+
+  Semantic scores (cosine similarity) naturally range from 0-1. Fulltext scores
+  (ts_rank) vary based on document content. This function normalizes fulltext
+  scores using min-max scaling within the result set to ensure fair combination.
+
+  """
+  def search_hybrid(collection, query_embedding, query_text, opts) do
+    repo = Keyword.fetch!(opts, :repo)
+    limit = Keyword.get(opts, :limit, 10)
+    source_id = Keyword.get(opts, :source_id)
+    semantic_weight = Keyword.get(opts, :semantic_weight, 0.5)
+    fulltext_weight = Keyword.get(opts, :fulltext_weight, 0.5)
+    threshold = Keyword.get(opts, :threshold, 0.0)
+
+    # Get collection_id if collection name is provided, convert to binary for SQL
+    collection_id =
+      if collection do
+        case repo.get_by(Collection, name: collection) do
+          nil -> nil
+          coll ->
+            {:ok, binary_id} = Ecto.UUID.dump(coll.id)
+            binary_id
+        end
+      end
+
+    tsquery = to_tsquery(query_text)
+
+    # Use raw SQL for the hybrid query with CTEs for proper normalization
+    sql = """
+    WITH base_scores AS (
+      SELECT
+        c.id,
+        c.text,
+        c.chunk_index,
+        c.document_id,
+        c.metadata,
+        1 - (c.embedding <=> $1) AS semantic_score,
+        COALESCE(ts_rank(to_tsvector('english', c.text), to_tsquery('english', $2)), 0) AS fulltext_score
+      FROM arcana_chunks c
+      JOIN arcana_documents d ON c.document_id = d.id
+      WHERE ($3::uuid IS NULL OR d.collection_id = $3::uuid)
+        AND ($4::text IS NULL OR d.source_id = $4::text)
+    ),
+    score_bounds AS (
+      SELECT
+        MIN(fulltext_score) AS min_ft,
+        MAX(fulltext_score) AS max_ft
+      FROM base_scores
+    ),
+    normalized AS (
+      SELECT
+        bs.*,
+        CASE
+          WHEN sb.max_ft = sb.min_ft THEN 0
+          ELSE (bs.fulltext_score - sb.min_ft) / (sb.max_ft - sb.min_ft)
+        END AS fulltext_normalized
+      FROM base_scores bs, score_bounds sb
+    )
+    SELECT
+      id,
+      text,
+      chunk_index,
+      document_id,
+      metadata,
+      semantic_score,
+      fulltext_score,
+      fulltext_normalized,
+      ($5::float * semantic_score + $6::float * fulltext_normalized) AS hybrid_score
+    FROM normalized
+    WHERE ($5::float * semantic_score + $6::float * fulltext_normalized) > $7::float
+    ORDER BY hybrid_score DESC
+    LIMIT $8
+    """
+
+    # Pass embedding as Pgvector struct for proper encoding
+    embedding_vector = Pgvector.new(query_embedding)
+
+    result =
+      repo.query!(sql, [
+        embedding_vector,
+        tsquery,
+        collection_id,
+        source_id,
+        semantic_weight,
+        fulltext_weight,
+        threshold,
+        limit
+      ])
+
+    # Transform rows to result maps
+    Enum.map(result.rows, fn row ->
+      [id, text, chunk_index, document_id, metadata, semantic_score, fulltext_score, _ft_norm, hybrid_score] =
+        row
+
+      %{
+        id: id,
+        metadata:
+          Map.merge(metadata || %{}, %{
+            text: text,
+            chunk_index: chunk_index,
+            document_id: document_id,
+            semantic_score: semantic_score,
+            fulltext_score: fulltext_score
+          }),
+        score: hybrid_score
+      }
+    end)
+  end
+
   @impl true
   def delete(collection, id, opts) do
     repo = Keyword.fetch!(opts, :repo)

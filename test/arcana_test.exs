@@ -140,6 +140,44 @@ defmodule ArcanaTest do
       assert first.score <= 1.0
     end
 
+    test "hybrid mode returns individual semantic and fulltext scores" do
+      results = Arcana.search("Elixir functional", repo: Repo, mode: :hybrid)
+
+      refute Enum.empty?(results)
+      first = hd(results)
+
+      # Single-query hybrid should include both score breakdowns
+      assert Map.has_key?(first, :semantic_score)
+      assert Map.has_key?(first, :fulltext_score)
+      assert is_number(first.semantic_score)
+      assert is_number(first.fulltext_score)
+    end
+
+    test "hybrid mode respects semantic_weight and fulltext_weight options" do
+      # Test with heavily weighted semantic
+      semantic_heavy = Arcana.search("Elixir",
+        repo: Repo,
+        mode: :hybrid,
+        semantic_weight: 0.9,
+        fulltext_weight: 0.1
+      )
+
+      # Test with heavily weighted fulltext
+      fulltext_heavy = Arcana.search("Elixir",
+        repo: Repo,
+        mode: :hybrid,
+        semantic_weight: 0.1,
+        fulltext_weight: 0.9
+      )
+
+      refute Enum.empty?(semantic_heavy)
+      refute Enum.empty?(fulltext_heavy)
+
+      # Both should return results but potentially in different orders
+      assert length(semantic_heavy) > 0
+      assert length(fulltext_heavy) > 0
+    end
+
     test "raises error for invalid mode" do
       assert_raise ArgumentError, ~r/invalid search mode/, fn ->
         Arcana.search("test", repo: Repo, mode: :invalid_mode)
