@@ -366,7 +366,12 @@ IO.puts("Answer:\n#{answer}")
 
 ## 7. Hybrid Search with RRF
 
-Hybrid search combines semantic and fulltext results using Reciprocal Rank Fusion (RRF).
+Hybrid search combines semantic and fulltext results. The approach differs by backend:
+
+- **pgvector backend**: Uses a single SQL query with weighted score combination and min-max normalization. Supports `semantic_weight` and `fulltext_weight` options.
+- **Memory backend**: Uses two separate queries combined with Reciprocal Rank Fusion (RRF).
+
+Since we're using the memory backend in this tutorial, let's implement RRF:
 
 ```elixir
 defmodule HybridSearch do

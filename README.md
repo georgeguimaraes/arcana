@@ -264,8 +264,16 @@ See the [LLM Integration Guide](guides/llm-integration.md) for detailed examples
 # Semantic search (default)
 results = Arcana.search("your query", repo: MyApp.Repo)
 
-# Hybrid search (combines semantic + fulltext with RRF)
+# Hybrid search (combines semantic + fulltext)
 results = Arcana.search("query", repo: MyApp.Repo, mode: :hybrid)
+
+# Hybrid with custom weights (pgvector only)
+results = Arcana.search("query",
+  repo: MyApp.Repo,
+  mode: :hybrid,
+  semantic_weight: 0.7,
+  fulltext_weight: 0.3
+)
 
 # With filters
 results = Arcana.search("query",

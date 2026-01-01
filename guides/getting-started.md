@@ -187,8 +187,16 @@ results = Arcana.search("functional programming", repo: MyApp.Repo)
 # Full-text search
 results = Arcana.search("Elixir", repo: MyApp.Repo, mode: :fulltext)
 
-# Hybrid search (combines semantic + fulltext with RRF)
+# Hybrid search (combines semantic + fulltext)
 results = Arcana.search("Elixir patterns", repo: MyApp.Repo, mode: :hybrid)
+
+# Hybrid with custom weights (pgvector backend)
+results = Arcana.search("Elixir patterns",
+  repo: MyApp.Repo,
+  mode: :hybrid,
+  semantic_weight: 0.7,  # Weight for semantic similarity
+  fulltext_weight: 0.3   # Weight for keyword matching
+)
 
 # With filters
 results = Arcana.search("query",
