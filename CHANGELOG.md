@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0](https://github.com/georgeguimaraes/arcana/compare/v1.0.0...v1.1.0) (2026-01-01)
+
+
+### Features
+
+* Add pluggable Chunker behaviour for custom chunking strategies ([4452374](https://github.com/georgeguimaraes/arcana/commit/44523744ac2c177d4c6966e19e3e28971bf947af))
+* Add release workflow with GitHub-generated notes ([7bf5568](https://github.com/georgeguimaraes/arcana/commit/7bf55681adb53773af4bd7d6843e236bfdfe5cfa))
+* Add single-query hybrid search for pgvector backend ([97e86b2](https://github.com/georgeguimaraes/arcana/commit/97e86b2ba7c9e321021b6dc8b87a136892a67adf))
+
+
+### Bug Fixes
+
+* Add validations to Evaluation Run and TestCase changesets ([d1c0963](https://github.com/georgeguimaraes/arcana/commit/d1c0963f48767bb36baac0596ea9c3e8fa7daaa7))
+* Consistent error handling across API ([7d246ea](https://github.com/georgeguimaraes/arcana/commit/7d246ea31882123734a7b89192d581aa011f670f))
+* Extract global config tests to separate async: false module ([90293d4](https://github.com/georgeguimaraes/arcana/commit/90293d49bf8bace7778113c79b665fab760fe824))
+* Make EmbedderTest async: false to prevent config races ([ccb47d7](https://github.com/georgeguimaraes/arcana/commit/ccb47d7f307ea7c4b0673af3abc3a603d080139f))
+* Make evaluation run async to avoid blocking LiveView ([e2f0321](https://github.com/georgeguimaraes/arcana/commit/e2f0321fe2403c13acbf0e2484bc53aa230cb6b9))
+* Make evaluation run async with supervised tasks ([19553ec](https://github.com/georgeguimaraes/arcana/commit/19553ecdd575f39d6a8238232b0d3a759440080a))
+* Move DB queries from mount() to handle_params() in LiveViews ([c48d3bd](https://github.com/georgeguimaraes/arcana/commit/c48d3bd20cbeb056ece47c4dfd9d237fef4ee805))
+* Resolve credo warnings for CI ([ecaf1bd](https://github.com/georgeguimaraes/arcana/commit/ecaf1bd6c9aefecc43412336cc0c01aa60ab23ef))
+* Use plainto_tsquery for safe fulltext search input ([3379ff0](https://github.com/georgeguimaraes/arcana/commit/3379ff05d3d9c960590805e9b3813e2698dbba4d))
+* Validate UUID format in Chunk changeset ([6481101](https://github.com/georgeguimaraes/arcana/commit/648110109cabaa57e2cb4e3e4525349ed32f959b))
+
 ## 1.0.0 (2025-12-30)
 
 
