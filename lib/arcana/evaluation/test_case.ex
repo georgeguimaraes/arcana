@@ -27,6 +27,8 @@ defmodule Arcana.Evaluation.TestCase do
   def changeset(test_case, attrs) do
     test_case
     |> cast(attrs, [:question, :source, :source_chunk_id])
-    |> validate_required([:question])
+    |> validate_required([:question, :source])
+    |> validate_length(:question, min: 1)
+    |> foreign_key_constraint(:source_chunk_id)
   end
 end

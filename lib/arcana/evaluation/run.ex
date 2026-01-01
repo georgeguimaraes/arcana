@@ -25,5 +25,7 @@ defmodule Arcana.Evaluation.Run do
   def changeset(run, attrs) do
     run
     |> cast(attrs, [:status, :metrics, :results, :config, :test_case_count])
+    |> validate_required([:status])
+    |> validate_number(:test_case_count, greater_than_or_equal_to: 0)
   end
 end
