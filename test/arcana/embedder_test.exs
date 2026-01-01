@@ -15,7 +15,8 @@ defmodule Arcana.EmbedderTest.MockEmbedder do
 end
 
 defmodule Arcana.EmbedderTest do
-  use ExUnit.Case, async: true
+  # Cannot be async because tests modify global application config
+  use ExUnit.Case, async: false
 
   alias Arcana.Embedder
   alias Arcana.Embedder.Local
