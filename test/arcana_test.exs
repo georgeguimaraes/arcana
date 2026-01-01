@@ -174,10 +174,6 @@ defmodule ArcanaTest do
 
       refute Enum.empty?(semantic_heavy)
       refute Enum.empty?(fulltext_heavy)
-
-      # Both should return results but potentially in different orders
-      assert length(semantic_heavy) > 0
-      assert length(fulltext_heavy) > 0
     end
 
     test "raises error for invalid mode" do

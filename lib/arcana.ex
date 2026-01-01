@@ -19,6 +19,7 @@ defmodule Arcana do
   """
 
   alias Arcana.{Chunk, Chunker, Collection, Document, Embedder, LLM, Parser, VectorStore}
+  alias Arcana.VectorStore.Pgvector
 
   @doc """
   Returns the configured embedder as a `{module, opts}` tuple.
@@ -570,7 +571,7 @@ defmodule Arcana do
     ]
 
     results =
-      Arcana.VectorStore.Pgvector.search_hybrid(
+      Pgvector.search_hybrid(
         params.collection,
         query_embedding,
         query,
