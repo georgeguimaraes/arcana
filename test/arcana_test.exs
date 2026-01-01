@@ -121,7 +121,8 @@ defmodule ArcanaTest do
 
     test "fulltext mode uses ts_rank scoring" do
       # Fulltext should return results with rank-based scoring
-      {:ok, results} = Arcana.search("functional programming language", repo: Repo, mode: :fulltext)
+      {:ok, results} =
+        Arcana.search("functional programming language", repo: Repo, mode: :fulltext)
 
       refute Enum.empty?(results)
       # ts_rank scores are typically small positive numbers
