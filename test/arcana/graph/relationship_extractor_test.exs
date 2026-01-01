@@ -2,8 +2,9 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
   use ExUnit.Case, async: true
 
   alias Arcana.Graph.RelationshipExtractor
+  alias Arcana.Graph.RelationshipExtractor.LLM
 
-  describe "extract/3" do
+  describe "extract/3 with LLM extractor" do
     test "extracts relationships between entities" do
       text = "Sam Altman is the CEO of OpenAI."
 
@@ -27,7 +28,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
          """}
       end
 
-      {:ok, relationships} = RelationshipExtractor.extract(text, entities, llm)
+      extractor = {LLM, llm: llm}
+      {:ok, relationships} = RelationshipExtractor.extract(extractor, text, entities)
 
       assert length(relationships) == 1
 
@@ -70,7 +72,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
          """}
       end
 
-      {:ok, relationships} = RelationshipExtractor.extract(text, entities, llm)
+      extractor = {LLM, llm: llm}
+      {:ok, relationships} = RelationshipExtractor.extract(extractor, text, entities)
 
       assert length(relationships) == 2
       types = Enum.map(relationships, & &1.type)
@@ -86,7 +89,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
         {:ok, "[]"}
       end
 
-      {:ok, relationships} = RelationshipExtractor.extract(text, entities, llm)
+      extractor = {LLM, llm: llm}
+      {:ok, relationships} = RelationshipExtractor.extract(extractor, text, entities)
       assert relationships == []
     end
 
@@ -98,7 +102,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
         {:error, :api_error}
       end
 
-      assert {:error, :api_error} = RelationshipExtractor.extract(text, entities, llm)
+      extractor = {LLM, llm: llm}
+      assert {:error, :api_error} = RelationshipExtractor.extract(extractor, text, entities)
     end
 
     test "handles malformed JSON response" do
@@ -109,8 +114,10 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
         {:ok, "not valid json"}
       end
 
+      extractor = {LLM, llm: llm}
+
       assert {:error, {:json_parse_error, _}} =
-               RelationshipExtractor.extract(text, entities, llm)
+               RelationshipExtractor.extract(extractor, text, entities)
     end
 
     test "filters out relationships with unknown entities" do
@@ -135,7 +142,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
          """}
       end
 
-      {:ok, relationships} = RelationshipExtractor.extract(text, entities, llm)
+      extractor = {LLM, llm: llm}
+      {:ok, relationships} = RelationshipExtractor.extract(extractor, text, entities)
 
       # OpenAI is not in the entities list, so relationship should be filtered
       assert relationships == []
@@ -164,7 +172,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
          """}
       end
 
-      {:ok, relationships} = RelationshipExtractor.extract(text, entities, llm)
+      extractor = {LLM, llm: llm}
+      {:ok, relationships} = RelationshipExtractor.extract(extractor, text, entities)
 
       [rel] = relationships
       assert rel.type == "LEADS"
@@ -188,7 +197,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
          """}
       end
 
-      {:ok, relationships} = RelationshipExtractor.extract(text, entities, llm)
+      extractor = {LLM, llm: llm}
+      {:ok, relationships} = RelationshipExtractor.extract(extractor, text, entities)
 
       strengths = Enum.map(relationships, & &1.strength)
       assert 10 in strengths
@@ -216,7 +226,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
          """}
       end
 
-      {:ok, relationships} = RelationshipExtractor.extract(text, entities, llm)
+      extractor = {LLM, llm: llm}
+      {:ok, relationships} = RelationshipExtractor.extract(extractor, text, entities)
 
       [rel] = relationships
       assert rel.type == "WORKS_AT"
@@ -225,7 +236,7 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
     end
   end
 
-  describe "build_prompt/2" do
+  describe "LLM.build_prompt/2" do
     test "includes entity names in prompt" do
       text = "Test text"
 
@@ -234,7 +245,7 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
         %{name: "OpenAI", type: :organization}
       ]
 
-      prompt = RelationshipExtractor.build_prompt(text, entities)
+      prompt = LLM.build_prompt(text, entities)
 
       assert prompt =~ "Sam Altman"
       assert prompt =~ "OpenAI"
@@ -248,7 +259,7 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
         %{name: "OpenAI", type: :organization}
       ]
 
-      prompt = RelationshipExtractor.build_prompt(text, entities)
+      prompt = LLM.build_prompt(text, entities)
 
       assert prompt =~ "person"
       assert prompt =~ "organization"
@@ -258,7 +269,7 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
       text = "The quick brown fox jumps over the lazy dog."
       entities = [%{name: "Fox", type: :concept}]
 
-      prompt = RelationshipExtractor.build_prompt(text, entities)
+      prompt = LLM.build_prompt(text, entities)
 
       assert prompt =~ text
     end

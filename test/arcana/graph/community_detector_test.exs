@@ -2,8 +2,11 @@ defmodule Arcana.Graph.CommunityDetectorTest do
   use ExUnit.Case, async: true
 
   alias Arcana.Graph.CommunityDetector
+  alias Arcana.Graph.CommunityDetector.Leiden
 
-  describe "detect/2" do
+  @detector {Leiden, []}
+
+  describe "detect/3 with Leiden" do
     test "detects communities in a simple graph" do
       # Two clusters: A-B-C and D-E-F
       entities = [
@@ -28,7 +31,7 @@ defmodule Arcana.Graph.CommunityDetectorTest do
         %{source_id: "c", target_id: "d", strength: 1}
       ]
 
-      {:ok, communities} = CommunityDetector.detect(entities, relationships)
+      {:ok, communities} = CommunityDetector.detect(@detector, entities, relationships)
 
       assert is_list(communities)
       assert communities != []
@@ -41,7 +44,7 @@ defmodule Arcana.Graph.CommunityDetectorTest do
     end
 
     test "returns empty list for empty graph" do
-      {:ok, communities} = CommunityDetector.detect([], [])
+      {:ok, communities} = CommunityDetector.detect(@detector, [], [])
       assert communities == []
     end
 
@@ -49,7 +52,7 @@ defmodule Arcana.Graph.CommunityDetectorTest do
       entities = [%{id: "a", name: "A"}]
       relationships = []
 
-      {:ok, communities} = CommunityDetector.detect(entities, relationships)
+      {:ok, communities} = CommunityDetector.detect(@detector, entities, relationships)
 
       # Single entity forms its own community
       assert communities != []
@@ -64,7 +67,8 @@ defmodule Arcana.Graph.CommunityDetectorTest do
           %{source_id: "#{i}", target_id: "#{i + 1}", strength: 5}
         end
 
-      {:ok, communities} = CommunityDetector.detect(entities, relationships, max_level: 1)
+      detector = {Leiden, max_level: 1}
+      {:ok, communities} = CommunityDetector.detect(detector, entities, relationships)
 
       # All communities should be at level 0 or 1
       levels = Enum.map(communities, & &1.level)
@@ -83,9 +87,11 @@ defmodule Arcana.Graph.CommunityDetectorTest do
       ]
 
       # Low resolution = fewer, larger communities
-      {:ok, low_res} = CommunityDetector.detect(entities, relationships, resolution: 0.5)
+      low_res_detector = {Leiden, resolution: 0.5}
+      {:ok, low_res} = CommunityDetector.detect(low_res_detector, entities, relationships)
       # High resolution = more, smaller communities
-      {:ok, high_res} = CommunityDetector.detect(entities, relationships, resolution: 2.0)
+      high_res_detector = {Leiden, resolution: 2.0}
+      {:ok, high_res} = CommunityDetector.detect(high_res_detector, entities, relationships)
 
       # At level 0, high resolution should have more or equal communities
       low_res_0 = Enum.filter(low_res, &(&1.level == 0))
@@ -107,7 +113,7 @@ defmodule Arcana.Graph.CommunityDetectorTest do
         %{source_id: "b", target_id: "c", strength: 1}
       ]
 
-      {:ok, communities} = CommunityDetector.detect(entities, relationships)
+      {:ok, communities} = CommunityDetector.detect(@detector, entities, relationships)
 
       # A and B should likely be in the same community at some level
       level_0 = Enum.filter(communities, &(&1.level == 0))
@@ -131,12 +137,12 @@ defmodule Arcana.Graph.CommunityDetectorTest do
         %{source_id: "a", target_id: "b"}
       ]
 
-      {:ok, communities} = CommunityDetector.detect(entities, relationships)
+      {:ok, communities} = CommunityDetector.detect(@detector, entities, relationships)
       assert is_list(communities)
     end
   end
 
-  describe "to_edges/2" do
+  describe "Leiden.to_edges/2" do
     test "converts relationships to weighted edge tuples" do
       entity_ids = ["a", "b", "c"]
 
@@ -145,7 +151,7 @@ defmodule Arcana.Graph.CommunityDetectorTest do
         %{source_id: "b", target_id: "c", strength: 8}
       ]
 
-      edges = CommunityDetector.to_edges(entity_ids, relationships)
+      edges = Leiden.to_edges(entity_ids, relationships)
 
       assert {"a", "b", 5} in edges or {"a", "b", 5.0} in edges
       assert {"b", "c", 8} in edges or {"b", "c", 8.0} in edges
@@ -159,7 +165,7 @@ defmodule Arcana.Graph.CommunityDetectorTest do
         %{source_id: "a", target_id: "unknown", strength: 3}
       ]
 
-      edges = CommunityDetector.to_edges(entity_ids, relationships)
+      edges = Leiden.to_edges(entity_ids, relationships)
 
       assert length(edges) == 1
     end
@@ -168,7 +174,7 @@ defmodule Arcana.Graph.CommunityDetectorTest do
       entity_ids = ["a", "b"]
       relationships = [%{source_id: "a", target_id: "b"}]
 
-      edges = CommunityDetector.to_edges(entity_ids, relationships)
+      edges = Leiden.to_edges(entity_ids, relationships)
 
       assert [{"a", "b", weight}] = edges
       assert weight == 1 or weight == 1.0

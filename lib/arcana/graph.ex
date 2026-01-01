@@ -47,12 +47,30 @@ defmodule Arcana.Graph do
 
     * `Arcana.Graph.EntityExtractor` - Behaviour for entity extraction
     * `Arcana.Graph.EntityExtractor.NER` - Built-in NER implementation (default)
-    * `Arcana.Graph.RelationshipExtractor` - Extracts relationships using LLM
-    * `Arcana.Graph.CommunityDetector` - Detects communities with Leiden algorithm
+    * `Arcana.Graph.RelationshipExtractor` - Behaviour for relationship extraction
+    * `Arcana.Graph.RelationshipExtractor.LLM` - Built-in LLM implementation (default)
+    * `Arcana.Graph.CommunityDetector` - Behaviour for community detection
+    * `Arcana.Graph.CommunityDetector.Leiden` - Built-in Leiden implementation (default)
     * `Arcana.Graph.CommunitySummarizer` - Generates LLM summaries for communities
     * `Arcana.Graph.GraphQuery` - Queries the knowledge graph
     * `Arcana.Graph.FusionSearch` - Combines vector and graph search with RRF
     * `Arcana.Graph.GraphBuilder` - Orchestrates graph construction
+
+  ## Custom Implementations
+
+  All core extractors and detectors support the behaviour pattern for extensibility:
+
+      # Custom entity extractor
+      config :arcana, :graph,
+        entity_extractor: {MyApp.SpacyExtractor, endpoint: "http://localhost:5000"}
+
+      # Custom relationship extractor
+      config :arcana, :graph,
+        relationship_extractor: {MyApp.PatternExtractor, patterns: [...]}
+
+      # Custom community detector
+      config :arcana, :graph,
+        community_detector: {MyApp.LouvainDetector, resolution: 0.5}
 
   """
 

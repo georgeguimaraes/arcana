@@ -13,6 +13,7 @@ Embeddable RAG library for Elixir/Phoenix. Add vector search, document retrieval
 - **Agentic RAG** - Pipeline with query expansion, decomposition, re-ranking, and self-correction
 - **Pluggable components** - Replace any pipeline step with custom implementations
 - **Hybrid search** - Vector, full-text, or combined with Reciprocal Rank Fusion
+- **GraphRAG** - Knowledge graph with entity extraction, community detection, and fusion search
 - **Multiple backends** - pgvector (default) or in-memory HNSWLib
 - **Configurable embeddings** - Local Bumblebee, OpenAI, or custom providers
 - **File ingestion** - Text, Markdown, and PDF support
@@ -449,6 +450,7 @@ See the [Agentic RAG Guide](guides/agentic-rag.md) for detailed examples.
 
 - [Getting Started](guides/getting-started.md) - Installation, embedding models, basic usage
 - [Agentic RAG](guides/agentic-rag.md) - Build sophisticated RAG pipelines
+- [GraphRAG](guides/graphrag.md) - Knowledge graphs with entity extraction and community detection
 - [LLM Integration](guides/llm-integration.md) - Connect to OpenAI, Anthropic, or custom LLMs
 - [Search Algorithms](guides/search-algorithms.md) - Semantic, fulltext, and hybrid search
 - [Re-ranking](guides/reranking.md) - Improve retrieval quality
@@ -477,7 +479,7 @@ See the [Agentic RAG Guide](guides/agentic-rag.md) for detailed examples.
   - [ ] ChromaDB
 - [ ] Async ingestion with Oban
 - [ ] HyDE (Hypothetical Document Embeddings)
-- [ ] GraphRAG (knowledge graph + community summaries)
+- [x] GraphRAG (knowledge graph + community summaries)
 
 ## Development
 
