@@ -27,8 +27,7 @@ defmodule Arcana.Embeddings.Serving do
 
     serving =
       TextEmbedding.text_embedding(model_info, tokenizer,
-        compile: [batch_size: 32, sequence_length: 512],
-        defn_options: [compiler: EXLA]
+        compile: [batch_size: 32, sequence_length: 512]
       )
 
     Nx.Serving.start_link(serving: serving, name: __MODULE__, batch_timeout: 100)
