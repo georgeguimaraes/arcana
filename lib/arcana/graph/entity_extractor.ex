@@ -1,0 +1,105 @@
+defmodule Arcana.Graph.EntityExtractor do
+  @moduledoc """
+  Extracts named entities from text using Bumblebee NER.
+
+  Uses dslim/distilbert-NER to identify persons, organizations,
+  locations, and miscellaneous entities. The model is lazy-loaded
+  on first use to avoid startup overhead when graph features aren't needed.
+  """
+
+  alias Arcana.Graph.NERServing
+
+  @type entity :: %{
+          name: String.t(),
+          type: atom(),
+          span_start: non_neg_integer(),
+          span_end: non_neg_integer(),
+          score: float()
+        }
+
+  @doc """
+  Extracts entities from text.
+
+  Returns a list of entity maps with :name, :type, :span_start, :span_end, :score.
+  Entities are deduplicated by name (first occurrence kept).
+
+  ## Examples
+
+      iex> EntityExtractor.extract("Sam Altman is CEO of OpenAI.")
+      [
+        %{name: "Sam Altman", type: :person, span_start: 0, span_end: 10, score: 0.99},
+        %{name: "OpenAI", type: :organization, span_start: 22, span_end: 28, score: 0.98}
+      ]
+
+  """
+  @spec extract(String.t()) :: [entity()]
+  def extract(""), do: []
+
+  def extract(text) when is_binary(text) do
+    %{entities: raw_entities} = NERServing.run(text)
+
+    raw_entities
+    |> Enum.map(&normalize_entity/1)
+    |> deduplicate_by_name()
+  end
+
+  @doc """
+  Extracts entities from multiple texts.
+
+  ## Examples
+
+      iex> EntityExtractor.extract_batch(["Sam Altman", "Elon Musk"])
+      [[%{name: "Sam Altman", ...}], [%{name: "Elon Musk", ...}]]
+
+  """
+  @spec extract_batch([String.t()]) :: [[entity()]]
+  def extract_batch(texts) when is_list(texts) do
+    Enum.map(texts, &extract/1)
+  end
+
+  @doc """
+  Maps NER labels to entity types.
+
+  ## Label Mapping
+  - PER, B-PER, I-PER → :person
+  - ORG, B-ORG, I-ORG → :organization
+  - LOC, B-LOC, I-LOC → :location
+  - MISC, B-MISC, I-MISC → :concept
+  - Other → :other
+  """
+  @spec map_label(String.t()) :: atom()
+  def map_label(label) when is_binary(label) do
+    label
+    |> String.replace(~r/^[BI]-/, "")
+    |> do_map_label()
+  end
+
+  defp do_map_label("PER"), do: :person
+  defp do_map_label("ORG"), do: :organization
+  defp do_map_label("LOC"), do: :location
+  defp do_map_label("MISC"), do: :concept
+  defp do_map_label(_), do: :other
+
+  defp normalize_entity(%{phrase: phrase, label: label, start: start, end: end_pos, score: score}) do
+    %{
+      name: String.trim(phrase),
+      type: map_label(label),
+      span_start: start,
+      span_end: end_pos,
+      score: score
+    }
+  end
+
+  defp deduplicate_by_name(entities) do
+    entities
+    |> Enum.reduce({[], MapSet.new()}, fn entity, {acc, seen} ->
+      if MapSet.member?(seen, entity.name) do
+        {acc, seen}
+      else
+        {[entity | acc], MapSet.put(seen, entity.name)}
+      end
+    end)
+    |> elem(0)
+    |> Enum.reverse()
+  end
+end
