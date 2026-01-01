@@ -3,14 +3,16 @@ name: Release
 # Triggers when a release PR is merged with the 'autorelease: pending' label
 on:
   pull_request:
-    types: [closed]
+    types:
+      - closed
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   release:
-    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'autorelease: pending')
+    if: ${{ github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'autorelease: pending') }}
     runs-on: ubuntu-latest
 
     services:
