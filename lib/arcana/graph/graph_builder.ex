@@ -12,7 +12,7 @@ defmodule Arcana.Graph.GraphBuilder do
       # During ingest (when graph: true option is passed)
       chunks = Chunker.chunk(text, opts)
       {:ok, graph_data} = GraphBuilder.build(chunks,
-        entity_extractor: &EntityExtractor.extract/2,
+        entity_extractor: &Arcana.Graph.EntityExtractor.NER.extract/2,
         relationship_extractor: &RelationshipExtractor.extract/3
       )
 

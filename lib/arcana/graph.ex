@@ -45,7 +45,8 @@ defmodule Arcana.Graph do
 
   GraphRAG consists of several modules:
 
-    * `Arcana.Graph.EntityExtractor` - Extracts named entities using NER
+    * `Arcana.Graph.EntityExtractor` - Behaviour for entity extraction
+    * `Arcana.Graph.EntityExtractor.NER` - Built-in NER implementation (default)
     * `Arcana.Graph.RelationshipExtractor` - Extracts relationships using LLM
     * `Arcana.Graph.CommunityDetector` - Detects communities with Leiden algorithm
     * `Arcana.Graph.CommunitySummarizer` - Generates LLM summaries for communities
@@ -109,7 +110,7 @@ defmodule Arcana.Graph do
 
       {:ok, graph_data} = Arcana.Graph.build(chunks,
         entity_extractor: fn text, _opts ->
-          Arcana.Graph.EntityExtractor.extract(text)
+          Arcana.Graph.EntityExtractor.NER.extract(text, [])
         end,
         relationship_extractor: fn text, entities, _opts ->
           Arcana.Graph.RelationshipExtractor.extract(text, entities, my_llm)
@@ -171,7 +172,7 @@ defmodule Arcana.Graph do
       {:ok, vector_results} = Arcana.search(query, repo: MyApp.Repo)
 
       # Extract entities from query
-      {:ok, entities} = Arcana.Graph.EntityExtractor.extract(query)
+      {:ok, entities} = Arcana.Graph.EntityExtractor.NER.extract(query, [])
 
       # Combine with graph search
       results = Arcana.Graph.fusion_search(graph, entities, vector_results)

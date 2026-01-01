@@ -22,7 +22,7 @@ defmodule Arcana.Graph.FusionSearch do
       graph = GraphQuery.build_graph(entities, relationships, chunks, communities)
 
       # Extract entities from query
-      entities = EntityExtractor.extract("Tell me about OpenAI")
+      {:ok, entities} = Arcana.Graph.EntityExtractor.NER.extract("Tell me about OpenAI", [])
 
       # Run vector search
       vector_results = Arcana.search(repo, collection, query, top_k: 10)

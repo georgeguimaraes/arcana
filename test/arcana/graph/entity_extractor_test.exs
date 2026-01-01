@@ -1,13 +1,13 @@
-defmodule Arcana.Graph.EntityExtractorTest do
+defmodule Arcana.Graph.EntityExtractor.NERTest do
   use Arcana.DataCase, async: true
 
-  alias Arcana.Graph.EntityExtractor
+  alias Arcana.Graph.EntityExtractor.NER
 
-  describe "extract/1" do
+  describe "extract/2" do
     test "extracts person entities" do
       text = "Sam Altman is the CEO of OpenAI."
 
-      entities = EntityExtractor.extract(text)
+      {:ok, entities} = NER.extract(text, [])
 
       assert Enum.any?(entities, fn e ->
                e.name == "Sam Altman" and e.type == :person
@@ -17,7 +17,7 @@ defmodule Arcana.Graph.EntityExtractorTest do
     test "extracts organization entities" do
       text = "OpenAI released GPT-4 in March 2023."
 
-      entities = EntityExtractor.extract(text)
+      {:ok, entities} = NER.extract(text, [])
 
       assert Enum.any?(entities, fn e ->
                e.name == "OpenAI" and e.type == :organization
@@ -27,7 +27,7 @@ defmodule Arcana.Graph.EntityExtractorTest do
     test "extracts location entities" do
       text = "The company is headquartered in San Francisco."
 
-      entities = EntityExtractor.extract(text)
+      {:ok, entities} = NER.extract(text, [])
 
       assert Enum.any?(entities, fn e ->
                e.name == "San Francisco" and e.type == :location
@@ -37,7 +37,7 @@ defmodule Arcana.Graph.EntityExtractorTest do
     test "extracts multiple entities from text" do
       text = "Elon Musk founded SpaceX in California."
 
-      entities = EntityExtractor.extract(text)
+      {:ok, entities} = NER.extract(text, [])
 
       assert length(entities) >= 2
     end
@@ -45,7 +45,7 @@ defmodule Arcana.Graph.EntityExtractorTest do
     test "returns entity with span positions" do
       text = "OpenAI is an AI company."
 
-      entities = EntityExtractor.extract(text)
+      {:ok, entities} = NER.extract(text, [])
       openai = Enum.find(entities, fn e -> e.name == "OpenAI" end)
 
       assert openai.span_start == 0
@@ -55,33 +55,33 @@ defmodule Arcana.Graph.EntityExtractorTest do
     test "returns empty list for text without entities" do
       text = "This is a simple sentence without names."
 
-      entities = EntityExtractor.extract(text)
+      {:ok, entities} = NER.extract(text, [])
 
       assert entities == []
     end
 
     test "handles empty text" do
-      assert EntityExtractor.extract("") == []
+      assert {:ok, []} = NER.extract("", [])
     end
 
     test "deduplicates entities with same name" do
       text = "OpenAI announced that OpenAI will release a new model."
 
-      entities = EntityExtractor.extract(text)
+      {:ok, entities} = NER.extract(text, [])
       openai_count = Enum.count(entities, fn e -> e.name == "OpenAI" end)
 
       assert openai_count == 1
     end
   end
 
-  describe "extract_batch/1" do
+  describe "extract_batch/2" do
     test "extracts entities from multiple texts" do
       texts = [
         "Sam Altman leads OpenAI.",
         "Elon Musk founded Tesla."
       ]
 
-      results = EntityExtractor.extract_batch(texts)
+      {:ok, results} = NER.extract_batch(texts, [])
 
       assert length(results) == 2
       assert is_list(hd(results))
@@ -90,29 +90,29 @@ defmodule Arcana.Graph.EntityExtractorTest do
 
   describe "label mapping" do
     test "maps PER to person" do
-      assert EntityExtractor.map_label("PER") == :person
-      assert EntityExtractor.map_label("B-PER") == :person
-      assert EntityExtractor.map_label("I-PER") == :person
+      assert NER.map_label("PER") == :person
+      assert NER.map_label("B-PER") == :person
+      assert NER.map_label("I-PER") == :person
     end
 
     test "maps ORG to organization" do
-      assert EntityExtractor.map_label("ORG") == :organization
-      assert EntityExtractor.map_label("B-ORG") == :organization
+      assert NER.map_label("ORG") == :organization
+      assert NER.map_label("B-ORG") == :organization
     end
 
     test "maps LOC to location" do
-      assert EntityExtractor.map_label("LOC") == :location
-      assert EntityExtractor.map_label("B-LOC") == :location
+      assert NER.map_label("LOC") == :location
+      assert NER.map_label("B-LOC") == :location
     end
 
     test "maps MISC to concept" do
-      assert EntityExtractor.map_label("MISC") == :concept
-      assert EntityExtractor.map_label("B-MISC") == :concept
+      assert NER.map_label("MISC") == :concept
+      assert NER.map_label("B-MISC") == :concept
     end
 
     test "maps unknown labels to other" do
-      assert EntityExtractor.map_label("UNKNOWN") == :other
-      assert EntityExtractor.map_label("O") == :other
+      assert NER.map_label("UNKNOWN") == :other
+      assert NER.map_label("O") == :other
     end
   end
 end
