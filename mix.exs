@@ -92,7 +92,10 @@ defmodule Arcana.MixProject do
       {:req_llm, "~> 1.2"},
 
       # Optional: In-memory vector store with HNSW
-      {:hnswlib, "~> 0.1", optional: true}
+      {:hnswlib, "~> 0.1", optional: true},
+
+      # Community detection for GraphRAG
+      {:ex_leiden, "~> 0.5", optional: true}
     ]
   end
 end
