@@ -2,12 +2,13 @@ defmodule Arcana.ServingTelemetryTest do
   # Requires real Nx.Serving - run with: mix test --include serving
   use ExUnit.Case, async: false
 
+  alias Arcana.Embeddings.Serving
+
   @moduletag :serving
 
   setup_all do
     # Start the serving with a small model for this test
-    {:ok, pid} =
-      Arcana.Embeddings.Serving.start_link(model: "sentence-transformers/all-MiniLM-L6-v2")
+    {:ok, pid} = Serving.start_link(model: "sentence-transformers/all-MiniLM-L6-v2")
 
     on_exit(fn -> GenServer.stop(pid) end)
     :ok
@@ -29,7 +30,7 @@ defmodule Arcana.ServingTelemetryTest do
       nil
     )
 
-    _embedding = Arcana.Embeddings.Serving.embed("test text")
+    _embedding = Serving.embed("test text")
 
     assert_receive {:telemetry, [:arcana, :embed, :start], start_measurements, start_metadata}
     assert is_integer(start_measurements.system_time)
