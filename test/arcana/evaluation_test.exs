@@ -152,7 +152,7 @@ defmodule Arcana.EvaluationTest do
 
       # Should save embedding config
       assert run.config.embedding.model == "BAAI/bge-small-en-v1.5"
-      assert run.config.embedding.dimensions == 384
+      assert run.config.embedding.dimensions == 32
 
       # Should save search mode
       assert run.config.mode == :semantic

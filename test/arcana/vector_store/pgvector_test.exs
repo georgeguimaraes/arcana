@@ -145,7 +145,7 @@ defmodule Arcana.VectorStore.PgvectorTest do
 
       {:ok, _collection} = Collection.get_or_create("empty-collection", repo)
 
-      query = List.duplicate(0.5, 384)
+      query = List.duplicate(0.5, 32)
       results = Pgvector.search("empty-collection", query, repo: repo, limit: 10)
 
       assert results == []
@@ -180,7 +180,7 @@ defmodule Arcana.VectorStore.PgvectorTest do
         })
         |> repo.insert()
 
-      embedding = List.duplicate(0.5, 384)
+      embedding = List.duplicate(0.5, 32)
 
       {:ok, chunk} =
         %Chunk{}
@@ -220,7 +220,7 @@ defmodule Arcana.VectorStore.PgvectorTest do
         })
         |> repo.insert()
 
-      embedding = List.duplicate(0.5, 384)
+      embedding = List.duplicate(0.5, 32)
 
       for i <- 1..3 do
         %Chunk{}
@@ -245,7 +245,7 @@ defmodule Arcana.VectorStore.PgvectorTest do
       {:ok, coll1} = Collection.get_or_create("clear-a", repo)
       {:ok, coll2} = Collection.get_or_create("clear-b", repo)
 
-      embedding = List.duplicate(0.5, 384)
+      embedding = List.duplicate(0.5, 32)
 
       {:ok, doc1} =
         %Document{}

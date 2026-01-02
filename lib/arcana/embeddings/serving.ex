@@ -2,28 +2,31 @@ defmodule Arcana.Embeddings.Serving do
   @moduledoc """
   Nx.Serving for text embeddings using Bumblebee.
 
-  Uses BAAI/bge-small-en-v1.5 which produces 384-dimensional embeddings.
+  Uses BAAI/bge-small-en-v1.5 which produces 384-dimensional embeddings by default.
   """
 
   alias Bumblebee.Text.TextEmbedding
 
-  @model_id "BAAI/bge-small-en-v1.5"
+  @default_model "BAAI/bge-small-en-v1.5"
 
   @doc """
   Returns the child spec for starting the embedding serving.
   Add this to your application's supervision tree.
   """
-  def child_spec(_opts) do
+  def child_spec(opts) do
     %{
       id: __MODULE__,
-      start: {__MODULE__, :start_link, [[]]},
+      start: {__MODULE__, :start_link, [opts]},
       type: :worker
     }
   end
 
-  def start_link(_opts) do
-    {:ok, model_info} = Bumblebee.load_model({:hf, @model_id})
-    {:ok, tokenizer} = Bumblebee.load_tokenizer({:hf, @model_id})
+  def start_link(opts \\ []) do
+    model = Keyword.get(opts, :model, @default_model)
+    tokenizer_model = Keyword.get(opts, :tokenizer, model)
+
+    {:ok, model_info} = Bumblebee.load_model({:hf, model})
+    {:ok, tokenizer} = Bumblebee.load_tokenizer({:hf, tokenizer_model})
 
     serving =
       TextEmbedding.text_embedding(model_info, tokenizer,

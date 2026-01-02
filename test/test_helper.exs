@@ -1,8 +1,9 @@
 {:ok, _} = Arcana.TestRepo.start_link()
 Ecto.Adapters.SQL.Sandbox.mode(Arcana.TestRepo, :manual)
 
-# Start the embedding serving for tests
-{:ok, _} = Arcana.Embeddings.Serving.start_link([])
+# Start embedding serving with tiny model for fast tests
+test_model = Application.get_env(:arcana, :test_model, "hf-internal-testing/tiny-random-bert")
+{:ok, _} = Arcana.Embeddings.Serving.start_link(model: test_model, tokenizer: "google-bert/bert-base-uncased")
 
 # Start the endpoint for LiveView tests
 {:ok, _} = ArcanaWeb.Endpoint.start_link()

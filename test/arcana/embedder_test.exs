@@ -4,13 +4,13 @@ defmodule Arcana.EmbedderTest.MockEmbedder do
 
   @impl Arcana.Embedder
   def embed(text, opts) do
-    dims = Keyword.get(opts, :dimensions, 384)
+    dims = Keyword.get(opts, :dimensions, 32)
     {:ok, List.duplicate(String.length(text) / 10, dims)}
   end
 
   @impl Arcana.Embedder
   def dimensions(opts) do
-    Keyword.get(opts, :dimensions, 384)
+    Keyword.get(opts, :dimensions, 32)
   end
 end
 
@@ -48,9 +48,9 @@ defmodule Arcana.EmbedderTest do
 
     test "Custom embedder dimensions are auto-detected" do
       embedder =
-        {Arcana.Embedder.Custom, [fun: fn _text -> {:ok, List.duplicate(0.1, 384)} end]}
+        {Arcana.Embedder.Custom, [fun: fn _text -> {:ok, List.duplicate(0.1, 32)} end]}
 
-      assert Embedder.dimensions(embedder) == 384
+      assert Embedder.dimensions(embedder) == 32
     end
 
     test "Custom embedder uses explicit dimensions when provided" do
@@ -70,26 +70,26 @@ defmodule Arcana.EmbedderTest do
 
   describe "Local" do
     test "returns correct dimensions for BGE models" do
-      assert Local.dimensions([]) == 384
-      assert Local.dimensions(model: "BAAI/bge-small-en-v1.5") == 384
+      assert Local.dimensions([]) == 32
+      assert Local.dimensions(model: "BAAI/bge-small-en-v1.5") == 32
       assert Local.dimensions(model: "BAAI/bge-base-en-v1.5") == 768
       assert Local.dimensions(model: "BAAI/bge-large-en-v1.5") == 1024
     end
 
     test "returns correct dimensions for E5 models" do
-      assert Local.dimensions(model: "intfloat/e5-small-v2") == 384
+      assert Local.dimensions(model: "intfloat/e5-small-v2") == 32
       assert Local.dimensions(model: "intfloat/e5-base-v2") == 768
       assert Local.dimensions(model: "intfloat/e5-large-v2") == 1024
     end
 
     test "returns correct dimensions for GTE models" do
-      assert Local.dimensions(model: "thenlper/gte-small") == 384
+      assert Local.dimensions(model: "thenlper/gte-small") == 32
       assert Local.dimensions(model: "thenlper/gte-base") == 768
       assert Local.dimensions(model: "thenlper/gte-large") == 1024
     end
 
     test "returns correct dimensions for Sentence Transformers models" do
-      assert Local.dimensions(model: "sentence-transformers/all-MiniLM-L6-v2") == 384
+      assert Local.dimensions(model: "sentence-transformers/all-MiniLM-L6-v2") == 32
     end
   end
 

@@ -136,7 +136,7 @@ defmodule Arcana.TelemetryTest do
 
       assert_receive {:telemetry, [:arcana, :embed, :stop], stop_measurements, stop_metadata}
       assert is_integer(stop_measurements.duration)
-      assert stop_metadata.dimensions == 384
+      assert stop_metadata.dimensions == 32
 
       :telemetry.detach(ref)
     end

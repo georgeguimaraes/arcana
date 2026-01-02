@@ -49,7 +49,7 @@ defmodule Arcana.ChunkTest do
 
       assert chunk.id
       assert chunk.document_id == doc.id
-      assert Pgvector.to_list(chunk.embedding) |> length() == 384
+      assert Pgvector.to_list(chunk.embedding) |> length() == 32
     end
 
     test "deletes chunks when document is deleted" do

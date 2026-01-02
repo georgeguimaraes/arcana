@@ -1,48 +1,15 @@
 import Config
 
+# Use Nx.BinaryBackend for tests (no EXLA/EMLX needed)
+config :nx,
+  default_backend: Nx.BinaryBackend,
+  default_defn_options: [compiler: Nx.Defn.Evaluator]
+
+# Tiny model for fast tests (32 dimensions)
 config :arcana,
-  repo: Arcana.TestRepo
-
-# Use a mock embedding function for tests (384 dimensions like bge-small-en-v1.5)
-# Creates pseudo-embeddings where similar words produce similar vectors
-config :arcana,
-  embedder: fn text ->
-    # Normalize and tokenize
-    words =
-      text
-      |> String.downcase()
-      |> String.replace(~r/[^\w\s]/, "")
-      |> String.split(~r/\s+/, trim: true)
-      |> Enum.uniq()
-
-    # Create a 384-dim embedding based on word hashes
-    # Each word contributes to specific dimensions based on its hash
-    base = List.duplicate(0.0, 384)
-
-    embedding =
-      Enum.reduce(words, base, fn word, acc ->
-        # Use word hash to determine which dimensions to activate
-        hash = :erlang.phash2(word)
-        dim1 = rem(hash, 384)
-        dim2 = rem(hash * 7, 384)
-        dim3 = rem(hash * 13, 384)
-
-        acc
-        |> List.update_at(dim1, &(&1 + 0.5))
-        |> List.update_at(dim2, &(&1 + 0.3))
-        |> List.update_at(dim3, &(&1 + 0.2))
-      end)
-
-    # Normalize to unit length
-    magnitude = :math.sqrt(Enum.reduce(embedding, 0.0, fn x, sum -> sum + x * x end))
-
-    normalized =
-      if magnitude > 0,
-        do: Enum.map(embedding, &(&1 / magnitude)),
-        else: embedding
-
-    {:ok, normalized}
-  end
+  repo: Arcana.TestRepo,
+  test_model: "hf-internal-testing/tiny-random-bert",
+  test_dimensions: 32
 
 config :arcana, Arcana.TestRepo,
   username: System.get_env("POSTGRES_USER", "postgres"),
