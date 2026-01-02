@@ -158,7 +158,6 @@ defmodule ArcanaWeb.GraphLive do
 
   defp load_relationships(socket) do
     repo = socket.assigns.repo
-    selected = socket.assigns.selected_collection
 
     query =
       from(r in Relationship,
@@ -186,15 +185,48 @@ defmodule ArcanaWeb.GraphLive do
       )
 
     query =
-      if selected do
-        where(query, [r, source, target, c], c.name == ^selected)
-      else
-        query
-      end
+      query
+      |> apply_collection_filter(socket.assigns.selected_collection)
+      |> apply_relationship_search_filter(socket.assigns.relationship_filter)
+      |> apply_relationship_type_filter(socket.assigns.relationship_type_filter)
+      |> apply_relationship_strength_filter(socket.assigns.relationship_strength_filter)
 
     relationships = repo.all(query)
     assign(socket, relationships: relationships)
   end
+
+  defp apply_collection_filter(query, nil), do: query
+  defp apply_collection_filter(query, ""), do: query
+
+  defp apply_collection_filter(query, collection) do
+    where(query, [r, source, target, c], c.name == ^collection)
+  end
+
+  defp apply_relationship_search_filter(query, nil), do: query
+  defp apply_relationship_search_filter(query, ""), do: query
+
+  defp apply_relationship_search_filter(query, search) do
+    pattern = "%#{search}%"
+
+    where(
+      query,
+      [r, source, target, c],
+      ilike(source.name, ^pattern) or ilike(target.name, ^pattern) or ilike(r.type, ^pattern)
+    )
+  end
+
+  defp apply_relationship_type_filter(query, nil), do: query
+  defp apply_relationship_type_filter(query, ""), do: query
+  defp apply_relationship_type_filter(query, type), do: where(query, [r], r.type == ^type)
+
+  defp apply_relationship_strength_filter(query, "strong"),
+    do: where(query, [r], r.strength >= 7)
+
+  defp apply_relationship_strength_filter(query, "medium"),
+    do: where(query, [r], r.strength >= 4 and r.strength < 7)
+
+  defp apply_relationship_strength_filter(query, "weak"), do: where(query, [r], r.strength < 4)
+  defp apply_relationship_strength_filter(query, _), do: query
 
   defp load_communities(socket) do
     repo = socket.assigns.repo
@@ -262,6 +294,21 @@ defmodule ArcanaWeb.GraphLive do
 
   def handle_event("close_entity_detail", _params, socket) do
     {:noreply, assign(socket, selected_entity: nil, entity_details: nil)}
+  end
+
+  def handle_event("filter_relationships", params, socket) do
+    search_filter = params["search"] || ""
+    type_filter = params["type"]
+    strength_filter = params["strength"]
+
+    {:noreply,
+     socket
+     |> assign(
+       relationship_filter: search_filter,
+       relationship_type_filter: type_filter,
+       relationship_strength_filter: strength_filter
+     )
+     |> load_relationships()}
   end
 
   defp load_entity_details(repo, entity_id) do
@@ -403,7 +450,12 @@ defmodule ArcanaWeb.GraphLive do
                 entity_details={@entity_details}
               />
             <% :relationships -> %>
-              <.relationships_view relationships={@relationships} />
+              <.relationships_view
+                relationships={@relationships}
+                relationship_filter={@relationship_filter}
+                relationship_type_filter={@relationship_type_filter}
+                relationship_strength_filter={@relationship_strength_filter}
+              />
             <% :communities -> %>
               <.communities_view communities={@communities} />
           <% end %>
@@ -531,8 +583,42 @@ defmodule ArcanaWeb.GraphLive do
   defp relationships_view(assigns) do
     ~H"""
     <div class="arcana-relationships-view">
+      <form phx-change="filter_relationships" class="arcana-filter-bar">
+        <input
+          type="text"
+          name="search"
+          value={@relationship_filter}
+          placeholder="Search relationships..."
+          class="arcana-input"
+          phx-debounce="300"
+        />
+        <select name="type" class="arcana-input">
+          <option value="">All Types</option>
+          <option value="LEADS" selected={@relationship_type_filter == "LEADS"}>LEADS</option>
+          <option value="CREATED" selected={@relationship_type_filter == "CREATED"}>CREATED</option>
+          <option value="PARTNERED" selected={@relationship_type_filter == "PARTNERED"}>
+            PARTNERED
+          </option>
+          <option value="ENABLES" selected={@relationship_type_filter == "ENABLES"}>ENABLES</option>
+          <option value="WORKS_AT" selected={@relationship_type_filter == "WORKS_AT"}>WORKS_AT</option>
+          <option value="RELATED_TO" selected={@relationship_type_filter == "RELATED_TO"}>
+            RELATED_TO
+          </option>
+        </select>
+        <select name="strength" class="arcana-input">
+          <option value="">Any Strength</option>
+          <option value="strong" selected={@relationship_strength_filter == "strong"}>
+            Strong (7-10)
+          </option>
+          <option value="medium" selected={@relationship_strength_filter == "medium"}>
+            Medium (4-6)
+          </option>
+          <option value="weak" selected={@relationship_strength_filter == "weak"}>Weak (1-3)</option>
+        </select>
+      </form>
+
       <%= if Enum.empty?(@relationships) do %>
-        <div class="arcana-empty">No relationships found in this collection.</div>
+        <div class="arcana-empty">No relationships found matching your criteria.</div>
       <% else %>
         <table class="arcana-table arcana-graph-table">
           <thead>

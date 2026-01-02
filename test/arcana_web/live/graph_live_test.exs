@@ -286,6 +286,114 @@ defmodule ArcanaWeb.GraphLiveTest do
     end
   end
 
+  describe "Relationships sub-view" do
+    setup do
+      entity_extractor = fn _text, _opts ->
+        {:ok,
+         [
+           %{name: "CEO Smith", type: :person},
+           %{name: "TechStartup Inc", type: :organization},
+           %{name: "Big Partner Corp", type: :organization}
+         ]}
+      end
+
+      relationship_extractor = fn _text, _entities, _opts ->
+        {:ok,
+         [
+           %{
+             source: "CEO Smith",
+             target: "TechStartup Inc",
+             type: "LEADS",
+             description: "CEO Smith leads TechStartup Inc as founder",
+             strength: 9
+           },
+           %{
+             source: "TechStartup Inc",
+             target: "Big Partner Corp",
+             type: "PARTNERED",
+             description: "Strategic partnership for distribution",
+             strength: 5
+           }
+         ]}
+      end
+
+      {:ok, doc} =
+        Arcana.ingest(
+          "CEO Smith leads TechStartup Inc and partnered with Big Partner Corp.",
+          repo: Repo,
+          graph: true,
+          entity_extractor: entity_extractor,
+          relationship_extractor: relationship_extractor,
+          collection: "relationships-test"
+        )
+
+      %{document: doc}
+    end
+
+    test "shows relationships table with Source, Relationship, Target, Strength columns", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=relationships")
+
+      assert has_element?(view, "th", "Source")
+      assert has_element?(view, "th", "Relationship")
+      assert has_element?(view, "th", "Target")
+      assert has_element?(view, "th", "Strength")
+    end
+
+    test "displays relationship data in table", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=relationships")
+
+      html = render(view)
+      assert html =~ "CEO Smith"
+      assert html =~ "TechStartup Inc"
+      assert html =~ "LEADS"
+    end
+
+    test "shows strength meter for relationships", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=relationships")
+
+      assert has_element?(view, ".arcana-strength-meter")
+    end
+
+    test "filters relationships by search term", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=relationships")
+
+      view
+      |> element("form[phx-change=filter_relationships]")
+      |> render_change(%{"search" => "Partner"})
+
+      html = render(view)
+      assert html =~ "Big Partner Corp"
+      refute html =~ "CEO Smith"
+    end
+
+    test "filters relationships by type", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=relationships")
+
+      view
+      |> element("form[phx-change=filter_relationships]")
+      |> render_change(%{"type" => "LEADS"})
+
+      html = render(view)
+      assert html =~ "CEO Smith"
+      refute html =~ "Big Partner Corp"
+    end
+
+    test "filters relationships by strength range", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=relationships")
+
+      # Filter to Strong (7-10) - should show LEADS (strength 9)
+      view
+      |> element("form[phx-change=filter_relationships]")
+      |> render_change(%{"strength" => "strong"})
+
+      html = render(view)
+      assert html =~ "CEO Smith"
+      refute html =~ "Big Partner Corp"
+    end
+  end
+
   describe "CSS classes" do
     setup do
       entity_extractor = fn _text, _opts ->
