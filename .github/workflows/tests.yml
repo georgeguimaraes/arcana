@@ -82,4 +82,4 @@ jobs:
         env:
           MIX_ENV: test
           POSTGRES_PORT: "5432"
-        run: mix test --exclude memory
+        run: mix test
