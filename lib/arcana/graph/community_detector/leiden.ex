@@ -31,25 +31,29 @@ defmodule Arcana.Graph.CommunityDetector.Leiden do
     entity_ids = Enum.map(entities, & &1.id)
     edges = to_edges(entity_ids, relationships)
 
-    :telemetry.span([:arcana, :graph, :community_detection], %{entity_count: length(entities)}, fn ->
-      result =
-        case ExLeiden.call({entity_ids, edges}, resolution: resolution, max_level: max_level) do
-          {:ok, %{source: source, result: level_results}} ->
-            communities = format_communities(level_results, source)
-            {:ok, communities}
+    :telemetry.span(
+      [:arcana, :graph, :community_detection],
+      %{entity_count: length(entities)},
+      fn ->
+        result =
+          case ExLeiden.call({entity_ids, edges}, resolution: resolution, max_level: max_level) do
+            {:ok, %{source: source, result: level_results}} ->
+              communities = format_communities(level_results, source)
+              {:ok, communities}
 
-          {:error, reason} ->
-            {:error, reason}
-        end
+            {:error, reason} ->
+              {:error, reason}
+          end
 
-      metadata =
-        case result do
-          {:ok, communities} -> %{community_count: length(communities)}
-          {:error, _} -> %{community_count: 0}
-        end
+        metadata =
+          case result do
+            {:ok, communities} -> %{community_count: length(communities)}
+            {:error, _} -> %{community_count: 0}
+          end
 
-      {result, metadata}
-    end)
+        {result, metadata}
+      end
+    )
   end
 
   @doc """

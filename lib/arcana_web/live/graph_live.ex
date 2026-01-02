@@ -39,7 +39,9 @@ defmodule ArcanaWeb.GraphLive do
        selected_relationship: nil,
        relationship_details: nil,
        community_filter: "",
-       community_level_filter: nil
+       community_level_filter: nil,
+       selected_community: nil,
+       community_details: nil
      )}
   end
 
@@ -232,7 +234,6 @@ defmodule ArcanaWeb.GraphLive do
 
   defp load_communities(socket) do
     repo = socket.assigns.repo
-    selected = socket.assigns.selected_collection
 
     query =
       from(comm in Community,
@@ -251,11 +252,10 @@ defmodule ArcanaWeb.GraphLive do
       )
 
     query =
-      if selected do
-        where(query, [comm, coll], coll.name == ^selected)
-      else
-        query
-      end
+      query
+      |> apply_community_collection_filter(socket.assigns.selected_collection)
+      |> apply_community_search_filter(socket.assigns.community_filter)
+      |> apply_community_level_filter(socket.assigns.community_level_filter)
 
     communities =
       repo.all(query)
@@ -264,6 +264,35 @@ defmodule ArcanaWeb.GraphLive do
       end)
 
     assign(socket, communities: communities)
+  end
+
+  defp apply_community_collection_filter(query, nil), do: query
+  defp apply_community_collection_filter(query, ""), do: query
+
+  defp apply_community_collection_filter(query, collection) do
+    where(query, [comm, coll], coll.name == ^collection)
+  end
+
+  defp apply_community_search_filter(query, nil), do: query
+  defp apply_community_search_filter(query, ""), do: query
+
+  defp apply_community_search_filter(query, search) do
+    pattern = "%#{search}%"
+    where(query, [comm], ilike(comm.summary, ^pattern))
+  end
+
+  defp apply_community_level_filter(query, nil), do: query
+  defp apply_community_level_filter(query, ""), do: query
+
+  defp apply_community_level_filter(query, level) when is_binary(level) do
+    case Integer.parse(level) do
+      {level_int, _} -> where(query, [comm], comm.level == ^level_int)
+      :error -> query
+    end
+  end
+
+  defp apply_community_level_filter(query, level) when is_integer(level) do
+    where(query, [comm], comm.level == ^level)
   end
 
   @impl true
@@ -320,6 +349,28 @@ defmodule ArcanaWeb.GraphLive do
 
   def handle_event("close_relationship_detail", _params, socket) do
     {:noreply, assign(socket, selected_relationship: nil, relationship_details: nil)}
+  end
+
+  def handle_event("filter_communities", params, socket) do
+    search_filter = params["search"] || ""
+    level_filter = params["level"]
+
+    {:noreply,
+     socket
+     |> assign(
+       community_filter: search_filter,
+       community_level_filter: level_filter
+     )
+     |> load_communities()}
+  end
+
+  def handle_event("select_community", %{"id" => id}, socket) do
+    details = load_community_details(socket.assigns.repo, id)
+    {:noreply, assign(socket, selected_community: id, community_details: details)}
+  end
+
+  def handle_event("close_community_detail", _params, socket) do
+    {:noreply, assign(socket, selected_community: nil, community_details: nil)}
   end
 
   defp load_relationship_details(repo, relationship_id) do
@@ -399,6 +450,61 @@ defmodule ArcanaWeb.GraphLive do
       )
 
     %{entity: entity, relationships: relationships, mentions: mentions}
+  end
+
+  defp load_community_details(repo, community_id) do
+    community =
+      repo.one(
+        from(c in Community,
+          where: c.id == ^community_id,
+          select: %{
+            id: c.id,
+            level: c.level,
+            summary: c.summary,
+            entity_ids: c.entity_ids,
+            dirty: c.dirty
+          }
+        )
+      )
+
+    # Load the entities that belong to this community
+    entity_ids = community.entity_ids || []
+
+    entities =
+      if entity_ids == [] do
+        []
+      else
+        repo.all(
+          from(e in Entity,
+            where: e.id in ^entity_ids,
+            select: %{id: e.id, name: e.name, type: e.type}
+          )
+        )
+      end
+
+    # Load internal relationships (between entities in this community)
+    internal_relationships =
+      if length(entity_ids) >= 2 do
+        repo.all(
+          from(r in Relationship,
+            join: source in Entity,
+            on: source.id == r.source_id,
+            join: target in Entity,
+            on: target.id == r.target_id,
+            where: r.source_id in ^entity_ids and r.target_id in ^entity_ids,
+            select: %{
+              id: r.id,
+              type: r.type,
+              source_name: source.name,
+              target_name: target.name
+            }
+          )
+        )
+      else
+        []
+      end
+
+    %{community: community, entities: entities, internal_relationships: internal_relationships}
   end
 
   defp build_path(socket, overrides) do
@@ -497,7 +603,13 @@ defmodule ArcanaWeb.GraphLive do
                 relationship_details={@relationship_details}
               />
             <% :communities -> %>
-              <.communities_view communities={@communities} />
+              <.communities_view
+                communities={@communities}
+                community_filter={@community_filter}
+                community_level_filter={@community_level_filter}
+                selected_community={@selected_community}
+                community_details={@community_details}
+              />
           <% end %>
         <% end %>
       </div>
@@ -724,6 +836,23 @@ defmodule ArcanaWeb.GraphLive do
   defp communities_view(assigns) do
     ~H"""
     <div class="arcana-communities-view">
+      <form phx-change="filter_communities" class="arcana-filter-bar">
+        <input
+          type="text"
+          name="search"
+          value={@community_filter}
+          placeholder="Search communities..."
+          class="arcana-input"
+          phx-debounce="300"
+        />
+        <select name="level" class="arcana-input">
+          <option value="">All Levels</option>
+          <option value="0" selected={@community_level_filter == "0"}>Level 0</option>
+          <option value="1" selected={@community_level_filter == "1"}>Level 1</option>
+          <option value="2" selected={@community_level_filter == "2"}>Level 2</option>
+        </select>
+      </form>
+
       <%= if Enum.empty?(@communities) do %>
         <div class="arcana-empty">
           <p>No Communities Detected</p>
@@ -744,7 +873,12 @@ defmodule ArcanaWeb.GraphLive do
           </thead>
           <tbody>
             <%= for community <- @communities do %>
-              <tr id={"community-#{community.id}"}>
+              <tr
+                id={"community-#{community.id}"}
+                class={"arcana-community-row #{if @selected_community == community.id, do: "selected", else: ""}"}
+                phx-click="select_community"
+                phx-value-id={community.id}
+              >
                 <td>
                   <%= if community.summary do %>
                     <%= String.slice(community.summary, 0, 50) %><%= if String.length(community.summary || "") > 50, do: "...", else: "" %>
@@ -768,6 +902,60 @@ defmodule ArcanaWeb.GraphLive do
             <% end %>
           </tbody>
         </table>
+      <% end %>
+
+      <%= if @community_details do %>
+        <.community_detail_panel details={@community_details} />
+      <% end %>
+    </div>
+    """
+  end
+
+  defp community_detail_panel(assigns) do
+    ~H"""
+    <div class="arcana-community-detail">
+      <div class="arcana-community-detail-header">
+        <h3>Community</h3>
+        <span class="arcana-community-level-badge">Level <%= @details.community.level %></span>
+        <button class="arcana-community-detail-close" phx-click="close_community_detail">×</button>
+      </div>
+
+      <%= if @details.community.summary do %>
+        <div class="arcana-community-summary">
+          <h4>Summary</h4>
+          <p><%= @details.community.summary %></p>
+        </div>
+      <% else %>
+        <div class="arcana-community-no-summary">
+          <p>No summary generated yet.</p>
+        </div>
+      <% end %>
+
+      <%= if Enum.any?(@details.entities) do %>
+        <div class="arcana-community-entities">
+          <h4>Member Entities</h4>
+          <ul>
+            <%= for entity <- @details.entities do %>
+              <li>
+                <span class={"arcana-entity-type-badge #{entity.type}"}><%= entity.type %></span>
+                <%= entity.name %>
+              </li>
+            <% end %>
+          </ul>
+        </div>
+      <% end %>
+
+      <%= if Enum.any?(@details.internal_relationships) do %>
+        <div class="arcana-community-relationships">
+          <h4>Internal Relationships</h4>
+          <ul>
+            <%= for rel <- @details.internal_relationships do %>
+              <li>
+                <%= rel.source_name %> <code><%= rel.type %></code> <%= rel.target_name %>
+              </li>
+            <% end %>
+          </ul>
+        </div>
       <% end %>
     </div>
     """

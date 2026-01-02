@@ -76,7 +76,9 @@ defmodule Arcana.Graph.NERServing do
         defn_options: [compiler: EXLA]
       )
 
-    {:ok, _pid} = Nx.Serving.start_link(serving: serving, name: __MODULE__.Serving, batch_timeout: 100)
+    {:ok, _pid} =
+      Nx.Serving.start_link(serving: serving, name: __MODULE__.Serving, batch_timeout: 100)
+
     :ok
   end
 end

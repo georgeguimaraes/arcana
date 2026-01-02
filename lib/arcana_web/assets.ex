@@ -1670,6 +1670,110 @@ defmodule ArcanaWeb.Assets do
     font-size: 0.8125rem;
   }
 
+  /* Community detail panel */
+  .arcana-community-row {
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+
+  .arcana-community-row.selected {
+    background: #ede9fe;
+  }
+
+  .arcana-community-detail {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    background: #faf5ff;
+    border: 1px solid #e9d5ff;
+    border-radius: 0.5rem;
+  }
+
+  .arcana-community-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .arcana-community-detail-header h3 {
+    margin: 0;
+    font-size: 1.125rem;
+    color: #1f2937;
+  }
+
+  .arcana-community-level-badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background: #ddd6fe;
+    color: #5b21b6;
+  }
+
+  .arcana-community-detail-close {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    font-size: 1.5rem;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .arcana-community-detail-close:hover {
+    color: #374151;
+  }
+
+  .arcana-community-summary,
+  .arcana-community-entities,
+  .arcana-community-relationships {
+    margin-bottom: 1rem;
+  }
+
+  .arcana-community-summary h4,
+  .arcana-community-entities h4,
+  .arcana-community-relationships h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .arcana-community-summary p {
+    margin: 0;
+    color: #374151;
+    line-height: 1.5;
+  }
+
+  .arcana-community-entities ul,
+  .arcana-community-relationships ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .arcana-community-entities li,
+  .arcana-community-relationships li {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .arcana-community-entities li:last-child,
+  .arcana-community-relationships li:last-child {
+    border-bottom: none;
+  }
+
+  .arcana-community-no-summary {
+    color: #9ca3af;
+    font-style: italic;
+  }
+
   /* Collection selector */
   .arcana-collection-selector {
     display: flex;

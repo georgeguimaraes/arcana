@@ -27,7 +27,12 @@ defmodule Arcana.Graph.CommunitySummarizer do
   """
 
   @type entity :: %{name: String.t(), type: atom(), description: String.t() | nil}
-  @type relationship :: %{source: String.t(), target: String.t(), type: String.t(), description: String.t() | nil}
+  @type relationship :: %{
+          source: String.t(),
+          target: String.t(),
+          type: String.t(),
+          description: String.t() | nil
+        }
 
   @default_threshold 10
 
@@ -50,22 +55,31 @@ defmodule Arcana.Graph.CommunitySummarizer do
     - `{:error, reason}` - If the LLM call fails
 
   """
-  @spec summarize([entity()], [relationship()], (String.t(), list(), keyword() -> {:ok, String.t()} | {:error, term()}), keyword()) ::
+  @spec summarize(
+          [entity()],
+          [relationship()],
+          (String.t(), list(), keyword() -> {:ok, String.t()} | {:error, term()}),
+          keyword()
+        ) ::
           {:ok, String.t()} | {:error, term()}
   def summarize(entities, relationships, llm, _opts \\ []) do
     prompt = build_prompt(entities, relationships)
 
-    :telemetry.span([:arcana, :graph, :community_summary], %{entity_count: length(entities)}, fn ->
-      result = llm.(prompt, [], system_prompt: system_prompt())
+    :telemetry.span(
+      [:arcana, :graph, :community_summary],
+      %{entity_count: length(entities)},
+      fn ->
+        result = llm.(prompt, [], system_prompt: system_prompt())
 
-      metadata =
-        case result do
-          {:ok, summary} -> %{summary_length: String.length(summary)}
-          {:error, _} -> %{summary_length: 0}
-        end
+        metadata =
+          case result do
+            {:ok, summary} -> %{summary_length: String.length(summary)}
+            {:error, _} -> %{summary_length: 0}
+          end
 
-      {result, metadata}
-    end)
+        {result, metadata}
+      end
+    )
   end
 
   @doc """

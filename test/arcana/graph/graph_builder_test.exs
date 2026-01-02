@@ -31,10 +31,11 @@ defmodule Arcana.Graph.GraphBuilderTest do
 
     test "extracts relationships between entities" do
       entity_extractor = fn _text, _opts ->
-        {:ok, [
-          %{name: "Sam Altman", type: :person},
-          %{name: "OpenAI", type: :organization}
-        ]}
+        {:ok,
+         [
+           %{name: "Sam Altman", type: :person},
+           %{name: "OpenAI", type: :organization}
+         ]}
       end
 
       relationship_extractor = fn _text, _entities, _opts ->
@@ -118,10 +119,11 @@ defmodule Arcana.Graph.GraphBuilderTest do
 
     test "generates unique IDs for entities" do
       entity_extractor = fn _text, _opts ->
-        {:ok, [
-          %{name: "OpenAI", type: :organization},
-          %{name: "GPT-4", type: :technology}
-        ]}
+        {:ok,
+         [
+           %{name: "OpenAI", type: :organization},
+           %{name: "GPT-4", type: :technology}
+         ]}
       end
 
       relationship_extractor = fn _text, _entities, _opts ->

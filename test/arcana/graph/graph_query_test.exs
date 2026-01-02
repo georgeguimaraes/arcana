@@ -28,7 +28,12 @@ defmodule Arcana.Graph.GraphQueryTest do
   @sample_communities [
     %{id: "comm1", level: 0, entity_ids: ["1", "2", "3"], summary: "AI research community"},
     %{id: "comm2", level: 0, entity_ids: ["4", "5"], summary: "Microsoft leadership"},
-    %{id: "comm3", level: 1, entity_ids: ["1", "2", "3", "4", "5"], summary: "Tech industry overview"}
+    %{
+      id: "comm3",
+      level: 1,
+      entity_ids: ["1", "2", "3", "4", "5"],
+      summary: "Tech industry overview"
+    }
   ]
 
   describe "find_entities_by_name/3" do
@@ -105,7 +110,10 @@ defmodule Arcana.Graph.GraphQueryTest do
       query_embedding = [-1.0, -1.0, -1.0]
 
       results =
-        GraphQuery.find_entities_by_embedding(graph, query_embedding, top_k: 5, min_similarity: 0.9)
+        GraphQuery.find_entities_by_embedding(graph, query_embedding,
+          top_k: 5,
+          min_similarity: 0.9
+        )
 
       assert results == []
     end
@@ -119,9 +127,12 @@ defmodule Arcana.Graph.GraphQueryTest do
 
       # OpenAI connects to: Sam Altman, GPT-4, Microsoft
       related_ids = Enum.map(results, & &1.id)
-      assert "2" in related_ids  # Sam Altman
-      assert "3" in related_ids  # GPT-4
-      assert "4" in related_ids  # Microsoft
+      # Sam Altman
+      assert "2" in related_ids
+      # GPT-4
+      assert "3" in related_ids
+      # Microsoft
+      assert "4" in related_ids
     end
 
     test "traverses 2 hops from entity" do
@@ -131,9 +142,12 @@ defmodule Arcana.Graph.GraphQueryTest do
 
       # Sam Altman -> OpenAI -> GPT-4, Microsoft
       related_ids = Enum.map(results, & &1.id)
-      assert "1" in related_ids  # OpenAI (1 hop)
-      assert "3" in related_ids  # GPT-4 (2 hops)
-      assert "4" in related_ids  # Microsoft (2 hops)
+      # OpenAI (1 hop)
+      assert "1" in related_ids
+      # GPT-4 (2 hops)
+      assert "3" in related_ids
+      # Microsoft (2 hops)
+      assert "4" in related_ids
     end
 
     test "returns empty list for unknown entity" do
@@ -204,6 +218,7 @@ defmodule Arcana.Graph.GraphQueryTest do
       summaries = GraphQuery.get_community_summaries(graph, level: 0)
 
       assert length(summaries) == 2
+
       Enum.each(summaries, fn comm ->
         assert comm.level == 0
       end)

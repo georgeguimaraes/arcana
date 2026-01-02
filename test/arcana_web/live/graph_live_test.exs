@@ -1,7 +1,11 @@
 defmodule ArcanaWeb.GraphLiveTest do
   use ArcanaWeb.ConnCase, async: true
 
+  import Ecto.Query
   import Phoenix.LiveViewTest
+
+  alias Arcana.Graph.Community
+  alias Arcana.Graph.Entity
 
   describe "Graph page without graph data" do
     test "mounts successfully", %{conn: conn} do
@@ -435,6 +439,184 @@ defmodule ArcanaWeb.GraphLiveTest do
       |> render_click()
 
       refute has_element?(view, ".arcana-relationship-detail")
+    end
+  end
+
+  describe "Communities sub-view" do
+    setup do
+      # Entities and relationships are needed for community context
+      entity_extractor = fn _text, _opts ->
+        {:ok,
+         [
+           %{name: "Alpha Leader", type: :person},
+           %{name: "Alpha Corp", type: :organization},
+           %{name: "Beta Inc", type: :organization}
+         ]}
+      end
+
+      relationship_extractor = fn _text, _entities, _opts ->
+        {:ok,
+         [
+           %{
+             source: "Alpha Leader",
+             target: "Alpha Corp",
+             type: "LEADS",
+             description: "Alpha Leader leads Alpha Corp",
+             strength: 8
+           },
+           %{
+             source: "Alpha Corp",
+             target: "Beta Inc",
+             type: "PARTNERED",
+             description: "Strategic partnership",
+             strength: 6
+           }
+         ]}
+      end
+
+      {:ok, doc} =
+        Arcana.ingest(
+          "Alpha Leader leads Alpha Corp which partnered with Beta Inc.",
+          repo: Repo,
+          graph: true,
+          entity_extractor: entity_extractor,
+          relationship_extractor: relationship_extractor,
+          collection: "community-test"
+        )
+
+      # Manually create a community for testing
+      collection = Repo.get_by!(Arcana.Collection, name: "community-test")
+
+      entities =
+        Repo.all(from(e in Entity, where: e.collection_id == ^collection.id))
+
+      entity_ids = Enum.map(entities, & &1.id)
+
+      {:ok, community} =
+        %Community{}
+        |> Community.changeset(%{
+          level: 0,
+          summary: "A tech leadership cluster involving Alpha Leader and Alpha Corp",
+          entity_ids: entity_ids,
+          dirty: false,
+          collection_id: collection.id
+        })
+        |> Repo.insert()
+
+      # Create a second community at a different level
+      {:ok, community2} =
+        %Community{}
+        |> Community.changeset(%{
+          level: 1,
+          summary: "Beta Inc partnership network",
+          entity_ids: [List.last(entity_ids)],
+          dirty: true,
+          collection_id: collection.id
+        })
+        |> Repo.insert()
+
+      %{document: doc, community: community, community2: community2, entity_ids: entity_ids}
+    end
+
+    test "shows communities table with Community, Level, Entities, Status columns", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=communities")
+
+      assert has_element?(view, "th", "Community")
+      assert has_element?(view, "th", "Level")
+      assert has_element?(view, "th", "Entities")
+      assert has_element?(view, "th", "Status")
+    end
+
+    test "displays community data in table", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=communities")
+
+      html = render(view)
+      assert html =~ "Alpha Leader"
+      assert html =~ "Beta Inc"
+    end
+
+    test "shows status indicators", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=communities")
+
+      html = render(view)
+      # Ready status (summary exists, not dirty)
+      assert html =~ "✓"
+      # Pending status (dirty)
+      assert html =~ "⟳"
+    end
+
+    test "filters communities by search term", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=communities")
+
+      view
+      |> element("form[phx-change=filter_communities]")
+      |> render_change(%{"search" => "Beta"})
+
+      html = render(view)
+      assert html =~ "Beta Inc"
+      refute html =~ "Alpha Leader"
+    end
+
+    test "filters communities by level", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=communities")
+
+      view
+      |> element("form[phx-change=filter_communities]")
+      |> render_change(%{"level" => "0"})
+
+      html = render(view)
+      assert html =~ "Alpha Leader"
+      refute html =~ "Beta Inc partnership"
+    end
+
+    test "clicking community row expands detail panel", %{conn: conn, community: community} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=communities")
+
+      view
+      |> element("tr[id='community-#{community.id}']")
+      |> render_click()
+
+      assert has_element?(view, ".arcana-community-detail")
+    end
+
+    test "detail panel shows community summary and level", %{conn: conn, community: community} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=communities")
+
+      view
+      |> element("tr[id='community-#{community.id}']")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "A tech leadership cluster"
+      assert html =~ "Level 0"
+    end
+
+    test "detail panel shows member entities", %{conn: conn, community: community} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=communities")
+
+      view
+      |> element("tr[id='community-#{community.id}']")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "Alpha Leader"
+      assert html =~ "Alpha Corp"
+    end
+
+    test "clicking close button hides community detail panel", %{conn: conn, community: community} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=communities")
+
+      view
+      |> element("tr[id='community-#{community.id}']")
+      |> render_click()
+
+      assert has_element?(view, ".arcana-community-detail")
+
+      view
+      |> element(".arcana-community-detail-close")
+      |> render_click()
+
+      refute has_element?(view, ".arcana-community-detail")
     end
   end
 
