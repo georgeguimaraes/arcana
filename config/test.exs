@@ -26,6 +26,7 @@ config :arcana, Arcana.TestRepo,
   database: "arcana_test",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: 10,
+  timeout: 120_000,
   ownership_timeout: 120_000,
   priv: "priv/test_repo",
   types: Arcana.PostgrexTypes
