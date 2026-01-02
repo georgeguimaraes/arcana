@@ -8,6 +8,21 @@ defmodule Arcana.Graph do
   - Fusion search combining vector and graph results
   - Community summaries for global context
 
+  ## Installation
+
+  GraphRAG is optional and requires separate installation:
+
+      $ mix arcana.graph.install
+      $ mix ecto.migrate
+
+  Add the NER serving to your supervision tree:
+
+      children = [
+        MyApp.Repo,
+        Arcana.Embedder.Local,
+        Arcana.Graph.NERServing  # For entity extraction
+      ]
+
   ## Configuration
 
   GraphRAG is disabled by default. Enable it in your config:

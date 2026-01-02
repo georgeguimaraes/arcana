@@ -10,6 +10,28 @@ GraphRAG enhances traditional vector search by building a knowledge graph from y
 - **Community summaries** - High-level context about clusters of related entities
 - **Fusion search** - Combine vector and graph results with Reciprocal Rank Fusion
 
+## Installation
+
+GraphRAG requires additional database tables. Install them separately:
+
+```bash
+mix arcana.graph.install
+mix ecto.migrate
+```
+
+This creates tables for entities, relationships, entity mentions, and communities.
+
+Add the NER serving to your supervision tree for entity extraction:
+
+```elixir
+# lib/my_app/application.ex
+children = [
+  MyApp.Repo,
+  Arcana.Embedder.Local,
+  Arcana.Graph.NERServing  # Add this for GraphRAG
+]
+```
+
 ## Configuration
 
 GraphRAG is disabled by default. Enable it globally:

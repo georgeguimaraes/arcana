@@ -13,7 +13,7 @@ Embeddable RAG library for Elixir/Phoenix. Add vector search, document retrieval
 - **Agentic RAG** - Pipeline with query expansion, decomposition, re-ranking, and self-correction
 - **Pluggable components** - Replace any pipeline step with custom implementations
 - **Hybrid search** - Vector, full-text, or combined with Reciprocal Rank Fusion
-- **GraphRAG** - Knowledge graph with entity extraction, community detection, and fusion search
+- **GraphRAG** - Optional knowledge graph with entity extraction, community detection, and fusion search
 - **Multiple backends** - pgvector (default) or in-memory HNSWLib
 - **Configurable embeddings** - Local Bumblebee, OpenAI, or custom providers
 - **File ingestion** - Text, Markdown, and PDF support
