@@ -62,6 +62,11 @@ jobs:
         with:
           path: ~/.cache/bumblebee
           key: ${{ runner.os }}-bumblebee-all-MiniLM-L6-v2
+      - name: Restore EXLA cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/xla
+          key: ${{ runner.os }}-exla-${{ matrix.otp }}-${{ matrix.elixir }}
       - name: Install dependencies
         run: mix deps.get
       - name: Check formatting
