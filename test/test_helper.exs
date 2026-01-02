@@ -18,4 +18,5 @@ embedder_model =
 # Run with: mix test --include end_to_end
 #
 # Limit concurrency to avoid DB connection timeouts during embeddings
-ExUnit.start(exclude: [:end_to_end], max_cases: 4)
+# Increase timeout for slow EXLA compilation on CI
+ExUnit.start(exclude: [:end_to_end], max_cases: 4, timeout: 120_000)
