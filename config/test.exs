@@ -1,9 +1,17 @@
 import Config
 
-# Use EXLA for fast test embeddings
+# Detect Apple Silicon and use EMLX (faster), otherwise use EXLA
+apple_silicon? =
+  :erlang.system_info(:system_architecture)
+  |> List.to_string()
+  |> String.starts_with?("aarch64-apple")
+
+{nx_backend, nx_compiler} =
+  if apple_silicon?, do: {EMLX.Backend, EMLX}, else: {EXLA.Backend, EXLA}
+
 config :nx,
-  default_backend: EXLA.Backend,
-  default_defn_options: [compiler: EXLA]
+  default_backend: nx_backend,
+  default_defn_options: [compiler: nx_compiler]
 
 # Use a smaller/faster model for tests (still 384 dims, but ~22M params vs ~33M)
 config :arcana,
