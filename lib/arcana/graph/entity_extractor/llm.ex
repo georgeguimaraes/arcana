@@ -55,7 +55,7 @@ defmodule Arcana.Graph.EntityExtractor.LLM do
 
     :telemetry.span([:arcana, :graph, :entity_extraction], %{text: text}, fn ->
       result =
-        case llm.(prompt, [], system_prompt: system_prompt()) do
+        case Arcana.LLM.complete(llm, prompt, [], system_prompt: system_prompt()) do
           {:ok, response} ->
             parse_and_validate(response, types)
 

@@ -1095,30 +1095,43 @@ defmodule Arcana do
   end
 
   defp resolve_entity_extractor(opts, graph_config) do
+    llm = opts[:llm] || Application.get_env(:arcana, :llm)
+
     case Keyword.get(opts, :entity_extractor) do
       nil ->
         case graph_config[:entity_extractor] do
           nil -> {Arcana.Graph.EntityExtractor.NER, []}
           :ner -> {Arcana.Graph.EntityExtractor.NER, []}
-          {module, extractor_opts} -> {module, extractor_opts}
-          module when is_atom(module) -> {module, []}
+          {module, extractor_opts} -> {module, maybe_inject_llm(extractor_opts, llm)}
+          module when is_atom(module) -> {module, maybe_inject_llm([], llm)}
           fun when is_function(fun, 2) -> fun
         end
+
+      {module, extractor_opts} ->
+        {module, maybe_inject_llm(extractor_opts, llm)}
 
       extractor ->
         extractor
     end
   end
 
+  defp maybe_inject_llm(opts, nil), do: opts
+  defp maybe_inject_llm(opts, llm), do: Keyword.put_new(opts, :llm, llm)
+
   defp resolve_relationship_extractor(opts, graph_config) do
+    llm = opts[:llm] || Application.get_env(:arcana, :llm)
+
     case Keyword.get(opts, :relationship_extractor) do
       nil ->
         case graph_config[:relationship_extractor] do
           nil -> nil
-          {module, extractor_opts} -> {module, extractor_opts}
-          module when is_atom(module) -> {module, []}
+          {module, extractor_opts} -> {module, maybe_inject_llm(extractor_opts, llm)}
+          module when is_atom(module) -> {module, maybe_inject_llm([], llm)}
           fun when is_function(fun, 3) -> fun
         end
+
+      {module, extractor_opts} ->
+        {module, maybe_inject_llm(extractor_opts, llm)}
 
       extractor ->
         extractor

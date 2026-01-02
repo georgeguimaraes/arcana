@@ -39,7 +39,7 @@ defmodule Arcana.Graph.RelationshipExtractor.LLM do
 
     :telemetry.span([:arcana, :graph, :relationship_extraction], %{text: text}, fn ->
       result =
-        case llm.(prompt, [], system_prompt: system_prompt()) do
+        case Arcana.LLM.complete(llm, prompt, [], system_prompt: system_prompt()) do
           {:ok, response} ->
             parse_and_validate(response, entity_names)
 
