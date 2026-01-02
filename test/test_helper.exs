@@ -17,6 +17,6 @@ embedder_model =
 # Exclude end_to_end tests by default (call real LLM APIs and cost money)
 # Run with: mix test --include end_to_end
 #
-# Limit concurrency to avoid DB connection timeouts during embeddings
+# Limit concurrency to match CI runner cores (2 vCPUs on ubuntu-latest)
 # Increase timeout for slow EXLA compilation on CI
-ExUnit.start(exclude: [:end_to_end], max_cases: 4, timeout: 120_000)
+ExUnit.start(exclude: [:end_to_end], max_cases: 2, timeout: 120_000)
