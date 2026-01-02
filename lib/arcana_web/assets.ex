@@ -1808,6 +1808,152 @@ defmodule ArcanaWeb.Assets do
   .arcana-communities-view {
     margin-top: 1rem;
   }
+
+  /* Graph-Enhanced toggle */
+  .arcana-graph-toggle {
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    background: linear-gradient(to right, #f3e8ff, #faf5ff);
+    border: 1px solid #e9d5ff;
+    border-radius: 0.5rem;
+  }
+
+  .arcana-graph-toggle .arcana-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+
+  .arcana-graph-toggle .arcana-checkbox-label span {
+    font-weight: 500;
+    color: #7c3aed;
+  }
+
+  .arcana-graph-toggle .arcana-checkbox-label small {
+    color: #9333ea;
+    font-size: 0.75rem;
+    margin-left: 0.25rem;
+  }
+
+  /* Graph Context section */
+  .arcana-graph-context {
+    margin: 1.5rem 0;
+    padding: 1rem;
+    background: linear-gradient(to right, #faf5ff, #f3e8ff);
+    border: 1px solid #e9d5ff;
+    border-radius: 0.5rem;
+  }
+
+  .arcana-graph-context-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
+
+  .arcana-graph-context-header h4 {
+    margin: 0;
+    color: #7c3aed;
+    font-size: 1rem;
+  }
+
+  .arcana-toggle-btn {
+    background: transparent;
+    border: 1px solid #d8b4fe;
+    border-radius: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    color: #7c3aed;
+    font-size: 0.75rem;
+  }
+
+  .arcana-toggle-btn:hover {
+    background: #f3e8ff;
+  }
+
+  .arcana-no-matches {
+    color: #9ca3af;
+    font-style: italic;
+    margin: 0.5rem 0;
+  }
+
+  .arcana-matched-entities,
+  .arcana-matched-relationships {
+    margin-top: 0.75rem;
+  }
+
+  .arcana-matched-entities h5,
+  .arcana-matched-relationships h5 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    color: #6b21a8;
+  }
+
+  .arcana-matched-entities ul,
+  .arcana-matched-relationships ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .arcana-matched-entities li,
+  .arcana-matched-relationships li {
+    padding: 0.375rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-bottom: 1px solid #f3e8ff;
+  }
+
+  .arcana-matched-entities li:last-child,
+  .arcana-matched-relationships li:last-child {
+    border-bottom: none;
+  }
+
+  .arcana-entity-name {
+    font-weight: 500;
+    color: #1f2937;
+  }
+
+  .arcana-entity-type {
+    font-size: 0.75rem;
+    padding: 0.125rem 0.5rem;
+    background: #e9d5ff;
+    color: #7c3aed;
+    border-radius: 9999px;
+  }
+
+  .arcana-view-in-graph {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: #7c3aed;
+    text-decoration: none;
+  }
+
+  .arcana-view-in-graph:hover {
+    text-decoration: underline;
+  }
+
+  .arcana-rel-source,
+  .arcana-rel-target {
+    color: #1f2937;
+  }
+
+  .arcana-rel-type {
+    font-size: 0.75rem;
+    color: #7c3aed;
+    font-family: monospace;
+  }
+
+  /* Graph attribution in chunks */
+  .arcana-graph-attribution {
+    display: block;
+    font-size: 0.75rem;
+    color: #7c3aed;
+    margin-top: 0.25rem;
+    font-style: italic;
+  }
   """
   @css_hash :crypto.hash(:md5, @css) |> Base.encode16(case: :lower) |> binary_part(0, 8)
 
