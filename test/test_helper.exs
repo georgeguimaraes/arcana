@@ -5,21 +5,17 @@ Ecto.Adapters.SQL.Sandbox.mode(Arcana.TestRepo, :manual)
 {:ok, _} = ArcanaWeb.Endpoint.start_link()
 
 # Start embeddings serving based on configured embedder
-case Application.get_env(:arcana, :embedder) do
-  {:local, opts} ->
-    {:ok, _} = Arcana.Embedder.Local.start_link(opts)
+embedder_model =
+  case Application.get_env(:arcana, :embedder) do
+    {:local, opts} -> Keyword.get(opts, :model, "BAAI/bge-small-en-v1.5")
+    _ -> "BAAI/bge-small-en-v1.5"
+  end
 
-  :local ->
-    {:ok, _} = Arcana.Embedder.Local.start_link([])
+{:ok, _} = Arcana.Embedder.Local.start_link(model: embedder_model)
+{:ok, _} = Arcana.Embeddings.Serving.start_link(model: embedder_model)
 
-  _ ->
-    :ok
-end
-
-# Exclude slow tests by default:
-# - :end_to_end - call real LLM APIs and cost money
-# - :serving - require Arcana.Embeddings.Serving (not Embedder.Local)
-# Run with: mix test --include end_to_end --include serving
+# Exclude end_to_end tests by default (call real LLM APIs and cost money)
+# Run with: mix test --include end_to_end
 #
 # Limit concurrency to avoid DB connection timeouts during embeddings
-ExUnit.start(exclude: [:end_to_end, :serving], max_cases: 4)
+ExUnit.start(exclude: [:end_to_end], max_cases: 4)
