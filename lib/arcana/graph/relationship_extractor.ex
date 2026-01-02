@@ -9,6 +9,7 @@ defmodule Arcana.Graph.RelationshipExtractor do
   ## Built-in Implementations
 
   - `Arcana.Graph.RelationshipExtractor.LLM` - LLM-based extraction (default)
+  - `Arcana.Graph.RelationshipExtractor.Cooccurrence` - Local co-occurrence based (no LLM)
 
   ## Configuration
 

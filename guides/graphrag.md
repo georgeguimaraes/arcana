@@ -71,29 +71,63 @@ Arcana.search(query, repo: MyApp.Repo, graph: true)
 
 ## Components
 
-GraphRAG uses three pluggable behaviours:
+GraphRAG uses pluggable behaviours for extraction and community detection:
 
 | Component | Default | Purpose |
 |-----------|---------|---------|
-| EntityExtractor | `Arcana.Graph.EntityExtractor.NER` | Extract entities from text |
-| RelationshipExtractor | `Arcana.Graph.RelationshipExtractor.LLM` | Find relationships between entities |
+| GraphExtractor | `Arcana.Graph.GraphExtractor.LLM` | Extract entities + relationships in one LLM call |
+| EntityExtractor | `Arcana.Graph.EntityExtractor.NER` | Extract entities only (fallback) |
+| RelationshipExtractor | `Arcana.Graph.RelationshipExtractor.LLM` | Find relationships (fallback) |
 | CommunityDetector | `Arcana.Graph.CommunityDetector.Leiden` | Detect entity communities |
+
+**Recommended:** Use the combined `GraphExtractor.LLM` for efficiency (1 LLM call per chunk instead of 2).
 
 ## Building a Graph
 
-### Basic Usage
+### Combined Extraction (Recommended)
+
+The combined `GraphExtractor.LLM` extracts entities and relationships in a single LLM call per chunk:
 
 ```elixir
-alias Arcana.Graph
+# config/runtime.exs - Enable combined extractor globally
+config :arcana,
+  llm: {"openai:gpt-4o-mini", api_key: System.get_env("OPENAI_API_KEY")},
+  graph: [
+    enabled: true,
+    extractor: Arcana.Graph.GraphExtractor.LLM
+  ]
 
-# Build graph from chunks
-{:ok, graph_data} = Graph.build(chunks,
-  entity_extractor: {Graph.EntityExtractor.NER, []},
-  relationship_extractor: {Graph.RelationshipExtractor.LLM, llm: &MyApp.llm/3}
+# The LLM is automatically injected from the :arcana, :llm config
+```
+
+Or use programmatically:
+
+```elixir
+alias Arcana.Graph.GraphBuilder
+
+# Build graph with combined extractor
+{:ok, graph_data} = GraphBuilder.build(chunks,
+  extractor: {Arcana.Graph.GraphExtractor.LLM, llm: my_llm}
 )
 
-# Convert to queryable format
-graph = Graph.to_query_graph(graph_data, chunks)
+# Returns:
+# %{
+#   entities: [%{name: "Sam Altman", type: "person", description: "CEO of OpenAI"}],
+#   relationships: [%{source: "Sam Altman", target: "OpenAI", type: "LEADS", strength: 9}],
+#   mentions: [%{entity_name: "Sam Altman", chunk_id: "chunk_123"}]
+# }
+```
+
+### Separate Extractors (Fallback)
+
+If `extractor` is not set, Arcana falls back to separate entity and relationship extractors:
+
+```elixir
+# Build graph with separate extractors
+{:ok, graph_data} = GraphBuilder.build(chunks,
+  entity_extractor: {Arcana.Graph.EntityExtractor.NER, []},
+  relationship_extractor: {Arcana.Graph.RelationshipExtractor.LLM, llm: my_llm}
+)
 ```
 
 ### Entity Extraction
@@ -205,6 +239,26 @@ summaries = Graph.community_summaries(graph, entity_id: "entity123")
 
 All components support custom implementations via behaviours.
 
+### Custom GraphExtractor (Combined)
+
+```elixir
+defmodule MyApp.CustomGraphExtractor do
+  @behaviour Arcana.Graph.GraphExtractor
+
+  @impl true
+  def extract(text, opts) do
+    # Your extraction logic - return both entities and relationships
+    entities = extract_entities(text, opts)
+    relationships = extract_relationships(text, entities, opts)
+    {:ok, %{entities: entities, relationships: relationships}}
+  end
+end
+
+# Configure globally
+config :arcana, :graph,
+  extractor: MyApp.CustomGraphExtractor
+```
+
 ### Custom Entity Extractor
 
 ```elixir
@@ -267,17 +321,26 @@ config :arcana, :graph,
 All extractors also support inline functions:
 
 ```elixir
-# Inline entity extractor
+# Inline combined extractor (recommended)
+extractor = fn text, _opts ->
+  {:ok, %{
+    entities: [%{name: "Example", type: :concept}],
+    relationships: [%{source: "A", target: "B", type: "RELATES_TO"}]
+  }}
+end
+
+GraphBuilder.build(chunks, extractor: extractor)
+
+# Or use separate inline extractors
 entity_extractor = fn text, _opts ->
   {:ok, [%{name: "Example", type: :concept}]}
 end
 
-# Inline relationship extractor
 relationship_extractor = fn text, entities, _opts ->
   {:ok, [%{source: "A", target: "B", type: "RELATES_TO"}]}
 end
 
-Graph.build(chunks,
+GraphBuilder.build(chunks,
   entity_extractor: entity_extractor,
   relationship_extractor: relationship_extractor
 )

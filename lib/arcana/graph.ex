@@ -64,6 +64,7 @@ defmodule Arcana.Graph do
     * `Arcana.Graph.EntityExtractor.NER` - Built-in NER implementation (default)
     * `Arcana.Graph.RelationshipExtractor` - Behaviour for relationship extraction
     * `Arcana.Graph.RelationshipExtractor.LLM` - Built-in LLM implementation (default)
+    * `Arcana.Graph.RelationshipExtractor.Cooccurrence` - Local co-occurrence (no LLM)
     * `Arcana.Graph.CommunityDetector` - Behaviour for community detection
     * `Arcana.Graph.CommunityDetector.Leiden` - Built-in Leiden implementation (default)
     * `Arcana.Graph.CommunitySummarizer` - Generates LLM summaries for communities

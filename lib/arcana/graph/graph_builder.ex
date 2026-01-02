@@ -55,8 +55,12 @@ defmodule Arcana.Graph.GraphBuilder do
 
   ## Options
 
-    - `:entity_extractor` - Function `(text, opts) -> {:ok, entities} | {:error, reason}`
-    - `:relationship_extractor` - Function `(text, entities, opts) -> {:ok, rels} | {:error, reason}`
+    - `:extractor` - Combined extractor `(text, opts) -> {:ok, %{entities: [...], relationships: [...]}}`.
+      When provided, this takes priority over separate extractors.
+    - `:entity_extractor` - Function `(text, opts) -> {:ok, entities} | {:error, reason}`.
+      Used when `:extractor` is not provided.
+    - `:relationship_extractor` - Function `(text, entities, opts) -> {:ok, rels} | {:error, reason}`.
+      Used when `:extractor` is not provided.
 
   ## Returns
 
@@ -66,14 +70,25 @@ defmodule Arcana.Graph.GraphBuilder do
   """
   @spec build([chunk()], keyword()) :: {:ok, graph_data()} | {:error, term()}
   def build(chunks, opts) do
-    entity_extractor = Keyword.fetch!(opts, :entity_extractor)
-    relationship_extractor = Keyword.fetch!(opts, :relationship_extractor)
+    extractor = Keyword.get(opts, :extractor)
 
     {entities, mentions, relationships} =
-      chunks
-      |> Enum.reduce({[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
-        process_chunk(chunk, entity_extractor, relationship_extractor, ent_acc, ment_acc, rel_acc)
-      end)
+      if extractor do
+        # Combined extractor mode
+        chunks
+        |> Enum.reduce({[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
+          process_chunk_combined(chunk, extractor, ent_acc, ment_acc, rel_acc)
+        end)
+      else
+        # Separate extractors mode (fallback)
+        entity_extractor = Keyword.fetch!(opts, :entity_extractor)
+        relationship_extractor = Keyword.fetch!(opts, :relationship_extractor)
+
+        chunks
+        |> Enum.reduce({[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
+          process_chunk(chunk, entity_extractor, relationship_extractor, ent_acc, ment_acc, rel_acc)
+        end)
+      end
 
     # Deduplicate entities by name
     deduplicated_entities = deduplicate_entities(entities)
@@ -167,6 +182,25 @@ defmodule Arcana.Graph.GraphBuilder do
 
   # Private functions
 
+  # Combined extractor mode - single call for entities + relationships
+  defp process_chunk_combined(chunk, extractor, ent_acc, ment_acc, rel_acc) do
+    case Arcana.Graph.GraphExtractor.extract(extractor, chunk.text) do
+      {:ok, %{entities: entities, relationships: relationships}} ->
+        # Track mentions
+        new_mentions =
+          Enum.map(entities, fn e ->
+            %{entity_name: e.name, chunk_id: chunk.id}
+          end)
+
+        {ent_acc ++ entities, ment_acc ++ new_mentions, rel_acc ++ relationships}
+
+      {:error, _} ->
+        # Continue despite errors
+        {ent_acc, ment_acc, rel_acc}
+    end
+  end
+
+  # Separate extractors mode - two calls per chunk
   defp process_chunk(chunk, entity_extractor, relationship_extractor, ent_acc, ment_acc, rel_acc) do
     case entity_extractor.(chunk.text, []) do
       {:ok, entities} ->

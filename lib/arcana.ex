@@ -20,7 +20,7 @@ defmodule Arcana do
 
   alias Arcana.{Chunk, Chunker, Collection, Document, Embedder, LLM, Parser, VectorStore}
   alias Arcana.VectorStore.Pgvector
-  alias Arcana.Graph.{Entity, EntityMention, EntityExtractor, Relationship, RelationshipExtractor}
+  alias Arcana.Graph.{Entity, EntityMention, EntityExtractor, GraphExtractor, Relationship, RelationshipExtractor}
 
   @doc """
   Returns the configured embedder as a `{module, opts}` tuple.
@@ -1062,22 +1062,34 @@ defmodule Arcana do
       fn ->
         graph_config = Arcana.Graph.config()
 
-        entity_extractor = resolve_entity_extractor(opts, graph_config)
-        relationship_extractor = resolve_relationship_extractor(opts, graph_config)
+        # Check for combined extractor first
+        extractor = resolve_extractor(opts, graph_config)
 
         # Extract entities and relationships from each chunk
         {all_entities, all_mentions, all_relationships} =
-          chunk_records
-          |> Enum.reduce({[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
-            extract_graph_data_from_chunk(
-              chunk,
-              entity_extractor,
-              relationship_extractor,
-              ent_acc,
-              ment_acc,
-              rel_acc
-            )
-          end)
+          if extractor do
+            # Combined extractor mode - single LLM call per chunk
+            chunk_records
+            |> Enum.reduce({[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
+              extract_graph_data_combined(chunk, extractor, ent_acc, ment_acc, rel_acc)
+            end)
+          else
+            # Fallback to separate extractors
+            entity_extractor = resolve_entity_extractor(opts, graph_config)
+            relationship_extractor = resolve_relationship_extractor(opts, graph_config)
+
+            chunk_records
+            |> Enum.reduce({[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
+              extract_graph_data_from_chunk(
+                chunk,
+                entity_extractor,
+                relationship_extractor,
+                ent_acc,
+                ment_acc,
+                rel_acc
+              )
+            end)
+          end
 
         # Persist entities (upsert by name + collection) and get ID mapping
         entity_id_map = persist_entities(all_entities, collection, repo)
@@ -1135,6 +1147,49 @@ defmodule Arcana do
 
       extractor ->
         extractor
+    end
+  end
+
+  # Combined extractor (single LLM call per chunk) - takes priority over separate extractors
+  defp resolve_extractor(opts, graph_config) do
+    llm = opts[:llm] || Application.get_env(:arcana, :llm)
+
+    case Keyword.get(opts, :extractor) do
+      nil ->
+        case graph_config[:extractor] do
+          nil -> nil
+          {module, extractor_opts} -> {module, maybe_inject_llm(extractor_opts, llm)}
+          module when is_atom(module) -> {module, maybe_inject_llm([], llm)}
+          fun when is_function(fun, 2) -> fun
+        end
+
+      {module, extractor_opts} ->
+        {module, maybe_inject_llm(extractor_opts, llm)}
+
+      extractor ->
+        extractor
+    end
+  end
+
+  defp extract_graph_data_combined(chunk, extractor, ent_acc, ment_acc, rel_acc) do
+    case GraphExtractor.extract(extractor, chunk.text) do
+      {:ok, %{entities: entities, relationships: relationships}} ->
+        # Track mentions (entity name -> chunk id)
+        new_mentions =
+          Enum.map(entities, fn entity ->
+            %{
+              entity_name: entity.name,
+              chunk_id: chunk.id,
+              span_start: entity[:span_start],
+              span_end: entity[:span_end]
+            }
+          end)
+
+        {ent_acc ++ entities, ment_acc ++ new_mentions, rel_acc ++ relationships}
+
+      {:error, _reason} ->
+        # Continue despite extraction errors
+        {ent_acc, ment_acc, rel_acc}
     end
   end
 
