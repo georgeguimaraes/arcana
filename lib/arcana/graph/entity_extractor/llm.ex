@@ -95,13 +95,13 @@ defmodule Arcana.Graph.EntityExtractor.LLM do
     4. Include a brief description if the text provides context
 
     ## Type definitions:
-    - person: Individual people (names, titles)
-    - organization: Companies, institutions, groups
-    - location: Places, addresses, geographic areas
-    - event: Named events, conferences, incidents
-    - concept: Abstract ideas, theories, methodologies
-    - technology: Products, tools, technologies, systems
-    - other: Entities that don't fit above categories
+    - person: Individual people, including names with titles (e.g., "Sam Altman", "Dr. Jane Smith", "CEO John Doe")
+    - organization: Companies, institutions, governments, teams, groups (e.g., "OpenAI", "FDA", "United Nations", "Engineering Team")
+    - location: Geographic places, addresses, regions, facilities (e.g., "San Francisco", "Building 42", "North America", "MIT Campus")
+    - event: Named events, conferences, incidents, historical moments (e.g., "World War II", "GPT-4 Launch", "2024 Election", "Annual Summit")
+    - concept: Abstract ideas, theories, methodologies, processes (e.g., "Machine Learning", "Agile Development", "Climate Change", "GDPR Compliance")
+    - technology: Products, tools, systems, protocols, standards (e.g., "GPT-4", "PostgreSQL", "REST API", "OAuth 2.0", "iPhone 15")
+    - other: Entities that don't fit above categories but are still significant named items
 
     ## Output format:
     Return a JSON array of entity objects. Each object should have:
