@@ -34,6 +34,15 @@ This logs all Arcana operations with timing:
 [info] [Arcana] ask completed in 6.12s
 ```
 
+With `graph: true` enabled, you'll also see:
+
+```
+[info] [Arcana] graph.ner completed in 45ms (3 entities)
+[info] [Arcana] graph.relationship_extraction completed in 1.2s (2 relationships)
+[info] [Arcana] graph.build completed in 1.5s (5 entities, 3 relationships)
+[info] [Arcana] graph.search completed in 28ms (8 graph results, 10 combined)
+```
+
 ### Logger Options
 
 ```elixir
@@ -75,6 +84,19 @@ Each step in the Agent pipeline emits its own events:
 | `[:arcana, :agent, :answer, :*]` | - |
 | `[:arcana, :agent, :self_correct, :*]` | `attempt` |
 
+### GraphRAG Events
+
+When using `graph: true`, these events track knowledge graph operations:
+
+| Event | Metadata |
+|-------|----------|
+| `[:arcana, :graph, :build, :*]` | `chunk_count`, `collection`, `entity_count`, `relationship_count` |
+| `[:arcana, :graph, :search, :*]` | `query`, `entity_count`, `graph_result_count`, `combined_count` |
+| `[:arcana, :graph, :ner, :*]` | `text`, `entity_count` |
+| `[:arcana, :graph, :relationship_extraction, :*]` | `text`, `relationship_count` |
+| `[:arcana, :graph, :community_detection, :*]` | `entity_count`, `community_count` |
+| `[:arcana, :graph, :community_summary, :*]` | `entity_count`, `summary_length` |
+
 ### Exception Events
 
 All `:exception` events include:
@@ -99,7 +121,10 @@ defmodule MyApp.ArcanaMetrics do
       [:arcana, :llm, :complete, :stop],
       # Agent pipeline
       [:arcana, :agent, :rerank, :stop],
-      [:arcana, :agent, :answer, :stop]
+      [:arcana, :agent, :answer, :stop],
+      # GraphRAG
+      [:arcana, :graph, :build, :stop],
+      [:arcana, :graph, :search, :stop]
     ]
 
     :telemetry.attach_many("my-arcana-metrics", events, &handle_event/4, nil)
@@ -180,7 +205,17 @@ defmodule MyApp.Telemetry do
       last_value("arcana.agent.rerank.stop.kept"),
       summary("arcana.agent.answer.stop.duration",
         unit: {:native, :millisecond}
-      )
+      ),
+
+      # GraphRAG metrics
+      summary("arcana.graph.build.stop.duration",
+        unit: {:native, :millisecond}
+      ),
+      last_value("arcana.graph.build.stop.entity_count"),
+      summary("arcana.graph.search.stop.duration",
+        unit: {:native, :millisecond}
+      ),
+      last_value("arcana.graph.search.stop.graph_result_count")
     ]
   end
 end

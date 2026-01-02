@@ -591,21 +591,33 @@ defmodule Arcana do
     # Extract entities from query
     case EntityExtractor.extract(entity_extractor, query) do
       {:ok, entities} when entities != [] ->
-        # Get graph-based results for each collection
-        graph_results = graph_search_db(entities, collections, repo)
+        :telemetry.span(
+          [:arcana, :graph, :search],
+          %{query: query, entity_count: length(entities)},
+          fn ->
+            # Get graph-based results for each collection
+            graph_results = graph_search_db(entities, collections, repo)
 
-        # Combine using RRF
-        combined = rrf_combine(vector_results, graph_results, limit * 2)
-        final_results = Enum.take(combined, limit)
+            # Combine using RRF
+            combined = rrf_combine(vector_results, graph_results, limit * 2)
+            final_results = Enum.take(combined, limit)
 
-        stop_metadata = %{
-          results: final_results,
-          result_count: length(final_results),
-          graph_enhanced: true,
-          entities_found: length(entities)
-        }
+            # Return value for caller and telemetry stop metadata
+            caller_result = %{
+              results: final_results,
+              result_count: length(final_results),
+              graph_enhanced: true,
+              entities_found: length(entities)
+            }
 
-        {{:ok, final_results}, stop_metadata}
+            telemetry_metadata = %{
+              graph_result_count: length(graph_results),
+              combined_count: length(final_results)
+            }
+
+            {{{:ok, final_results}, caller_result}, telemetry_metadata}
+          end
+        )
 
       _ ->
         # No entities found, return vector results as-is
@@ -1042,35 +1054,44 @@ defmodule Arcana do
   # GraphRAG integration
 
   defp build_and_persist_graph(chunk_records, collection, repo, opts) do
-    graph_config = Arcana.Graph.config()
+    collection_name = if is_binary(collection), do: collection, else: collection.name
 
-    entity_extractor = resolve_entity_extractor(opts, graph_config)
-    relationship_extractor = resolve_relationship_extractor(opts, graph_config)
+    :telemetry.span(
+      [:arcana, :graph, :build],
+      %{chunk_count: length(chunk_records), collection: collection_name},
+      fn ->
+        graph_config = Arcana.Graph.config()
 
-    # Extract entities and relationships from each chunk
-    {all_entities, all_mentions, all_relationships} =
-      chunk_records
-      |> Enum.reduce({[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
-        extract_graph_data_from_chunk(
-          chunk,
-          entity_extractor,
-          relationship_extractor,
-          ent_acc,
-          ment_acc,
-          rel_acc
-        )
-      end)
+        entity_extractor = resolve_entity_extractor(opts, graph_config)
+        relationship_extractor = resolve_relationship_extractor(opts, graph_config)
 
-    # Persist entities (upsert by name + collection) and get ID mapping
-    entity_id_map = persist_entities(all_entities, collection, repo)
+        # Extract entities and relationships from each chunk
+        {all_entities, all_mentions, all_relationships} =
+          chunk_records
+          |> Enum.reduce({[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
+            extract_graph_data_from_chunk(
+              chunk,
+              entity_extractor,
+              relationship_extractor,
+              ent_acc,
+              ment_acc,
+              rel_acc
+            )
+          end)
 
-    # Persist entity mentions
-    persist_entity_mentions(all_mentions, entity_id_map, repo)
+        # Persist entities (upsert by name + collection) and get ID mapping
+        entity_id_map = persist_entities(all_entities, collection, repo)
 
-    # Persist relationships
-    persist_relationships(all_relationships, entity_id_map, repo)
+        # Persist entity mentions
+        persist_entity_mentions(all_mentions, entity_id_map, repo)
 
-    :ok
+        # Persist relationships
+        persist_relationships(all_relationships, entity_id_map, repo)
+
+        {:ok,
+         %{entity_count: map_size(entity_id_map), relationship_count: length(all_relationships)}}
+      end
+    )
   end
 
   defp resolve_entity_extractor(opts, graph_config) do
