@@ -114,13 +114,10 @@ if Code.ensure_loaded?(Igniter) do
         use Ecto.Migration
 
         def up do
-          # Entity types enum
-          execute "CREATE TYPE arcana_entity_type AS ENUM ('person', 'organization', 'location', 'event', 'concept', 'technology', 'other')"
-
           create table(:arcana_graph_entities, primary_key: false) do
             add :id, :binary_id, primary_key: true
             add :name, :string, null: false
-            add :type, :arcana_entity_type, null: false
+            add :type, :string, null: false
             add :description, :text
             add :embedding, :vector, size: 384
             add :metadata, :map, default: %{}
@@ -193,7 +190,6 @@ if Code.ensure_loaded?(Igniter) do
           drop table(:arcana_graph_relationships)
           drop table(:arcana_graph_entity_mentions)
           drop table(:arcana_graph_entities)
-          execute "DROP TYPE arcana_entity_type"
         end
       end
       """
@@ -232,13 +228,10 @@ else
       use Ecto.Migration
 
       def up do
-        # Entity types enum
-        execute "CREATE TYPE arcana_entity_type AS ENUM ('person', 'organization', 'location', 'event', 'concept', 'technology', 'other')"
-
         create table(:arcana_graph_entities, primary_key: false) do
           add :id, :binary_id, primary_key: true
           add :name, :string, null: false
-          add :type, :arcana_entity_type, null: false
+          add :type, :string, null: false
           add :description, :text
           add :embedding, :vector, size: 384
           add :metadata, :map, default: %{}
@@ -311,7 +304,6 @@ else
         drop table(:arcana_graph_relationships)
         drop table(:arcana_graph_entity_mentions)
         drop table(:arcana_graph_entities)
-        execute "DROP TYPE arcana_entity_type"
       end
     end
     """

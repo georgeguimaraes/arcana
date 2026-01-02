@@ -14,11 +14,9 @@ defmodule Arcana.Graph.Entity do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
-  @entity_types [:person, :organization, :location, :event, :concept, :technology, :other]
-
   schema "arcana_graph_entities" do
     field(:name, :string)
-    field(:type, Ecto.Enum, values: @entity_types)
+    field(:type, :string)
     field(:description, :string)
     field(:embedding, Pgvector.Ecto.Vector)
     field(:metadata, :map, default: %{})

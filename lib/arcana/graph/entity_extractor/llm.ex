@@ -32,7 +32,20 @@ defmodule Arcana.Graph.EntityExtractor.LLM do
 
   @behaviour Arcana.Graph.EntityExtractor
 
-  @default_types [:person, :organization, :location, :event, :concept, :technology]
+  @default_types [
+    :person,
+    :organization,
+    :location,
+    :event,
+    :concept,
+    :technology,
+    :role,
+    :publication,
+    :media,
+    :award,
+    :standard,
+    :language
+  ]
 
   @impl true
   def extract(text, opts) when is_binary(text) do
@@ -122,7 +135,7 @@ defmodule Arcana.Graph.EntityExtractor.LLM do
     """
   end
 
-  defp parse_and_validate(response, types) do
+  defp parse_and_validate(response, _types) do
     # Strip any markdown code blocks if present
     cleaned =
       response
@@ -131,14 +144,12 @@ defmodule Arcana.Graph.EntityExtractor.LLM do
       |> String.replace(~r/\n?```$/, "")
       |> String.trim()
 
-    valid_types = MapSet.new(types ++ [:other])
-
     case Jason.decode(cleaned) do
       {:ok, entities} when is_list(entities) ->
         validated =
           entities
           |> Enum.map(&normalize_entity/1)
-          |> Enum.filter(&valid_entity?(&1, valid_types))
+          |> Enum.filter(&valid_entity?(&1, nil))
 
         {:ok, validated}
 
@@ -161,22 +172,20 @@ defmodule Arcana.Graph.EntityExtractor.LLM do
     }
   end
 
-  defp normalize_type(nil), do: :other
+  defp normalize_type(nil), do: "other"
 
   defp normalize_type(type) when is_binary(type) do
     type
     |> String.downcase()
-    |> String.replace(~r/[^a-z]/, "")
-    |> String.to_existing_atom()
-  rescue
-    ArgumentError -> :other
+    |> String.replace(~r/[^a-z_]/, "")
   end
 
-  defp normalize_type(_), do: :other
+  defp normalize_type(_), do: "other"
 
-  defp valid_entity?(%{name: name, type: type}, valid_types) do
+  defp valid_entity?(%{name: name, type: type}, _valid_types) do
     is_binary(name) and
       String.trim(name) != "" and
-      MapSet.member?(valid_types, type)
+      is_binary(type) and
+      String.trim(type) != ""
   end
 end
