@@ -1,0 +1,182 @@
+defmodule Arcana.Graph.EntityExtractor.LLM do
+  @moduledoc """
+  LLM-based entity extraction implementation.
+
+  Uses structured prompts to identify named entities from text. The LLM
+  returns JSON-formatted entities with name, type, and optional description.
+
+  This extractor is useful when you want to use the same LLM for both
+  entity and relationship extraction, or when you need domain-specific
+  entity recognition.
+
+  ## Usage
+
+      # Configure with an LLM function
+      extractor = {Arcana.Graph.EntityExtractor.LLM, llm: my_llm_fn}
+      {:ok, entities} = EntityExtractor.extract(extractor, "Sam Altman leads OpenAI")
+
+  ## Configuration
+
+      config :arcana, :graph,
+        entity_extractor: {Arcana.Graph.EntityExtractor.LLM, []}
+
+  When using this extractor, the LLM function is passed automatically
+  from the graph pipeline.
+
+  ## Options
+
+    - `:llm` - Required. An LLM function `(prompt, context, opts) -> {:ok, response} | {:error, reason}`
+    - `:types` - Optional. List of entity types to extract. Defaults to all standard types.
+
+  """
+
+  @behaviour Arcana.Graph.EntityExtractor
+
+  @default_types [:person, :organization, :location, :event, :concept, :technology]
+
+  @impl true
+  def extract(text, opts) when is_binary(text) do
+    llm = Keyword.fetch!(opts, :llm)
+    types = Keyword.get(opts, :types, @default_types)
+    prompt = build_prompt(text, types)
+
+    :telemetry.span([:arcana, :graph, :entity_extraction], %{text: text}, fn ->
+      result =
+        case llm.(prompt, [], system_prompt: system_prompt()) do
+          {:ok, response} ->
+            parse_and_validate(response, types)
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      metadata =
+        case result do
+          {:ok, entities} -> %{entity_count: length(entities)}
+          {:error, _} -> %{entity_count: 0}
+        end
+
+      {result, metadata}
+    end)
+  end
+
+  @impl true
+  def extract_batch(texts, opts) when is_list(texts) do
+    # For LLM extractors, sequential is fine (LLM already has latency)
+    results = Enum.map(texts, fn text -> extract(text, opts) end)
+
+    if Enum.all?(results, &match?({:ok, _}, &1)) do
+      {:ok, Enum.map(results, fn {:ok, entities} -> entities end)}
+    else
+      {:error, :batch_failed}
+    end
+  end
+
+  @doc """
+  Builds the prompt for entity extraction.
+  """
+  @spec build_prompt(String.t(), [atom()]) :: String.t()
+  def build_prompt(text, types) do
+    type_list = Enum.map_join(types, ", ", &to_string/1)
+
+    """
+    Extract named entities from the following text.
+
+    ## Text to analyze:
+    #{text}
+
+    ## Entity types to extract:
+    #{type_list}
+
+    ## Instructions:
+    1. Identify all significant named entities in the text
+    2. Classify each entity into one of the types listed above
+    3. Use "other" for entities that don't fit the categories
+    4. Include a brief description if the text provides context
+
+    ## Type definitions:
+    - person: Individual people (names, titles)
+    - organization: Companies, institutions, groups
+    - location: Places, addresses, geographic areas
+    - event: Named events, conferences, incidents
+    - concept: Abstract ideas, theories, methodologies
+    - technology: Products, tools, technologies, systems
+    - other: Entities that don't fit above categories
+
+    ## Output format:
+    Return a JSON array of entity objects. Each object should have:
+    - "name": The entity name (required)
+    - "type": One of the types listed above (required)
+    - "description": Brief description from context (optional)
+
+    Return only the JSON array, no other text.
+    """
+  end
+
+  defp system_prompt do
+    """
+    You are a named entity recognition assistant. Your task is to extract
+    named entities from text and classify them by type. Be precise and
+    extract only clearly identifiable entities.
+    Always return valid JSON.
+    """
+  end
+
+  defp parse_and_validate(response, types) do
+    # Strip any markdown code blocks if present
+    cleaned =
+      response
+      |> String.trim()
+      |> String.replace(~r/^```json\n?/, "")
+      |> String.replace(~r/\n?```$/, "")
+      |> String.trim()
+
+    valid_types = MapSet.new(types ++ [:other])
+
+    case Jason.decode(cleaned) do
+      {:ok, entities} when is_list(entities) ->
+        validated =
+          entities
+          |> Enum.map(&normalize_entity/1)
+          |> Enum.filter(&valid_entity?(&1, valid_types))
+
+        {:ok, validated}
+
+      {:ok, _} ->
+        {:error, {:json_parse_error, "Expected JSON array"}}
+
+      {:error, error} ->
+        {:error, {:json_parse_error, error}}
+    end
+  end
+
+  defp normalize_entity(entity) when is_map(entity) do
+    %{
+      name: Map.get(entity, "name"),
+      type: normalize_type(Map.get(entity, "type")),
+      description: Map.get(entity, "description"),
+      span_start: nil,
+      span_end: nil,
+      score: nil
+    }
+  end
+
+  defp normalize_type(nil), do: :other
+
+  defp normalize_type(type) when is_binary(type) do
+    type
+    |> String.downcase()
+    |> String.replace(~r/[^a-z]/, "")
+    |> String.to_existing_atom()
+  rescue
+    ArgumentError -> :other
+  end
+
+  defp normalize_type(_), do: :other
+
+  defp valid_entity?(%{name: name, type: type}, valid_types) do
+    is_binary(name) and
+      String.trim(name) != "" and
+      MapSet.member?(valid_types, type)
+  end
+end

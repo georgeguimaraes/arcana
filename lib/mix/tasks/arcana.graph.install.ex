@@ -125,7 +125,7 @@ if Code.ensure_loaded?(Igniter) do
             add :embedding, :vector, size: 384
             add :metadata, :map, default: %{}
             add :chunk_id, references(:arcana_chunks, type: :binary_id, on_delete: :nilify_all)
-            add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :cascade)
+            add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :delete_all)
 
             timestamps()
           end
@@ -179,7 +179,7 @@ if Code.ensure_loaded?(Igniter) do
             add :entity_ids, {:array, :binary_id}, default: []
             add :dirty, :boolean, default: true
             add :change_count, :integer, default: 0
-            add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :cascade)
+            add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :delete_all)
 
             timestamps()
           end
@@ -243,7 +243,7 @@ else
           add :embedding, :vector, size: 384
           add :metadata, :map, default: %{}
           add :chunk_id, references(:arcana_chunks, type: :binary_id, on_delete: :nilify_all)
-          add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :cascade)
+          add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :delete_all)
 
           timestamps()
         end
@@ -297,7 +297,7 @@ else
           add :entity_ids, {:array, :binary_id}, default: []
           add :dirty, :boolean, default: true
           add :change_count, :integer, default: 0
-          add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :cascade)
+          add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :delete_all)
 
           timestamps()
         end
