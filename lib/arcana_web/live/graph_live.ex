@@ -105,6 +105,8 @@ defmodule ArcanaWeb.GraphLive do
   defp load_entities(socket) do
     repo = socket.assigns.repo
     selected = socket.assigns.selected_collection
+    name_filter = socket.assigns.entity_filter || ""
+    type_filter = socket.assigns.entity_type_filter
 
     query =
       from(e in Entity,
@@ -130,6 +132,20 @@ defmodule ArcanaWeb.GraphLive do
     query =
       if selected do
         where(query, [e, c], c.name == ^selected)
+      else
+        query
+      end
+
+    query =
+      if name_filter != "" do
+        where(query, [e], ilike(e.name, ^"%#{name_filter}%"))
+      else
+        query
+      end
+
+    query =
+      if type_filter && type_filter != "" do
+        where(query, [e], e.type == ^type_filter)
       else
         query
       end
@@ -227,6 +243,16 @@ defmodule ArcanaWeb.GraphLive do
     {:noreply, push_patch(socket, to: build_path(socket, collection: collection))}
   end
 
+  def handle_event("filter_entities", params, socket) do
+    name_filter = params["name"] || ""
+    type_filter = params["type"]
+
+    {:noreply,
+     socket
+     |> assign(entity_filter: name_filter, entity_type_filter: type_filter)
+     |> load_entities()}
+  end
+
   defp build_path(socket, overrides) do
     tab = Keyword.get(overrides, :tab, Atom.to_string(socket.assigns.current_subtab))
 
@@ -306,7 +332,11 @@ defmodule ArcanaWeb.GraphLive do
 
           <%= case @current_subtab do %>
             <% :entities -> %>
-              <.entities_view entities={@entities} />
+              <.entities_view
+                entities={@entities}
+                entity_filter={@entity_filter}
+                entity_type_filter={@entity_type_filter}
+              />
             <% :relationships -> %>
               <.relationships_view relationships={@relationships} />
             <% :communities -> %>
@@ -321,8 +351,30 @@ defmodule ArcanaWeb.GraphLive do
   defp entities_view(assigns) do
     ~H"""
     <div class="arcana-entities-view">
+      <form phx-change="filter_entities" class="arcana-filter-bar">
+        <input
+          type="text"
+          name="name"
+          value={@entity_filter}
+          placeholder="Search entities..."
+          class="arcana-input"
+          phx-debounce="300"
+        />
+        <select name="type" class="arcana-input">
+          <option value="">All Types</option>
+          <option value="person" selected={@entity_type_filter == "person"}>Person</option>
+          <option value="organization" selected={@entity_type_filter == "organization"}>
+            Organization
+          </option>
+          <option value="technology" selected={@entity_type_filter == "technology"}>Technology</option>
+          <option value="concept" selected={@entity_type_filter == "concept"}>Concept</option>
+          <option value="location" selected={@entity_type_filter == "location"}>Location</option>
+          <option value="event" selected={@entity_type_filter == "event"}>Event</option>
+        </select>
+      </form>
+
       <%= if Enum.empty?(@entities) do %>
-        <div class="arcana-empty">No entities found in this collection.</div>
+        <div class="arcana-empty">No entities found matching your criteria.</div>
       <% else %>
         <table class="arcana-table arcana-graph-table">
           <thead>

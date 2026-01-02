@@ -120,6 +120,81 @@ defmodule ArcanaWeb.GraphLiveTest do
     end
   end
 
+  describe "Entities sub-view" do
+    setup do
+      entity_extractor = fn _text, _opts ->
+        {:ok,
+         [
+           %{name: "Alice Smith", type: :person},
+           %{name: "Acme Corp", type: :organization},
+           %{name: "Phoenix Framework", type: :technology}
+         ]}
+      end
+
+      {:ok, doc} =
+        Arcana.ingest(
+          "Alice Smith works at Acme Corp using Phoenix Framework.",
+          repo: Repo,
+          graph: true,
+          entity_extractor: entity_extractor,
+          collection: "entities-test"
+        )
+
+      %{document: doc}
+    end
+
+    test "shows entity table with name, type, mentions, relationships columns", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+
+      assert has_element?(view, "th", "Name")
+      assert has_element?(view, "th", "Type")
+      assert has_element?(view, "th", "Mentions")
+      assert has_element?(view, "th", "Relationships")
+    end
+
+    test "displays entity data in table", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+
+      html = render(view)
+      assert html =~ "Alice Smith"
+      assert html =~ "Acme Corp"
+      assert html =~ "Phoenix Framework"
+    end
+
+    test "shows type badges for different entity types", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+
+      assert has_element?(view, ".arcana-entity-type-badge.person")
+      assert has_element?(view, ".arcana-entity-type-badge.organization")
+      assert has_element?(view, ".arcana-entity-type-badge.technology")
+    end
+
+    test "filters entities by name search", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+
+      view
+      |> element("form[phx-change=filter_entities]")
+      |> render_change(%{"name" => "Alice"})
+
+      html = render(view)
+      assert html =~ "Alice Smith"
+      refute html =~ "Acme Corp"
+    end
+
+    test "filters entities by type", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+
+      view
+      |> element("form[phx-change=filter_entities]")
+      |> render_change(%{"type" => "person"})
+
+      html = render(view)
+      assert html =~ "Alice Smith"
+      refute html =~ "Acme Corp"
+      refute html =~ "Phoenix Framework"
+    end
+  end
+
   describe "CSS classes" do
     setup do
       entity_extractor = fn _text, _opts ->
