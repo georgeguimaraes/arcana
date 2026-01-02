@@ -31,6 +31,8 @@ defmodule ArcanaWeb.GraphLive do
        stats: nil,
        entity_filter: "",
        entity_type_filter: nil,
+       selected_entity: nil,
+       entity_details: nil,
        relationship_filter: "",
        relationship_type_filter: nil,
        relationship_strength_filter: nil,
@@ -253,6 +255,67 @@ defmodule ArcanaWeb.GraphLive do
      |> load_entities()}
   end
 
+  def handle_event("select_entity", %{"id" => id}, socket) do
+    details = load_entity_details(socket.assigns.repo, id)
+    {:noreply, assign(socket, selected_entity: id, entity_details: details)}
+  end
+
+  def handle_event("close_entity_detail", _params, socket) do
+    {:noreply, assign(socket, selected_entity: nil, entity_details: nil)}
+  end
+
+  defp load_entity_details(repo, entity_id) do
+    # Load entity with relationships
+    entity =
+      repo.one(
+        from(e in Entity,
+          where: e.id == ^entity_id,
+          select: %{id: e.id, name: e.name, type: e.type, description: e.description}
+        )
+      )
+
+    # Load relationships where this entity is source or target
+    relationships =
+      repo.all(
+        from(r in Relationship,
+          join: source in Entity,
+          on: source.id == r.source_id,
+          join: target in Entity,
+          on: target.id == r.target_id,
+          where: r.source_id == ^entity_id or r.target_id == ^entity_id,
+          select: %{
+            id: r.id,
+            type: r.type,
+            description: r.description,
+            source_id: source.id,
+            source_name: source.name,
+            target_id: target.id,
+            target_name: target.name
+          }
+        )
+      )
+
+    # Load mentions with chunk context
+    mentions =
+      repo.all(
+        from(m in EntityMention,
+          join: c in Arcana.Chunk,
+          on: c.id == m.chunk_id,
+          where: m.entity_id == ^entity_id,
+          limit: 5,
+          select: %{
+            id: m.id,
+            context: m.context,
+            chunk_id: c.id,
+            chunk_text: c.text,
+            document_id: c.document_id
+          }
+        )
+      )
+
+    %{entity: entity, relationships: relationships, mentions: mentions}
+  end
+
   defp build_path(socket, overrides) do
     tab = Keyword.get(overrides, :tab, Atom.to_string(socket.assigns.current_subtab))
 
@@ -336,6 +399,8 @@ defmodule ArcanaWeb.GraphLive do
                 entities={@entities}
                 entity_filter={@entity_filter}
                 entity_type_filter={@entity_type_filter}
+                selected_entity={@selected_entity}
+                entity_details={@entity_details}
               />
             <% :relationships -> %>
               <.relationships_view relationships={@relationships} />
@@ -387,7 +452,12 @@ defmodule ArcanaWeb.GraphLive do
           </thead>
           <tbody>
             <%= for entity <- @entities do %>
-              <tr id={"entity-#{entity.id}"}>
+              <tr
+                id={"entity-#{entity.id}"}
+                class={"arcana-entity-row #{if @selected_entity == entity.id, do: "selected", else: ""}"}
+                phx-click="select_entity"
+                phx-value-id={entity.id}
+              >
                 <td><%= entity.name %></td>
                 <td>
                   <span class={"arcana-entity-type-badge #{entity.type}"}>
@@ -400,6 +470,59 @@ defmodule ArcanaWeb.GraphLive do
             <% end %>
           </tbody>
         </table>
+      <% end %>
+
+      <%= if @entity_details do %>
+        <.entity_detail_panel details={@entity_details} />
+      <% end %>
+    </div>
+    """
+  end
+
+  defp entity_detail_panel(assigns) do
+    ~H"""
+    <div class="arcana-entity-detail">
+      <div class="arcana-entity-detail-header">
+        <h3><%= @details.entity.name %></h3>
+        <span class={"arcana-entity-type-badge #{@details.entity.type}"}>
+          <%= @details.entity.type %>
+        </span>
+        <button class="arcana-entity-detail-close" phx-click="close_entity_detail">×</button>
+      </div>
+
+      <%= if @details.entity.description do %>
+        <p class="arcana-entity-description"><%= @details.entity.description %></p>
+      <% end %>
+
+      <%= if Enum.any?(@details.relationships) do %>
+        <div class="arcana-entity-relationships">
+          <h4>Relationships</h4>
+          <ul>
+            <%= for rel <- @details.relationships do %>
+              <li>
+                <code><%= rel.type %></code>
+                → <%= if rel.source_id == @details.entity.id, do: rel.target_name, else: rel.source_name %>
+              </li>
+            <% end %>
+          </ul>
+        </div>
+      <% end %>
+
+      <%= if Enum.any?(@details.mentions) do %>
+        <div class="arcana-entity-mentions">
+          <h4>Source Chunks</h4>
+          <%= for mention <- @details.mentions do %>
+            <div class="arcana-mention-preview">
+              <p><%= String.slice(mention.context || mention.chunk_text || "", 0, 200) %></p>
+              <a
+                href={"/arcana/documents?doc=#{mention.document_id}"}
+                class="arcana-view-in-docs"
+              >
+                View in Documents →
+              </a>
+            </div>
+          <% end %>
+        </div>
       <% end %>
     </div>
     """

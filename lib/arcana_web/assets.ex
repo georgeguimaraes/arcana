@@ -1492,6 +1492,105 @@ defmodule ArcanaWeb.Assets do
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   }
 
+  /* Entity detail panel */
+  .arcana-entity-row {
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+
+  .arcana-entity-row.selected {
+    background: #ede9fe;
+  }
+
+  .arcana-entity-detail {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    background: #faf5ff;
+    border: 1px solid #e9d5ff;
+    border-radius: 0.5rem;
+  }
+
+  .arcana-entity-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .arcana-entity-detail-header h3 {
+    margin: 0;
+    font-size: 1.125rem;
+    color: #1f2937;
+  }
+
+  .arcana-entity-detail-close {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    font-size: 1.5rem;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .arcana-entity-detail-close:hover {
+    color: #374151;
+  }
+
+  .arcana-entity-description {
+    color: #4b5563;
+    margin: 0 0 1rem 0;
+  }
+
+  .arcana-entity-relationships h4,
+  .arcana-entity-mentions h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .arcana-entity-relationships ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .arcana-entity-relationships li {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .arcana-entity-relationships li:last-child {
+    border-bottom: none;
+  }
+
+  .arcana-mention-preview {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .arcana-mention-preview p {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    color: #374151;
+  }
+
+  .arcana-view-in-docs {
+    font-size: 0.75rem;
+    color: #7c3aed;
+    text-decoration: none;
+  }
+
+  .arcana-view-in-docs:hover {
+    text-decoration: underline;
+  }
+
   .arcana-empty-hint {
     font-size: 0.8125rem;
   }

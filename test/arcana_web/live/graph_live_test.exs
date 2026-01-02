@@ -195,6 +195,97 @@ defmodule ArcanaWeb.GraphLiveTest do
     end
   end
 
+  describe "Entity detail panel" do
+    setup do
+      # Create entities with relationships
+      entity_extractor = fn _text, _opts ->
+        {:ok,
+         [
+           %{name: "Alice Johnson", type: :person},
+           %{name: "TechCorp Inc", type: :organization}
+         ]}
+      end
+
+      relationship_extractor = fn _text, _entities, _opts ->
+        {:ok,
+         [
+           %{
+             source: "Alice Johnson",
+             target: "TechCorp Inc",
+             type: "WORKS_AT",
+             description: "Alice works at TechCorp"
+           }
+         ]}
+      end
+
+      {:ok, doc} =
+        Arcana.ingest(
+          "Alice Johnson is a senior developer at TechCorp Inc since 2020.",
+          repo: Repo,
+          graph: true,
+          entity_extractor: entity_extractor,
+          relationship_extractor: relationship_extractor,
+          collection: "detail-test"
+        )
+
+      %{document: doc}
+    end
+
+    test "clicking entity row expands detail panel", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+
+      # Find the Alice Johnson row and click it
+      view
+      |> element("tr[id^=entity-]", "Alice Johnson")
+      |> render_click()
+
+      # Detail panel should appear
+      assert has_element?(view, ".arcana-entity-detail")
+    end
+
+    test "detail panel shows entity name and type", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+
+      view
+      |> element("tr[id^=entity-]", "Alice Johnson")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "Alice Johnson"
+      assert has_element?(view, ".arcana-entity-detail .arcana-entity-type-badge.person")
+    end
+
+    test "detail panel shows relationships", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+
+      view
+      |> element("tr[id^=entity-]", "Alice Johnson")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "WORKS_AT"
+      assert html =~ "TechCorp Inc"
+    end
+
+    test "clicking close button hides detail panel", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+
+      # Open detail
+      view
+      |> element("tr[id^=entity-]", "Alice Johnson")
+      |> render_click()
+
+      assert has_element?(view, ".arcana-entity-detail")
+
+      # Close it
+      view
+      |> element(".arcana-entity-detail-close")
+      |> render_click()
+
+      refute has_element?(view, ".arcana-entity-detail")
+    end
+  end
+
   describe "CSS classes" do
     setup do
       entity_extractor = fn _text, _opts ->
