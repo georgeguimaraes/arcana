@@ -1350,6 +1350,186 @@ defmodule ArcanaWeb.Assets do
     font-size: 0.75rem;
     font-weight: 500;
   }
+
+  /* Graph Tab Styles */
+  .arcana-graph-subtabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .arcana-subtab-btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid #d1d5db;
+    background: white;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .arcana-subtab-btn:hover {
+    border-color: #7c3aed;
+    color: #7c3aed;
+  }
+
+  .arcana-subtab-btn.active {
+    background: #7c3aed;
+    border-color: #7c3aed;
+    color: white;
+  }
+
+  .arcana-graph-table {
+    margin-top: 1rem;
+  }
+
+  /* Entity type badges */
+  .arcana-entity-type-badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: lowercase;
+  }
+
+  .arcana-entity-type-badge.person {
+    background: #dbeafe;
+    color: #1e40af;
+  }
+
+  .arcana-entity-type-badge.organization {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .arcana-entity-type-badge.technology {
+    background: #fce7f3;
+    color: #9d174d;
+  }
+
+  .arcana-entity-type-badge.concept {
+    background: #fef3c7;
+    color: #92400e;
+  }
+
+  .arcana-entity-type-badge.location {
+    background: #e0e7ff;
+    color: #3730a3;
+  }
+
+  .arcana-entity-type-badge.event {
+    background: #f3e8ff;
+    color: #6b21a8;
+  }
+
+  /* Relationship strength meter */
+  .arcana-strength-meter {
+    display: inline-flex;
+    gap: 2px;
+    align-items: center;
+  }
+
+  .arcana-strength-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #e5e7eb;
+  }
+
+  .arcana-strength-dot.filled {
+    background: #7c3aed;
+  }
+
+  /* Community status indicators */
+  .arcana-status-ready {
+    color: #16a34a;
+  }
+
+  .arcana-status-pending {
+    color: #d97706;
+  }
+
+  .arcana-status-empty {
+    color: #9ca3af;
+  }
+
+  .arcana-no-summary {
+    color: #9ca3af;
+    font-style: italic;
+  }
+
+  /* Graph empty state */
+  .arcana-empty-state {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    padding: 2rem;
+    text-align: center;
+  }
+
+  .arcana-empty-state h3 {
+    margin: 0 0 1rem 0;
+    color: #374151;
+  }
+
+  .arcana-empty-state p {
+    color: #6b7280;
+    margin: 0.5rem 0;
+  }
+
+  .arcana-empty-state pre {
+    background: #1f2937;
+    color: #e5e7eb;
+    padding: 0.75rem 1rem;
+    border-radius: 0.375rem;
+    display: inline-block;
+    margin: 1rem 0;
+    font-size: 0.875rem;
+  }
+
+  .arcana-empty-state code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  }
+
+  .arcana-empty-hint {
+    font-size: 0.8125rem;
+  }
+
+  /* Collection selector */
+  .arcana-collection-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .arcana-collection-selector label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #374151;
+  }
+
+  .arcana-collection-selector select {
+    padding: 0.5rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    min-width: 200px;
+  }
+
+  .arcana-collection-selector select:focus {
+    outline: none;
+    border-color: #7c3aed;
+    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+  }
+
+  /* Entity/Relationship/Community views */
+  .arcana-entities-view,
+  .arcana-relationships-view,
+  .arcana-communities-view {
+    margin-top: 1rem;
+  }
   """
   @css_hash :crypto.hash(:md5, @css) |> Base.encode16(case: :lower) |> binary_part(0, 8)
 

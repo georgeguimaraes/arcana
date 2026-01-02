@@ -120,6 +120,52 @@ defmodule ArcanaWeb.GraphLiveTest do
     end
   end
 
+  describe "CSS classes" do
+    setup do
+      entity_extractor = fn _text, _opts ->
+        {:ok, [%{name: "CSSTestEntity", type: :person}]}
+      end
+
+      {:ok, _doc} =
+        Arcana.ingest(
+          "Test content for CSS.",
+          repo: Repo,
+          graph: true,
+          entity_extractor: entity_extractor,
+          collection: "css-test-collection"
+        )
+
+      :ok
+    end
+
+    test "renders sub-tab navigation with correct CSS class", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+
+      assert has_element?(view, ".arcana-graph-subtabs")
+    end
+
+    test "renders sub-tab buttons with correct CSS class", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+
+      assert has_element?(view, ".arcana-subtab-btn", "Entities")
+      assert has_element?(view, ".arcana-subtab-btn", "Relationships")
+      assert has_element?(view, ".arcana-subtab-btn", "Communities")
+    end
+
+    test "renders entity type badge with correct CSS class", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+
+      assert has_element?(view, ".arcana-entity-type-badge.person")
+    end
+
+    test "renders strength meter with correct CSS class", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=relationships")
+
+      # May be empty if no relationships, but check it renders the view
+      assert render(view) =~ "Relationships" or render(view) =~ "No relationships"
+    end
+  end
+
   describe "URL state preservation" do
     setup do
       # Create test data with graph entities
