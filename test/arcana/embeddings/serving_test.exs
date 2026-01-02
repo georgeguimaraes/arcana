@@ -1,7 +1,7 @@
 defmodule Arcana.Embeddings.ServingTest do
   use ExUnit.Case, async: true
 
-  # These tests require real Nx.Serving with loaded models
+  # These tests require Arcana.Embeddings.Serving to be started separately
   # Run with: mix test --include serving
   @moduletag :serving
 

@@ -112,7 +112,7 @@ defmodule Arcana.TelemetryTest do
   end
 
   describe "embed telemetry" do
-    # Requires real Nx.Serving - run with: mix test --include serving
+    # Requires Arcana.Embeddings.Serving - run with: mix test --include serving
     @tag :serving
     test "emits [:arcana, :embed, :start] and [:arcana, :embed, :stop] events" do
       ref = make_ref()

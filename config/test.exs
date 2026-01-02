@@ -1,27 +1,14 @@
 import Config
 
-# Mock embedder for tests - generates deterministic 384-dim embeddings based on text hash
-# This is much faster than real embeddings and sufficient for testing RAG functionality
-mock_embedder = fn text ->
-  # Use hash of text to generate deterministic pseudo-random embeddings
-  hash = :erlang.phash2(text, 1_000_000)
-  :rand.seed(:exsss, {hash, hash * 2, hash * 3})
+# Use EXLA for fast test embeddings
+config :nx,
+  default_backend: EXLA.Backend,
+  default_defn_options: [compiler: EXLA]
 
-  embedding =
-    for _ <- 1..384 do
-      :rand.uniform() * 2 - 1
-    end
-
-  # Normalize to unit length
-  norm = :math.sqrt(Enum.reduce(embedding, 0, fn x, acc -> acc + x * x end))
-  normalized = Enum.map(embedding, fn x -> x / norm end)
-
-  {:ok, normalized}
-end
-
+# Use a smaller/faster model for tests (still 384 dims, but ~22M params vs ~33M)
 config :arcana,
   repo: Arcana.TestRepo,
-  embedder: mock_embedder
+  embedder: {:local, model: "sentence-transformers/all-MiniLM-L6-v2"}
 
 config :arcana, Arcana.TestRepo,
   username: System.get_env("POSTGRES_USER", "postgres"),
@@ -31,6 +18,7 @@ config :arcana, Arcana.TestRepo,
   database: "arcana_test",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: 10,
+  ownership_timeout: 120_000,
   priv: "priv/test_repo",
   types: Arcana.PostgrexTypes
 
