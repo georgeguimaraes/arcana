@@ -71,9 +71,13 @@ defmodule Arcana.Embedder.Local do
     {:ok, model_info} = Bumblebee.load_model({:hf, model})
     {:ok, tokenizer} = Bumblebee.load_tokenizer({:hf, model})
 
+    # Get defn_options from Nx config (includes compiler like EXLA or EMLX)
+    defn_options = Nx.Defn.default_options()
+
     serving =
       TextEmbedding.text_embedding(model_info, tokenizer,
-        compile: [batch_size: 32, sequence_length: 512]
+        compile: [batch_size: 32, sequence_length: 512],
+        defn_options: defn_options
       )
 
     Nx.Serving.start_link(serving: serving, name: serving_name, batch_timeout: 100)
