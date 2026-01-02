@@ -49,6 +49,19 @@ jobs:
           path: deps
           key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-
+      - name: Restore build cache
+        uses: actions/cache@v3
+        with:
+          path: _build
+          key: ${{ runner.os }}-build-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ matrix.otp }}-${{ matrix.elixir }}-
+            ${{ runner.os }}-build-
+      - name: Restore Bumblebee model cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/bumblebee
+          key: ${{ runner.os }}-bumblebee-all-MiniLM-L6-v2
       - name: Install dependencies
         run: mix deps.get
       - name: Check formatting
