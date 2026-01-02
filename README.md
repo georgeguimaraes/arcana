@@ -124,13 +124,35 @@ def start(_type, _args) do
 end
 ```
 
-### Configure Nx backend (recommended)
+### Configure Nx backend (required for local embeddings)
 
-For better performance with local embeddings:
+For local embeddings, you need an Nx backend. Configure both the backend and compiler:
 
 ```elixir
 # config/config.exs
-config :nx, default_backend: EXLA.Backend
+
+# EXLA - Google's XLA compiler (Linux/macOS/Windows)
+config :nx,
+  default_backend: EXLA.Backend,
+  default_defn_options: [compiler: EXLA]
+
+# EMLX - Apple's MLX framework (macOS with Apple Silicon)
+config :nx,
+  default_backend: EMLX.Backend,
+  default_defn_options: [compiler: EMLX]
+
+# Torchx - PyTorch backend
+config :nx,
+  default_backend: Torchx.Backend,
+  default_defn_options: [compiler: Torchx]
+```
+
+Add the corresponding dependency to your `mix.exs`:
+
+```elixir
+{:exla, "~> 0.9"}    # or
+{:emlx, "~> 0.1"}    # or
+{:torchx, "~> 0.9"}
 ```
 
 ### Embedding providers

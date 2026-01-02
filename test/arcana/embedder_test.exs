@@ -4,13 +4,13 @@ defmodule Arcana.EmbedderTest.MockEmbedder do
 
   @impl Arcana.Embedder
   def embed(text, opts) do
-    dims = Keyword.get(opts, :dimensions, 384)
+    dims = Keyword.get(opts, :dimensions, 32)
     {:ok, List.duplicate(String.length(text) / 10, dims)}
   end
 
   @impl Arcana.Embedder
   def dimensions(opts) do
-    Keyword.get(opts, :dimensions, 384)
+    Keyword.get(opts, :dimensions, 32)
   end
 end
 
@@ -48,9 +48,9 @@ defmodule Arcana.EmbedderTest do
 
     test "Custom embedder dimensions are auto-detected" do
       embedder =
-        {Arcana.Embedder.Custom, [fun: fn _text -> {:ok, List.duplicate(0.1, 384)} end]}
+        {Arcana.Embedder.Custom, [fun: fn _text -> {:ok, List.duplicate(0.1, 32)} end]}
 
-      assert Embedder.dimensions(embedder) == 384
+      assert Embedder.dimensions(embedder) == 32
     end
 
     test "Custom embedder uses explicit dimensions when provided" do

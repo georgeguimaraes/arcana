@@ -2,19 +2,19 @@ defmodule Arcana.ChunkTest do
   use Arcana.DataCase, async: true
 
   alias Arcana.{Chunk, Document}
-  alias Arcana.Embeddings.Serving
+
+  # Static test embedding (384 dimensions matching production default)
+  defp test_embedding, do: List.duplicate(0.5, 384)
 
   describe "changeset/2" do
     test "valid with required fields" do
-      embedding = Serving.embed("test")
-      changeset = Chunk.changeset(%Chunk{}, %{text: "Hello", embedding: embedding})
+      changeset = Chunk.changeset(%Chunk{}, %{text: "Hello", embedding: test_embedding()})
 
       assert changeset.valid?
     end
 
     test "invalid without text" do
-      embedding = Serving.embed("test")
-      changeset = Chunk.changeset(%Chunk{}, %{embedding: embedding})
+      changeset = Chunk.changeset(%Chunk{}, %{embedding: test_embedding()})
 
       refute changeset.valid?
       assert "can't be blank" in errors_on(changeset).text
@@ -35,13 +35,11 @@ defmodule Arcana.ChunkTest do
         |> Document.changeset(%{content: "Full document"})
         |> Repo.insert()
 
-      embedding = Serving.embed("chunk text")
-
       {:ok, chunk} =
         %Chunk{}
         |> Chunk.changeset(%{
           text: "chunk text",
-          embedding: embedding,
+          embedding: test_embedding(),
           document_id: doc.id,
           chunk_index: 0
         })
@@ -58,11 +56,9 @@ defmodule Arcana.ChunkTest do
         |> Document.changeset(%{content: "Test"})
         |> Repo.insert()
 
-      embedding = Serving.embed("chunk")
-
       {:ok, _chunk} =
         %Chunk{}
-        |> Chunk.changeset(%{text: "chunk", embedding: embedding, document_id: doc.id})
+        |> Chunk.changeset(%{text: "chunk", embedding: test_embedding(), document_id: doc.id})
         |> Repo.insert()
 
       Repo.delete!(doc)

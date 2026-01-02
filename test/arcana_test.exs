@@ -291,7 +291,7 @@ defmodule ArcanaTest do
         )
 
       assert_receive {:llm_called, prompt, context}
-      assert prompt =~ "Paris"
+      assert prompt =~ "Tell me about Paris"
       assert is_list(context)
       assert not Enum.empty?(context)
       # Context should contain the ingested document chunks

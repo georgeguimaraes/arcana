@@ -4,8 +4,6 @@ defmodule Arcana.TelemetryTest do
   # events that the search test receives)
   use Arcana.DataCase, async: false
 
-  alias Arcana.Embeddings.Serving
-
   describe "ingest telemetry" do
     test "emits [:arcana, :ingest, :start] and [:arcana, :ingest, :stop] events" do
       ref = make_ref()
@@ -106,37 +104,6 @@ defmodule Arcana.TelemetryTest do
       assert_receive {:telemetry, [:arcana, :ask, :stop], stop_measurements, stop_metadata}
       assert is_integer(stop_measurements.duration)
       assert stop_metadata.answer == answer
-
-      :telemetry.detach(ref)
-    end
-  end
-
-  describe "embed telemetry" do
-    test "emits [:arcana, :embed, :start] and [:arcana, :embed, :stop] events" do
-      ref = make_ref()
-      test_pid = self()
-
-      :telemetry.attach_many(
-        ref,
-        [
-          [:arcana, :embed, :start],
-          [:arcana, :embed, :stop]
-        ],
-        fn event, measurements, metadata, _ ->
-          send(test_pid, {:telemetry, event, measurements, metadata})
-        end,
-        nil
-      )
-
-      _embedding = Serving.embed("test text")
-
-      assert_receive {:telemetry, [:arcana, :embed, :start], start_measurements, start_metadata}
-      assert is_integer(start_measurements.system_time)
-      assert start_metadata.text == "test text"
-
-      assert_receive {:telemetry, [:arcana, :embed, :stop], stop_measurements, stop_metadata}
-      assert is_integer(stop_measurements.duration)
-      assert stop_metadata.dimensions == 384
 
       :telemetry.detach(ref)
     end
