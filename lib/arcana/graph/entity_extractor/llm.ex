@@ -113,7 +113,13 @@ defmodule Arcana.Graph.EntityExtractor.LLM do
     - location: Geographic places, addresses, regions, facilities (e.g., "San Francisco", "Building 42", "North America", "MIT Campus")
     - event: Named events, conferences, incidents, historical moments (e.g., "World War II", "GPT-4 Launch", "2024 Election", "Annual Summit")
     - concept: Abstract ideas, theories, methodologies, processes (e.g., "Machine Learning", "Agile Development", "Climate Change", "GDPR Compliance")
-    - technology: Products, tools, systems, protocols, standards (e.g., "GPT-4", "PostgreSQL", "REST API", "OAuth 2.0", "iPhone 15")
+    - technology: Products, tools, systems, software, hardware (e.g., "GPT-4", "PostgreSQL", "iPhone 15", "Kubernetes")
+    - role: Job titles, positions, responsibilities (e.g., "CEO", "Software Engineer", "Board Member", "Project Manager")
+    - publication: Papers, books, articles, reports (e.g., "Attention Is All You Need", "The Lean Startup", "Annual Report 2024")
+    - media: Movies, songs, artworks, creative works (e.g., "The Matrix", "Bohemian Rhapsody", "Mona Lisa")
+    - award: Awards, certifications, honors (e.g., "Nobel Prize", "ISO 9001", "Grammy Award", "Pulitzer Prize")
+    - standard: Specifications, protocols, regulations (e.g., "RFC 2616", "WCAG 2.1", "PCI DSS", "HIPAA")
+    - language: Programming or natural languages (e.g., "Python", "Mandarin", "SQL", "JavaScript")
     - other: Entities that don't fit above categories but are still significant named items
 
     ## Output format:
