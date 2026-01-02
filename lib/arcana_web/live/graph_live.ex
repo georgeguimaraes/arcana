@@ -36,6 +36,8 @@ defmodule ArcanaWeb.GraphLive do
        relationship_filter: "",
        relationship_type_filter: nil,
        relationship_strength_filter: nil,
+       selected_relationship: nil,
+       relationship_details: nil,
        community_filter: "",
        community_level_filter: nil
      )}
@@ -311,6 +313,42 @@ defmodule ArcanaWeb.GraphLive do
      |> load_relationships()}
   end
 
+  def handle_event("select_relationship", %{"id" => id}, socket) do
+    details = load_relationship_details(socket.assigns.repo, id)
+    {:noreply, assign(socket, selected_relationship: id, relationship_details: details)}
+  end
+
+  def handle_event("close_relationship_detail", _params, socket) do
+    {:noreply, assign(socket, selected_relationship: nil, relationship_details: nil)}
+  end
+
+  defp load_relationship_details(repo, relationship_id) do
+    relationship =
+      repo.one(
+        from(r in Relationship,
+          join: source in Entity,
+          on: source.id == r.source_id,
+          join: target in Entity,
+          on: target.id == r.target_id,
+          where: r.id == ^relationship_id,
+          select: %{
+            id: r.id,
+            type: r.type,
+            strength: r.strength,
+            description: r.description,
+            source_id: source.id,
+            source_name: source.name,
+            source_type: source.type,
+            target_id: target.id,
+            target_name: target.name,
+            target_type: target.type
+          }
+        )
+      )
+
+    %{relationship: relationship}
+  end
+
   defp load_entity_details(repo, entity_id) do
     # Load entity with relationships
     entity =
@@ -455,6 +493,8 @@ defmodule ArcanaWeb.GraphLive do
                 relationship_filter={@relationship_filter}
                 relationship_type_filter={@relationship_type_filter}
                 relationship_strength_filter={@relationship_strength_filter}
+                selected_relationship={@selected_relationship}
+                relationship_details={@relationship_details}
               />
             <% :communities -> %>
               <.communities_view communities={@communities} />
@@ -631,7 +671,12 @@ defmodule ArcanaWeb.GraphLive do
           </thead>
           <tbody>
             <%= for rel <- @relationships do %>
-              <tr id={"relationship-#{rel.id}"}>
+              <tr
+                id={"relationship-#{rel.id}"}
+                class={"arcana-relationship-row #{if @selected_relationship == rel.id, do: "selected", else: ""}"}
+                phx-click="select_relationship"
+                phx-value-id={rel.id}
+              >
                 <td><%= rel.source_name %></td>
                 <td><code><%= rel.type %></code></td>
                 <td><%= rel.target_name %></td>
@@ -640,6 +685,37 @@ defmodule ArcanaWeb.GraphLive do
             <% end %>
           </tbody>
         </table>
+      <% end %>
+
+      <%= if @relationship_details do %>
+        <.relationship_detail_panel details={@relationship_details} />
+      <% end %>
+    </div>
+    """
+  end
+
+  defp relationship_detail_panel(assigns) do
+    ~H"""
+    <div class="arcana-relationship-detail">
+      <div class="arcana-relationship-detail-header">
+        <div class="arcana-relationship-visual">
+          <span class="arcana-relationship-source"><%= @details.relationship.source_name %></span>
+          <span class="arcana-relationship-arrow">→</span>
+          <code class="arcana-relationship-type"><%= @details.relationship.type %></code>
+          <span class="arcana-relationship-arrow">→</span>
+          <span class="arcana-relationship-target"><%= @details.relationship.target_name %></span>
+        </div>
+        <button class="arcana-relationship-detail-close" phx-click="close_relationship_detail">
+          ×
+        </button>
+      </div>
+
+      <div class="arcana-relationship-strength">
+        <strong>Strength:</strong> <%= @details.relationship.strength || 5 %>/10
+      </div>
+
+      <%= if @details.relationship.description do %>
+        <p class="arcana-relationship-description"><%= @details.relationship.description %></p>
       <% end %>
     </div>
     """

@@ -1591,6 +1591,81 @@ defmodule ArcanaWeb.Assets do
     text-decoration: underline;
   }
 
+  /* Relationship detail panel */
+  .arcana-relationship-row {
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+
+  .arcana-relationship-row.selected {
+    background: #ede9fe;
+  }
+
+  .arcana-relationship-detail {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    background: #faf5ff;
+    border: 1px solid #e9d5ff;
+    border-radius: 0.5rem;
+  }
+
+  .arcana-relationship-detail-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+  }
+
+  .arcana-relationship-visual {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1rem;
+  }
+
+  .arcana-relationship-source,
+  .arcana-relationship-target {
+    font-weight: 600;
+    color: #1f2937;
+  }
+
+  .arcana-relationship-arrow {
+    color: #9ca3af;
+  }
+
+  .arcana-relationship-type {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    font-size: 0.875rem;
+    background: #ede9fe;
+    color: #6d28d9;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+  }
+
+  .arcana-relationship-detail-close {
+    background: transparent;
+    border: none;
+    font-size: 1.5rem;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .arcana-relationship-detail-close:hover {
+    color: #374151;
+  }
+
+  .arcana-relationship-strength {
+    margin-bottom: 0.75rem;
+    color: #4b5563;
+  }
+
+  .arcana-relationship-description {
+    color: #4b5563;
+    margin: 0;
+  }
+
   .arcana-empty-hint {
     font-size: 0.8125rem;
   }

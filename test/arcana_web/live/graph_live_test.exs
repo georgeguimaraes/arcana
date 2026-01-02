@@ -392,6 +392,50 @@ defmodule ArcanaWeb.GraphLiveTest do
       assert html =~ "CEO Smith"
       refute html =~ "Big Partner Corp"
     end
+
+    test "clicking relationship row expands detail panel", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=relationships")
+
+      view
+      |> element("tr[id^=relationship-]", "LEADS")
+      |> render_click()
+
+      assert has_element?(view, ".arcana-relationship-detail")
+    end
+
+    test "detail panel shows relationship info", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=relationships")
+
+      view
+      |> element("tr[id^=relationship-]", "LEADS")
+      |> render_click()
+
+      html = render(view)
+      # Shows source → relationship → target
+      assert html =~ "CEO Smith"
+      assert html =~ "LEADS"
+      assert html =~ "TechStartup Inc"
+      # Shows strength
+      assert html =~ "9/10"
+    end
+
+    test "clicking close button hides relationship detail panel", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=relationships")
+
+      # Open detail
+      view
+      |> element("tr[id^=relationship-]", "LEADS")
+      |> render_click()
+
+      assert has_element?(view, ".arcana-relationship-detail")
+
+      # Close it
+      view
+      |> element(".arcana-relationship-detail-close")
+      |> render_click()
+
+      refute has_element?(view, ".arcana-relationship-detail")
+    end
   end
 
   describe "CSS classes" do
