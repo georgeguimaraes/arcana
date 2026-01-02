@@ -10,6 +10,22 @@ GraphRAG enhances traditional vector search by building a knowledge graph from y
 - **Community summaries** - High-level context about clusters of related entities
 - **Fusion search** - Combine vector and graph results with Reciprocal Rank Fusion
 
+## Quick Start
+
+Once installed and configured, GraphRAG integrates seamlessly with the existing API:
+
+```elixir
+# Ingest with graph building - extracts entities and relationships automatically
+{:ok, document} = Arcana.ingest(content, repo: MyApp.Repo, graph: true)
+
+# Search with fusion - combines vector similarity + entity graph traversal
+{:ok, results} = Arcana.search("Who leads OpenAI?", repo: MyApp.Repo, graph: true)
+```
+
+When `graph: true` is enabled:
+- **Ingest** extracts entities (people, organizations, etc.) and relationships from each chunk
+- **Search** finds entities in your query, traverses the graph, and combines results with vector search using Reciprocal Rank Fusion (RRF)
+
 ## Installation
 
 GraphRAG requires additional database tables. Install them separately:

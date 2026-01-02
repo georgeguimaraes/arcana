@@ -748,6 +748,7 @@ Use explicit collections when:
 | **Re-ranking** | Filter chunks by LLM-scored relevance |
 | **Self-Correction** | Evaluate and refine answers for grounding |
 | **Agent Pipeline** | Rewrite → Select → Expand → Search → Rerank → Answer |
+| **GraphRAG** | Knowledge graph with entity extraction (pgvector only) |
 
 ### Next Steps
 
@@ -755,6 +756,7 @@ Use explicit collections when:
 2. Connect to pgvector for persistence
 3. Use a real LLM (OpenAI, Anthropic) for the agent
 4. Add to your Phoenix application with the dashboard
+5. Enable GraphRAG for entity-based retrieval (see [GraphRAG Guide](../guides/graphrag.md))
 
 ```elixir
 # Cleanup

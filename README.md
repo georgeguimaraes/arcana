@@ -279,6 +279,9 @@ See the [LLM Integration Guide](guides/llm-integration.md) for detailed examples
 
 # Ingest from file (supports .txt, .md, .pdf)
 {:ok, document} = Arcana.ingest_file("path/to/document.pdf", repo: MyApp.Repo)
+
+# With GraphRAG (extracts entities and relationships)
+{:ok, document} = Arcana.ingest(content, repo: MyApp.Repo, graph: true)
 ```
 
 ### Search
@@ -304,9 +307,13 @@ See the [LLM Integration Guide](guides/llm-integration.md) for detailed examples
   limit: 5,
   collection: "products"
 )
+
+# With GraphRAG (combines vector + graph search with RRF)
+{:ok, results} = Arcana.search("query", repo: MyApp.Repo, graph: true)
 ```
 
 See the [Search Algorithms Guide](guides/search-algorithms.md) for details on search modes.
+See the [GraphRAG Guide](guides/graphrag.md) for knowledge graph features.
 
 ### Ask (Simple RAG)
 
