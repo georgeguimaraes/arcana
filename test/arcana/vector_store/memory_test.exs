@@ -14,22 +14,22 @@ defmodule Arcana.VectorStore.MemoryTest do
 
   describe "store/5" do
     test "stores a vector with id and metadata", %{pid: pid} do
-      embedding = List.duplicate(0.5, 32)
+      embedding = List.duplicate(0.5, 384)
       metadata = %{text: "hello world", chunk_index: 0}
 
       assert :ok = Memory.store(pid, "default", "chunk-1", embedding, metadata)
     end
 
     test "stores multiple vectors in same collection", %{pid: pid} do
-      embedding1 = List.duplicate(0.5, 32)
-      embedding2 = List.duplicate(0.3, 32)
+      embedding1 = List.duplicate(0.5, 384)
+      embedding2 = List.duplicate(0.3, 384)
 
       assert :ok = Memory.store(pid, "default", "chunk-1", embedding1, %{text: "hello"})
       assert :ok = Memory.store(pid, "default", "chunk-2", embedding2, %{text: "world"})
     end
 
     test "stores vectors in different collections", %{pid: pid} do
-      embedding = List.duplicate(0.5, 32)
+      embedding = List.duplicate(0.5, 384)
 
       assert :ok = Memory.store(pid, "docs", "chunk-1", embedding, %{text: "doc"})
       assert :ok = Memory.store(pid, "products", "chunk-2", embedding, %{text: "product"})
@@ -38,7 +38,7 @@ defmodule Arcana.VectorStore.MemoryTest do
 
   describe "search/4" do
     test "returns empty list for empty collection", %{pid: pid} do
-      query = List.duplicate(0.5, 32)
+      query = List.duplicate(0.5, 384)
 
       assert [] = Memory.search(pid, "default", query, limit: 10)
     end
@@ -110,7 +110,7 @@ defmodule Arcana.VectorStore.MemoryTest do
 
   describe "delete/3" do
     test "removes vector from collection", %{pid: pid} do
-      embedding = List.duplicate(0.5, 32)
+      embedding = List.duplicate(0.5, 384)
       :ok = Memory.store(pid, "default", "chunk-1", embedding, %{text: "hello"})
 
       # Verify it's there
@@ -132,7 +132,7 @@ defmodule Arcana.VectorStore.MemoryTest do
 
   describe "clear/2" do
     test "removes all vectors from collection", %{pid: pid} do
-      embedding = List.duplicate(0.5, 32)
+      embedding = List.duplicate(0.5, 384)
       :ok = Memory.store(pid, "default", "chunk-1", embedding, %{text: "hello"})
       :ok = Memory.store(pid, "default", "chunk-2", embedding, %{text: "world"})
 
@@ -143,7 +143,7 @@ defmodule Arcana.VectorStore.MemoryTest do
     end
 
     test "only clears specified collection", %{pid: pid} do
-      embedding = List.duplicate(0.5, 32)
+      embedding = List.duplicate(0.5, 384)
       :ok = Memory.store(pid, "docs", "doc-1", embedding, %{text: "doc"})
       :ok = Memory.store(pid, "products", "prod-1", embedding, %{text: "product"})
 

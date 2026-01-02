@@ -112,6 +112,8 @@ defmodule Arcana.TelemetryTest do
   end
 
   describe "embed telemetry" do
+    # Requires real Nx.Serving - run with: mix test --include serving
+    @tag :serving
     test "emits [:arcana, :embed, :start] and [:arcana, :embed, :stop] events" do
       ref = make_ref()
       test_pid = self()
@@ -136,7 +138,7 @@ defmodule Arcana.TelemetryTest do
 
       assert_receive {:telemetry, [:arcana, :embed, :stop], stop_measurements, stop_metadata}
       assert is_integer(stop_measurements.duration)
-      assert stop_metadata.dimensions == 32
+      assert stop_metadata.dimensions == 384
 
       :telemetry.detach(ref)
     end

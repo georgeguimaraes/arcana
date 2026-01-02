@@ -25,7 +25,12 @@ defmodule Arcana.Embeddings.Serving do
     model = Keyword.get(opts, :model, @default_model)
     tokenizer_model = Keyword.get(opts, :tokenizer, model)
 
-    {:ok, model_info} = Bumblebee.load_model({:hf, model})
+    model_opts =
+      opts
+      |> Keyword.take([:module, :architecture])
+      |> Enum.into([])
+
+    {:ok, model_info} = Bumblebee.load_model({:hf, model}, model_opts)
     {:ok, tokenizer} = Bumblebee.load_tokenizer({:hf, tokenizer_model})
 
     serving =

@@ -28,8 +28,9 @@ defmodule ArcanaWeb.SearchLiveTest do
 
       {:ok, view, _html} = live(conn, "/arcana/search")
 
+      # Use fulltext mode since mock embeddings don't provide semantic similarity
       view
-      |> form("#search-form", %{"query" => "Elixir"})
+      |> form("#search-form", %{"query" => "Elixir", "mode" => "fulltext"})
       |> render_submit()
 
       html = render(view)

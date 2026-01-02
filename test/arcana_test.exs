@@ -81,7 +81,8 @@ defmodule ArcanaTest do
     end
 
     test "finds relevant chunks", %{doc1: doc1} do
-      {:ok, results} = Arcana.search("functional programming", repo: Repo)
+      # Use fulltext mode since mock embeddings don't provide semantic similarity
+      {:ok, results} = Arcana.search("functional programming", repo: Repo, mode: :fulltext)
 
       refute Enum.empty?(results)
       # First result should be from the Elixir document
@@ -100,7 +101,8 @@ defmodule ArcanaTest do
       {:ok, _scoped_doc} =
         Arcana.ingest("Ruby programming language", repo: Repo, source_id: "scope-a")
 
-      {:ok, results} = Arcana.search("programming", repo: Repo, source_id: "scope-a")
+      # Use fulltext mode since mock embeddings don't provide semantic similarity
+      {:ok, results} = Arcana.search("Ruby", repo: Repo, source_id: "scope-a", mode: :fulltext)
 
       refute Enum.empty?(results)
 
@@ -191,7 +193,9 @@ defmodule ArcanaTest do
           collection: "search-coll"
         )
 
-      {:ok, results} = Arcana.search("programming", repo: Repo, collection: "search-coll")
+      # Use fulltext mode since mock embeddings don't provide semantic similarity
+      {:ok, results} =
+        Arcana.search("Ruby", repo: Repo, collection: "search-coll", mode: :fulltext)
 
       refute Enum.empty?(results)
       assert Enum.all?(results, fn r -> String.contains?(r.text, "Ruby") end)
@@ -214,9 +218,13 @@ defmodule ArcanaTest do
       {:ok, _doc3} =
         Arcana.ingest("JavaScript is a web language", repo: Repo, collection: "search-coll-c")
 
-      # Search only in collections a and b
+      # Use fulltext mode and search for "language" which appears in all
       {:ok, results} =
-        Arcana.search("language", repo: Repo, collections: ["search-coll-a", "search-coll-b"])
+        Arcana.search("language",
+          repo: Repo,
+          collections: ["search-coll-a", "search-coll-b"],
+          mode: :fulltext
+        )
 
       refute Enum.empty?(results)
       texts = Enum.map(results, & &1.text)
@@ -284,10 +292,12 @@ defmodule ArcanaTest do
         {:ok, "Test answer"}
       end
 
+      # Use fulltext mode since mock embeddings don't provide semantic similarity
       {:ok, _answer, _results} =
-        Arcana.ask("Tell me about Paris",
+        Arcana.ask("Paris",
           repo: Repo,
-          llm: test_llm
+          llm: test_llm,
+          mode: :fulltext
         )
 
       assert_receive {:llm_called, prompt, context}
@@ -383,10 +393,11 @@ defmodule ArcanaTest do
       # Rewriter expands query and reports what it received
       rewriter = fn query ->
         send(test_pid, {:rewriter_called, query})
-        {:ok, "functional programming language"}
+        {:ok, "functional programming"}
       end
 
-      {:ok, results} = Arcana.search("xyz123", repo: Repo, rewriter: rewriter)
+      # Use fulltext mode since mock embeddings don't provide semantic similarity
+      {:ok, results} = Arcana.search("xyz123", repo: Repo, rewriter: rewriter, mode: :fulltext)
 
       # Verify rewriter was called with original query
       assert_receive {:rewriter_called, "xyz123"}
@@ -400,8 +411,8 @@ defmodule ArcanaTest do
         {:error, :failed}
       end
 
-      # Should fall back to original query, still find results
-      {:ok, results} = Arcana.search("Elixir", repo: Repo, rewriter: rewriter)
+      # Use fulltext mode; should fall back to original query, still find results
+      {:ok, results} = Arcana.search("Elixir", repo: Repo, rewriter: rewriter, mode: :fulltext)
 
       refute Enum.empty?(results)
     end

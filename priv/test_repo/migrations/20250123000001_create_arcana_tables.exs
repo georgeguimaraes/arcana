@@ -21,7 +21,7 @@ defmodule Arcana.TestRepo.Migrations.CreateArcanaTables do
     create table(:arcana_chunks, primary_key: false) do
       add :id, :binary_id, primary_key: true
       add :text, :text, null: false
-      add :embedding, :vector, size: 32, null: false
+      add :embedding, :vector, size: 384, null: false
       add :chunk_index, :integer, default: 0
       add :token_count, :integer
       add :metadata, :map, default: %{}

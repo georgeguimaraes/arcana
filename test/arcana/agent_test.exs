@@ -506,21 +506,34 @@ defmodule Arcana.AgentTest do
     end
 
     test "full pipeline from question to answer" do
+      # LLM answers based on whether context contains relevant info
       llm = fn prompt ->
-        if prompt =~ "BEAM" do
+        if prompt =~ "BEAM" or prompt =~ "Elixir" do
           {:ok, "Elixir runs on the BEAM VM."}
         else
-          {:ok, "Unknown"}
+          {:ok, "No relevant info found"}
         end
       end
 
-      # Query shares "Elixir", "programming", "language" with document
+      # Custom searcher using fulltext mode since mock embeddings don't provide semantic similarity
+      fulltext_searcher = fn question, collection, opts ->
+        repo = Keyword.fetch!(opts, :repo)
+        limit = Keyword.get(opts, :limit, 5)
+
+        Arcana.search(question,
+          repo: repo,
+          collection: collection,
+          limit: limit,
+          mode: :fulltext
+        )
+      end
+
       ctx =
-        Agent.new("What programming language is Elixir?",
+        Agent.new("Elixir",
           repo: Arcana.TestRepo,
           llm: llm
         )
-        |> Agent.search()
+        |> Agent.search(searcher: fulltext_searcher)
         |> Agent.answer()
 
       assert ctx.answer == "Elixir runs on the BEAM VM."
@@ -1574,16 +1587,29 @@ defmodule Arcana.AgentTest do
         end
       end
 
+      # Custom searcher using fulltext mode since mock embeddings don't provide semantic similarity
+      fulltext_searcher = fn question, collection, opts ->
+        repo = Keyword.fetch!(opts, :repo)
+        limit = Keyword.get(opts, :limit, 5)
+
+        Arcana.search(question,
+          repo: repo,
+          collection: collection,
+          limit: limit,
+          mode: :fulltext
+        )
+      end
+
       ctx =
         %Context{
-          question: "What is Elixir?",
+          question: "Elixir",
           repo: Arcana.TestRepo,
           llm: llm,
           limit: 10,
           threshold: 0.0,
           collections: ["test-rerank"]
         }
-        |> Agent.search()
+        |> Agent.search(searcher: fulltext_searcher)
         |> Agent.rerank(threshold: 7)
 
       # Should filter out the weather chunk
@@ -1610,16 +1636,28 @@ defmodule Arcana.AgentTest do
         end
       end
 
+      fulltext_searcher = fn question, collection, opts ->
+        repo = Keyword.fetch!(opts, :repo)
+        limit = Keyword.get(opts, :limit, 5)
+
+        Arcana.search(question,
+          repo: repo,
+          collection: collection,
+          limit: limit,
+          mode: :fulltext
+        )
+      end
+
       ctx =
         %Context{
-          question: "BEAM VM",
+          question: "BEAM Elixir",
           repo: Arcana.TestRepo,
           llm: llm,
           limit: 10,
           threshold: 0.0,
           collections: ["test-rerank"]
         }
-        |> Agent.search()
+        |> Agent.search(searcher: fulltext_searcher)
         |> Agent.rerank(threshold: 7)
 
       all_chunks = Enum.flat_map(ctx.results, & &1.chunks)
@@ -1636,6 +1674,18 @@ defmodule Arcana.AgentTest do
         end
       end
 
+      fulltext_searcher = fn question, collection, opts ->
+        repo = Keyword.fetch!(opts, :repo)
+        limit = Keyword.get(opts, :limit, 5)
+
+        Arcana.search(question,
+          repo: repo,
+          collection: collection,
+          limit: limit,
+          mode: :fulltext
+        )
+      end
+
       ctx =
         %Context{
           question: "Elixir",
@@ -1645,7 +1695,7 @@ defmodule Arcana.AgentTest do
           threshold: 0.0,
           collections: ["test-rerank"]
         }
-        |> Agent.search()
+        |> Agent.search(searcher: fulltext_searcher)
         |> Agent.rerank()
 
       # Should have reranked results
@@ -1665,16 +1715,28 @@ defmodule Arcana.AgentTest do
 
       llm = fn _prompt -> {:ok, "response"} end
 
+      fulltext_searcher = fn question, collection, opts ->
+        repo = Keyword.fetch!(opts, :repo)
+        limit = Keyword.get(opts, :limit, 5)
+
+        Arcana.search(question,
+          repo: repo,
+          collection: collection,
+          limit: limit,
+          mode: :fulltext
+        )
+      end
+
       ctx =
         %Context{
-          question: "Elixir programming",
+          question: "Elixir",
           repo: Arcana.TestRepo,
           llm: llm,
           limit: 10,
           threshold: 0.0,
           collections: ["test-rerank"]
         }
-        |> Agent.search()
+        |> Agent.search(searcher: fulltext_searcher)
         |> Agent.rerank(reranker: TestReranker)
 
       # Reranker was called (chunks are reversed)
@@ -1690,16 +1752,28 @@ defmodule Arcana.AgentTest do
         {:ok, filtered}
       end
 
+      fulltext_searcher = fn question, collection, opts ->
+        repo = Keyword.fetch!(opts, :repo)
+        limit = Keyword.get(opts, :limit, 5)
+
+        Arcana.search(question,
+          repo: repo,
+          collection: collection,
+          limit: limit,
+          mode: :fulltext
+        )
+      end
+
       ctx =
         %Context{
-          question: "programming language",
+          question: "Elixir",
           repo: Arcana.TestRepo,
           llm: llm,
           limit: 10,
           threshold: 0.0,
           collections: ["test-rerank"]
         }
-        |> Agent.search()
+        |> Agent.search(searcher: fulltext_searcher)
         |> Agent.rerank(reranker: custom_reranker)
 
       all_chunks = Enum.flat_map(ctx.results, & &1.chunks)

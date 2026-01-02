@@ -1,14 +1,18 @@
 defmodule Arcana.Embeddings.ServingTest do
   use ExUnit.Case, async: true
 
+  # These tests require real Nx.Serving with loaded models
+  # Run with: mix test --include serving
+  @moduletag :serving
+
   alias Arcana.Embeddings.Serving
 
   describe "embed/1" do
-    test "returns 32-dimensional vector for text" do
+    test "returns 384-dimensional vector for text" do
       embedding = Serving.embed("Hello world")
 
       assert is_list(embedding)
-      assert length(embedding) == 32
+      assert length(embedding) == 384
       assert Enum.all?(embedding, &is_float/1)
     end
 
@@ -35,7 +39,7 @@ defmodule Arcana.Embeddings.ServingTest do
       embeddings = Serving.embed_batch(texts)
 
       assert length(embeddings) == 3
-      assert Enum.all?(embeddings, fn e -> length(e) == 32 end)
+      assert Enum.all?(embeddings, fn e -> length(e) == 384 end)
     end
   end
 

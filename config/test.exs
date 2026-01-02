@@ -1,15 +1,27 @@
 import Config
 
-# Use Nx.BinaryBackend for tests (no EXLA/EMLX needed)
-config :nx,
-  default_backend: Nx.BinaryBackend,
-  default_defn_options: [compiler: Nx.Defn.Evaluator]
+# Mock embedder for tests - generates deterministic 384-dim embeddings based on text hash
+# This is much faster than real embeddings and sufficient for testing RAG functionality
+mock_embedder = fn text ->
+  # Use hash of text to generate deterministic pseudo-random embeddings
+  hash = :erlang.phash2(text, 1_000_000)
+  :rand.seed(:exsss, {hash, hash * 2, hash * 3})
 
-# Tiny model for fast tests (32 dimensions)
+  embedding =
+    for _ <- 1..384 do
+      :rand.uniform() * 2 - 1
+    end
+
+  # Normalize to unit length
+  norm = :math.sqrt(Enum.reduce(embedding, 0, fn x, acc -> acc + x * x end))
+  normalized = Enum.map(embedding, fn x -> x / norm end)
+
+  {:ok, normalized}
+end
+
 config :arcana,
   repo: Arcana.TestRepo,
-  test_model: "hf-internal-testing/tiny-random-bert",
-  test_dimensions: 32
+  embedder: mock_embedder
 
 config :arcana, Arcana.TestRepo,
   username: System.get_env("POSTGRES_USER", "postgres"),
