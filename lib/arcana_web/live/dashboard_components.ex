@@ -30,6 +30,7 @@ defmodule ArcanaWeb.DashboardComponents do
       <nav class="arcana-tabs">
         <.nav_link href="/arcana/documents" active={@current_tab == :documents}>Documents</.nav_link>
         <.nav_link href="/arcana/collections" active={@current_tab == :collections}>Collections</.nav_link>
+        <.nav_link href="/arcana/graph" active={@current_tab == :graph}>Graph</.nav_link>
         <.nav_link href="/arcana/search" active={@current_tab == :search}>Search</.nav_link>
         <.nav_link href="/arcana/ask" active={@current_tab == :ask}>Ask</.nav_link>
         <.nav_link href="/arcana/evaluation" active={@current_tab == :evaluation}>Evaluation</.nav_link>

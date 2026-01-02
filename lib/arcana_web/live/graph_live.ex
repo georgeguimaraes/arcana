@@ -1,0 +1,453 @@
+defmodule ArcanaWeb.GraphLive do
+  @moduledoc """
+  LiveView for exploring the GraphRAG knowledge graph.
+
+  Provides three sub-views:
+  - Entities: Browse and search entities with their relationships and source chunks
+  - Relationships: Explore entity relationships with strength indicators
+  - Communities: View community clusters with LLM-generated summaries
+  """
+  use Phoenix.LiveView
+
+  import ArcanaWeb.DashboardComponents
+  import Ecto.Query
+
+  alias Arcana.Graph.{Community, Entity, EntityMention, Relationship}
+
+  @impl true
+  def mount(_params, session, socket) do
+    repo = get_repo_from_session(session)
+
+    {:ok,
+     socket
+     |> assign(repo: repo)
+     |> assign(
+       current_subtab: :entities,
+       selected_collection: nil,
+       collections: [],
+       entities: [],
+       relationships: [],
+       communities: [],
+       stats: nil,
+       entity_filter: "",
+       entity_type_filter: nil,
+       relationship_filter: "",
+       relationship_type_filter: nil,
+       relationship_strength_filter: nil,
+       community_filter: "",
+       community_level_filter: nil
+     )}
+  end
+
+  @impl true
+  def handle_params(params, _uri, socket) do
+    subtab =
+      case params["tab"] do
+        "relationships" -> :relationships
+        "communities" -> :communities
+        _ -> :entities
+      end
+
+    selected_collection = params["collection"]
+
+    {:noreply,
+     socket
+     |> assign(current_subtab: subtab, selected_collection: selected_collection)
+     |> load_data()}
+  end
+
+  defp load_data(socket) do
+    repo = socket.assigns.repo
+
+    socket
+    |> assign(stats: load_stats(repo))
+    |> load_collections_with_graph_status()
+    |> load_subtab_data()
+  end
+
+  defp load_collections_with_graph_status(socket) do
+    repo = socket.assigns.repo
+
+    collections =
+      repo.all(
+        from(c in Arcana.Collection,
+          left_join: e in Entity,
+          on: e.collection_id == c.id,
+          group_by: c.id,
+          order_by: c.name,
+          select: %{
+            id: c.id,
+            name: c.name,
+            description: c.description,
+            entity_count: count(e.id, :distinct)
+          }
+        )
+      )
+      |> Enum.map(fn c ->
+        Map.put(c, :graph_enabled, c.entity_count > 0)
+      end)
+
+    assign(socket, collections: collections)
+  end
+
+  defp load_subtab_data(%{assigns: %{current_subtab: :entities}} = socket) do
+    load_entities(socket)
+  end
+
+  defp load_subtab_data(%{assigns: %{current_subtab: :relationships}} = socket) do
+    load_relationships(socket)
+  end
+
+  defp load_subtab_data(%{assigns: %{current_subtab: :communities}} = socket) do
+    load_communities(socket)
+  end
+
+  defp load_entities(socket) do
+    repo = socket.assigns.repo
+    selected = socket.assigns.selected_collection
+
+    query =
+      from(e in Entity,
+        join: c in Arcana.Collection,
+        on: c.id == e.collection_id,
+        left_join: m in EntityMention,
+        on: m.entity_id == e.id,
+        left_join: r in Relationship,
+        on: r.source_id == e.id or r.target_id == e.id,
+        group_by: [e.id, c.name],
+        order_by: [desc: count(m.id, :distinct)],
+        limit: 50,
+        select: %{
+          id: e.id,
+          name: e.name,
+          type: e.type,
+          collection: c.name,
+          mention_count: count(m.id, :distinct),
+          relationship_count: count(r.id, :distinct)
+        }
+      )
+
+    query =
+      if selected do
+        where(query, [e, c], c.name == ^selected)
+      else
+        query
+      end
+
+    entities = repo.all(query)
+    assign(socket, entities: entities)
+  end
+
+  defp load_relationships(socket) do
+    repo = socket.assigns.repo
+    selected = socket.assigns.selected_collection
+
+    query =
+      from(r in Relationship,
+        join: source in Entity,
+        on: source.id == r.source_id,
+        join: target in Entity,
+        on: target.id == r.target_id,
+        join: c in Arcana.Collection,
+        on: c.id == source.collection_id,
+        order_by: [desc: r.strength],
+        limit: 50,
+        select: %{
+          id: r.id,
+          type: r.type,
+          strength: r.strength,
+          description: r.description,
+          source_id: source.id,
+          source_name: source.name,
+          source_type: source.type,
+          target_id: target.id,
+          target_name: target.name,
+          target_type: target.type,
+          collection: c.name
+        }
+      )
+
+    query =
+      if selected do
+        where(query, [r, source, target, c], c.name == ^selected)
+      else
+        query
+      end
+
+    relationships = repo.all(query)
+    assign(socket, relationships: relationships)
+  end
+
+  defp load_communities(socket) do
+    repo = socket.assigns.repo
+    selected = socket.assigns.selected_collection
+
+    query =
+      from(comm in Community,
+        join: coll in Arcana.Collection,
+        on: coll.id == comm.collection_id,
+        order_by: [asc: comm.level, desc: comm.updated_at],
+        limit: 50,
+        select: %{
+          id: comm.id,
+          level: comm.level,
+          summary: comm.summary,
+          entity_ids: comm.entity_ids,
+          collection: coll.name,
+          dirty: comm.dirty
+        }
+      )
+
+    query =
+      if selected do
+        where(query, [comm, coll], coll.name == ^selected)
+      else
+        query
+      end
+
+    communities =
+      repo.all(query)
+      |> Enum.map(fn c ->
+        Map.put(c, :entity_count, length(c.entity_ids || []))
+      end)
+
+    assign(socket, communities: communities)
+  end
+
+  @impl true
+  def handle_event("switch_subtab", %{"tab" => tab}, socket) do
+    {:noreply, push_patch(socket, to: build_path(socket, tab: tab))}
+  end
+
+  def handle_event("select_collection", %{"collection" => ""}, socket) do
+    {:noreply, push_patch(socket, to: build_path(socket, collection: nil))}
+  end
+
+  def handle_event("select_collection", %{"collection" => collection}, socket) do
+    {:noreply, push_patch(socket, to: build_path(socket, collection: collection))}
+  end
+
+  defp build_path(socket, overrides) do
+    tab = Keyword.get(overrides, :tab, Atom.to_string(socket.assigns.current_subtab))
+
+    collection =
+      case Keyword.fetch(overrides, :collection) do
+        {:ok, nil} -> nil
+        {:ok, c} -> c
+        :error -> socket.assigns.selected_collection
+      end
+
+    params =
+      [tab: tab, collection: collection]
+      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+      |> Enum.into(%{})
+
+    "/arcana/graph?" <> URI.encode_query(params)
+  end
+
+  defp has_any_graph_data?(collections) do
+    Enum.any?(collections, & &1.graph_enabled)
+  end
+
+  @impl true
+  def render(assigns) do
+    ~H"""
+    <.dashboard_layout stats={@stats} current_tab={:graph}>
+      <div class="arcana-graph">
+        <h2>Graph</h2>
+        <p class="arcana-tab-description">
+          Explore entities, relationships, and communities extracted from your documents.
+        </p>
+
+        <div class="arcana-collection-selector">
+          <label>Collection:</label>
+          <select phx-change="select_collection" name="collection">
+            <option value="">All Collections</option>
+            <%= for coll <- @collections do %>
+              <option value={coll.name} selected={@selected_collection == coll.name}>
+                <%= coll.name %>
+                <%= if coll.graph_enabled, do: "✓", else: "✗" %>
+              </option>
+            <% end %>
+          </select>
+        </div>
+
+        <%= if not has_any_graph_data?(@collections) do %>
+          <div class="arcana-empty-state">
+            <h3>No Graph Data Yet</h3>
+            <p>Enable GraphRAG during document ingestion:</p>
+            <pre><code>Arcana.ingest(text, repo: Repo, graph: true)</code></pre>
+            <p>This extracts entities and relationships to enhance search.</p>
+          </div>
+        <% else %>
+          <div class="arcana-graph-subtabs">
+            <button
+              class={"arcana-subtab-btn #{if @current_subtab == :entities, do: "active", else: ""}"}
+              phx-click="switch_subtab"
+              phx-value-tab="entities"
+            >
+              Entities
+            </button>
+            <button
+              class={"arcana-subtab-btn #{if @current_subtab == :relationships, do: "active", else: ""}"}
+              phx-click="switch_subtab"
+              phx-value-tab="relationships"
+            >
+              Relationships
+            </button>
+            <button
+              class={"arcana-subtab-btn #{if @current_subtab == :communities, do: "active", else: ""}"}
+              phx-click="switch_subtab"
+              phx-value-tab="communities"
+            >
+              Communities
+            </button>
+          </div>
+
+          <%= case @current_subtab do %>
+            <% :entities -> %>
+              <.entities_view entities={@entities} />
+            <% :relationships -> %>
+              <.relationships_view relationships={@relationships} />
+            <% :communities -> %>
+              <.communities_view communities={@communities} />
+          <% end %>
+        <% end %>
+      </div>
+    </.dashboard_layout>
+    """
+  end
+
+  defp entities_view(assigns) do
+    ~H"""
+    <div class="arcana-entities-view">
+      <%= if Enum.empty?(@entities) do %>
+        <div class="arcana-empty">No entities found in this collection.</div>
+      <% else %>
+        <table class="arcana-table arcana-graph-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Mentions</th>
+              <th>Relationships</th>
+            </tr>
+          </thead>
+          <tbody>
+            <%= for entity <- @entities do %>
+              <tr id={"entity-#{entity.id}"}>
+                <td><%= entity.name %></td>
+                <td>
+                  <span class={"arcana-entity-type-badge #{entity.type}"}>
+                    <%= entity.type %>
+                  </span>
+                </td>
+                <td><%= entity.mention_count %></td>
+                <td><%= entity.relationship_count %></td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp relationships_view(assigns) do
+    ~H"""
+    <div class="arcana-relationships-view">
+      <%= if Enum.empty?(@relationships) do %>
+        <div class="arcana-empty">No relationships found in this collection.</div>
+      <% else %>
+        <table class="arcana-table arcana-graph-table">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Relationship</th>
+              <th>Target</th>
+              <th>Strength</th>
+            </tr>
+          </thead>
+          <tbody>
+            <%= for rel <- @relationships do %>
+              <tr id={"relationship-#{rel.id}"}>
+                <td><%= rel.source_name %></td>
+                <td><code><%= rel.type %></code></td>
+                <td><%= rel.target_name %></td>
+                <td><.strength_meter value={rel.strength || 5} /></td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp communities_view(assigns) do
+    ~H"""
+    <div class="arcana-communities-view">
+      <%= if Enum.empty?(@communities) do %>
+        <div class="arcana-empty">
+          <p>No Communities Detected</p>
+          <p class="arcana-empty-hint">
+            Communities are generated when there are enough entities
+            and relationships to form meaningful clusters.
+          </p>
+        </div>
+      <% else %>
+        <table class="arcana-table arcana-graph-table">
+          <thead>
+            <tr>
+              <th>Community</th>
+              <th>Level</th>
+              <th>Entities</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <%= for community <- @communities do %>
+              <tr id={"community-#{community.id}"}>
+                <td>
+                  <%= if community.summary do %>
+                    <%= String.slice(community.summary, 0, 50) %><%= if String.length(community.summary || "") > 50, do: "...", else: "" %>
+                  <% else %>
+                    <span class="arcana-no-summary">No summary</span>
+                  <% end %>
+                </td>
+                <td><%= community.level %></td>
+                <td><%= community.entity_count %></td>
+                <td>
+                  <%= cond do %>
+                    <% community.dirty -> %>
+                      <span class="arcana-status-pending" title="Pending regeneration">⟳</span>
+                    <% community.summary -> %>
+                      <span class="arcana-status-ready" title="Summary ready">✓</span>
+                    <% true -> %>
+                      <span class="arcana-status-empty" title="No summary">○</span>
+                  <% end %>
+                </td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp strength_meter(assigns) do
+    value = assigns.value || 5
+    filled = min(max(round(value), 0), 10)
+
+    assigns = assign(assigns, filled: filled)
+
+    ~H"""
+    <span class="arcana-strength-meter" title={"Strength: #{@value}/10"}>
+      <%= for i <- 1..10 do %>
+        <span class={"arcana-strength-dot #{if i <= @filled, do: "filled", else: ""}"}></span>
+      <% end %>
+    </span>
+    """
+  end
+end

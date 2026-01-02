@@ -65,6 +65,7 @@ defmodule ArcanaWeb.Router do
           # Separate pages for each tab
           live("/documents", ArcanaWeb.DocumentsLive, :index, route_opts)
           live("/collections", ArcanaWeb.CollectionsLive, :index, route_opts)
+          live("/graph", ArcanaWeb.GraphLive, :index, route_opts)
           live("/search", ArcanaWeb.SearchLive, :index, route_opts)
           live("/ask", ArcanaWeb.AskLive, :index, route_opts)
           live("/evaluation", ArcanaWeb.EvaluationLive, :index, route_opts)
