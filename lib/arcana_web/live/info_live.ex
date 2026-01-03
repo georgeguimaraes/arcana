@@ -401,14 +401,14 @@ defmodule ArcanaWeb.InfoLive do
               </div>
             </div>
           </div>
-        </div>
 
-        <div class="arcana-info-section arcana-info-full">
-          <h3>Repository</h3>
-          <div class="arcana-doc-info">
-            <div class="arcana-doc-field">
-              <label>Module</label>
-              <code><%= inspect(@config_info.repo) %></code>
+          <div class="arcana-info-section">
+            <h3>Repository</h3>
+            <div class="arcana-doc-info">
+              <div class="arcana-doc-field">
+                <label>Module</label>
+                <code><%= inspect(@config_info.repo) %></code>
+              </div>
             </div>
           </div>
         </div>
