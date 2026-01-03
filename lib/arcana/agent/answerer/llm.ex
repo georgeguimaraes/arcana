@@ -35,10 +35,11 @@ defmodule Arcana.Agent.Answerer.LLM do
   def answer(question, chunks, opts) do
     llm = Keyword.fetch!(opts, :llm)
     prompt_fn = Keyword.get(opts, :prompt)
+    skip_retrieval = Keyword.get(opts, :skip_retrieval, false)
 
     prompt =
       case prompt_fn do
-        nil -> default_prompt(question, chunks)
+        nil -> default_prompt(question, chunks, skip_retrieval)
         custom_fn -> custom_fn.(question, chunks)
       end
 
@@ -48,16 +49,25 @@ defmodule Arcana.Agent.Answerer.LLM do
     end
   end
 
-  defp default_prompt(question, chunks) do
+  defp default_prompt(question, _chunks, true) do
+    # No context prompt - used when skip_retrieval is true
+    """
+    Question: "#{question}"
+
+    Answer the question directly based on your knowledge.
+    """
+  end
+
+  defp default_prompt(question, chunks, _skip_retrieval) do
     reference_material = Enum.map_join(chunks, "\n\n---\n\n", & &1.text)
 
     """
-    Reference material:
+    Context:
     #{reference_material}
 
     Question: "#{question}"
 
-    Answer the question directly and naturally. Use the reference material to inform your answer, but don't mention or reference it explicitly. If you don't have enough information to answer, simply say you don't know.
+    Answer the question directly and naturally. Use the context to inform your answer, but don't mention or reference it explicitly. If you don't have enough information to answer, simply say you don't know.
     """
   end
 end

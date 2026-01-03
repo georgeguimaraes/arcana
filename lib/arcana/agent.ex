@@ -72,6 +72,92 @@ defmodule Arcana.Agent do
   end
 
   @doc """
+  Decides whether retrieval is needed for the question.
+
+  Uses the LLM to determine if the question can be answered from general
+  knowledge or if it requires searching the knowledge base. Questions
+  about basic facts, math, or general knowledge can skip retrieval.
+
+  Sets `skip_retrieval: true` on the context if retrieval can be skipped,
+  which causes `answer/2` to generate a response without context.
+
+  ## Options
+
+  - `:prompt` - Custom prompt function `fn question -> prompt_string end`
+  - `:llm` - Override the LLM function for this step
+
+  ## Example
+
+      ctx
+      |> Agent.gate()      # Decides if retrieval is needed
+      |> Agent.search()    # Skipped if skip_retrieval is true
+      |> Agent.answer()    # Uses no-context prompt if skip_retrieval
+
+  """
+  def gate(ctx, opts \\ [])
+
+  def gate(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
+
+  def gate(%Context{} = ctx, opts) do
+    start_metadata = %{question: ctx.question}
+
+    :telemetry.span([:arcana, :agent, :gate], start_metadata, fn ->
+      llm = Keyword.get(opts, :llm, ctx.llm)
+      custom_prompt_fn = Keyword.get(opts, :prompt)
+
+      {skip_retrieval, reasoning} = evaluate_gate(llm, ctx.question, custom_prompt_fn)
+
+      updated_ctx = %{ctx | skip_retrieval: skip_retrieval, gate_reasoning: reasoning}
+
+      stop_metadata = %{skip_retrieval: skip_retrieval}
+
+      {updated_ctx, stop_metadata}
+    end)
+  end
+
+  defp evaluate_gate(llm, question, custom_prompt_fn) do
+    prompt =
+      if custom_prompt_fn do
+        custom_prompt_fn.(question)
+      else
+        default_gate_prompt(question)
+      end
+
+    case llm.(prompt) do
+      {:ok, response} -> parse_gate_response(response)
+      {:error, _} -> {false, nil}
+    end
+  end
+
+  defp default_gate_prompt(question) do
+    """
+    Determine if this question requires searching a knowledge base, or if it can be answered from general knowledge.
+
+    Question: #{question}
+
+    Respond with JSON only:
+    {"needs_retrieval": true/false, "reasoning": "brief explanation"}
+
+    - Set needs_retrieval to false for: basic facts, math, general knowledge, definitions
+    - Set needs_retrieval to true for: domain-specific questions, current events, specific documents
+    """
+  end
+
+  defp parse_gate_response(response) do
+    case Jason.decode(response) do
+      {:ok, %{"needs_retrieval" => needs_retrieval, "reasoning" => reasoning}} ->
+        {not needs_retrieval, reasoning}
+
+      {:ok, %{"needs_retrieval" => needs_retrieval}} ->
+        {not needs_retrieval, nil}
+
+      _ ->
+        # Default to retrieval on parse failure
+        {false, nil}
+    end
+  end
+
+  @doc """
   Rewrites conversational input into a clear search query.
 
   Uses the LLM to remove conversational noise (greetings, filler phrases)
@@ -474,10 +560,6 @@ defmodule Arcana.Agent do
 
   def search(%Context{} = ctx, opts) do
     searcher = Keyword.get(opts, :searcher, Arcana.Agent.Searcher.Arcana)
-    self_correct = Keyword.get(opts, :self_correct, false)
-    max_iterations = Keyword.get(opts, :max_iterations, 3)
-    sufficient_prompt_fn = Keyword.get(opts, :sufficient_prompt)
-    rewrite_prompt_fn = Keyword.get(opts, :rewrite_prompt)
 
     # Collection priority: option > ctx.collections > default
     collections =
@@ -492,39 +574,26 @@ defmodule Arcana.Agent do
       question: ctx.question,
       sub_questions: ctx.sub_questions,
       collections: collections,
-      searcher: searcher_name(searcher),
-      self_correct: self_correct
+      searcher: searcher_name(searcher)
     }
 
     :telemetry.span([:arcana, :agent, :search], start_metadata, fn ->
       questions = ctx.sub_questions || [ctx.expanded_query || ctx.question]
-
-      search_opts = %{
-        searcher: searcher,
-        searcher_opts: [repo: ctx.repo, limit: ctx.limit, threshold: ctx.threshold],
-        sufficient_prompt: sufficient_prompt_fn,
-        rewrite_prompt: rewrite_prompt_fn
-      }
+      searcher_opts = [repo: ctx.repo, limit: ctx.limit, threshold: ctx.threshold]
 
       results =
         for question <- questions,
             collection <- collections do
-          if self_correct do
-            do_self_correcting_search(ctx, question, collection, max_iterations, search_opts)
-          else
-            chunks = do_simple_search(searcher, question, collection, search_opts.searcher_opts)
-            %{question: question, collection: collection, chunks: chunks, iterations: 1}
-          end
+          chunks = do_simple_search(searcher, question, collection, searcher_opts)
+          %{question: question, collection: collection, chunks: chunks}
         end
 
       updated_ctx = %{ctx | results: results}
       total_chunks = results |> Enum.flat_map(& &1.chunks) |> length()
-      total_iterations = results |> Enum.map(& &1.iterations) |> Enum.sum()
 
       stop_metadata = %{
         result_count: length(results),
-        total_chunks: total_chunks,
-        total_iterations: total_iterations
+        total_chunks: total_chunks
       }
 
       {updated_ctx, stop_metadata}
@@ -548,128 +617,205 @@ defmodule Arcana.Agent do
     end
   end
 
-  defp do_self_correcting_search(ctx, question, collection, max_iterations, search_opts) do
-    do_self_correcting_search(ctx, question, collection, max_iterations, search_opts, 1)
+  @doc """
+  Evaluates if search results are sufficient and searches again if not.
+
+  This step implements multi-hop reasoning by:
+  1. Asking the LLM if current results can answer the question
+  2. If not, getting a follow-up query and searching again
+  3. Repeating until sufficient or max iterations reached
+
+  Tracks `queries_tried` to prevent searching the same query twice.
+
+  ## Options
+
+  - `:max_iterations` - Maximum additional searches (default: 2)
+  - `:prompt` - Custom prompt function `fn question, chunks -> prompt_string end`
+  - `:llm` - Override the LLM function for this step
+
+  ## Example
+
+      ctx
+      |> Agent.search()
+      |> Agent.reason()    # Multi-hop if needed
+      |> Agent.rerank()
+      |> Agent.answer()
+
+  """
+  def reason(ctx, opts \\ [])
+
+  def reason(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
+
+  def reason(%Context{} = ctx, opts) do
+    start_metadata = %{question: ctx.question}
+
+    :telemetry.span([:arcana, :agent, :reason], start_metadata, fn ->
+      llm = Keyword.get(opts, :llm, ctx.llm)
+      max_iterations = Keyword.get(opts, :max_iterations, 2)
+      custom_prompt_fn = Keyword.get(opts, :prompt)
+
+      # Initialize queries_tried if not set
+      queries_tried = ctx.queries_tried || MapSet.new([ctx.question])
+
+      updated_ctx = do_reason_loop(ctx, llm, custom_prompt_fn, max_iterations, queries_tried, 0)
+
+      stop_metadata = %{iterations: updated_ctx.reason_iterations}
+
+      {updated_ctx, stop_metadata}
+    end)
   end
 
-  defp do_self_correcting_search(
-         _ctx,
-         question,
-         collection,
-         max_iterations,
-         search_opts,
-         iteration
-       )
-       when iteration > max_iterations do
-    # Max iterations reached, return best effort
-    chunks =
-      do_simple_search(search_opts.searcher, question, collection, search_opts.searcher_opts)
-
-    %{question: question, collection: collection, chunks: chunks, iterations: max_iterations}
+  defp do_reason_loop(ctx, _llm, _prompt_fn, max_iterations, queries_tried, iteration)
+       when iteration >= max_iterations do
+    %{ctx | queries_tried: queries_tried, reason_iterations: iteration}
   end
 
-  defp do_self_correcting_search(
-         ctx,
-         question,
-         collection,
-         max_iterations,
-         search_opts,
-         iteration
-       ) do
-    chunks =
-      do_simple_search(search_opts.searcher, question, collection, search_opts.searcher_opts)
+  defp do_reason_loop(ctx, llm, prompt_fn, max_iterations, queries_tried, iteration) do
+    all_chunks =
+      (ctx.results || [])
+      |> Enum.flat_map(& &1.chunks)
 
-    if sufficient_results?(ctx, question, chunks, search_opts.sufficient_prompt) do
-      %{question: question, collection: collection, chunks: chunks, iterations: iteration}
-    else
-      case rewrite_query(ctx, question, chunks, search_opts.rewrite_prompt) do
-        {:ok, rewritten_query} ->
-          do_self_correcting_search(
-            ctx,
-            rewritten_query,
-            collection,
+    case evaluate_sufficiency(llm, ctx.question, all_chunks, prompt_fn) do
+      {:sufficient, _reasoning} ->
+        %{ctx | queries_tried: queries_tried, reason_iterations: iteration}
+
+      {:insufficient, follow_up_query} ->
+        if MapSet.member?(queries_tried, follow_up_query) do
+          # Already tried this query, stop
+          %{ctx | queries_tried: queries_tried, reason_iterations: iteration}
+        else
+          # Search with follow-up query
+          updated_queries = MapSet.put(queries_tried, follow_up_query)
+
+          new_results = do_additional_search(ctx, follow_up_query)
+          merged_results = merge_results(ctx.results, new_results)
+          updated_ctx = %{ctx | results: merged_results}
+
+          do_reason_loop(
+            updated_ctx,
+            llm,
+            prompt_fn,
             max_iterations,
-            search_opts,
+            updated_queries,
             iteration + 1
           )
-
-        {:error, _} ->
-          # Can't rewrite, return what we have
-          %{question: question, collection: collection, chunks: chunks, iterations: iteration}
-      end
-    end
-  end
-
-  defp sufficient_results?(ctx, question, chunks, custom_prompt_fn) do
-    prompt =
-      case custom_prompt_fn do
-        nil -> default_sufficient_prompt(question, chunks)
-        fn_ref -> fn_ref.(question, chunks)
-      end
-
-    case Arcana.LLM.complete(ctx.llm, prompt, [], []) do
-      {:ok, response} ->
-        case JSON.decode(response) do
-          {:ok, %{"sufficient" => true}} -> true
-          {:ok, %{"sufficient" => false}} -> false
-          _ -> true
         end
 
-      {:error, _} ->
-        # On error, assume sufficient to avoid infinite loops
-        true
+      :error ->
+        # On error, accept what we have
+        %{ctx | queries_tried: queries_tried, reason_iterations: iteration}
     end
   end
 
-  defp default_sufficient_prompt(question, chunks) do
-    chunks_text = Enum.map_join(chunks, "\n---\n", & &1.text)
-
-    """
-    Question: "#{question}"
-
-    Retrieved chunks:
-    #{chunks_text}
-
-    Are these chunks sufficient to answer the question?
-    Return JSON only: {"sufficient": true} or {"sufficient": false, "reasoning": "..."}
-    """
-  end
-
-  defp rewrite_query(ctx, question, chunks, custom_prompt_fn) do
+  defp evaluate_sufficiency(llm, question, chunks, custom_prompt_fn) do
     prompt =
-      case custom_prompt_fn do
-        nil -> default_rewrite_prompt(question, chunks)
-        fn_ref -> fn_ref.(question, chunks)
+      if custom_prompt_fn do
+        custom_prompt_fn.(question, chunks)
+      else
+        default_sufficiency_prompt(question, chunks)
       end
 
-    case Arcana.LLM.complete(ctx.llm, prompt, [], []) do
-      {:ok, response} ->
-        case JSON.decode(response) do
-          {:ok, %{"query" => rewritten}} -> {:ok, rewritten}
-          _ -> {:error, :invalid_response}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
+    case Arcana.LLM.complete(llm, prompt, [], []) do
+      {:ok, response} -> parse_sufficiency_response(response)
+      {:error, _} -> :error
     end
   end
 
-  defp default_rewrite_prompt(question, chunks) do
+  defp default_sufficiency_prompt(question, chunks) do
     chunks_text =
       chunks
-      |> Enum.take(3)
-      |> Enum.map_join("\n---\n", & &1.text)
+      |> Enum.take(10)
+      |> Enum.map(& &1.text)
+      |> Enum.join("\n---\n")
 
     """
-    The following search query did not return sufficient results:
-    Query: "#{question}"
+    Evaluate if these search results are sufficient to answer the question.
 
-    Retrieved (insufficient) results:
+    Question: #{question}
+
+    Retrieved Results:
     #{chunks_text}
 
-    Rewrite the query to find better results.
-    Return JSON only: {"query": "rewritten query here"}
+    Respond with JSON only:
+    - If sufficient: {"sufficient": true, "reasoning": "brief explanation"}
+    - If not sufficient: {"sufficient": false, "missing": "what info is missing", "follow_up_query": "query to find missing info"}
     """
+  end
+
+  defp parse_sufficiency_response(response) do
+    case Jason.decode(response) do
+      {:ok, %{"sufficient" => true}} ->
+        {:sufficient, nil}
+
+      {:ok, %{"sufficient" => true, "reasoning" => reasoning}} ->
+        {:sufficient, reasoning}
+
+      {:ok, %{"sufficient" => false, "follow_up_query" => query}} ->
+        {:insufficient, query}
+
+      _ ->
+        # Default to sufficient on parse failure
+        {:sufficient, nil}
+    end
+  end
+
+  defp do_additional_search(ctx, query) do
+    # Determine which collections to search
+    collections =
+      cond do
+        ctx.collections && ctx.collections != [] -> ctx.collections
+        ctx.results && ctx.results != [] -> [hd(ctx.results).collection]
+        true -> ["default"]
+      end
+
+    Enum.map(collections, fn collection ->
+      search_opts = [
+        repo: ctx.repo,
+        limit: ctx.limit,
+        threshold: ctx.threshold
+      ]
+
+      chunks =
+        case Arcana.Search.search(query, Keyword.put(search_opts, :collection, collection)) do
+          {:ok, results} ->
+            Enum.map(results, fn r ->
+              %{
+                id: r.id,
+                text: r.text,
+                score: r.score
+              }
+            end)
+
+          {:error, _} ->
+            []
+        end
+
+      %{question: query, collection: collection, chunks: chunks}
+    end)
+  end
+
+  defp merge_results(existing_results, new_results) do
+    all_results = (existing_results || []) ++ new_results
+
+    # Deduplicate chunks across results
+    {deduped_results, _final_seen} =
+      Enum.reduce(all_results, {[], MapSet.new()}, fn result, {acc_results, seen_ids} ->
+        {unique_chunks, new_seen} =
+          Enum.reduce(result.chunks, {[], seen_ids}, fn chunk, {acc, seen} ->
+            if MapSet.member?(seen, chunk.id) do
+              {acc, seen}
+            else
+              {[chunk | acc], MapSet.put(seen, chunk.id)}
+            end
+          end)
+
+        updated_result = %{result | chunks: Enum.reverse(unique_chunks)}
+        {[updated_result | acc_results], new_seen}
+      end)
+
+    deduped_results
+    |> Enum.reverse()
+    |> Enum.reject(fn r -> r.chunks == [] end)
   end
 
   @doc """
@@ -825,12 +971,17 @@ defmodule Arcana.Agent do
       max_corrections = Keyword.get(opts, :max_corrections, 2)
       custom_prompt_fn = Keyword.get(opts, :prompt)
 
+      # If skip_retrieval is true, answer without context
       all_chunks =
-        ctx.results
-        |> Enum.flat_map(& &1.chunks)
-        |> Enum.uniq_by(& &1.id)
+        if ctx.skip_retrieval do
+          []
+        else
+          (ctx.results || [])
+          |> Enum.flat_map(& &1.chunks)
+          |> Enum.uniq_by(& &1.id)
+        end
 
-      answerer_opts = Keyword.merge(opts, llm: llm)
+      answerer_opts = Keyword.merge(opts, llm: llm, skip_retrieval: ctx.skip_retrieval)
 
       updated_ctx =
         handle_answer_result(

@@ -29,8 +29,16 @@ defmodule Arcana.Agent.Context do
   ### Populated by `decompose/1`
   - `:sub_questions` - List of sub-questions to search separately
 
+  ### Populated by `gate/2`
+  - `:skip_retrieval` - If true, skip search and answer from LLM knowledge
+  - `:gate_reasoning` - LLM's reasoning for the gate decision
+
   ### Populated by `search/2`
   - `:results` - List of `%{question: _, collection: _, chunks: _}` maps
+
+  ### Populated by `reason/2`
+  - `:queries_tried` - MapSet of queries already searched (prevents loops)
+  - `:reason_iterations` - Number of reason iterations performed
 
   ### Populated by `rerank/2`
   - `:rerank_scores` - Map of chunk ID to score (for debugging/observability)
@@ -68,8 +76,16 @@ defmodule Arcana.Agent.Context do
     # Populated by decompose/1
     :sub_questions,
 
+    # Populated by gate/2
+    :skip_retrieval,
+    :gate_reasoning,
+
     # Populated by search/2
     :results,
+
+    # Populated by reason/2
+    :queries_tried,
+    :reason_iterations,
 
     # Populated by rerank/2
     :rerank_scores,
