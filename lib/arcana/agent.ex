@@ -558,6 +558,8 @@ defmodule Arcana.Agent do
 
   def search(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
 
+  def search(%Context{skip_retrieval: true} = ctx, _opts), do: %{ctx | results: []}
+
   def search(%Context{} = ctx, opts) do
     searcher = Keyword.get(opts, :searcher, Arcana.Agent.Searcher.Arcana)
 
@@ -645,6 +647,8 @@ defmodule Arcana.Agent do
   def reason(ctx, opts \\ [])
 
   def reason(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
+
+  def reason(%Context{skip_retrieval: true} = ctx, _opts), do: ctx
 
   def reason(%Context{} = ctx, opts) do
     start_metadata = %{question: ctx.question}

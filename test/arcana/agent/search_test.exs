@@ -143,6 +143,47 @@ defmodule Arcana.Agent.SearchTest do
       [result] = ctx.results
       assert result.collection == "haskell-docs"
     end
+
+    test "skips search when skip_retrieval is true" do
+      ctx =
+        %Context{
+          question: "What is 2 + 2?",
+          repo: Arcana.TestRepo,
+          llm: &mock_llm/1,
+          limit: 5,
+          threshold: 0.5,
+          skip_retrieval: true
+        }
+        |> Agent.search()
+
+      # Should not have searched - results should be empty
+      assert ctx.results == []
+    end
+
+    test "performs search when skip_retrieval is false" do
+      ctx =
+        %Context{
+          question: "functional programming",
+          repo: Arcana.TestRepo,
+          llm: &mock_llm/1,
+          limit: 5,
+          threshold: 0.5,
+          skip_retrieval: false
+        }
+        |> Agent.search()
+
+      # Should have searched
+      refute Enum.empty?(ctx.results)
+    end
+
+    test "performs search when skip_retrieval is nil (default)" do
+      ctx =
+        Agent.new("functional programming", repo: Arcana.TestRepo, llm: &mock_llm/1)
+        |> Agent.search()
+
+      # Default behavior - should search
+      refute Enum.empty?(ctx.results)
+    end
   end
 
   describe "custom searcher" do

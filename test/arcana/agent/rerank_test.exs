@@ -300,5 +300,24 @@ defmodule Arcana.Agent.RerankTest do
       refute Enum.empty?(ctx.results)
       assert is_map(ctx.rerank_scores)
     end
+
+    test "skips reranking when skip_retrieval is true" do
+      # LLM should not be called since we're skipping retrieval
+      llm = fn _prompt -> raise "LLM should not be called" end
+
+      ctx = %Context{
+        question: "What is 2 + 2?",
+        repo: Arcana.TestRepo,
+        llm: llm,
+        skip_retrieval: true,
+        results: []
+      }
+
+      ctx = Agent.rerank(ctx)
+
+      # Should pass through without error
+      assert ctx.results == []
+      assert is_nil(ctx.error)
+    end
   end
 end

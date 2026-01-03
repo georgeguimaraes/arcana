@@ -231,5 +231,26 @@ defmodule Arcana.Agent.ReasonTest do
 
       assert MapSet.member?(ctx.queries_tried, "my question")
     end
+
+    test "skips reasoning when skip_retrieval is true" do
+      # LLM should not be called since we're skipping retrieval
+      llm = fn _prompt -> raise "LLM should not be called" end
+
+      ctx = %Context{
+        question: "What is 2 + 2?",
+        repo: Arcana.TestRepo,
+        llm: llm,
+        limit: 5,
+        threshold: 0.5,
+        skip_retrieval: true,
+        results: [],
+        queries_tried: nil
+      }
+
+      ctx = Agent.reason(ctx)
+
+      # Should not have done any reasoning
+      assert ctx.reason_iterations == 0 or is_nil(ctx.reason_iterations)
+    end
   end
 end

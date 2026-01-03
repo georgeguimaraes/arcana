@@ -273,7 +273,7 @@ Vl.new(width: 400, height: 200, title: "Query-Document Similarity")
 
 ## 6. Agentic RAG Pipeline
 
-For complex questions, Arcana provides an Agent pipeline that can decompose questions, select collections, and self-correct searches.
+For complex questions, Arcana provides an Agent pipeline with retrieval gating, multi-hop reasoning, query expansion, and re-ranking.
 
 ### Define an LLM Function
 
@@ -284,21 +284,28 @@ The agent needs an LLM to make decisions. Let's create a simple mock:
 # In production, use OpenAI, Anthropic, or another provider
 mock_llm = fn prompt ->
   cond do
+    # Gate: decide if retrieval is needed
+    prompt =~ "needs_retrieval" ->
+      if prompt =~ "2 + 2" or prompt =~ "basic" do
+        {:ok, ~s({"needs_retrieval": false, "reasoning": "Basic knowledge"})}
+      else
+        {:ok, ~s({"needs_retrieval": true, "reasoning": "Domain-specific"})}
+      end
+
     prompt =~ "collections" ->
       # Select relevant collections
       {:ok, ~s({"collections": ["languages", "frameworks"], "reasoning": "Question covers both"})}
 
-    prompt =~ "sub_questions" ->
+    prompt =~ "sub_questions" or prompt =~ "decompose" ->
       # Decompose into simpler questions
       {:ok, ~s({"sub_questions": ["What is Elixir?", "What is Phoenix?"], "reasoning": "Two distinct topics"})}
 
+    # Reason: evaluate if results are sufficient
     prompt =~ "sufficient" ->
-      # Results are sufficient
-      {:ok, ~s({"sufficient": true})}
+      {:ok, ~s({"sufficient": true, "reasoning": "Results contain needed info"})}
 
     prompt =~ "Answer" ->
       # Generate answer from context
-      context = prompt
       {:ok, "Based on the context, Elixir is a functional language on BEAM, and Phoenix is its web framework with real-time capabilities."}
 
     true ->
@@ -791,11 +798,12 @@ Use explicit collections when:
 | **Fulltext Search** | Matches exact keywords with TF-IDF scoring |
 | **Hybrid Search** | Combines both using Reciprocal Rank Fusion |
 | **Collections** | Organize documents into logical groups |
+| **Retrieval Gating** | Skip retrieval for questions answerable from knowledge |
 | **Query Rewriting** | Clean conversational input into clear queries |
 | **Query Expansion** | Add synonyms for better recall |
+| **Multi-hop Reasoning** | Search again if results are insufficient |
 | **Re-ranking** | Filter chunks by LLM-scored relevance |
-| **Self-Correction** | Evaluate and refine answers for grounding |
-| **Agent Pipeline** | Rewrite → Select → Expand → Search → Rerank → Answer |
+| **Agent Pipeline** | Gate → Rewrite → Select → Expand → Search → Reason → Rerank → Answer |
 | **GraphRAG** | Knowledge graph with entity extraction (supports memory and Ecto backends) |
 
 ### Next Steps

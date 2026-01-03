@@ -42,10 +42,11 @@ When `graph: true` is enabled:
 ### Agentic Pipeline
 
 For complex questions, the Agent pipeline provides:
+- **Retrieval gating** - decides if retrieval is needed or can answer from knowledge
 - **Query expansion** - adds synonyms and related terms
 - **Decomposition** - splits multi-part questions
+- **Multi-hop reasoning** - evaluates results and searches again if needed
 - **Re-ranking** - scores chunk relevance (0-10)
-- **Self-correction** - evaluates and refines answers
 
 ## Installation
 
@@ -365,7 +366,7 @@ See the [GraphRAG Guide](guides/graphrag.md) for entity extraction, community de
 
 ### Agentic RAG
 
-For complex questions, use the Agent pipeline with query expansion, re-ranking, and self-correcting answers:
+For complex questions, use the Agent pipeline with retrieval gating, query expansion, multi-hop reasoning, and re-ranking:
 
 ```elixir
 alias Arcana.Agent
@@ -374,11 +375,13 @@ llm = fn prompt -> {:ok, "LLM response"} end
 
 ctx =
   Agent.new("Compare Elixir and Erlang features", repo: MyApp.Repo, llm: llm)
+  |> Agent.gate()                                   # Skip retrieval if not needed
   |> Agent.select(collections: ["elixir-docs", "erlang-docs"])
   |> Agent.expand()
   |> Agent.search()
+  |> Agent.reason()                                 # Search again if results insufficient
   |> Agent.rerank()
-  |> Agent.answer(self_correct: true)
+  |> Agent.answer()
 
 ctx.answer
 # => "Generated answer based on retrieved context..."
@@ -389,13 +392,15 @@ ctx.answer
 | Step | What it does |
 |------|--------------|
 | `new/2` | Initialize context with question, repo, and LLM function |
+| `gate/2` | Decide if retrieval is needed; sets `skip_retrieval: true` if answerable from knowledge |
 | `rewrite/2` | Clean up conversational input ("Hey, can you tell me about X?" → "about X") |
 | `select/2` | Choose which collections to search (LLM picks based on collection descriptions) |
 | `expand/2` | Add synonyms and related terms ("ML models" → "ML machine learning models algorithms") |
 | `decompose/2` | Split complex questions ("What is X and how does Y work?" → ["What is X?", "How does Y work?"]) |
-| `search/2` | Execute vector search across selected collections |
+| `search/2` | Execute vector search (skipped if `skip_retrieval: true`) |
+| `reason/2` | Multi-hop reasoning; evaluates if results are sufficient and searches again if needed |
 | `rerank/2` | Score each chunk's relevance (0-10) and filter below threshold |
-| `answer/2` | Generate final answer; with `self_correct: true`, evaluates and refines if not grounded |
+| `answer/2` | Generate final answer using retrieved context (or from knowledge if `skip_retrieval: true`) |
 
 #### Example: Building a Pipeline
 
@@ -409,19 +414,21 @@ ctx =
 # Full pipeline with all steps
 ctx =
   Agent.new(question, repo: MyApp.Repo, llm: llm)
+  |> Agent.gate()                                 # Decide if retrieval needed
   |> Agent.rewrite()                              # Clean up conversational input
   |> Agent.select(collections: available_collections)  # Pick relevant collections
   |> Agent.expand()                               # Add synonyms
   |> Agent.decompose()                            # Split multi-part questions
   |> Agent.search()                               # Search each sub-question
+  |> Agent.reason()                               # Multi-hop: search again if needed
   |> Agent.rerank(threshold: 7)                   # Keep chunks scoring 7+/10
-  |> Agent.answer(self_correct: true)             # Generate and verify answer
+  |> Agent.answer()                               # Generate answer
 
 # Access results
 ctx.answer           # Final answer
-ctx.chunks           # Retrieved chunks after reranking
+ctx.skip_retrieval   # true if gate/2 determined no retrieval needed
 ctx.sub_questions    # Sub-questions from decomposition
-ctx.correction_count # Number of self-correction iterations
+ctx.reason_iterations # Number of additional searches by reason/2
 ```
 
 #### Custom Components

@@ -11,10 +11,12 @@ alias Arcana.Agent
 
 ctx =
   Agent.new("Compare Elixir and Erlang")
+  |> Agent.gate()        # Decide if retrieval is needed
   |> Agent.rewrite()     # Clean up conversational input
   |> Agent.expand()      # Expand query with synonyms
   |> Agent.decompose()   # Break into sub-questions
   |> Agent.search()      # Search for each sub-question
+  |> Agent.reason()      # Multi-hop: search again if needed
   |> Agent.rerank()      # Re-rank results
   |> Agent.answer()      # Generate final answer
 
@@ -55,6 +57,40 @@ ctx = Agent.new("What is Elixir?",
   limit: 5,        # Max chunks per search (default: 5)
   threshold: 0.5   # Minimum similarity (default: 0.5)
 )
+```
+
+### gate/2 - Retrieval Gating
+
+Decide if the question needs retrieval or can be answered from knowledge:
+
+```elixir
+ctx = Agent.gate(ctx)
+
+ctx.skip_retrieval   # true if retrieval can be skipped
+ctx.gate_reasoning   # "Basic arithmetic can be answered from knowledge"
+```
+
+When `skip_retrieval` is true, downstream steps behave differently:
+- `search/2` skips the search and sets `results: []`
+- `reason/2` skips multi-hop reasoning
+- `rerank/2` passes through empty results
+- `answer/2` uses a no-context prompt (answers from knowledge)
+
+Use when:
+- Your questions mix simple facts with domain-specific queries
+- You want to reduce latency for questions that don't need retrieval
+- You're building a chatbot that handles general knowledge questions
+
+```elixir
+# Example: skip retrieval for math questions
+ctx =
+  Agent.new("What is 2 + 2?", repo: MyApp.Repo, llm: llm)
+  |> Agent.gate()
+  |> Agent.search()
+  |> Agent.answer()
+
+ctx.skip_retrieval  # => true
+ctx.answer          # => "4" (answered from knowledge, no retrieval)
 ```
 
 ### rewrite/2 - Clean Conversational Input
@@ -141,6 +177,46 @@ This is useful when:
 - The user explicitly chooses which collection(s) to search
 - You want deterministic routing without LLM overhead
 
+### reason/2 - Multi-hop Reasoning
+
+Evaluate if search results are sufficient and search again if not:
+
+```elixir
+ctx = Agent.reason(ctx, max_iterations: 2)
+
+ctx.reason_iterations  # Number of additional searches performed
+ctx.queries_tried      # MapSet of all queries attempted
+```
+
+This step implements multi-hop reasoning by:
+1. Asking the LLM if current results can answer the question
+2. If not, getting a follow-up query from the LLM
+3. Executing the follow-up search and merging results
+4. Repeating until sufficient or `max_iterations` reached
+
+The `queries_tried` set prevents searching the same query twice.
+
+#### Options
+
+- `:max_iterations` - Maximum additional searches (default: 2)
+- `:prompt` - Custom prompt function `fn question, chunks -> prompt_string end`
+- `:llm` - Override the LLM function for this step
+
+#### Example
+
+```elixir
+# Question that may need multiple searches
+ctx =
+  Agent.new("How does Elixir handle concurrency and error recovery?")
+  |> Agent.search()
+  |> Agent.reason(max_iterations: 3)
+  |> Agent.answer()
+
+# First search finds concurrency info, reason/2 adds error recovery search
+ctx.reason_iterations  # => 1
+ctx.queries_tried      # => MapSet.new(["How does Elixir...", "Elixir error recovery supervision"])
+```
+
 ### rerank/2 - Re-rank Results
 
 Score and filter chunks by relevance:
@@ -164,25 +240,18 @@ ctx.context_used
 # => [%Arcana.Chunk{...}, ...]
 ```
 
-#### Self-Correcting Answers
-
-Enable self-correction to evaluate and refine answers:
+When `skip_retrieval` is true (set by `gate/2`), `answer/2` uses a no-context prompt and answers from the LLM's knowledge:
 
 ```elixir
-ctx = Agent.answer(ctx, self_correct: true, max_corrections: 2)
+ctx =
+  Agent.new("What is 2 + 2?")
+  |> Agent.gate()    # Sets skip_retrieval: true
+  |> Agent.search()  # Skipped
+  |> Agent.answer()  # Answers from knowledge
 
-ctx.answer           # Final (possibly refined) answer
-ctx.correction_count # Number of corrections made
-ctx.corrections      # List of {previous_answer, feedback} tuples
+ctx.answer       # => "4"
+ctx.context_used # => []
 ```
-
-When `self_correct: true`, the pipeline:
-1. Generates an initial answer
-2. Evaluates if the answer is grounded in the retrieved context
-3. If not grounded, regenerates with feedback
-4. Repeats up to `max_corrections` times (default: 2)
-
-This reduces hallucinations by ensuring answers are well-supported by the context.
 
 ## Custom Prompts
 

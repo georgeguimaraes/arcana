@@ -26,9 +26,11 @@ This logs all Arcana operations with timing:
 ```
 [info] [Arcana] search completed in 42ms (15 results)
 [info] [Arcana] llm.complete completed in 1.23s [openai:gpt-4o-mini] ok (156 chars) prompt=892chars
+[info] [Arcana] agent.gate completed in 180ms (skip_retrieval: false)
 [info] [Arcana] agent.rewrite completed in 235ms
 [info] [Arcana] agent.expand completed in 2.15s ("machine learning ML models...")
 [info] [Arcana] agent.search completed in 156ms (25 chunks)
+[info] [Arcana] agent.reason completed in 1.2s (1 iteration)
 [info] [Arcana] agent.rerank completed in 312ms (10/25 kept)
 [info] [Arcana] agent.answer completed in 3.25s
 [info] [Arcana] ask completed in 6.12s
@@ -75,14 +77,15 @@ Each step in the Agent pipeline emits its own events:
 
 | Event | Metadata |
 |-------|----------|
-| `[:arcana, :agent, :rewrite, :*]` | `query` (rewritten) |
+| `[:arcana, :agent, :gate, :*]` | `question`, `skip_retrieval` |
+| `[:arcana, :agent, :rewrite, :*]` | `question`, `rewritten_query` |
 | `[:arcana, :agent, :select, :*]` | `selected` (collections) |
-| `[:arcana, :agent, :expand, :*]` | `expanded_query` |
-| `[:arcana, :agent, :decompose, :*]` | `sub_question_count` |
-| `[:arcana, :agent, :search, :*]` | `total_chunks` |
-| `[:arcana, :agent, :rerank, :*]` | `kept`, `original` |
-| `[:arcana, :agent, :answer, :*]` | - |
-| `[:arcana, :agent, :self_correct, :*]` | `attempt` |
+| `[:arcana, :agent, :expand, :*]` | `question`, `expanded_query` |
+| `[:arcana, :agent, :decompose, :*]` | `question`, `sub_question_count` |
+| `[:arcana, :agent, :search, :*]` | `question`, `total_chunks` |
+| `[:arcana, :agent, :reason, :*]` | `question`, `iterations` |
+| `[:arcana, :agent, :rerank, :*]` | `question`, `chunks_before`, `chunks_after` |
+| `[:arcana, :agent, :answer, :*]` | `question`, `context_chunk_count` |
 
 ### VectorStore Events
 
@@ -145,7 +148,9 @@ defmodule MyApp.ArcanaMetrics do
       [:arcana, :embed, :stop],
       [:arcana, :llm, :complete, :stop],
       # Agent pipeline
+      [:arcana, :agent, :gate, :stop],
       [:arcana, :agent, :rerank, :stop],
+      [:arcana, :agent, :reason, :stop],
       [:arcana, :agent, :answer, :stop],
       # VectorStore
       [:arcana, :vector_store, :store, :stop],
@@ -354,9 +359,11 @@ In this example, the LLM call dominates total time (3.2s of 3.3s).
 For agentic RAG, each pipeline step is instrumented:
 
 ```
+[info] [Arcana] agent.gate completed in 150ms (skip_retrieval: false)
 [info] [Arcana] agent.rewrite completed in 180ms ("what are elixir macros")
 [info] [Arcana] agent.expand completed in 220ms ("elixir macros metaprogramming...")
 [info] [Arcana] agent.search completed in 35ms (25 chunks)
+[info] [Arcana] agent.reason completed in 850ms (1 iteration)
 [info] [Arcana] agent.rerank completed in 890ms (8/25 kept)
 [info] [Arcana] agent.answer completed in 2.1s
 ```
@@ -365,6 +372,10 @@ Here, reranking takes 890ms - if this is too slow, consider:
 - Reducing chunks before reranking (lower search limit)
 - Using a faster reranking threshold
 - Implementing a custom reranker
+
+If `reason/2` is taking too long due to multiple iterations, consider:
+- Lowering `max_iterations` (default: 2)
+- Improving initial search quality with query expansion
 
 ### Monitor LLM Costs
 
