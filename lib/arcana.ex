@@ -22,11 +22,9 @@ defmodule Arcana do
   alias Arcana.VectorStore.Pgvector
 
   alias Arcana.Graph.{
-    Entity,
     EntityExtractor,
-    EntityMention,
     GraphExtractor,
-    Relationship,
+    GraphStore,
     RelationshipExtractor
   }
 
@@ -635,13 +633,13 @@ defmodule Arcana do
   end
 
   defp graph_search_db(entities, collections, repo) do
-    import Ecto.Query
-
     entity_names = Enum.map(entities, & &1.name)
     collection_ids = resolve_collection_ids(collections, repo)
-    entity_ids = find_entity_ids(entity_names, collection_ids, repo)
 
-    fetch_and_score_chunks(entity_ids, repo)
+    # GraphStore.search returns %{chunk_id: ..., score: ...}
+    # Transform to format expected by RRF combine: %{id: ...}
+    GraphStore.search(entity_names, collection_ids, repo: repo)
+    |> Enum.map(fn result -> Map.put(result, :id, result.chunk_id) end)
   end
 
   defp resolve_collection_ids([nil], _repo), do: nil
@@ -657,68 +655,6 @@ defmodule Arcana do
         id -> [id]
       end
     end)
-  end
-
-  defp find_entity_ids(entity_names, collection_ids, repo) do
-    import Ecto.Query
-
-    query = from(e in Entity, where: e.name in ^entity_names, select: e.id)
-
-    query =
-      if collection_ids,
-        do: from(e in query, where: e.collection_id in ^collection_ids),
-        else: query
-
-    repo.all(query)
-  end
-
-  defp fetch_and_score_chunks([], _repo), do: []
-
-  defp fetch_and_score_chunks(entity_ids, repo) do
-    import Ecto.Query
-
-    chunk_ids =
-      repo.all(
-        from(m in EntityMention,
-          where: m.entity_id in ^entity_ids,
-          select: m.chunk_id,
-          distinct: true
-        )
-      )
-
-    score_chunks(chunk_ids, entity_ids, repo)
-  end
-
-  defp score_chunks([], _entity_ids, _repo), do: []
-
-  defp score_chunks(chunk_ids, entity_ids, repo) do
-    import Ecto.Query
-
-    chunks = repo.all(from(c in Chunk, where: c.id in ^chunk_ids, preload: [:document]))
-
-    chunks
-    |> Enum.map(&score_chunk(&1, entity_ids, repo))
-    |> Enum.sort_by(& &1.score, :desc)
-  end
-
-  defp score_chunk(chunk, entity_ids, repo) do
-    import Ecto.Query
-
-    mention_count =
-      repo.one(
-        from(m in EntityMention,
-          where: m.chunk_id == ^chunk.id and m.entity_id in ^entity_ids,
-          select: count()
-        )
-      )
-
-    %{
-      id: chunk.id,
-      text: chunk.text,
-      document_id: chunk.document_id,
-      chunk_index: chunk.chunk_index,
-      score: mention_count * 0.1
-    }
   end
 
   defp do_search(:semantic, query, params) do
@@ -1065,6 +1001,7 @@ defmodule Arcana do
 
   defp build_and_persist_graph(chunk_records, collection, repo, opts) do
     collection_name = if is_binary(collection), do: collection, else: collection.name
+    collection_id = if is_binary(collection), do: collection, else: collection.id
 
     :telemetry.span(
       [:arcana, :graph, :build],
@@ -1073,9 +1010,11 @@ defmodule Arcana do
         {all_entities, all_mentions, all_relationships} =
           extract_all_graph_data(chunk_records, opts)
 
-        entity_id_map = persist_entities(all_entities, collection, repo)
-        persist_entity_mentions(all_mentions, entity_id_map, repo)
-        persist_relationships(all_relationships, entity_id_map, repo)
+        {:ok, entity_id_map} =
+          GraphStore.persist_entities(collection_id, all_entities, repo: repo)
+
+        :ok = GraphStore.persist_mentions(all_mentions, entity_id_map, repo: repo)
+        :ok = GraphStore.persist_relationships(all_relationships, entity_id_map, repo: repo)
 
         {:ok,
          %{entity_count: map_size(entity_id_map), relationship_count: length(all_relationships)}}
@@ -1230,89 +1169,5 @@ defmodule Arcana do
         # Continue despite extraction errors
         {ent_acc, ment_acc, rel_acc}
     end
-  end
-
-  defp persist_entities(entities, collection, repo) do
-    # Deduplicate by name
-    unique_entities =
-      entities
-      |> Enum.reduce(%{}, fn entity, acc ->
-        Map.put_new(acc, entity.name, entity)
-      end)
-      |> Map.values()
-
-    # Upsert each entity and build name -> id mapping
-    unique_entities
-    |> Enum.reduce(%{}, fn entity, id_map ->
-      entity_record = upsert_entity(entity, collection, repo)
-      Map.put(id_map, entity.name, entity_record.id)
-    end)
-  end
-
-  defp upsert_entity(entity, collection, repo) do
-    import Ecto.Query
-
-    # Check if entity exists
-    existing =
-      repo.one(
-        from(e in Entity,
-          where: e.name == ^entity.name and e.collection_id == ^collection.id
-        )
-      )
-
-    case existing do
-      nil ->
-        # Insert new entity
-        %Entity{}
-        |> Entity.changeset(%{
-          name: entity.name,
-          type: entity.type,
-          description: entity[:description],
-          collection_id: collection.id
-        })
-        |> repo.insert!()
-
-      entity_record ->
-        # Return existing entity
-        entity_record
-    end
-  end
-
-  defp persist_entity_mentions(mentions, entity_id_map, repo) do
-    mentions
-    |> Enum.each(fn mention ->
-      entity_id = Map.get(entity_id_map, mention.entity_name)
-
-      if entity_id do
-        %EntityMention{}
-        |> EntityMention.changeset(%{
-          entity_id: entity_id,
-          chunk_id: mention.chunk_id,
-          span_start: mention[:span_start],
-          span_end: mention[:span_end]
-        })
-        |> repo.insert!()
-      end
-    end)
-  end
-
-  defp persist_relationships(relationships, entity_id_map, repo) do
-    relationships
-    |> Enum.each(fn rel ->
-      source_id = Map.get(entity_id_map, rel.source)
-      target_id = Map.get(entity_id_map, rel.target)
-
-      if source_id && target_id do
-        %Relationship{}
-        |> Relationship.changeset(%{
-          source_id: source_id,
-          target_id: target_id,
-          type: rel.type,
-          description: rel[:description],
-          strength: rel[:strength]
-        })
-        |> repo.insert!()
-      end
-    end)
   end
 end

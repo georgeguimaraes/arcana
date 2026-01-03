@@ -179,6 +179,47 @@ defmodule Arcana.Graph.GraphStore do
     end
   end
 
+  # Dispatch to Ecto backend
+  defp dispatch(:persist_entities, :ecto, [collection_id, entities], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.persist_entities(collection_id, entities, opts)
+  end
+
+  defp dispatch(:persist_relationships, :ecto, [relationships, entity_id_map], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.persist_relationships(relationships, entity_id_map, opts)
+  end
+
+  defp dispatch(:persist_mentions, :ecto, [mentions, entity_id_map], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.persist_mentions(mentions, entity_id_map, opts)
+  end
+
+  defp dispatch(:search, :ecto, [entity_names, collection_ids], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.search(entity_names, collection_ids, opts)
+  end
+
+  defp dispatch(:find_entities, :ecto, [collection_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.find_entities(collection_id, opts)
+  end
+
+  defp dispatch(:find_related_entities, :ecto, [entity_id, depth], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.find_related_entities(entity_id, depth, opts)
+  end
+
+  defp dispatch(:persist_communities, :ecto, [collection_id, communities], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.persist_communities(collection_id, communities, opts)
+  end
+
+  defp dispatch(:get_community_summaries, :ecto, [collection_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.get_community_summaries(collection_id, opts)
+  end
+
   # Dispatch to custom module
   defp dispatch(:persist_entities, module, [collection_id, entities], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
