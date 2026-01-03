@@ -8,13 +8,17 @@ defmodule Mix.Tasks.Arcana.Reembed do
 
   ## Options
 
+    * `--collection` - Only re-embed chunks in the specified collection
     * `--batch-size` - Number of chunks to process at once (default: 50)
     * `--quiet` - Suppress progress output
 
   ## Examples
 
-      # Default usage
+      # Default usage (all collections)
       mix arcana.reembed
+
+      # Re-embed only a specific collection
+      mix arcana.reembed --collection my-docs
 
       # With larger batch size
       mix arcana.reembed --batch-size 100
@@ -32,11 +36,12 @@ defmodule Mix.Tasks.Arcana.Reembed do
   def run(args) do
     {opts, _, _} =
       OptionParser.parse(args,
-        strict: [batch_size: :integer, quiet: :boolean]
+        strict: [batch_size: :integer, quiet: :boolean, collection: :string]
       )
 
     batch_size = Keyword.get(opts, :batch_size, 50)
     quiet = Keyword.get(opts, :quiet, false)
+    collection = Keyword.get(opts, :collection)
 
     # Start the host application (which will start the repo)
     Mix.Task.run("app.start")
@@ -59,10 +64,14 @@ defmodule Mix.Tasks.Arcana.Reembed do
         build_progress_fn()
       end
 
-    Mix.shell().info("Re-embedding chunks...")
+    scope = if collection, do: "collection '#{collection}'", else: "all collections"
+    Mix.shell().info("Re-embedding chunks in #{scope}...")
+
+    reembed_opts = [batch_size: batch_size, progress: progress_fn]
+    reembed_opts = if collection, do: Keyword.put(reembed_opts, :collection, collection), else: reembed_opts
 
     {:ok, %{rechunked_documents: docs, total_chunks: total}} =
-      Arcana.Maintenance.reembed(repo, batch_size: batch_size, progress: progress_fn)
+      Arcana.Maintenance.reembed(repo, reembed_opts)
 
     unless quiet, do: IO.puts("")
 

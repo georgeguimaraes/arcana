@@ -21,6 +21,8 @@ defmodule ArcanaWeb.DocumentsLive do
      |> assign(viewing_document: nil)
      |> assign(upload_error: nil)
      |> assign(filter_collection: nil)
+     |> assign(graph_enabled: Arcana.Graph.enabled?())
+     |> assign(graph_indexing: false)
      |> assign(stats: nil, collections: [], documents: [], total_pages: 1, total_count: 0)
      |> allow_upload(:files,
        accept: ~w(.txt .md .markdown .pdf),
@@ -90,7 +92,14 @@ defmodule ArcanaWeb.DocumentsLive do
 
   defp load_document_detail(socket, doc_id) do
     repo = socket.assigns.repo
-    document = repo.get(Document, doc_id)
+
+    document =
+      repo.one(
+        from(d in Document,
+          where: d.id == ^doc_id,
+          preload: [:collection]
+        )
+      )
 
     if document do
       chunks =
@@ -193,13 +202,51 @@ defmodule ArcanaWeb.DocumentsLive do
     {:noreply, socket |> assign(filter_collection: nil, page: 1) |> load_documents()}
   end
 
+  def handle_event("build_graph", _params, socket) do
+    %{document: document, chunks: chunks} = socket.assigns.viewing_document
+    collection = document.collection
+    repo = socket.assigns.repo
+    parent = self()
+
+    socket = assign(socket, graph_indexing: true)
+
+    Arcana.TaskSupervisor.start_child(fn ->
+      result = Arcana.Graph.build_and_persist(chunks, collection, repo, [])
+      send(parent, {:graph_complete, result})
+    end)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:graph_complete, result}, socket) do
+    socket =
+      case result do
+        {:ok, %{entity_count: entities, relationship_count: relationships}} ->
+          socket
+          |> assign(graph_indexing: false)
+          |> put_flash(:info, "Graph built: #{entities} entities, #{relationships} relationships")
+
+        {:error, reason} ->
+          socket
+          |> assign(graph_indexing: false)
+          |> put_flash(:error, "Graph build failed: #{inspect(reason)}")
+      end
+
+    {:noreply, socket}
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
     <.dashboard_layout stats={@stats} current_tab={:documents}>
       <div class="arcana-documents">
         <%= if @viewing_document do %>
-          <.document_detail viewing={@viewing_document} />
+          <.document_detail
+            viewing={@viewing_document}
+            graph_enabled={@graph_enabled}
+            graph_indexing={@graph_indexing}
+          />
         <% else %>
           <h2>Documents</h2>
           <p class="arcana-tab-description">
@@ -399,7 +446,19 @@ defmodule ArcanaWeb.DocumentsLive do
     <div class="arcana-doc-detail">
       <div class="arcana-doc-header">
         <h2>Document Details</h2>
-        <button class="arcana-close-btn" phx-click="close_detail">← Back to list</button>
+        <div class="arcana-doc-header-actions">
+          <%= if @graph_enabled do %>
+            <button
+              phx-click="build_graph"
+              disabled={@graph_indexing}
+              class="arcana-graph-btn"
+              style="background: #10b981; color: white; padding: 0.5rem 1rem; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: pointer; margin-right: 0.5rem;"
+            >
+              <%= if @graph_indexing, do: "Building...", else: "Build Graph" %>
+            </button>
+          <% end %>
+          <button class="arcana-close-btn" phx-click="close_detail">← Back to list</button>
+        </div>
       </div>
 
       <div class="arcana-doc-info">
