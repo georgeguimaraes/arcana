@@ -242,10 +242,12 @@ defmodule ArcanaWeb.DocumentsLive do
                     </select>
                   </label>
                   <div class="arcana-graph-toggle">
-                    <label class="arcana-checkbox-label">
-                      <input type="checkbox" name="graph" value="true" />
-                      <span>Build Graph</span>
-                      <small>Extract entities and relationships</small>
+                    <label>
+                      Build Graph
+                      <label class="arcana-checkbox-label">
+                        <input type="checkbox" name="graph" value="true" />
+                        <span>Extract entities and relationships</span>
+                      </label>
                     </label>
                   </div>
                 </div>
@@ -277,10 +279,12 @@ defmodule ArcanaWeb.DocumentsLive do
                 </select>
               </label>
               <div class="arcana-graph-toggle">
-                <label class="arcana-checkbox-label">
-                  <input type="checkbox" name="graph" value="true" />
-                  <span>Build Graph</span>
-                  <small>Extract entities and relationships</small>
+                <label>
+                  Build Graph
+                  <label class="arcana-checkbox-label">
+                    <input type="checkbox" name="graph" value="true" />
+                    <span>Extract entities and relationships</span>
+                  </label>
                 </label>
               </div>
             </div>
