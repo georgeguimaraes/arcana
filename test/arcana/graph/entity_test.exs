@@ -2,23 +2,22 @@ defmodule Arcana.Graph.EntityTest do
   use Arcana.DataCase, async: true
 
   alias Arcana.{Chunk, Collection, Document}
-  alias Arcana.Embeddings.Serving
   alias Arcana.Graph.Entity
 
   describe "changeset/2" do
     test "valid with required fields" do
-      changeset = Entity.changeset(%Entity{}, %{name: "OpenAI", type: :organization})
+      changeset = Entity.changeset(%Entity{}, %{name: "OpenAI", type: "organization"})
 
       assert changeset.valid?
     end
 
     test "valid with all fields" do
-      embedding = Serving.embed("OpenAI")
+      {:ok, embedding} = embed("OpenAI")
 
       changeset =
         Entity.changeset(%Entity{}, %{
           name: "OpenAI",
-          type: :organization,
+          type: "organization",
           description: "AI research company",
           embedding: embedding,
           metadata: %{"founded" => "2015"}
@@ -28,7 +27,7 @@ defmodule Arcana.Graph.EntityTest do
     end
 
     test "invalid without name" do
-      changeset = Entity.changeset(%Entity{}, %{type: :organization})
+      changeset = Entity.changeset(%Entity{}, %{type: "organization"})
 
       refute changeset.valid?
       assert "can't be blank" in errors_on(changeset).name
@@ -51,7 +50,15 @@ defmodule Arcana.Graph.EntityTest do
 
   describe "entity types" do
     test "accepts all valid entity types" do
-      valid_types = [:person, :organization, :location, :event, :concept, :technology, :other]
+      valid_types = [
+        "person",
+        "organization",
+        "location",
+        "event",
+        "concept",
+        "technology",
+        "other"
+      ]
 
       for type <- valid_types do
         changeset = Entity.changeset(%Entity{}, %{name: "Test", type: type})
@@ -70,7 +77,7 @@ defmodule Arcana.Graph.EntityTest do
         %Entity{}
         |> Entity.changeset(%{
           name: "OpenAI",
-          type: :organization,
+          type: "organization",
           description: "AI research company",
           chunk_id: chunk.id,
           collection_id: collection.id
@@ -79,19 +86,19 @@ defmodule Arcana.Graph.EntityTest do
 
       assert entity.id
       assert entity.name == "OpenAI"
-      assert entity.type == :organization
+      assert entity.type == "organization"
       assert entity.chunk_id == chunk.id
       assert entity.collection_id == collection.id
     end
 
     test "inserts entity with embedding" do
-      embedding = Serving.embed("OpenAI AI research")
+      {:ok, embedding} = embed("OpenAI AI research")
 
       {:ok, entity} =
         %Entity{}
         |> Entity.changeset(%{
           name: "OpenAI",
-          type: :organization,
+          type: "organization",
           embedding: embedding
         })
         |> Repo.insert()
@@ -106,7 +113,7 @@ defmodule Arcana.Graph.EntityTest do
         %Entity{}
         |> Entity.changeset(%{
           name: "OpenAI",
-          type: :organization,
+          type: "organization",
           collection_id: collection.id
         })
         |> Repo.insert()
@@ -115,7 +122,7 @@ defmodule Arcana.Graph.EntityTest do
         %Entity{}
         |> Entity.changeset(%{
           name: "OpenAI",
-          type: :organization,
+          type: "organization",
           collection_id: collection.id
         })
         |> Repo.insert()
@@ -129,12 +136,20 @@ defmodule Arcana.Graph.EntityTest do
 
       {:ok, entity1} =
         %Entity{}
-        |> Entity.changeset(%{name: "OpenAI", type: :organization, collection_id: collection1.id})
+        |> Entity.changeset(%{
+          name: "OpenAI",
+          type: "organization",
+          collection_id: collection1.id
+        })
         |> Repo.insert()
 
       {:ok, entity2} =
         %Entity{}
-        |> Entity.changeset(%{name: "OpenAI", type: :organization, collection_id: collection2.id})
+        |> Entity.changeset(%{
+          name: "OpenAI",
+          type: "organization",
+          collection_id: collection2.id
+        })
         |> Repo.insert()
 
       assert entity1.id != entity2.id
@@ -154,10 +169,15 @@ defmodule Arcana.Graph.EntityTest do
   end
 
   defp create_chunk(document) do
-    embedding = Serving.embed("chunk text")
+    {:ok, embedding} = embed("chunk text")
 
     %Chunk{}
     |> Chunk.changeset(%{text: "chunk text", embedding: embedding, document_id: document.id})
     |> Repo.insert()
+  end
+
+  defp embed(text) do
+    embedder = Application.get_env(:arcana, :embedder)
+    embedder.(text)
   end
 end

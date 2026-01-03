@@ -25,15 +25,15 @@ defmodule Arcana.GraphIntegrationTest do
           text =~ "OpenAI" and text =~ "Sam Altman" ->
             {:ok,
              [
-               %{name: "OpenAI", type: :organization},
-               %{name: "Sam Altman", type: :person}
+               %{name: "OpenAI", type: "organization"},
+               %{name: "Sam Altman", type: "person"}
              ]}
 
           text =~ "OpenAI" ->
-            {:ok, [%{name: "OpenAI", type: :organization}]}
+            {:ok, [%{name: "OpenAI", type: "organization"}]}
 
           text =~ "Sam Altman" ->
-            {:ok, [%{name: "Sam Altman", type: :person}]}
+            {:ok, [%{name: "Sam Altman", type: "person"}]}
 
           true ->
             {:ok, []}
@@ -73,8 +73,8 @@ defmodule Arcana.GraphIntegrationTest do
       entity_extractor = fn _text, _opts ->
         {:ok,
          [
-           %{name: "OpenAI", type: :organization},
-           %{name: "Sam Altman", type: :person}
+           %{name: "OpenAI", type: "organization"},
+           %{name: "Sam Altman", type: "person"}
          ]}
       end
 
@@ -119,8 +119,8 @@ defmodule Arcana.GraphIntegrationTest do
         # Return duplicate entity names
         {:ok,
          [
-           %{name: "OpenAI", type: :organization},
-           %{name: "OpenAI", type: :organization}
+           %{name: "OpenAI", type: "organization"},
+           %{name: "OpenAI", type: "organization"}
          ]}
       end
 
@@ -149,7 +149,7 @@ defmodule Arcana.GraphIntegrationTest do
         if count == 0 do
           {:error, :extraction_failed}
         else
-          {:ok, [%{name: "TestEntity", type: :concept}]}
+          {:ok, [%{name: "TestEntity", type: "concept"}]}
         end
       end
 
@@ -172,8 +172,8 @@ defmodule Arcana.GraphIntegrationTest do
       entity_extractor = fn _text, _opts ->
         {:ok,
          [
-           %{name: "Elixir", type: :technology},
-           %{name: "Phoenix", type: :technology}
+           %{name: "Elixir", type: "technology"},
+           %{name: "Phoenix", type: "technology"}
          ]}
       end
 
@@ -193,7 +193,7 @@ defmodule Arcana.GraphIntegrationTest do
       # Mock extractor for search query
       entity_extractor = fn query, _opts ->
         if query =~ "Elixir" do
-          {:ok, [%{name: "Elixir", type: :technology}]}
+          {:ok, [%{name: "Elixir", type: "technology"}]}
         else
           {:ok, []}
         end

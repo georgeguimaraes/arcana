@@ -47,7 +47,7 @@ defmodule ArcanaWeb.AskLiveTest do
         %Entity{}
         |> Entity.changeset(%{
           name: "OpenAI",
-          type: :organization,
+          type: "organization",
           collection_id: collection.id
         })
         |> Repo.insert()
@@ -115,7 +115,7 @@ defmodule ArcanaWeb.AskLiveTest do
         %Entity{}
         |> Entity.changeset(%{
           name: "OpenAI",
-          type: :organization,
+          type: "organization",
           collection_id: collection.id
         })
         |> Repo.insert()
@@ -124,7 +124,7 @@ defmodule ArcanaWeb.AskLiveTest do
         %Entity{}
         |> Entity.changeset(%{
           name: "Sam Altman",
-          type: :person,
+          type: "person",
           collection_id: collection.id
         })
         |> Repo.insert()
@@ -133,7 +133,7 @@ defmodule ArcanaWeb.AskLiveTest do
         %Entity{}
         |> Entity.changeset(%{
           name: "GPT-4",
-          type: :technology,
+          type: "technology",
           collection_id: collection.id
         })
         |> Repo.insert()
@@ -177,8 +177,8 @@ defmodule ArcanaWeb.AskLiveTest do
         selected_collections: nil,
         graph_enhanced: true,
         matched_entities: [
-          %{name: "OpenAI", type: :organization},
-          %{name: "Sam Altman", type: :person}
+          %{name: "OpenAI", type: "organization"},
+          %{name: "Sam Altman", type: "person"}
         ],
         matched_relationships: [
           %{source: "Sam Altman", target: "OpenAI", type: "LEADS"}
@@ -204,8 +204,8 @@ defmodule ArcanaWeb.AskLiveTest do
         selected_collections: nil,
         graph_enhanced: true,
         matched_entities: [
-          %{name: "OpenAI", type: :organization},
-          %{name: "Sam Altman", type: :person}
+          %{name: "OpenAI", type: "organization"},
+          %{name: "Sam Altman", type: "person"}
         ],
         matched_relationships: []
       }
@@ -257,7 +257,7 @@ defmodule ArcanaWeb.AskLiveTest do
         sub_questions: nil,
         selected_collections: nil,
         graph_enhanced: true,
-        matched_entities: [%{id: "abc123", name: "OpenAI", type: :organization}],
+        matched_entities: [%{id: "abc123", name: "OpenAI", type: "organization"}],
         matched_relationships: []
       }
 
@@ -299,7 +299,7 @@ defmodule ArcanaWeb.AskLiveTest do
         sub_questions: nil,
         selected_collections: nil,
         graph_enhanced: true,
-        matched_entities: [%{name: "OpenAI", type: :organization}],
+        matched_entities: [%{name: "OpenAI", type: "organization"}],
         matched_relationships: []
       }
 
@@ -333,7 +333,7 @@ defmodule ArcanaWeb.AskLiveTest do
         sub_questions: nil,
         selected_collections: nil,
         graph_enhanced: true,
-        matched_entities: [%{name: "OpenAI", type: :organization}],
+        matched_entities: [%{name: "OpenAI", type: "organization"}],
         matched_relationships: []
       }
 

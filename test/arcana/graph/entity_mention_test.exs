@@ -2,7 +2,6 @@ defmodule Arcana.Graph.EntityMentionTest do
   use Arcana.DataCase, async: true
 
   alias Arcana.{Chunk, Collection, Document}
-  alias Arcana.Embeddings.Serving
   alias Arcana.Graph.{Entity, EntityMention}
 
   describe "changeset/2" do
@@ -55,7 +54,7 @@ defmodule Arcana.Graph.EntityMentionTest do
       {:ok, collection} = create_collection()
       {:ok, doc} = create_document(collection)
       {:ok, chunk} = create_chunk(doc, "OpenAI released GPT-4")
-      {:ok, entity} = create_entity("OpenAI", :organization)
+      {:ok, entity} = create_entity("OpenAI", "organization")
 
       {:ok, mention} =
         %EntityMention{}
@@ -79,7 +78,7 @@ defmodule Arcana.Graph.EntityMentionTest do
       {:ok, collection} = create_collection()
       {:ok, doc} = create_document(collection)
       {:ok, chunk} = create_chunk(doc, "OpenAI released GPT-4")
-      {:ok, entity} = create_entity("OpenAI", :organization)
+      {:ok, entity} = create_entity("OpenAI", "organization")
 
       {:ok, mention} =
         %EntityMention{}
@@ -99,7 +98,7 @@ defmodule Arcana.Graph.EntityMentionTest do
       {:ok, collection} = create_collection()
       {:ok, doc} = create_document(collection)
       {:ok, chunk} = create_chunk(doc, "OpenAI released GPT-4")
-      {:ok, entity} = create_entity("OpenAI", :organization)
+      {:ok, entity} = create_entity("OpenAI", "organization")
 
       {:ok, _mention} =
         %EntityMention{}
@@ -115,7 +114,7 @@ defmodule Arcana.Graph.EntityMentionTest do
       {:ok, collection} = create_collection()
       {:ok, doc} = create_document(collection)
       {:ok, chunk} = create_chunk(doc, "OpenAI released GPT-4")
-      {:ok, entity} = create_entity("OpenAI", :organization)
+      {:ok, entity} = create_entity("OpenAI", "organization")
 
       {:ok, _mention} =
         %EntityMention{}
@@ -141,7 +140,7 @@ defmodule Arcana.Graph.EntityMentionTest do
   end
 
   defp create_chunk(document, text) do
-    embedding = Serving.embed(text)
+    {:ok, embedding} = embed(text)
 
     %Chunk{}
     |> Chunk.changeset(%{text: text, embedding: embedding, document_id: document.id})
@@ -152,5 +151,10 @@ defmodule Arcana.Graph.EntityMentionTest do
     %Entity{}
     |> Entity.changeset(%{name: name, type: type})
     |> Repo.insert()
+  end
+
+  defp embed(text) do
+    embedder = Application.get_env(:arcana, :embedder)
+    embedder.(text)
   end
 end

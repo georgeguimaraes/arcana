@@ -20,7 +20,15 @@ defmodule Arcana do
 
   alias Arcana.{Chunk, Chunker, Collection, Document, Embedder, LLM, Parser, VectorStore}
   alias Arcana.VectorStore.Pgvector
-  alias Arcana.Graph.{Entity, EntityMention, EntityExtractor, GraphExtractor, Relationship, RelationshipExtractor}
+
+  alias Arcana.Graph.{
+    Entity,
+    EntityMention,
+    EntityExtractor,
+    GraphExtractor,
+    Relationship,
+    RelationshipExtractor
+  }
 
   @doc """
   Returns the configured embedder as a `{module, opts}` tuple.

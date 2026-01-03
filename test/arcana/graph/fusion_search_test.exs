@@ -5,9 +5,9 @@ defmodule Arcana.Graph.FusionSearchTest do
   alias Arcana.Graph.GraphQuery
 
   @sample_entities [
-    %{id: "1", name: "OpenAI", type: :organization, embedding: [0.1, 0.2, 0.3]},
-    %{id: "2", name: "Sam Altman", type: :person, embedding: [0.15, 0.25, 0.35]},
-    %{id: "3", name: "GPT-4", type: :technology, embedding: [0.2, 0.3, 0.4]}
+    %{id: "1", name: "OpenAI", type: "organization", embedding: [0.1, 0.2, 0.3]},
+    %{id: "2", name: "Sam Altman", type: "person", embedding: [0.15, 0.25, 0.35]},
+    %{id: "3", name: "GPT-4", type: "technology", embedding: [0.2, 0.3, 0.4]}
   ]
 
   @sample_relationships [
@@ -81,7 +81,7 @@ defmodule Arcana.Graph.FusionSearchTest do
   describe "graph_search/4" do
     test "returns chunks connected to recognized entities" do
       graph = build_graph()
-      entities = [%{name: "OpenAI", type: :organization}]
+      entities = [%{name: "OpenAI", type: "organization"}]
 
       results = FusionSearch.graph_search(graph, entities)
 
@@ -93,7 +93,7 @@ defmodule Arcana.Graph.FusionSearchTest do
 
     test "traverses relationships to find related chunks" do
       graph = build_graph()
-      entities = [%{name: "Sam Altman", type: :person}]
+      entities = [%{name: "Sam Altman", type: "person"}]
 
       results = FusionSearch.graph_search(graph, entities, depth: 2)
 
@@ -105,7 +105,7 @@ defmodule Arcana.Graph.FusionSearchTest do
 
     test "returns empty list when no entities found" do
       graph = build_graph()
-      entities = [%{name: "Unknown", type: :organization}]
+      entities = [%{name: "Unknown", type: "organization"}]
 
       results = FusionSearch.graph_search(graph, entities)
 
@@ -114,7 +114,7 @@ defmodule Arcana.Graph.FusionSearchTest do
 
     test "respects depth option" do
       graph = build_graph()
-      entities = [%{name: "Sam Altman", type: :person}]
+      entities = [%{name: "Sam Altman", type: "person"}]
 
       # Depth 1: Sam Altman -> OpenAI only
       results_1 = FusionSearch.graph_search(graph, entities, depth: 1)
@@ -129,7 +129,7 @@ defmodule Arcana.Graph.FusionSearchTest do
   describe "search/4" do
     test "combines vector and graph results" do
       graph = build_graph()
-      entities = [%{name: "OpenAI", type: :organization}]
+      entities = [%{name: "OpenAI", type: "organization"}]
 
       # Mock vector search returning some chunks
       vector_results = [%{id: "c3", content: "GPT-4 is a large language model"}]
@@ -143,7 +143,7 @@ defmodule Arcana.Graph.FusionSearchTest do
 
     test "deduplicates results from multiple sources" do
       graph = build_graph()
-      entities = [%{name: "OpenAI", type: :organization}]
+      entities = [%{name: "OpenAI", type: "organization"}]
 
       # Vector search also returns c1 which is in graph results
       vector_results = [%{id: "c1", content: "Sam Altman leads OpenAI"}]
@@ -157,7 +157,7 @@ defmodule Arcana.Graph.FusionSearchTest do
 
     test "ranks items appearing in multiple sources higher" do
       graph = build_graph()
-      entities = [%{name: "GPT-4", type: :technology}]
+      entities = [%{name: "GPT-4", type: "technology"}]
 
       # c2 appears in both graph and vector results
       vector_results = [
@@ -174,7 +174,7 @@ defmodule Arcana.Graph.FusionSearchTest do
 
     test "respects limit option" do
       graph = build_graph()
-      entities = [%{name: "OpenAI", type: :organization}]
+      entities = [%{name: "OpenAI", type: "organization"}]
       vector_results = [%{id: "c3", content: "GPT-4"}]
 
       results = FusionSearch.search(graph, entities, vector_results, limit: 2)

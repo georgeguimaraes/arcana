@@ -4,11 +4,11 @@ defmodule Arcana.Graph.GraphQueryTest do
   alias Arcana.Graph.GraphQuery
 
   @sample_entities [
-    %{id: "1", name: "OpenAI", type: :organization, embedding: [0.1, 0.2, 0.3]},
-    %{id: "2", name: "Sam Altman", type: :person, embedding: [0.15, 0.25, 0.35]},
-    %{id: "3", name: "GPT-4", type: :technology, embedding: [0.2, 0.3, 0.4]},
-    %{id: "4", name: "Microsoft", type: :organization, embedding: [0.8, 0.7, 0.6]},
-    %{id: "5", name: "Satya Nadella", type: :person, embedding: [0.85, 0.75, 0.65]}
+    %{id: "1", name: "OpenAI", type: "organization", embedding: [0.1, 0.2, 0.3]},
+    %{id: "2", name: "Sam Altman", type: "person", embedding: [0.15, 0.25, 0.35]},
+    %{id: "3", name: "GPT-4", type: "technology", embedding: [0.2, 0.3, 0.4]},
+    %{id: "4", name: "Microsoft", type: "organization", embedding: [0.8, 0.7, 0.6]},
+    %{id: "5", name: "Satya Nadella", type: "person", embedding: [0.85, 0.75, 0.65]}
   ]
 
   @sample_relationships [

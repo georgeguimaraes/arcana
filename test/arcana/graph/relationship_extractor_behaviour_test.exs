@@ -32,8 +32,8 @@ defmodule Arcana.Graph.RelationshipExtractorBehaviourTest do
   alias Arcana.Graph.RelationshipExtractor
 
   @entities [
-    %{name: "Sam Altman", type: :person},
-    %{name: "OpenAI", type: :organization}
+    %{name: "Sam Altman", type: "person"},
+    %{name: "OpenAI", type: "organization"}
   ]
 
   describe "extract/3 with module extractor" do

@@ -154,7 +154,8 @@ defmodule Arcana.Graph.GraphExtractor.LLM do
         {:ok, %{entities: normalized_entities, relationships: validated_relationships}}
 
       {:ok, _} ->
-        {:error, {:json_parse_error, "Expected object with 'entities' and 'relationships' arrays"}}
+        {:error,
+         {:json_parse_error, "Expected object with 'entities' and 'relationships' arrays"}}
 
       {:error, error} ->
         {:error, {:json_parse_error, error}}

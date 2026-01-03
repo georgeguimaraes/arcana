@@ -10,7 +10,7 @@ defmodule Arcana.Graph.EntityExtractor.NERTest do
       {:ok, entities} = NER.extract(text, [])
 
       assert Enum.any?(entities, fn e ->
-               e.name == "Sam Altman" and e.type == :person
+               e.name == "Sam Altman" and e.type == "person"
              end)
     end
 
@@ -20,7 +20,7 @@ defmodule Arcana.Graph.EntityExtractor.NERTest do
       {:ok, entities} = NER.extract(text, [])
 
       assert Enum.any?(entities, fn e ->
-               e.name == "OpenAI" and e.type == :organization
+               e.name == "OpenAI" and e.type == "organization"
              end)
     end
 
@@ -30,7 +30,7 @@ defmodule Arcana.Graph.EntityExtractor.NERTest do
       {:ok, entities} = NER.extract(text, [])
 
       assert Enum.any?(entities, fn e ->
-               e.name == "San Francisco" and e.type == :location
+               e.name == "San Francisco" and e.type == "location"
              end)
     end
 
@@ -90,29 +90,29 @@ defmodule Arcana.Graph.EntityExtractor.NERTest do
 
   describe "label mapping" do
     test "maps PER to person" do
-      assert NER.map_label("PER") == :person
-      assert NER.map_label("B-PER") == :person
-      assert NER.map_label("I-PER") == :person
+      assert NER.map_label("PER") == "person"
+      assert NER.map_label("B-PER") == "person"
+      assert NER.map_label("I-PER") == "person"
     end
 
     test "maps ORG to organization" do
-      assert NER.map_label("ORG") == :organization
-      assert NER.map_label("B-ORG") == :organization
+      assert NER.map_label("ORG") == "organization"
+      assert NER.map_label("B-ORG") == "organization"
     end
 
     test "maps LOC to location" do
-      assert NER.map_label("LOC") == :location
-      assert NER.map_label("B-LOC") == :location
+      assert NER.map_label("LOC") == "location"
+      assert NER.map_label("B-LOC") == "location"
     end
 
     test "maps MISC to concept" do
-      assert NER.map_label("MISC") == :concept
-      assert NER.map_label("B-MISC") == :concept
+      assert NER.map_label("MISC") == "concept"
+      assert NER.map_label("B-MISC") == "concept"
     end
 
     test "maps unknown labels to other" do
-      assert NER.map_label("UNKNOWN") == :other
-      assert NER.map_label("O") == :other
+      assert NER.map_label("UNKNOWN") == "other"
+      assert NER.map_label("O") == "other"
     end
   end
 end

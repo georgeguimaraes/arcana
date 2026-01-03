@@ -51,8 +51,8 @@ defmodule Arcana.Graph.CommunityTest do
 
   describe "database operations" do
     test "inserts community with entity_ids array" do
-      {:ok, entity1} = create_entity("OpenAI", :organization)
-      {:ok, entity2} = create_entity("Sam Altman", :person)
+      {:ok, entity1} = create_entity("OpenAI", "organization")
+      {:ok, entity2} = create_entity("Sam Altman", "person")
 
       {:ok, community} =
         %Community{}

@@ -97,6 +97,7 @@ defmodule Arcana.EndToEnd.GraphRAGTest do
 
       # Should have entities from both documents
       assert Enum.any?(entity_names, &String.contains?(&1, "Anthropic"))
+
       assert Enum.any?(entity_names, &String.contains?(&1, "Dario")) or
                Enum.any?(entity_names, &String.contains?(&1, "Amodei"))
     end
@@ -133,7 +134,7 @@ defmodule Arcana.EndToEnd.GraphRAGTest do
           graph: true,
           entity_extractor: fn query, _opts ->
             if query =~ "Elixir" do
-              {:ok, [%{name: "Elixir", type: :technology}]}
+              {:ok, [%{name: "Elixir", type: "technology"}]}
             else
               {:ok, []}
             end
@@ -159,8 +160,17 @@ defmodule Arcana.EndToEnd.GraphRAGTest do
           graph: true,
           entity_extractor: fn query, _opts ->
             entities = []
-            entities = if query =~ "Phoenix", do: [%{name: "Phoenix", type: :technology} | entities], else: entities
-            entities = if query =~ "Elixir", do: [%{name: "Elixir", type: :technology} | entities], else: entities
+
+            entities =
+              if query =~ "Phoenix",
+                do: [%{name: "Phoenix", type: "technology"} | entities],
+                else: entities
+
+            entities =
+              if query =~ "Elixir",
+                do: [%{name: "Elixir", type: "technology"} | entities],
+                else: entities
+
             {:ok, entities}
           end,
           collection: "e2e-ask-test"
@@ -181,9 +191,9 @@ defmodule Arcana.EndToEnd.GraphRAGTest do
       llm = llm_config(:zai)
 
       entities = [
-        %{name: "Sam Altman", type: :person, description: "CEO of OpenAI"},
-        %{name: "OpenAI", type: :organization, description: "AI research company"},
-        %{name: "GPT-4", type: :technology, description: "Large language model"}
+        %{name: "Sam Altman", type: "person", description: "CEO of OpenAI"},
+        %{name: "OpenAI", type: "organization", description: "AI research company"},
+        %{name: "GPT-4", type: "technology", description: "Large language model"}
       ]
 
       relationships = [
@@ -211,12 +221,12 @@ defmodule Arcana.EndToEnd.GraphRAGTest do
       llm = llm_config(:zai)
 
       entities = [
-        %{name: "Google", type: :organization, description: "Tech company"},
-        %{name: "DeepMind", type: :organization, description: "AI lab"},
-        %{name: "Demis Hassabis", type: :person, description: "CEO of DeepMind"},
-        %{name: "AlphaGo", type: :technology, description: "Go-playing AI"},
-        %{name: "AlphaFold", type: :technology, description: "Protein structure prediction AI"},
-        %{name: "Gemini", type: :technology, description: "Large language model"}
+        %{name: "Google", type: "organization", description: "Tech company"},
+        %{name: "DeepMind", type: "organization", description: "AI lab"},
+        %{name: "Demis Hassabis", type: "person", description: "CEO of DeepMind"},
+        %{name: "AlphaGo", type: "technology", description: "Go-playing AI"},
+        %{name: "AlphaFold", type: "technology", description: "Protein structure prediction AI"},
+        %{name: "Gemini", type: "technology", description: "Large language model"}
       ]
 
       relationships = [
@@ -279,7 +289,7 @@ defmodule Arcana.EndToEnd.GraphRAGTest do
           repo: Arcana.TestRepo,
           graph: true,
           entity_extractor: fn _q, _opts ->
-            {:ok, [%{name: "Rust", type: :technology}]}
+            {:ok, [%{name: "Rust", type: "technology"}]}
           end,
           collection: "e2e-full-pipeline"
         )
@@ -293,7 +303,7 @@ defmodule Arcana.EndToEnd.GraphRAGTest do
           llm: llm,
           graph: true,
           entity_extractor: fn _q, _opts ->
-            {:ok, [%{name: "Rust", type: :technology}]}
+            {:ok, [%{name: "Rust", type: "technology"}]}
           end,
           collection: "e2e-full-pipeline"
         )

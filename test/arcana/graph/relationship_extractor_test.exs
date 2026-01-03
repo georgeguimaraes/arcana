@@ -9,8 +9,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
       text = "Sam Altman is the CEO of OpenAI."
 
       entities = [
-        %{name: "Sam Altman", type: :person},
-        %{name: "OpenAI", type: :organization}
+        %{name: "Sam Altman", type: "person"},
+        %{name: "OpenAI", type: "organization"}
       ]
 
       llm = fn _prompt, _context, _opts ->
@@ -45,9 +45,9 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
       text = "Elon Musk founded SpaceX and acquired Twitter."
 
       entities = [
-        %{name: "Elon Musk", type: :person},
-        %{name: "SpaceX", type: :organization},
-        %{name: "Twitter", type: :organization}
+        %{name: "Elon Musk", type: "person"},
+        %{name: "SpaceX", type: "organization"},
+        %{name: "Twitter", type: "organization"}
       ]
 
       llm = fn _prompt, _context, _opts ->
@@ -96,7 +96,7 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
 
     test "handles LLM errors gracefully" do
       text = "Some text"
-      entities = [%{name: "Entity", type: :person}]
+      entities = [%{name: "Entity", type: "person"}]
 
       llm = fn _prompt, _context, _opts ->
         {:error, :api_error}
@@ -108,7 +108,7 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
 
     test "handles malformed JSON response" do
       text = "Sam Altman is the CEO of OpenAI."
-      entities = [%{name: "Sam Altman", type: :person}]
+      entities = [%{name: "Sam Altman", type: "person"}]
 
       llm = fn _prompt, _context, _opts ->
         {:ok, "not valid json"}
@@ -124,7 +124,7 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
       text = "Sam Altman is the CEO of OpenAI."
 
       entities = [
-        %{name: "Sam Altman", type: :person}
+        %{name: "Sam Altman", type: "person"}
       ]
 
       llm = fn _prompt, _context, _opts ->
@@ -153,8 +153,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
       text = "Sam Altman leads OpenAI."
 
       entities = [
-        %{name: "Sam Altman", type: :person},
-        %{name: "OpenAI", type: :organization}
+        %{name: "Sam Altman", type: "person"},
+        %{name: "OpenAI", type: "organization"}
       ]
 
       llm = fn _prompt, _context, _opts ->
@@ -183,8 +183,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
       text = "Test text"
 
       entities = [
-        %{name: "A", type: :person},
-        %{name: "B", type: :person}
+        %{name: "A", type: "person"},
+        %{name: "B", type: "person"}
       ]
 
       llm = fn _prompt, _context, _opts ->
@@ -209,8 +209,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
       text = "Sam Altman works at OpenAI."
 
       entities = [
-        %{name: "Sam Altman", type: :person},
-        %{name: "OpenAI", type: :organization}
+        %{name: "Sam Altman", type: "person"},
+        %{name: "OpenAI", type: "organization"}
       ]
 
       llm = fn _prompt, _context, _opts ->
@@ -241,8 +241,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
       text = "Test text"
 
       entities = [
-        %{name: "Sam Altman", type: :person},
-        %{name: "OpenAI", type: :organization}
+        %{name: "Sam Altman", type: "person"},
+        %{name: "OpenAI", type: "organization"}
       ]
 
       prompt = LLM.build_prompt(text, entities)
@@ -255,8 +255,8 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
       text = "Test text"
 
       entities = [
-        %{name: "Sam Altman", type: :person},
-        %{name: "OpenAI", type: :organization}
+        %{name: "Sam Altman", type: "person"},
+        %{name: "OpenAI", type: "organization"}
       ]
 
       prompt = LLM.build_prompt(text, entities)
@@ -267,7 +267,7 @@ defmodule Arcana.Graph.RelationshipExtractorTest do
 
     test "includes input text in prompt" do
       text = "The quick brown fox jumps over the lazy dog."
-      entities = [%{name: "Fox", type: :concept}]
+      entities = [%{name: "Fox", type: "concept"}]
 
       prompt = LLM.build_prompt(text, entities)
 

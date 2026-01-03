@@ -84,8 +84,8 @@ defmodule Arcana.Graph.RelationshipTest do
 
   describe "database operations" do
     test "inserts relationship between entities" do
-      {:ok, source} = create_entity("Sam Altman", :person)
-      {:ok, target} = create_entity("OpenAI", :organization)
+      {:ok, source} = create_entity("Sam Altman", "person")
+      {:ok, target} = create_entity("OpenAI", "organization")
 
       {:ok, relationship} =
         %Relationship{}
@@ -105,8 +105,8 @@ defmodule Arcana.Graph.RelationshipTest do
     end
 
     test "loads source and target entities" do
-      {:ok, source} = create_entity("Sam Altman", :person)
-      {:ok, target} = create_entity("OpenAI", :organization)
+      {:ok, source} = create_entity("Sam Altman", "person")
+      {:ok, target} = create_entity("OpenAI", "organization")
 
       {:ok, relationship} =
         %Relationship{}
@@ -124,8 +124,8 @@ defmodule Arcana.Graph.RelationshipTest do
     end
 
     test "deletes relationship when source entity is deleted" do
-      {:ok, source} = create_entity("Sam Altman", :person)
-      {:ok, target} = create_entity("OpenAI", :organization)
+      {:ok, source} = create_entity("Sam Altman", "person")
+      {:ok, target} = create_entity("OpenAI", "organization")
 
       {:ok, _relationship} =
         %Relationship{}

@@ -6,8 +6,8 @@ defmodule Arcana.Graph.CommunitySummarizerTest do
   describe "summarize/4" do
     test "generates summary for community" do
       entities = [
-        %{name: "Sam Altman", type: :person, description: "CEO of OpenAI"},
-        %{name: "OpenAI", type: :organization, description: "AI research company"}
+        %{name: "Sam Altman", type: "person", description: "CEO of OpenAI"},
+        %{name: "OpenAI", type: "organization", description: "AI research company"}
       ]
 
       relationships = [
@@ -35,7 +35,7 @@ defmodule Arcana.Graph.CommunitySummarizerTest do
     end
 
     test "handles LLM errors" do
-      entities = [%{name: "Test", type: :person}]
+      entities = [%{name: "Test", type: "person"}]
 
       llm = fn _prompt, _ctx, _opts ->
         {:error, :api_error}
@@ -48,8 +48,8 @@ defmodule Arcana.Graph.CommunitySummarizerTest do
   describe "build_prompt/2" do
     test "includes entity names and types" do
       entities = [
-        %{name: "OpenAI", type: :organization},
-        %{name: "Sam Altman", type: :person}
+        %{name: "OpenAI", type: "organization"},
+        %{name: "Sam Altman", type: "person"}
       ]
 
       prompt = CommunitySummarizer.build_prompt(entities, [])
@@ -61,7 +61,7 @@ defmodule Arcana.Graph.CommunitySummarizerTest do
     end
 
     test "includes relationship information" do
-      entities = [%{name: "A", type: :person}, %{name: "B", type: :person}]
+      entities = [%{name: "A", type: "person"}, %{name: "B", type: "person"}]
 
       relationships = [
         %{source: "A", target: "B", type: "KNOWS", description: "Friends"}

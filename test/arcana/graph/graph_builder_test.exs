@@ -12,7 +12,7 @@ defmodule Arcana.Graph.GraphBuilderTest do
   describe "build/3" do
     test "extracts entities from chunks" do
       entity_extractor = fn _text, _opts ->
-        {:ok, [%{name: "OpenAI", type: :organization}]}
+        {:ok, [%{name: "OpenAI", type: "organization"}]}
       end
 
       relationship_extractor = fn _text, _entities, _opts ->
@@ -33,8 +33,8 @@ defmodule Arcana.Graph.GraphBuilderTest do
       entity_extractor = fn _text, _opts ->
         {:ok,
          [
-           %{name: "Sam Altman", type: :person},
-           %{name: "OpenAI", type: :organization}
+           %{name: "Sam Altman", type: "person"},
+           %{name: "OpenAI", type: "organization"}
          ]}
       end
 
@@ -54,7 +54,7 @@ defmodule Arcana.Graph.GraphBuilderTest do
 
     test "tracks entity-chunk mentions" do
       entity_extractor = fn _text, _opts ->
-        {:ok, [%{name: "OpenAI", type: :organization}]}
+        {:ok, [%{name: "OpenAI", type: "organization"}]}
       end
 
       relationship_extractor = fn _text, _entities, _opts ->
@@ -78,7 +78,7 @@ defmodule Arcana.Graph.GraphBuilderTest do
     test "deduplicates entities across chunks" do
       entity_extractor = fn _text, _opts ->
         # Returns OpenAI from each chunk
-        {:ok, [%{name: "OpenAI", type: :organization}]}
+        {:ok, [%{name: "OpenAI", type: "organization"}]}
       end
 
       relationship_extractor = fn _text, _entities, _opts ->
@@ -121,8 +121,8 @@ defmodule Arcana.Graph.GraphBuilderTest do
       entity_extractor = fn _text, _opts ->
         {:ok,
          [
-           %{name: "OpenAI", type: :organization},
-           %{name: "GPT-4", type: :technology}
+           %{name: "OpenAI", type: "organization"},
+           %{name: "GPT-4", type: "technology"}
          ]}
       end
 
@@ -144,7 +144,7 @@ defmodule Arcana.Graph.GraphBuilderTest do
   describe "build_from_text/3" do
     test "builds graph from single text" do
       entity_extractor = fn _text, _opts ->
-        {:ok, [%{name: "OpenAI", type: :organization}]}
+        {:ok, [%{name: "OpenAI", type: "organization"}]}
       end
 
       relationship_extractor = fn _text, _entities, _opts ->
@@ -166,13 +166,13 @@ defmodule Arcana.Graph.GraphBuilderTest do
   describe "merge/2" do
     test "merges two graph data structures" do
       graph1 = %{
-        entities: [%{id: "1", name: "OpenAI", type: :organization}],
+        entities: [%{id: "1", name: "OpenAI", type: "organization"}],
         relationships: [],
         mentions: [%{entity_name: "OpenAI", chunk_id: "c1"}]
       }
 
       graph2 = %{
-        entities: [%{id: "2", name: "GPT-4", type: :technology}],
+        entities: [%{id: "2", name: "GPT-4", type: "technology"}],
         relationships: [%{source: "OpenAI", target: "GPT-4", type: "DEVELOPS"}],
         mentions: [%{entity_name: "GPT-4", chunk_id: "c2"}]
       }
@@ -186,13 +186,13 @@ defmodule Arcana.Graph.GraphBuilderTest do
 
     test "deduplicates entities by name when merging" do
       graph1 = %{
-        entities: [%{id: "1", name: "OpenAI", type: :organization}],
+        entities: [%{id: "1", name: "OpenAI", type: "organization"}],
         relationships: [],
         mentions: []
       }
 
       graph2 = %{
-        entities: [%{id: "2", name: "OpenAI", type: :organization}],
+        entities: [%{id: "2", name: "OpenAI", type: "organization"}],
         relationships: [],
         mentions: []
       }
@@ -208,8 +208,8 @@ defmodule Arcana.Graph.GraphBuilderTest do
     test "converts builder output to GraphQuery format" do
       graph_data = %{
         entities: [
-          %{id: "1", name: "OpenAI", type: :organization},
-          %{id: "2", name: "GPT-4", type: :technology}
+          %{id: "1", name: "OpenAI", type: "organization"},
+          %{id: "2", name: "GPT-4", type: "technology"}
         ],
         relationships: [
           %{source: "OpenAI", target: "GPT-4", type: "DEVELOPS"}

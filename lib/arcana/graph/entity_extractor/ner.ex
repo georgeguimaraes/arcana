@@ -23,7 +23,7 @@ defmodule Arcana.Graph.EntityExtractor.NER do
 
   @type entity :: %{
           name: String.t(),
-          type: atom(),
+          type: String.t(),
           span_start: non_neg_integer(),
           span_end: non_neg_integer(),
           score: float()
@@ -40,8 +40,8 @@ defmodule Arcana.Graph.EntityExtractor.NER do
 
       iex> NER.extract("Sam Altman is CEO of OpenAI.", [])
       {:ok, [
-        %{name: "Sam Altman", type: :person, span_start: 0, span_end: 10, score: 0.99},
-        %{name: "OpenAI", type: :organization, span_start: 22, span_end: 28, score: 0.98}
+        %{name: "Sam Altman", type: "person", span_start: 0, span_end: 10, score: 0.99},
+        %{name: "OpenAI", type: "organization", span_start: 22, span_end: 28, score: 0.98}
       ]}
 
   """
@@ -79,24 +79,24 @@ defmodule Arcana.Graph.EntityExtractor.NER do
   Maps NER labels to entity types.
 
   ## Label Mapping
-  - PER, B-PER, I-PER → :person
-  - ORG, B-ORG, I-ORG → :organization
-  - LOC, B-LOC, I-LOC → :location
-  - MISC, B-MISC, I-MISC → :concept
-  - Other → :other
+  - PER, B-PER, I-PER → "person"
+  - ORG, B-ORG, I-ORG → "organization"
+  - LOC, B-LOC, I-LOC → "location"
+  - MISC, B-MISC, I-MISC → "concept"
+  - Other → "other"
   """
-  @spec map_label(String.t()) :: atom()
+  @spec map_label(String.t()) :: String.t()
   def map_label(label) when is_binary(label) do
     label
     |> String.replace(~r/^[BI]-/, "")
     |> do_map_label()
   end
 
-  defp do_map_label("PER"), do: :person
-  defp do_map_label("ORG"), do: :organization
-  defp do_map_label("LOC"), do: :location
-  defp do_map_label("MISC"), do: :concept
-  defp do_map_label(_), do: :other
+  defp do_map_label("PER"), do: "person"
+  defp do_map_label("ORG"), do: "organization"
+  defp do_map_label("LOC"), do: "location"
+  defp do_map_label("MISC"), do: "concept"
+  defp do_map_label(_), do: "other"
 
   defp normalize_entity(%{phrase: phrase, label: label, start: start, end: end_pos, score: score}) do
     %{

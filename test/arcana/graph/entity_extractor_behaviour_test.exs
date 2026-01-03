@@ -6,9 +6,9 @@ defmodule MockEntityExtractor do
     min_score = Keyword.get(opts, :min_score, 0.0)
 
     all_entities = [
-      %{name: "Sam Altman", type: :person, score: 0.95},
-      %{name: "OpenAI", type: :organization, score: 0.98},
-      %{name: "Elon Musk", type: :person, score: 0.92}
+      %{name: "Sam Altman", type: "person", score: 0.95},
+      %{name: "OpenAI", type: "organization", score: 0.98},
+      %{name: "Elon Musk", type: "person", score: 0.92}
     ]
 
     entities =
@@ -32,7 +32,7 @@ defmodule MockEntityExtractorWithoutBatch do
   @impl true
   def extract(text, _opts) do
     entities =
-      [%{name: "Sam Altman", type: :person}, %{name: "Elon Musk", type: :person}]
+      [%{name: "Sam Altman", type: "person"}, %{name: "Elon Musk", type: "person"}]
       |> Enum.filter(&String.contains?(text, &1.name))
 
     {:ok, entities}

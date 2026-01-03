@@ -86,7 +86,14 @@ defmodule Arcana.Graph.GraphBuilder do
 
         chunks
         |> Enum.reduce({[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
-          process_chunk(chunk, entity_extractor, relationship_extractor, ent_acc, ment_acc, rel_acc)
+          process_chunk(
+            chunk,
+            entity_extractor,
+            relationship_extractor,
+            ent_acc,
+            ment_acc,
+            rel_acc
+          )
         end)
       end
 

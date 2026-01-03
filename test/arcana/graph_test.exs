@@ -23,7 +23,7 @@ defmodule Arcana.GraphTest do
   describe "search/3" do
     test "returns results from graph" do
       graph = build_sample_graph()
-      entities = [%{name: "OpenAI", type: :organization}]
+      entities = [%{name: "OpenAI", type: "organization"}]
 
       results = Graph.search(graph, entities)
 
@@ -32,7 +32,7 @@ defmodule Arcana.GraphTest do
 
     test "supports depth option" do
       graph = build_sample_graph()
-      entities = [%{name: "Sam Altman", type: :person}]
+      entities = [%{name: "Sam Altman", type: "person"}]
 
       results = Graph.search(graph, entities, depth: 2)
 
@@ -43,7 +43,7 @@ defmodule Arcana.GraphTest do
   describe "fusion_search/4" do
     test "combines graph and vector results" do
       graph = build_sample_graph()
-      entities = [%{name: "OpenAI", type: :organization}]
+      entities = [%{name: "OpenAI", type: "organization"}]
       vector_results = [%{id: "c3", content: "GPT-4 info"}]
 
       results = Graph.fusion_search(graph, entities, vector_results)
@@ -53,7 +53,7 @@ defmodule Arcana.GraphTest do
 
     test "respects limit option" do
       graph = build_sample_graph()
-      entities = [%{name: "OpenAI", type: :organization}]
+      entities = [%{name: "OpenAI", type: "organization"}]
       vector_results = [%{id: "c3", content: "GPT-4 info"}]
 
       results = Graph.fusion_search(graph, entities, vector_results, limit: 2)
@@ -87,7 +87,7 @@ defmodule Arcana.GraphTest do
       ]
 
       entity_extractor = fn _text, _opts ->
-        {:ok, [%{name: "OpenAI", type: :organization}]}
+        {:ok, [%{name: "OpenAI", type: "organization"}]}
       end
 
       relationship_extractor = fn _text, _entities, _opts ->
@@ -109,9 +109,9 @@ defmodule Arcana.GraphTest do
     alias Arcana.Graph.GraphQuery
 
     entities = [
-      %{id: "1", name: "OpenAI", type: :organization, embedding: [0.1, 0.2, 0.3]},
-      %{id: "2", name: "Sam Altman", type: :person, embedding: [0.15, 0.25, 0.35]},
-      %{id: "3", name: "GPT-4", type: :technology, embedding: [0.2, 0.3, 0.4]}
+      %{id: "1", name: "OpenAI", type: "organization", embedding: [0.1, 0.2, 0.3]},
+      %{id: "2", name: "Sam Altman", type: "person", embedding: [0.15, 0.25, 0.35]},
+      %{id: "3", name: "GPT-4", type: "technology", embedding: [0.2, 0.3, 0.4]}
     ]
 
     relationships = [

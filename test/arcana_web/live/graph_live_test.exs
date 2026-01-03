@@ -61,7 +61,7 @@ defmodule ArcanaWeb.GraphLiveTest do
     setup do
       # Create test data with graph entities
       entity_extractor = fn _text, _opts ->
-        {:ok, [%{name: "TestEntity", type: :concept}]}
+        {:ok, [%{name: "TestEntity", type: "concept"}]}
       end
 
       {:ok, doc} =
@@ -129,9 +129,9 @@ defmodule ArcanaWeb.GraphLiveTest do
       entity_extractor = fn _text, _opts ->
         {:ok,
          [
-           %{name: "Alice Smith", type: :person},
-           %{name: "Acme Corp", type: :organization},
-           %{name: "Phoenix Framework", type: :technology}
+           %{name: "Alice Smith", type: "person"},
+           %{name: "Acme Corp", type: "organization"},
+           %{name: "Phoenix Framework", type: "technology"}
          ]}
       end
 
@@ -205,8 +205,8 @@ defmodule ArcanaWeb.GraphLiveTest do
       entity_extractor = fn _text, _opts ->
         {:ok,
          [
-           %{name: "Alice Johnson", type: :person},
-           %{name: "TechCorp Inc", type: :organization}
+           %{name: "Alice Johnson", type: "person"},
+           %{name: "TechCorp Inc", type: "organization"}
          ]}
       end
 
@@ -295,9 +295,9 @@ defmodule ArcanaWeb.GraphLiveTest do
       entity_extractor = fn _text, _opts ->
         {:ok,
          [
-           %{name: "CEO Smith", type: :person},
-           %{name: "TechStartup Inc", type: :organization},
-           %{name: "Big Partner Corp", type: :organization}
+           %{name: "CEO Smith", type: "person"},
+           %{name: "TechStartup Inc", type: "organization"},
+           %{name: "Big Partner Corp", type: "organization"}
          ]}
       end
 
@@ -448,9 +448,9 @@ defmodule ArcanaWeb.GraphLiveTest do
       entity_extractor = fn _text, _opts ->
         {:ok,
          [
-           %{name: "Alpha Leader", type: :person},
-           %{name: "Alpha Corp", type: :organization},
-           %{name: "Beta Inc", type: :organization}
+           %{name: "Alpha Leader", type: "person"},
+           %{name: "Alpha Corp", type: "organization"},
+           %{name: "Beta Inc", type: "organization"}
          ]}
       end
 
@@ -623,7 +623,7 @@ defmodule ArcanaWeb.GraphLiveTest do
   describe "CSS classes" do
     setup do
       entity_extractor = fn _text, _opts ->
-        {:ok, [%{name: "CSSTestEntity", type: :person}]}
+        {:ok, [%{name: "CSSTestEntity", type: "person"}]}
       end
 
       {:ok, _doc} =
@@ -670,7 +670,7 @@ defmodule ArcanaWeb.GraphLiveTest do
     setup do
       # Create test data with graph entities
       entity_extractor = fn _text, _opts ->
-        {:ok, [%{name: "URLTestEntity", type: :concept}]}
+        {:ok, [%{name: "URLTestEntity", type: "concept"}]}
       end
 
       {:ok, doc} =
