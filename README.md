@@ -166,6 +166,9 @@ Arcana supports multiple embedding providers:
 config :arcana, embedder: :local
 config :arcana, embedder: {:local, model: "BAAI/bge-large-en-v1.5"}
 
+# E5 models (automatically adds query:/passage: prefixes)
+config :arcana, embedder: {:local, model: "intfloat/e5-small-v2"}
+
 # OpenAI (requires OPENAI_API_KEY)
 config :arcana, embedder: :openai
 config :arcana, embedder: {:openai, model: "text-embedding-3-large"}
@@ -498,7 +501,7 @@ See the [Agentic RAG Guide](guides/agentic-rag.md) for detailed examples.
   - [x] Question decomposition (multi-step)
   - [x] Collection selection
   - [x] Pluggable components (custom behaviours for all steps)
-- [ ] E5 embedding model prefix support (`query:` / `passage:` prefixes)
+- [x] E5 embedding model prefix support (`query:` / `passage:` prefixes)
 - [ ] Additional vector store backends
   - [ ] TurboPuffer (hybrid search)
   - [ ] ChromaDB

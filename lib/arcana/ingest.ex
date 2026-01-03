@@ -131,7 +131,7 @@ defmodule Arcana.Ingest do
   end
 
   defp embed_single_chunk(emb, chunk, document, repo, acc) do
-    case Embedder.embed(emb, chunk.text) do
+    case Embedder.embed(emb, chunk.text, intent: :document) do
       {:ok, embedding} ->
         chunk_record =
           %Chunk{}

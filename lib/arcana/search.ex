@@ -195,7 +195,7 @@ defmodule Arcana.Search do
   end
 
   defp do_search(:semantic, query, params) do
-    case Embedder.embed(Arcana.Config.embedder(), query) do
+    case Embedder.embed(Arcana.Config.embedder(), query, intent: :query) do
       {:ok, query_embedding} ->
         vector_store_opts =
           [
@@ -242,7 +242,7 @@ defmodule Arcana.Search do
   end
 
   defp do_hybrid_pgvector(query, params) do
-    case Embedder.embed(Arcana.Config.embedder(), query) do
+    case Embedder.embed(Arcana.Config.embedder(), query, intent: :query) do
       {:ok, query_embedding} ->
         opts = [
           repo: params.repo,

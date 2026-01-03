@@ -87,7 +87,7 @@ defmodule Arcana.Maintenance do
       chunks = Chunker.chunk(chunker, doc.content)
 
       Enum.each(chunks, fn chunk ->
-        {:ok, embedding} = Embedder.embed(embedder, chunk.text)
+        {:ok, embedding} = Embedder.embed(embedder, chunk.text, intent: :document)
 
         %Chunk{}
         |> Chunk.changeset(%{
@@ -127,7 +127,7 @@ defmodule Arcana.Maintenance do
   end
 
   defp reembed_single_chunk(repo, embedder, chunk, index, total, progress_fn, count) do
-    case Embedder.embed(embedder, chunk.text) do
+    case Embedder.embed(embedder, chunk.text, intent: :document) do
       {:ok, embedding} ->
         repo.update_all(
           from(c in Chunk, where: c.id == ^chunk.id),

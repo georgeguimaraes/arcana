@@ -62,8 +62,12 @@ children = [
 | `BAAI/bge-base-en-v1.5` | 768 | 438MB | Better accuracy |
 | `BAAI/bge-large-en-v1.5` | 1024 | 1.3GB | Best accuracy |
 | `intfloat/e5-small-v2` | 384 | 133MB | Alternative to BGE |
+| `intfloat/e5-base-v2` | 768 | 438MB | E5 medium size |
+| `intfloat/e5-large-v2` | 1024 | 1.3GB | E5 best accuracy |
 | `thenlper/gte-small` | 384 | 67MB | Smallest, fastest |
 | `sentence-transformers/all-MiniLM-L6-v2` | 384 | 91MB | Lightweight |
+
+**E5 Models:** E5 models require special prefixes (`query:` for search queries, `passage:` for documents). Arcana handles this automatically - just configure the model and the prefixes are added during search and ingestion.
 
 ### Changing Embedding Models
 

@@ -121,4 +121,59 @@ defmodule Arcana.EmbedderTest do
       assert Embedder.dimensions(embedder) == 256
     end
   end
+
+  describe "Local E5 model prefix support" do
+    test "adds 'query: ' prefix for E5 models with intent: :query" do
+      text = "what is machine learning?"
+
+      result = Local.prepare_text(text, "intfloat/e5-small-v2", :query)
+
+      assert result == "query: what is machine learning?"
+    end
+
+    test "adds 'passage: ' prefix for E5 models with intent: :document" do
+      text = "Machine learning is a branch of AI."
+
+      result = Local.prepare_text(text, "intfloat/e5-small-v2", :document)
+
+      assert result == "passage: Machine learning is a branch of AI."
+    end
+
+    test "defaults to :document intent for E5 models when no intent specified" do
+      text = "Some document text"
+
+      result = Local.prepare_text(text, "intfloat/e5-base-v2", nil)
+
+      assert result == "passage: Some document text"
+    end
+
+    test "does not add prefix for non-E5 models" do
+      text = "Hello world"
+
+      result = Local.prepare_text(text, "BAAI/bge-small-en-v1.5", :query)
+
+      assert result == "Hello world"
+    end
+
+    test "does not add prefix for non-E5 models with document intent" do
+      text = "Hello world"
+
+      result = Local.prepare_text(text, "BAAI/bge-small-en-v1.5", :document)
+
+      assert result == "Hello world"
+    end
+
+    test "handles all E5 model variants" do
+      models = [
+        "intfloat/e5-small-v2",
+        "intfloat/e5-base-v2",
+        "intfloat/e5-large-v2"
+      ]
+
+      for model <- models do
+        assert Local.prepare_text("test", model, :query) == "query: test"
+        assert Local.prepare_text("test", model, :document) == "passage: test"
+      end
+    end
+  end
 end

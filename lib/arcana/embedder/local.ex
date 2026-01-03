@@ -47,6 +47,13 @@ defmodule Arcana.Embedder.Local do
     "sentence-transformers/all-MiniLM-L6-v2" => 384
   }
 
+  # E5 models require special prefixes for queries vs documents
+  @e5_models MapSet.new([
+               "intfloat/e5-small-v2",
+               "intfloat/e5-base-v2",
+               "intfloat/e5-large-v2"
+             ])
+
   @doc """
   Returns the child spec for starting the embedding serving.
   """
@@ -92,17 +99,55 @@ defmodule Arcana.Embedder.Local do
   @impl Arcana.Embedder
   def embed(text, opts) do
     model = Keyword.get(opts, :model, @default_model)
+    intent = Keyword.get(opts, :intent)
     serving_name = serving_name(model)
+    prepared_text = prepare_text(text, model, intent)
 
     start_metadata = %{text: text, model: model}
 
     :telemetry.span([:arcana, :embed], start_metadata, fn ->
-      %{embedding: embedding} = Nx.Serving.batched_run(serving_name, text)
+      %{embedding: embedding} = Nx.Serving.batched_run(serving_name, prepared_text)
       result = Nx.to_flat_list(embedding)
 
       stop_metadata = %{dimensions: length(result)}
       {{:ok, result}, stop_metadata}
     end)
+  end
+
+  @doc """
+  Prepares text for embedding by adding model-specific prefixes.
+
+  E5 models require `query: ` prefix for search queries and `passage: ` prefix
+  for documents. Other models return text unchanged.
+
+  ## Options
+
+    * `:query` - Text is a search query (adds "query: " prefix for E5)
+    * `:document` - Text is document content (adds "passage: " prefix for E5)
+    * `nil` - Defaults to `:document` for E5 models
+
+  ## Examples
+
+      iex> prepare_text("hello", "intfloat/e5-small-v2", :query)
+      "query: hello"
+
+      iex> prepare_text("hello", "intfloat/e5-small-v2", :document)
+      "passage: hello"
+
+      iex> prepare_text("hello", "BAAI/bge-small-en-v1.5", :query)
+      "hello"
+
+  """
+  def prepare_text(text, model, intent) do
+    if MapSet.member?(@e5_models, model) do
+      case intent do
+        :query -> "query: #{text}"
+        :document -> "passage: #{text}"
+        nil -> "passage: #{text}"
+      end
+    else
+      text
+    end
   end
 
   @impl Arcana.Embedder

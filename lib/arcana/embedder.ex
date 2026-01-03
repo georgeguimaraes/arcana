@@ -83,9 +83,25 @@ defmodule Arcana.Embedder do
 
   The embedder is a `{module, opts}` tuple where module implements
   this behaviour.
+
+  ## Options
+
+    * `:intent` - The embedding intent, either `:query` or `:document`.
+      Used by models like E5 that require different prefixes for
+      search queries vs document content. Defaults to `:document`.
+
+  ## Examples
+
+      # Embed a search query (uses "query: " prefix for E5 models)
+      Embedder.embed(embedder, "what is machine learning?", intent: :query)
+
+      # Embed document content (uses "passage: " prefix for E5 models)
+      Embedder.embed(embedder, "Machine learning is...", intent: :document)
+
   """
-  def embed({module, opts}, text) when is_atom(module) do
-    module.embed(text, opts)
+  def embed({module, opts}, text, call_opts \\ []) when is_atom(module) do
+    merged_opts = Keyword.merge(opts, call_opts)
+    module.embed(text, merged_opts)
   end
 
   @doc """
