@@ -24,10 +24,28 @@ Embeddable RAG library for Elixir/Phoenix. Add vector search, document retrieval
 
 ## How it works
 
-1. **Ingest**: Text is split into overlapping chunks (default 450 tokens, 50 overlap)
-2. **Embed**: Each chunk is embedded using `bge-small-en-v1.5` (384 dimensions)
-3. **Store**: Chunks are stored in PostgreSQL with pgvector
-4. **Search**: Query is embedded and compared using cosine similarity via HNSW index
+### Basic RAG Pipeline
+
+1. **Chunk**: Text is split into overlapping segments (default 450 tokens, 50 overlap). Pluggable chunkers support custom splitting logic.
+2. **Embed**: Each chunk is embedded using configurable providers (local Bumblebee, OpenAI, or custom). E5 models automatically get `query:`/`passage:` prefixes.
+3. **Store**: Embeddings are stored via swappable vector backends (pgvector for production, HNSWLib in-memory for testing).
+4. **Search**: Query embedding is compared using cosine similarity. Supports semantic, full-text, and hybrid modes with Reciprocal Rank Fusion.
+
+### GraphRAG (Optional)
+
+When `graph: true` is enabled:
+1. **Extract**: Named entities (people, orgs, technologies) are extracted via NER or LLM
+2. **Link**: Relationships between entities are detected and stored
+3. **Community**: Entities are clustered using the Leiden algorithm
+4. **Fuse**: Vector search and graph traversal results are combined with RRF
+
+### Agentic Pipeline
+
+For complex questions, the Agent pipeline provides:
+- **Query expansion** - adds synonyms and related terms
+- **Decomposition** - splits multi-part questions
+- **Re-ranking** - scores chunk relevance (0-10)
+- **Self-correction** - evaluates and refines answers
 
 ## Installation
 
