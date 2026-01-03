@@ -206,7 +206,7 @@ defmodule Arcana.EndToEnd.GraphRAGTest do
         Arcana.LLM.complete(llm, prompt, [], opts)
       end
 
-      {:ok, summary} = CommunitySummarizer.summarize(entities, relationships, llm_fn)
+      {:ok, summary} = CommunitySummarizer.summarize(entities, relationships, llm: llm_fn)
 
       assert is_binary(summary)
       assert String.length(summary) > 20
@@ -241,7 +241,7 @@ defmodule Arcana.EndToEnd.GraphRAGTest do
         Arcana.LLM.complete(llm, prompt, [], opts)
       end
 
-      {:ok, summary} = CommunitySummarizer.summarize(entities, relationships, llm_fn)
+      {:ok, summary} = CommunitySummarizer.summarize(entities, relationships, llm: llm_fn)
 
       assert is_binary(summary)
       # Should produce a meaningful summary that captures the essence

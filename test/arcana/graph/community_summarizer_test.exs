@@ -2,9 +2,10 @@ defmodule Arcana.Graph.CommunitySummarizerTest do
   use ExUnit.Case, async: true
 
   alias Arcana.Graph.CommunitySummarizer
+  alias Arcana.Graph.CommunitySummarizer.LLM
 
-  describe "summarize/4" do
-    test "generates summary for community" do
+  describe "summarize/3" do
+    test "generates summary for community with LLM" do
       entities = [
         %{name: "Sam Altman", type: "person", description: "CEO of OpenAI"},
         %{name: "OpenAI", type: "organization", description: "AI research company"}
@@ -18,7 +19,7 @@ defmodule Arcana.Graph.CommunitySummarizerTest do
         {:ok, "This community focuses on OpenAI leadership, with Sam Altman as CEO."}
       end
 
-      {:ok, summary} = CommunitySummarizer.summarize(entities, relationships, llm)
+      {:ok, summary} = CommunitySummarizer.summarize(entities, relationships, llm: llm)
 
       assert is_binary(summary)
       assert summary =~ "OpenAI"
@@ -29,7 +30,7 @@ defmodule Arcana.Graph.CommunitySummarizerTest do
         {:ok, "Empty community with no entities."}
       end
 
-      {:ok, summary} = CommunitySummarizer.summarize([], [], llm)
+      {:ok, summary} = CommunitySummarizer.summarize([], [], llm: llm)
 
       assert is_binary(summary)
     end
@@ -41,18 +42,38 @@ defmodule Arcana.Graph.CommunitySummarizerTest do
         {:error, :api_error}
       end
 
-      assert {:error, :api_error} = CommunitySummarizer.summarize(entities, [], llm)
+      assert {:error, :api_error} = CommunitySummarizer.summarize(entities, [], llm: llm)
+    end
+
+    test "returns empty string when no summarizer configured and no llm provided" do
+      {:ok, summary} = CommunitySummarizer.summarize([], [], [])
+      assert summary == ""
+    end
+
+    test "works with inline function summarizer" do
+      summarizer = fn entities, _relationships, _opts ->
+        {:ok, "Community with #{length(entities)} entities"}
+      end
+
+      {:ok, summary} =
+        CommunitySummarizer.summarize(
+          [%{name: "Test", type: "person"}],
+          [],
+          community_summarizer: summarizer
+        )
+
+      assert summary == "Community with 1 entities"
     end
   end
 
-  describe "build_prompt/2" do
+  describe "LLM.build_prompt/2" do
     test "includes entity names and types" do
       entities = [
         %{name: "OpenAI", type: "organization"},
         %{name: "Sam Altman", type: "person"}
       ]
 
-      prompt = CommunitySummarizer.build_prompt(entities, [])
+      prompt = LLM.build_prompt(entities, [])
 
       assert prompt =~ "OpenAI"
       assert prompt =~ "Sam Altman"
@@ -67,7 +88,7 @@ defmodule Arcana.Graph.CommunitySummarizerTest do
         %{source: "A", target: "B", type: "KNOWS", description: "Friends"}
       ]
 
-      prompt = CommunitySummarizer.build_prompt(entities, relationships)
+      prompt = LLM.build_prompt(entities, relationships)
 
       assert prompt =~ "KNOWS"
       assert prompt =~ "Friends"

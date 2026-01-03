@@ -67,7 +67,8 @@ defmodule Arcana.Graph do
     * `Arcana.Graph.RelationshipExtractor.Cooccurrence` - Local co-occurrence (no LLM)
     * `Arcana.Graph.CommunityDetector` - Behaviour for community detection
     * `Arcana.Graph.CommunityDetector.Leiden` - Built-in Leiden implementation (default)
-    * `Arcana.Graph.CommunitySummarizer` - Generates LLM summaries for communities
+    * `Arcana.Graph.CommunitySummarizer` - Behaviour for community summarization
+    * `Arcana.Graph.CommunitySummarizer.LLM` - Built-in LLM implementation (default)
     * `Arcana.Graph.GraphQuery` - Queries the knowledge graph
     * `Arcana.Graph.FusionSearch` - Combines vector and graph search with RRF
     * `Arcana.Graph.GraphBuilder` - Orchestrates graph construction
@@ -87,6 +88,10 @@ defmodule Arcana.Graph do
       # Custom community detector
       config :arcana, :graph,
         community_detector: {MyApp.LouvainDetector, resolution: 0.5}
+
+      # Custom community summarizer
+      config :arcana, :graph,
+        community_summarizer: {MyApp.ExtractiveSum, max_sentences: 3}
 
   """
 
