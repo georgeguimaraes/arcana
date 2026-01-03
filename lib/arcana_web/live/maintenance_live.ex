@@ -16,6 +16,7 @@ defmodule ArcanaWeb.MaintenanceLive do
      |> assign(
        reembed_running: false,
        reembed_progress: nil,
+       reembed_collection: nil,
        embedding_info: get_embedding_info(),
        rebuild_graph_running: false,
        rebuild_graph_progress: nil,
@@ -59,8 +60,14 @@ defmodule ArcanaWeb.MaintenanceLive do
   end
 
   @impl true
+  def handle_event("select_reembed_collection", %{"collection" => collection}, socket) do
+    collection = if collection == "", do: nil, else: collection
+    {:noreply, assign(socket, reembed_collection: collection)}
+  end
+
   def handle_event("reembed", _params, socket) do
     repo = socket.assigns.repo
+    collection = socket.assigns.reembed_collection
     parent = self()
 
     socket = assign(socket, reembed_running: true, reembed_progress: %{current: 0, total: 0})
@@ -70,7 +77,9 @@ defmodule ArcanaWeb.MaintenanceLive do
         send(parent, {:reembed_progress, current, total})
       end
 
-      result = Arcana.Maintenance.reembed(repo, batch_size: 50, progress: progress_fn)
+      opts = [batch_size: 50, progress: progress_fn]
+      opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
+      result = Arcana.Maintenance.reembed(repo, opts)
       send(parent, {:reembed_complete, result})
     end)
 
@@ -182,9 +191,9 @@ defmodule ArcanaWeb.MaintenanceLive do
         </div>
 
         <div class="arcana-maintenance-section">
-          <h3>Re-embed All Chunks</h3>
+          <h3>Re-embed Chunks</h3>
           <p style="color: #6b7280; margin-bottom: 1rem; font-size: 0.875rem;">
-            Re-embed all chunks using the current embedding configuration.
+            Re-embed chunks using the current embedding configuration.
             Use this after changing embedding models.
           </p>
 
@@ -204,13 +213,26 @@ defmodule ArcanaWeb.MaintenanceLive do
               <% end %>
             </div>
           <% else %>
-            <button
-              phx-click="reembed"
-              class="arcana-reembed-btn"
-              style="background: #7c3aed; color: white; padding: 0.625rem 1.25rem; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: pointer;"
-            >
-              Re-embed All Chunks
-            </button>
+            <div style="display: flex; gap: 0.75rem; align-items: stretch;">
+              <select
+                phx-change="select_reembed_collection"
+                name="collection"
+                style="padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem; background: white; min-width: 160px;"
+              >
+                <option value="">All Collections</option>
+                <%= for collection <- @collections do %>
+                  <option value={collection} selected={@reembed_collection == collection}>
+                    <%= collection %>
+                  </option>
+                <% end %>
+              </select>
+              <button
+                phx-click="reembed"
+                style="background: #7c3aed; color: white; padding: 0.5rem 1rem; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: pointer; white-space: nowrap;"
+              >
+                Re-embed
+              </button>
+            </div>
           <% end %>
         </div>
 
@@ -224,8 +246,13 @@ defmodule ArcanaWeb.MaintenanceLive do
               </span>
             </div>
             <div class="arcana-doc-field">
-              <label>Extractor Type</label>
-              <span><%= @graph_info.extractor_type %></span>
+              <label>Extractor</label>
+              <span>
+                <%= @graph_info.extractor_name || @graph_info.extractor_type %>
+                <%= if @graph_info.extractor_type == :combined do %>
+                  <span style="color: #6b7280; font-size: 0.75rem;">(combined)</span>
+                <% end %>
+              </span>
             </div>
             <div class="arcana-doc-field">
               <label>Community Levels</label>

@@ -528,14 +528,23 @@ defmodule ArcanaWeb.GraphLive do
       <%= if Enum.any?(@details.relationships) do %>
         <div class="arcana-entity-relationships">
           <h4>Relationships</h4>
-          <ul>
+          <div class="arcana-rel-cards">
             <%= for rel <- @details.relationships do %>
-              <li>
-                <code><%= rel.type %></code>
-                → <%= if rel.source_id == @details.entity.id, do: rel.target_name, else: rel.source_name %>
-              </li>
+              <div class="arcana-rel-card">
+                <%= if rel.source_id == @details.entity.id do %>
+                  <span class="arcana-rel-type"><%= rel.type %></span>
+                  <span class="arcana-rel-arrow">→</span>
+                  <span class="arcana-rel-target"><%= rel.target_name %></span>
+                <% else %>
+                  <span class="arcana-rel-source"><%= rel.source_name %></span>
+                  <span class="arcana-rel-arrow">→</span>
+                  <span class="arcana-rel-type"><%= rel.type %></span>
+                  <span class="arcana-rel-arrow">→</span>
+                  <span class="arcana-rel-self">(this)</span>
+                <% end %>
+              </div>
             <% end %>
-          </ul>
+          </div>
         </div>
       <% end %>
 

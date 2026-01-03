@@ -1634,19 +1634,49 @@ defmodule ArcanaWeb.Assets do
     letter-spacing: 0.05em;
   }
 
-  .arcana-entity-relationships ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
+  .arcana-rel-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
   }
 
-  .arcana-entity-relationships li {
-    padding: 0.5rem 0;
-    border-bottom: 1px solid #e5e7eb;
+  .arcana-rel-card {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
   }
 
-  .arcana-entity-relationships li:last-child {
-    border-bottom: none;
+  .arcana-rel-type {
+    font-family: monospace;
+    background: #7c3aed;
+    color: white;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+  }
+
+  .arcana-rel-arrow {
+    color: #9ca3af;
+    font-weight: bold;
+  }
+
+  .arcana-rel-target,
+  .arcana-rel-source {
+    font-weight: 500;
+    color: #1f2937;
+  }
+
+  .arcana-rel-self {
+    color: #6b7280;
+    font-style: italic;
+    font-size: 0.75rem;
   }
 
   .arcana-mention-preview {

@@ -26,7 +26,7 @@ defmodule ArcanaWeb.MaintenanceLiveTest do
     test "shows re-embed section", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/arcana/maintenance")
 
-      assert html =~ "Re-embed All Chunks"
+      assert html =~ "Re-embed Chunks"
     end
 
     test "has re-embed button", %{conn: conn} do

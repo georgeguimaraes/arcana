@@ -48,12 +48,13 @@ defmodule Arcana.Maintenance do
   def reembed(repo, opts \\ []) do
     batch_size = Keyword.get(opts, :batch_size, 50)
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
+    collection_filter = Keyword.get(opts, :collection)
 
     embedder = Arcana.embedder()
+    collection_id = get_collection_id(repo, collection_filter)
 
     # First, rechunk documents that have no chunks
-    docs_without_chunks =
-      repo.all(from(d in Document, where: d.chunk_count == 0 or d.status == :pending))
+    docs_without_chunks = fetch_docs_without_chunks(repo, collection_id)
 
     rechunked =
       if docs_without_chunks != [] do
@@ -63,6 +64,34 @@ defmodule Arcana.Maintenance do
       end
 
     # Then re-embed existing chunks
+    {total_chunks, reembedded} =
+      reembed_filtered_chunks(repo, embedder, batch_size, progress_fn, collection_id)
+
+    {:ok, %{rechunked_documents: rechunked, reembedded: reembedded, total_chunks: total_chunks}}
+  end
+
+  defp get_collection_id(_repo, nil), do: nil
+
+  defp get_collection_id(repo, collection_name) when is_binary(collection_name) do
+    case repo.one(from(c in Collection, where: c.name == ^collection_name, select: c.id)) do
+      nil -> nil
+      id -> id
+    end
+  end
+
+  defp fetch_docs_without_chunks(repo, nil) do
+    repo.all(from(d in Document, where: d.chunk_count == 0 or d.status == :pending))
+  end
+
+  defp fetch_docs_without_chunks(repo, collection_id) do
+    repo.all(
+      from(d in Document,
+        where: d.collection_id == ^collection_id and (d.chunk_count == 0 or d.status == :pending)
+      )
+    )
+  end
+
+  defp reembed_filtered_chunks(repo, embedder, batch_size, progress_fn, nil) do
     total_chunks = repo.aggregate(Chunk, :count)
 
     reembedded =
@@ -72,8 +101,51 @@ defmodule Arcana.Maintenance do
         0
       end
 
-    {:ok,
-     %{rechunked_documents: rechunked, reembedded_chunks: reembedded, total_chunks: total_chunks}}
+    {total_chunks, reembedded}
+  end
+
+  defp reembed_filtered_chunks(repo, embedder, batch_size, progress_fn, collection_id) do
+    chunks_query =
+      from(c in Chunk,
+        join: d in Document,
+        on: d.id == c.document_id,
+        where: d.collection_id == ^collection_id,
+        order_by: c.id,
+        select: [:id, :text]
+      )
+
+    total_chunks = repo.aggregate(chunks_query, :count)
+
+    reembedded =
+      if total_chunks > 0 do
+        reembed_chunks_from_query(
+          repo,
+          embedder,
+          batch_size,
+          progress_fn,
+          total_chunks,
+          chunks_query
+        )
+      else
+        0
+      end
+
+    {total_chunks, reembedded}
+  end
+
+  defp reembed_chunks_from_query(repo, embedder, batch_size, progress_fn, total, chunks_query) do
+    repo.transaction(fn ->
+      chunks_query
+      |> repo.stream(max_rows: batch_size)
+      |> Stream.with_index(1)
+      |> Enum.reduce(0, fn {chunk, index}, count ->
+        reembed_single_chunk(repo, embedder, chunk, index, total, progress_fn, count)
+      end)
+    end)
+    |> case do
+      {:ok, count} -> count
+      {:error, reason} -> raise reason
+    end
   end
 
   defp rechunk_documents(documents, embedder, repo, progress_fn) do
@@ -307,19 +379,41 @@ defmodule Arcana.Maintenance do
   """
   def graph_info do
     config = Arcana.Graph.config()
+    graph_opts = Application.get_env(:arcana, :graph, [])
 
-    extractor_type =
+    {extractor_type, extractor_name} =
       cond do
-        config[:extractor] -> :combined
-        config[:relationship_extractor] -> :separate
-        true -> :entities_only
+        config[:extractor] || graph_opts[:extractor] ->
+          extractor = config[:extractor] || graph_opts[:extractor]
+          {:combined, format_extractor_name(extractor)}
+
+        config[:relationship_extractor] || graph_opts[:relationship_extractor] ->
+          {:separate, nil}
+
+        true ->
+          {:entities_only, nil}
       end
 
     %{
       enabled: config.enabled,
       extractor_type: extractor_type,
+      extractor_name: extractor_name,
       community_levels: config.community_levels,
       resolution: config.resolution
     }
   end
+
+  defp format_extractor_name(nil), do: nil
+  defp format_extractor_name(:ner), do: "NER"
+  defp format_extractor_name(:llm), do: "LLM"
+
+  defp format_extractor_name({module, _opts}) when is_atom(module) do
+    module |> Module.split() |> List.last()
+  end
+
+  defp format_extractor_name(module) when is_atom(module) do
+    module |> Module.split() |> List.last()
+  end
+
+  defp format_extractor_name(_other), do: nil
 end
