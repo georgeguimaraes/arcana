@@ -43,7 +43,8 @@ defmodule Arcana.Agent.ReasonTest do
 
         cond do
           count == 0 and prompt =~ "sufficient" ->
-            {:ok, ~s({"sufficient": false, "missing": "concurrency model", "follow_up_query": "Elixir concurrency actors"})}
+            {:ok,
+             ~s({"sufficient": false, "missing": "concurrency model", "follow_up_query": "Elixir concurrency actors"})}
 
           count == 1 and prompt =~ "sufficient" ->
             {:ok, ~s({"sufficient": true, "reasoning": "Now has concurrency info"})}
@@ -86,7 +87,8 @@ defmodule Arcana.Agent.ReasonTest do
     test "respects max_iterations limit" do
       llm = fn prompt ->
         if prompt =~ "sufficient" do
-          {:ok, ~s({"sufficient": false, "missing": "more info", "follow_up_query": "query #{:rand.uniform(1000)}"})}
+          {:ok,
+           ~s({"sufficient": false, "missing": "more info", "follow_up_query": "query #{:rand.uniform(1000)}"})}
         else
           {:ok, "response"}
         end

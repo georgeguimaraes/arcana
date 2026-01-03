@@ -15,7 +15,8 @@ defmodule Arcana.Maintenance do
 
   """
 
-  alias Arcana.{Chunk, Chunker, Document, Embedder}
+  alias Arcana.{Chunk, Chunker, Collection, Document, Embedder}
+  alias Arcana.Graph.GraphStore
 
   import Ecto.Query
 
@@ -188,5 +189,124 @@ defmodule Arcana.Maintenance do
       {module, _opts} ->
         %{type: :custom, module: module, dimensions: dimensions}
     end
+  end
+
+  @doc """
+  Rebuilds the knowledge graph for all documents.
+
+  This clears existing graph data (entities, relationships, mentions) and
+  re-extracts from all chunks using the current graph extractor configuration.
+
+  Use this when:
+  - You've changed the graph extractor configuration
+  - You've enabled relationship extraction after initial ingest
+  - You want to regenerate entity/relationship data
+
+  ## Options
+
+    * `:batch_size` - Number of chunks to process per collection batch (default: 50)
+    * `:progress` - Function to call with progress updates `fn current, total -> :ok end`
+
+  ## Examples
+
+      # Basic usage
+      Arcana.Maintenance.rebuild_graph(MyApp.Repo)
+
+      # With progress callback
+      Arcana.Maintenance.rebuild_graph(MyApp.Repo,
+        progress: fn current, total ->
+          IO.puts("Progress: \#{current}/\#{total}")
+        end
+      )
+
+  """
+  def rebuild_graph(repo, opts \\ []) do
+    progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
+
+    # Get all collections
+    collections = repo.all(from(c in Collection, select: c))
+
+    if collections == [] do
+      {:ok, %{collections: 0, entities: 0, relationships: 0}}
+    else
+      total_collections = length(collections)
+
+      results =
+        rebuild_graph_for_collections(collections, repo, opts, progress_fn, total_collections)
+
+      total_entities = Enum.sum(Enum.map(results, & &1.entities))
+      total_relationships = Enum.sum(Enum.map(results, & &1.relationships))
+
+      {:ok,
+       %{
+         collections: total_collections,
+         entities: total_entities,
+         relationships: total_relationships
+       }}
+    end
+  end
+
+  defp rebuild_graph_for_collections(collections, repo, opts, progress_fn, total) do
+    collections
+    |> Enum.with_index(1)
+    |> Enum.map(fn {collection, index} ->
+      progress_fn.(index, total)
+      rebuild_graph_for_collection(collection, repo, opts)
+    end)
+  end
+
+  defp rebuild_graph_for_collection(collection, repo, opts) do
+    # Clear existing graph data for this collection
+    :ok = GraphStore.delete_by_collection(collection.id, repo: repo)
+
+    # Get all chunks for this collection
+    chunk_records =
+      repo.all(
+        from(c in Chunk,
+          join: d in Document,
+          on: d.id == c.document_id,
+          where: d.collection_id == ^collection.id,
+          select: %{id: c.id, text: c.text}
+        )
+      )
+
+    if chunk_records == [] do
+      %{entities: 0, relationships: 0}
+    else
+      case Arcana.Graph.build_and_persist(chunk_records, collection, repo, opts) do
+        {:ok, %{entity_count: entities, relationship_count: relationships}} ->
+          %{entities: entities, relationships: relationships}
+
+        {:error, _reason} ->
+          %{entities: 0, relationships: 0}
+      end
+    end
+  end
+
+  @doc """
+  Returns info about the current graph configuration.
+
+  ## Examples
+
+      iex> Arcana.Maintenance.graph_info()
+      %{enabled: true, extractor: :llm}
+
+  """
+  def graph_info do
+    config = Arcana.Graph.config()
+
+    extractor_type =
+      cond do
+        config[:extractor] -> :combined
+        config[:relationship_extractor] -> :separate
+        true -> :entities_only
+      end
+
+    %{
+      enabled: config.enabled,
+      extractor_type: extractor_type,
+      community_levels: config.community_levels,
+      resolution: config.resolution
+    }
   end
 end

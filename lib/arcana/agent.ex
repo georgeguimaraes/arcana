@@ -803,7 +803,7 @@ defmodule Arcana.Agent do
 
     deduped_results
     |> Enum.reverse()
-    |> Enum.reject(& &1.chunks == [])
+    |> Enum.reject(&(&1.chunks == []))
   end
 
   defp dedupe_chunks(chunks, seen_ids) do
