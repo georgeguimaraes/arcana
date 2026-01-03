@@ -92,6 +92,89 @@ defmodule Arcana.Graph.GraphStore do
   """
   @callback get_community_summaries(collection_id(), opts :: keyword()) :: [community()]
 
+  # === Deletion Callbacks ===
+
+  @doc """
+  Deletes all graph data for the given chunk IDs.
+
+  Removes mentions referencing these chunks, and cleans up orphaned entities
+  (entities with no remaining mentions).
+  """
+  @callback delete_by_chunks(chunk_ids :: [binary()], opts :: keyword()) ::
+              :ok | {:error, term()}
+
+  @doc """
+  Deletes all graph data for a collection.
+
+  Removes all entities, relationships, mentions, and communities
+  associated with the collection.
+  """
+  @callback delete_by_collection(collection_id(), opts :: keyword()) ::
+              :ok | {:error, term()}
+
+  # === Detail Query Callbacks ===
+
+  @doc """
+  Retrieves a single entity by ID.
+  """
+  @callback get_entity(entity_id(), opts :: keyword()) ::
+              {:ok, entity()} | {:error, :not_found}
+
+  @doc """
+  Retrieves all relationships for an entity.
+
+  Returns relationships where the entity is either source or target.
+  """
+  @callback get_relationships(entity_id(), opts :: keyword()) :: [relationship()]
+
+  # === List Callbacks (for UI) ===
+
+  @doc """
+  Lists entities with optional filtering and pagination.
+
+  ## Options
+
+    * `:collection_id` - Filter by collection (nil for all)
+    * `:type` - Filter by entity type
+    * `:search` - Search in entity name
+    * `:limit` - Maximum results (default: 50)
+    * `:offset` - Pagination offset (default: 0)
+
+  Returns entities with aggregated counts (mention_count, relationship_count).
+  """
+  @callback list_entities(opts :: keyword()) :: [entity()]
+
+  @doc """
+  Lists relationships with optional filtering and pagination.
+
+  ## Options
+
+    * `:collection_id` - Filter by collection (nil for all)
+    * `:type` - Filter by relationship type
+    * `:search` - Search in entity names or type
+    * `:strength` - Filter by strength (:strong, :medium, :weak)
+    * `:limit` - Maximum results (default: 50)
+    * `:offset` - Pagination offset (default: 0)
+
+  Returns relationships with source/target entity names.
+  """
+  @callback list_relationships(opts :: keyword()) :: [relationship()]
+
+  @doc """
+  Lists communities with optional filtering and pagination.
+
+  ## Options
+
+    * `:collection_id` - Filter by collection (nil for all)
+    * `:level` - Filter by hierarchy level
+    * `:search` - Search in summary
+    * `:limit` - Maximum results (default: 50)
+    * `:offset` - Pagination offset (default: 0)
+
+  Returns communities with entity counts.
+  """
+  @callback list_communities(opts :: keyword()) :: [community()]
+
   # === Dispatch Functions ===
 
   @doc """
@@ -165,6 +248,62 @@ defmodule Arcana.Graph.GraphStore do
     dispatch(:get_community_summaries, backend, [collection_id], backend_opts, opts)
   end
 
+  @doc """
+  Deletes graph data for the given chunk IDs using the configured backend.
+  """
+  def delete_by_chunks(chunk_ids, opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:delete_by_chunks, backend, [chunk_ids], backend_opts, opts)
+  end
+
+  @doc """
+  Deletes all graph data for a collection using the configured backend.
+  """
+  def delete_by_collection(collection_id, opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:delete_by_collection, backend, [collection_id], backend_opts, opts)
+  end
+
+  @doc """
+  Gets a single entity by ID using the configured backend.
+  """
+  def get_entity(entity_id, opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:get_entity, backend, [entity_id], backend_opts, opts)
+  end
+
+  @doc """
+  Gets relationships for an entity using the configured backend.
+  """
+  def get_relationships(entity_id, opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:get_relationships, backend, [entity_id], backend_opts, opts)
+  end
+
+  @doc """
+  Lists entities using the configured backend.
+  """
+  def list_entities(opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:list_entities, backend, [], backend_opts, opts)
+  end
+
+  @doc """
+  Lists relationships using the configured backend.
+  """
+  def list_relationships(opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:list_relationships, backend, [], backend_opts, opts)
+  end
+
+  @doc """
+  Lists communities using the configured backend.
+  """
+  def list_communities(opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:list_communities, backend, [], backend_opts, opts)
+  end
+
   # === Private Helpers ===
 
   defp extract_backend(opts) do
@@ -220,13 +359,54 @@ defmodule Arcana.Graph.GraphStore do
     __MODULE__.Ecto.get_community_summaries(collection_id, opts)
   end
 
+  defp dispatch(:delete_by_chunks, :ecto, [chunk_ids], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.delete_by_chunks(chunk_ids, opts)
+  end
+
+  defp dispatch(:delete_by_collection, :ecto, [collection_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.delete_by_collection(collection_id, opts)
+  end
+
+  defp dispatch(:get_entity, :ecto, [entity_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.get_entity(entity_id, opts)
+  end
+
+  defp dispatch(:get_relationships, :ecto, [entity_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.get_relationships(entity_id, opts)
+  end
+
+  defp dispatch(:list_entities, :ecto, [], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.list_entities(opts)
+  end
+
+  defp dispatch(:list_relationships, :ecto, [], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.list_relationships(opts)
+  end
+
+  defp dispatch(:list_communities, :ecto, [], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.list_communities(opts)
+  end
+
   # Dispatch to Memory backend
   defp dispatch(:persist_entities, :memory, [collection_id, entities], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     __MODULE__.Memory.persist_entities(collection_id, entities, opts)
   end
 
-  defp dispatch(:persist_relationships, :memory, [relationships, entity_id_map], backend_opts, opts) do
+  defp dispatch(
+         :persist_relationships,
+         :memory,
+         [relationships, entity_id_map],
+         backend_opts,
+         opts
+       ) do
     opts = Keyword.merge(backend_opts, opts)
     __MODULE__.Memory.persist_relationships(relationships, entity_id_map, opts)
   end
@@ -261,13 +441,54 @@ defmodule Arcana.Graph.GraphStore do
     __MODULE__.Memory.get_community_summaries(collection_id, opts)
   end
 
+  defp dispatch(:delete_by_chunks, :memory, [chunk_ids], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.delete_by_chunks(chunk_ids, opts)
+  end
+
+  defp dispatch(:delete_by_collection, :memory, [collection_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.delete_by_collection(collection_id, opts)
+  end
+
+  defp dispatch(:get_entity, :memory, [entity_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.get_entity(entity_id, opts)
+  end
+
+  defp dispatch(:get_relationships, :memory, [entity_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.get_relationships(entity_id, opts)
+  end
+
+  defp dispatch(:list_entities, :memory, [], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.list_entities(opts)
+  end
+
+  defp dispatch(:list_relationships, :memory, [], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.list_relationships(opts)
+  end
+
+  defp dispatch(:list_communities, :memory, [], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.list_communities(opts)
+  end
+
   # Dispatch to custom module
   defp dispatch(:persist_entities, module, [collection_id, entities], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     module.persist_entities(collection_id, entities, opts)
   end
 
-  defp dispatch(:persist_relationships, module, [relationships, entity_id_map], backend_opts, opts) do
+  defp dispatch(
+         :persist_relationships,
+         module,
+         [relationships, entity_id_map],
+         backend_opts,
+         opts
+       ) do
     opts = Keyword.merge(backend_opts, opts)
     module.persist_relationships(relationships, entity_id_map, opts)
   end
@@ -300,5 +521,40 @@ defmodule Arcana.Graph.GraphStore do
   defp dispatch(:get_community_summaries, module, [collection_id], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     module.get_community_summaries(collection_id, opts)
+  end
+
+  defp dispatch(:delete_by_chunks, module, [chunk_ids], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.delete_by_chunks(chunk_ids, opts)
+  end
+
+  defp dispatch(:delete_by_collection, module, [collection_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.delete_by_collection(collection_id, opts)
+  end
+
+  defp dispatch(:get_entity, module, [entity_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.get_entity(entity_id, opts)
+  end
+
+  defp dispatch(:get_relationships, module, [entity_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.get_relationships(entity_id, opts)
+  end
+
+  defp dispatch(:list_entities, module, [], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.list_entities(opts)
+  end
+
+  defp dispatch(:list_relationships, module, [], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.list_relationships(opts)
+  end
+
+  defp dispatch(:list_communities, module, [], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.list_communities(opts)
   end
 end

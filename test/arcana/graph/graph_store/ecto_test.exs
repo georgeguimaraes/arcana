@@ -1,9 +1,9 @@
 defmodule Arcana.Graph.GraphStore.EctoTest do
   use Arcana.DataCase, async: true
 
+  alias Arcana.{Chunk, Collection, Document}
+  alias Arcana.Graph.{Entity, EntityMention, Relationship}
   alias Arcana.Graph.GraphStore.Ecto, as: EctoStore
-  alias Arcana.Graph.{Entity, Relationship, EntityMention}
-  alias Arcana.{Collection, Document, Chunk}
 
   defp create_collection(name \\ "test-collection") do
     %Collection{}
@@ -55,6 +55,7 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
   describe "persist_entities/3" do
     test "inserts new entities and returns id map" do
       collection = create_collection()
+
       entities = [
         %{name: "Alice", type: "person"},
         %{name: "Bob", type: "person"}
@@ -73,6 +74,7 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
 
     test "deduplicates entities by name" do
       collection = create_collection()
+
       entities = [
         %{name: "Alice", type: "person"},
         %{name: "Alice", type: "person"}
