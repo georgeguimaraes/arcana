@@ -127,6 +127,25 @@ defmodule Arcana.Graph.GraphStore do
   """
   @callback get_relationships(entity_id(), opts :: keyword()) :: [relationship()]
 
+  @doc """
+  Retrieves a single relationship by ID.
+  """
+  @callback get_relationship(relationship_id :: binary(), opts :: keyword()) ::
+              {:ok, relationship()} | {:error, :not_found}
+
+  @doc """
+  Retrieves mentions for an entity with chunk context.
+
+  Returns mentions with associated chunk text for display.
+  """
+  @callback get_mentions(entity_id(), opts :: keyword()) :: [mention()]
+
+  @doc """
+  Retrieves a single community by ID.
+  """
+  @callback get_community(community_id :: binary(), opts :: keyword()) ::
+              {:ok, community()} | {:error, :not_found}
+
   # === List Callbacks (for UI) ===
 
   @doc """
@@ -281,6 +300,30 @@ defmodule Arcana.Graph.GraphStore do
   end
 
   @doc """
+  Gets a single relationship by ID using the configured backend.
+  """
+  def get_relationship(relationship_id, opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:get_relationship, backend, [relationship_id], backend_opts, opts)
+  end
+
+  @doc """
+  Gets mentions for an entity using the configured backend.
+  """
+  def get_mentions(entity_id, opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:get_mentions, backend, [entity_id], backend_opts, opts)
+  end
+
+  @doc """
+  Gets a single community by ID using the configured backend.
+  """
+  def get_community(community_id, opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+    dispatch(:get_community, backend, [community_id], backend_opts, opts)
+  end
+
+  @doc """
   Lists entities using the configured backend.
   """
   def list_entities(opts \\ []) do
@@ -379,6 +422,21 @@ defmodule Arcana.Graph.GraphStore do
     __MODULE__.Ecto.get_relationships(entity_id, opts)
   end
 
+  defp dispatch(:get_relationship, :ecto, [relationship_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.get_relationship(relationship_id, opts)
+  end
+
+  defp dispatch(:get_mentions, :ecto, [entity_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.get_mentions(entity_id, opts)
+  end
+
+  defp dispatch(:get_community, :ecto, [community_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.get_community(community_id, opts)
+  end
+
   defp dispatch(:list_entities, :ecto, [], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     __MODULE__.Ecto.list_entities(opts)
@@ -461,6 +519,21 @@ defmodule Arcana.Graph.GraphStore do
     __MODULE__.Memory.get_relationships(entity_id, opts)
   end
 
+  defp dispatch(:get_relationship, :memory, [relationship_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.get_relationship(relationship_id, opts)
+  end
+
+  defp dispatch(:get_mentions, :memory, [entity_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.get_mentions(entity_id, opts)
+  end
+
+  defp dispatch(:get_community, :memory, [community_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.get_community(community_id, opts)
+  end
+
   defp dispatch(:list_entities, :memory, [], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     __MODULE__.Memory.list_entities(opts)
@@ -541,6 +614,21 @@ defmodule Arcana.Graph.GraphStore do
   defp dispatch(:get_relationships, module, [entity_id], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     module.get_relationships(entity_id, opts)
+  end
+
+  defp dispatch(:get_relationship, module, [relationship_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.get_relationship(relationship_id, opts)
+  end
+
+  defp dispatch(:get_mentions, module, [entity_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.get_mentions(entity_id, opts)
+  end
+
+  defp dispatch(:get_community, module, [community_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.get_community(community_id, opts)
   end
 
   defp dispatch(:list_entities, module, [], backend_opts, opts) do

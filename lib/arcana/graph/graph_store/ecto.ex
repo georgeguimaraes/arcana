@@ -239,6 +239,80 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     )
   end
 
+  @impl true
+  def get_relationship(relationship_id, opts) do
+    repo = Keyword.fetch!(opts, :repo)
+
+    case repo.one(
+           from(r in Relationship,
+             join: source in Entity,
+             on: source.id == r.source_id,
+             join: target in Entity,
+             on: target.id == r.target_id,
+             where: r.id == ^relationship_id,
+             select: %{
+               id: r.id,
+               type: r.type,
+               strength: r.strength,
+               description: r.description,
+               source_id: source.id,
+               source_name: source.name,
+               source_type: source.type,
+               target_id: target.id,
+               target_name: target.name,
+               target_type: target.type
+             }
+           )
+         ) do
+      nil -> {:error, :not_found}
+      relationship -> {:ok, relationship}
+    end
+  end
+
+  @impl true
+  def get_mentions(entity_id, opts) do
+    repo = Keyword.fetch!(opts, :repo)
+    limit = Keyword.get(opts, :limit, 5)
+
+    repo.all(
+      from(m in EntityMention,
+        join: c in Arcana.Chunk,
+        on: c.id == m.chunk_id,
+        where: m.entity_id == ^entity_id,
+        limit: ^limit,
+        select: %{
+          id: m.id,
+          context: m.context,
+          chunk_id: c.id,
+          chunk_text: c.text,
+          document_id: c.document_id
+        }
+      )
+    )
+  end
+
+  @impl true
+  def get_community(community_id, opts) do
+    repo = Keyword.fetch!(opts, :repo)
+
+    case repo.one(
+           from(c in Community,
+             where: c.id == ^community_id,
+             select: %{
+               id: c.id,
+               level: c.level,
+               summary: c.summary,
+               entity_ids: c.entity_ids,
+               collection_id: c.collection_id,
+               dirty: c.dirty
+             }
+           )
+         ) do
+      nil -> {:error, :not_found}
+      community -> {:ok, community}
+    end
+  end
+
   # === List Callbacks (for UI) ===
 
   @impl true
