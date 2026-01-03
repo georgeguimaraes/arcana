@@ -1105,7 +1105,14 @@ defmodule Arcana do
     relationship_extractor = resolve_relationship_extractor(opts, graph_config)
 
     Enum.reduce(chunk_records, {[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
-      extract_graph_data_from_chunk(chunk, entity_extractor, relationship_extractor, ent_acc, ment_acc, rel_acc)
+      extract_graph_data_from_chunk(
+        chunk,
+        entity_extractor,
+        relationship_extractor,
+        ent_acc,
+        ment_acc,
+        rel_acc
+      )
     end)
   end
 
@@ -1119,7 +1126,9 @@ defmodule Arcana do
   defp normalize_entity_extractor(:ner, _llm), do: {Arcana.Graph.EntityExtractor.NER, []}
   defp normalize_entity_extractor({module, opts}, llm), do: {module, maybe_inject_llm(opts, llm)}
   defp normalize_entity_extractor(fun, _llm) when is_function(fun, 2), do: fun
-  defp normalize_entity_extractor(module, llm) when is_atom(module), do: {module, maybe_inject_llm([], llm)}
+
+  defp normalize_entity_extractor(module, llm) when is_atom(module),
+    do: {module, maybe_inject_llm([], llm)}
 
   defp maybe_inject_llm(opts, nil), do: opts
   defp maybe_inject_llm(opts, llm), do: Keyword.put_new(opts, :llm, llm)
