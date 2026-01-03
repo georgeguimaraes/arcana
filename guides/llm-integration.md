@@ -9,7 +9,7 @@ Add `req_llm` to your dependencies:
 ```elixir
 def deps do
   [
-    {:arcana, "~> 0.1.0"},
+    {:arcana, "~> 1.0"},
     {:req_llm, "~> 1.2"}
   ]
 end

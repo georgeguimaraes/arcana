@@ -65,7 +65,7 @@ Add `arcana` to your dependencies:
 ```elixir
 def deps do
   [
-    {:arcana, "~> 0.1.0"}
+    {:arcana, "~> 1.0"}
   ]
 end
 ```

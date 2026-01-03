@@ -18,7 +18,7 @@ This adds the dependency, creates migrations, configures your repo, and sets up 
 ```elixir
 def deps do
   [
-    {:arcana, "~> 0.1.0"}
+    {:arcana, "~> 1.0"}
   ]
 end
 ```
