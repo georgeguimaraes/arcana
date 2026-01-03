@@ -12,7 +12,7 @@ defmodule ArcanaWeb.GraphLive do
   import ArcanaWeb.DashboardComponents
   import Ecto.Query
 
-  alias Arcana.Graph.{Community, Entity, EntityMention, Relationship}
+  alias Arcana.Graph.{Entity, GraphStore}
 
   @impl true
   def mount(_params, session, socket) do
@@ -110,189 +110,71 @@ defmodule ArcanaWeb.GraphLive do
 
   defp load_entities(socket) do
     repo = socket.assigns.repo
-    selected = socket.assigns.selected_collection
+    collection_id = get_selected_collection_id(socket)
     name_filter = socket.assigns.entity_filter || ""
     type_filter = socket.assigns.entity_type_filter
 
-    query =
-      from(e in Entity,
-        join: c in Arcana.Collection,
-        on: c.id == e.collection_id,
-        left_join: m in EntityMention,
-        on: m.entity_id == e.id,
-        left_join: r in Relationship,
-        on: r.source_id == e.id or r.target_id == e.id,
-        group_by: [e.id, c.name],
-        order_by: [desc: count(m.id, :distinct)],
-        limit: 50,
-        select: %{
-          id: e.id,
-          name: e.name,
-          type: e.type,
-          collection: c.name,
-          mention_count: count(m.id, :distinct),
-          relationship_count: count(r.id, :distinct)
-        }
-      )
+    opts =
+      [repo: repo, limit: 50]
+      |> maybe_add_opt(:collection_id, collection_id)
+      |> maybe_add_opt(:search, if(name_filter != "", do: name_filter))
+      |> maybe_add_opt(:type, if(type_filter && type_filter != "", do: type_filter))
 
-    query =
-      if selected do
-        where(query, [e, c], c.name == ^selected)
-      else
-        query
-      end
-
-    query =
-      if name_filter != "" do
-        where(query, [e], ilike(e.name, ^"%#{name_filter}%"))
-      else
-        query
-      end
-
-    query =
-      if type_filter && type_filter != "" do
-        where(query, [e], e.type == ^type_filter)
-      else
-        query
-      end
-
-    entities = repo.all(query)
+    entities = GraphStore.list_entities(opts)
     assign(socket, entities: entities)
   end
 
   defp load_relationships(socket) do
     repo = socket.assigns.repo
+    collection_id = get_selected_collection_id(socket)
+    search_filter = socket.assigns.relationship_filter
+    type_filter = socket.assigns.relationship_type_filter
+    strength_filter = socket.assigns.relationship_strength_filter
 
-    query =
-      from(r in Relationship,
-        join: source in Entity,
-        on: source.id == r.source_id,
-        join: target in Entity,
-        on: target.id == r.target_id,
-        join: c in Arcana.Collection,
-        on: c.id == source.collection_id,
-        order_by: [desc: r.strength],
-        limit: 50,
-        select: %{
-          id: r.id,
-          type: r.type,
-          strength: r.strength,
-          description: r.description,
-          source_id: source.id,
-          source_name: source.name,
-          source_type: source.type,
-          target_id: target.id,
-          target_name: target.name,
-          target_type: target.type,
-          collection: c.name
-        }
-      )
+    opts =
+      [repo: repo, limit: 50]
+      |> maybe_add_opt(:collection_id, collection_id)
+      |> maybe_add_opt(:search, if(search_filter && search_filter != "", do: search_filter))
+      |> maybe_add_opt(:type, if(type_filter && type_filter != "", do: type_filter))
+      |> maybe_add_opt(:strength, strength_filter)
 
-    query =
-      query
-      |> apply_collection_filter(socket.assigns.selected_collection)
-      |> apply_relationship_search_filter(socket.assigns.relationship_filter)
-      |> apply_relationship_type_filter(socket.assigns.relationship_type_filter)
-      |> apply_relationship_strength_filter(socket.assigns.relationship_strength_filter)
-
-    relationships = repo.all(query)
+    relationships = GraphStore.list_relationships(opts)
     assign(socket, relationships: relationships)
   end
 
-  defp apply_collection_filter(query, nil), do: query
-  defp apply_collection_filter(query, ""), do: query
-
-  defp apply_collection_filter(query, collection) do
-    where(query, [r, source, target, c], c.name == ^collection)
-  end
-
-  defp apply_relationship_search_filter(query, nil), do: query
-  defp apply_relationship_search_filter(query, ""), do: query
-
-  defp apply_relationship_search_filter(query, search) do
-    pattern = "%#{search}%"
-
-    where(
-      query,
-      [r, source, target, c],
-      ilike(source.name, ^pattern) or ilike(target.name, ^pattern) or ilike(r.type, ^pattern)
-    )
-  end
-
-  defp apply_relationship_type_filter(query, nil), do: query
-  defp apply_relationship_type_filter(query, ""), do: query
-  defp apply_relationship_type_filter(query, type), do: where(query, [r], r.type == ^type)
-
-  defp apply_relationship_strength_filter(query, "strong"),
-    do: where(query, [r], r.strength >= 7)
-
-  defp apply_relationship_strength_filter(query, "medium"),
-    do: where(query, [r], r.strength >= 4 and r.strength < 7)
-
-  defp apply_relationship_strength_filter(query, "weak"), do: where(query, [r], r.strength < 4)
-  defp apply_relationship_strength_filter(query, _), do: query
-
   defp load_communities(socket) do
     repo = socket.assigns.repo
+    collection_id = get_selected_collection_id(socket)
+    search_filter = socket.assigns.community_filter
+    level_filter = socket.assigns.community_level_filter
 
-    query =
-      from(comm in Community,
-        join: coll in Arcana.Collection,
-        on: coll.id == comm.collection_id,
-        order_by: [asc: comm.level, desc: comm.updated_at],
-        limit: 50,
-        select: %{
-          id: comm.id,
-          level: comm.level,
-          summary: comm.summary,
-          entity_ids: comm.entity_ids,
-          collection: coll.name,
-          dirty: comm.dirty
-        }
-      )
+    # Parse level filter to integer if it's a string
+    level =
+      case level_filter do
+        nil ->
+          nil
 
-    query =
-      query
-      |> apply_community_collection_filter(socket.assigns.selected_collection)
-      |> apply_community_search_filter(socket.assigns.community_filter)
-      |> apply_community_level_filter(socket.assigns.community_level_filter)
+        "" ->
+          nil
 
-    communities =
-      repo.all(query)
-      |> Enum.map(fn c ->
-        Map.put(c, :entity_count, length(c.entity_ids || []))
-      end)
+        level when is_integer(level) ->
+          level
 
+        level when is_binary(level) ->
+          case Integer.parse(level) do
+            {int, _} -> int
+            :error -> nil
+          end
+      end
+
+    opts =
+      [repo: repo, limit: 50]
+      |> maybe_add_opt(:collection_id, collection_id)
+      |> maybe_add_opt(:search, if(search_filter && search_filter != "", do: search_filter))
+      |> maybe_add_opt(:level, level)
+
+    communities = GraphStore.list_communities(opts)
     assign(socket, communities: communities)
-  end
-
-  defp apply_community_collection_filter(query, nil), do: query
-  defp apply_community_collection_filter(query, ""), do: query
-
-  defp apply_community_collection_filter(query, collection) do
-    where(query, [comm, coll], coll.name == ^collection)
-  end
-
-  defp apply_community_search_filter(query, nil), do: query
-  defp apply_community_search_filter(query, ""), do: query
-
-  defp apply_community_search_filter(query, search) do
-    pattern = "%#{search}%"
-    where(query, [comm], ilike(comm.summary, ^pattern))
-  end
-
-  defp apply_community_level_filter(query, nil), do: query
-  defp apply_community_level_filter(query, ""), do: query
-
-  defp apply_community_level_filter(query, level) when is_binary(level) do
-    case Integer.parse(level) do
-      {level_int, _} -> where(query, [comm], comm.level == ^level_int)
-      :error -> query
-    end
-  end
-
-  defp apply_community_level_filter(query, level) when is_integer(level) do
-    where(query, [comm], comm.level == ^level)
   end
 
   @impl true
@@ -374,137 +256,64 @@ defmodule ArcanaWeb.GraphLive do
   end
 
   defp load_relationship_details(repo, relationship_id) do
-    relationship =
-      repo.one(
-        from(r in Relationship,
-          join: source in Entity,
-          on: source.id == r.source_id,
-          join: target in Entity,
-          on: target.id == r.target_id,
-          where: r.id == ^relationship_id,
-          select: %{
-            id: r.id,
-            type: r.type,
-            strength: r.strength,
-            description: r.description,
-            source_id: source.id,
-            source_name: source.name,
-            source_type: source.type,
-            target_id: target.id,
-            target_name: target.name,
-            target_type: target.type
-          }
-        )
-      )
-
-    %{relationship: relationship}
+    case GraphStore.get_relationship(relationship_id, repo: repo) do
+      {:ok, relationship} -> %{relationship: relationship}
+      {:error, :not_found} -> %{relationship: nil}
+    end
   end
 
   defp load_entity_details(repo, entity_id) do
-    # Load entity with relationships
     entity =
-      repo.one(
-        from(e in Entity,
-          where: e.id == ^entity_id,
-          select: %{id: e.id, name: e.name, type: e.type, description: e.description}
-        )
-      )
+      case GraphStore.get_entity(entity_id, repo: repo) do
+        {:ok, e} -> e
+        {:error, :not_found} -> nil
+      end
 
-    # Load relationships where this entity is source or target
-    relationships =
-      repo.all(
-        from(r in Relationship,
-          join: source in Entity,
-          on: source.id == r.source_id,
-          join: target in Entity,
-          on: target.id == r.target_id,
-          where: r.source_id == ^entity_id or r.target_id == ^entity_id,
-          select: %{
-            id: r.id,
-            type: r.type,
-            description: r.description,
-            source_id: source.id,
-            source_name: source.name,
-            target_id: target.id,
-            target_name: target.name
-          }
-        )
-      )
-
-    # Load mentions with chunk context
-    mentions =
-      repo.all(
-        from(m in EntityMention,
-          join: c in Arcana.Chunk,
-          on: c.id == m.chunk_id,
-          where: m.entity_id == ^entity_id,
-          limit: 5,
-          select: %{
-            id: m.id,
-            context: m.context,
-            chunk_id: c.id,
-            chunk_text: c.text,
-            document_id: c.document_id
-          }
-        )
-      )
+    relationships = GraphStore.get_relationships(entity_id, repo: repo)
+    mentions = GraphStore.get_mentions(entity_id, repo: repo, limit: 5)
 
     %{entity: entity, relationships: relationships, mentions: mentions}
   end
 
   defp load_community_details(repo, community_id) do
-    community =
-      repo.one(
-        from(c in Community,
-          where: c.id == ^community_id,
-          select: %{
-            id: c.id,
-            level: c.level,
-            summary: c.summary,
-            entity_ids: c.entity_ids,
-            dirty: c.dirty
-          }
-        )
-      )
+    case GraphStore.get_community(community_id, repo: repo) do
+      {:ok, community} ->
+        build_community_details(community, repo)
 
-    # Load the entities that belong to this community
+      {:error, :not_found} ->
+        %{community: nil, entities: [], internal_relationships: []}
+    end
+  end
+
+  defp build_community_details(community, repo) do
     entity_ids = community.entity_ids || []
 
-    entities =
-      if entity_ids == [] do
-        []
-      else
-        repo.all(
-          from(e in Entity,
-            where: e.id in ^entity_ids,
-            select: %{id: e.id, name: e.name, type: e.type}
-          )
-        )
-      end
-
-    # Load internal relationships (between entities in this community)
-    internal_relationships =
-      if length(entity_ids) >= 2 do
-        repo.all(
-          from(r in Relationship,
-            join: source in Entity,
-            on: source.id == r.source_id,
-            join: target in Entity,
-            on: target.id == r.target_id,
-            where: r.source_id in ^entity_ids and r.target_id in ^entity_ids,
-            select: %{
-              id: r.id,
-              type: r.type,
-              source_name: source.name,
-              target_name: target.name
-            }
-          )
-        )
-      else
-        []
-      end
+    entities = load_community_entities(entity_ids, repo)
+    internal_relationships = load_internal_relationships(entity_ids, repo)
 
     %{community: community, entities: entities, internal_relationships: internal_relationships}
+  end
+
+  defp load_community_entities(entity_ids, repo) do
+    entity_ids
+    |> Enum.map(&fetch_entity_summary(&1, repo))
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp fetch_entity_summary(id, repo) do
+    case GraphStore.get_entity(id, repo: repo) do
+      {:ok, entity} -> %{id: entity.id, name: entity.name, type: entity.type}
+      {:error, :not_found} -> nil
+    end
+  end
+
+  defp load_internal_relationships(entity_ids, _repo) when length(entity_ids) < 2, do: []
+
+  defp load_internal_relationships(entity_ids, repo) do
+    entity_ids
+    |> Enum.flat_map(fn id -> GraphStore.get_relationships(id, repo: repo) end)
+    |> Enum.filter(fn rel -> rel.source_id in entity_ids and rel.target_id in entity_ids end)
+    |> Enum.uniq_by(& &1.id)
   end
 
   defp build_path(socket, overrides) do
@@ -528,6 +337,24 @@ defmodule ArcanaWeb.GraphLive do
   defp has_any_graph_data?(collections) do
     Enum.any?(collections, & &1.graph_enabled)
   end
+
+  defp get_selected_collection_id(socket) do
+    selected_name = socket.assigns.selected_collection
+
+    if selected_name do
+      socket.assigns.collections
+      |> Enum.find(fn c -> c.name == selected_name end)
+      |> case do
+        nil -> nil
+        collection -> collection.id
+      end
+    else
+      nil
+    end
+  end
+
+  defp maybe_add_opt(opts, _key, nil), do: opts
+  defp maybe_add_opt(opts, key, value), do: Keyword.put(opts, key, value)
 
   @impl true
   def render(assigns) do

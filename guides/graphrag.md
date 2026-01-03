@@ -83,6 +83,106 @@ GraphRAG uses pluggable behaviours for extraction and community detection:
 
 **Recommended:** Use the combined `GraphExtractor.LLM` for efficiency (1 LLM call per chunk instead of 2).
 
+## Graph Storage
+
+GraphRAG supports swappable storage backends for graph data:
+
+| Backend | Purpose |
+|---------|---------|
+| `:ecto` (default) | PostgreSQL persistence via Ecto |
+| `:memory` | In-memory storage for testing |
+| Custom module | Your own implementation |
+
+### Configuration
+
+```elixir
+# config/config.exs
+
+# Use Ecto/PostgreSQL (default)
+config :arcana, :graph_store, :ecto
+
+# With options
+config :arcana, :graph_store, {:ecto, repo: MyApp.Repo}
+
+# Custom module
+config :arcana, :graph_store, MyApp.CustomGraphStore
+```
+
+### In-Memory Backend (Testing)
+
+The memory backend is useful for testing without database dependencies:
+
+```elixir
+# Start a memory store
+{:ok, pid} = Arcana.Graph.GraphStore.Memory.start_link([])
+
+# Use in tests
+Arcana.ingest(text, graph_store: {:memory, pid: pid})
+Arcana.search(query, graph_store: {:memory, pid: pid})
+
+# Or with a named process
+{:ok, _} = Arcana.Graph.GraphStore.Memory.start_link(name: :test_graph)
+Arcana.ingest(text, graph_store: {:memory, name: :test_graph})
+```
+
+### Custom Backend
+
+Implement the `Arcana.Graph.GraphStore` behaviour:
+
+```elixir
+defmodule MyApp.Neo4jGraphStore do
+  @behaviour Arcana.Graph.GraphStore
+
+  @impl true
+  def persist_entities(collection_id, entities, opts) do
+    # Store entities in Neo4j
+    {:ok, id_map}
+  end
+
+  @impl true
+  def persist_relationships(relationships, entity_id_map, opts) do
+    # Store relationships
+    :ok
+  end
+
+  @impl true
+  def persist_mentions(mentions, entity_id_map, opts) do
+    # Store entity-chunk mentions
+    :ok
+  end
+
+  @impl true
+  def search(entity_names, collection_ids, opts) do
+    # Find chunks by entity names
+    [%{chunk_id: "...", score: 0.9}]
+  end
+
+  @impl true
+  def find_entities(collection_id, opts) do
+    # Return all entities in collection
+    [%{id: "...", name: "...", type: "..."}]
+  end
+
+  @impl true
+  def find_related_entities(entity_id, depth, opts) do
+    # Traverse graph to find related entities
+    [%{id: "...", name: "...", type: "..."}]
+  end
+
+  @impl true
+  def persist_communities(collection_id, communities, opts) do
+    # Store community data
+    :ok
+  end
+
+  @impl true
+  def get_community_summaries(collection_id, opts) do
+    # Return community summaries
+    [%{id: "...", level: 0, summary: "..."}]
+  end
+end
+```
+
 ## Building a Graph
 
 ### Combined Extraction (Recommended)

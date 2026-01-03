@@ -127,25 +127,24 @@ end
 
 ### Configure Nx backend (required for local embeddings)
 
-For local embeddings, you need an Nx backend. Configure both the backend and compiler:
+For local embeddings, you need an Nx backend. Choose **one** of the following:
 
 ```elixir
 # config/config.exs
 
-# EXLA - Google's XLA compiler (Linux/macOS/Windows)
+# Option 1: EXLA - Google's XLA compiler (Linux/macOS/Windows)
 config :nx,
   default_backend: EXLA.Backend,
   default_defn_options: [compiler: EXLA]
 
-# EMLX - Apple's MLX framework (macOS with Apple Silicon)
+# Option 2: EMLX - Apple's MLX framework (macOS with Apple Silicon only)
 config :nx,
   default_backend: EMLX.Backend,
   default_defn_options: [compiler: EMLX]
 
-# Torchx - PyTorch backend
+# Option 3: Torchx - PyTorch backend (no compiler, uses eager execution)
 config :nx,
-  default_backend: Torchx.Backend,
-  default_defn_options: [compiler: Torchx]
+  default_backend: {Torchx.Backend, device: :cpu}  # or :mps for Apple Silicon
 ```
 
 Add the corresponding dependency to your `mix.exs`:
