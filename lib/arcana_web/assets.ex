@@ -543,6 +543,19 @@ defmodule ArcanaWeb.Assets do
     padding: 0;
   }
 
+  .arcana-orphan-section {
+    background: #fef3c7;
+    border-color: #f59e0b;
+  }
+  .arcana-orphan-section h3 {
+    color: #b45309;
+    border-bottom-color: #fcd34d;
+  }
+  .arcana-orphan-count {
+    font-weight: 600;
+    color: #b45309;
+  }
+
   .arcana-chunks-list {
     display: flex;
     flex-direction: column;

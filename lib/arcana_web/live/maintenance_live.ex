@@ -4,6 +4,7 @@ defmodule ArcanaWeb.MaintenanceLive do
   """
   use Phoenix.LiveView
 
+  import Ecto.Query
   import ArcanaWeb.DashboardComponents
 
   @impl true
@@ -23,6 +24,9 @@ defmodule ArcanaWeb.MaintenanceLive do
        rebuild_graph_collection: nil,
        graph_info: get_graph_info(),
        collections: [],
+       collections_for_assign: [],
+       orphaned_stats: %{entities: 0, relationships: 0},
+       assign_orphans_collection: nil,
        stats: nil
      )}
   end
@@ -34,17 +38,34 @@ defmodule ArcanaWeb.MaintenanceLive do
 
   defp load_data(socket) do
     repo = socket.assigns.repo
+    collections = fetch_collections(repo)
 
     socket
     |> assign(stats: load_stats(repo))
-    |> assign(collections: fetch_collection_names(repo))
+    |> assign(collections: Enum.map(collections, & &1.name))
+    |> assign(collections_for_assign: collections)
+    |> assign(orphaned_stats: count_orphaned_graph_data(repo))
   end
 
-  defp fetch_collection_names(repo) do
-    import Ecto.Query
-    repo.all(from(c in Arcana.Collection, select: c.name, order_by: c.name))
+  defp fetch_collections(repo) do
+    repo.all(from(c in Arcana.Collection, select: %{id: c.id, name: c.name}, order_by: c.name))
   rescue
     _ -> []
+  end
+
+  defp count_orphaned_graph_data(repo) do
+    entities =
+      repo.one(from(e in Arcana.Graph.Entity, where: is_nil(e.collection_id), select: count(e.id))) ||
+        0
+
+    relationships =
+      repo.one(
+        from(r in Arcana.Graph.Relationship, where: is_nil(r.collection_id), select: count(r.id))
+      ) || 0
+
+    %{entities: entities, relationships: relationships}
+  rescue
+    _ -> %{entities: 0, relationships: 0}
   end
 
   defp get_embedding_info do
@@ -111,6 +132,73 @@ defmodule ArcanaWeb.MaintenanceLive do
     end)
 
     {:noreply, socket}
+  end
+
+  def handle_event("select_assign_collection", %{"collection" => collection}, socket) do
+    collection = if collection == "", do: nil, else: collection
+    {:noreply, assign(socket, assign_orphans_collection: collection)}
+  end
+
+  def handle_event("assign_orphans", _params, socket) do
+    repo = socket.assigns.repo
+    collection_name = socket.assigns.assign_orphans_collection
+
+    if collection_name do
+      collection =
+        Enum.find(socket.assigns.collections_for_assign, &(&1.name == collection_name))
+
+      if collection do
+        assign_orphaned_to_collection(repo, collection.id)
+
+        socket =
+          socket
+          |> load_data()
+          |> put_flash(:info, "Assigned orphaned graph data to #{collection_name}")
+
+        {:noreply, socket}
+      else
+        {:noreply, put_flash(socket, :error, "Collection not found")}
+      end
+    else
+      {:noreply, put_flash(socket, :error, "Please select a collection")}
+    end
+  end
+
+  def handle_event("delete_orphans", _params, socket) do
+    repo = socket.assigns.repo
+    {entities_deleted, relationships_deleted} = delete_orphaned_graph_data(repo)
+
+    socket =
+      socket
+      |> load_data()
+      |> put_flash(
+        :info,
+        "Deleted #{entities_deleted} orphaned entities and #{relationships_deleted} orphaned relationships"
+      )
+
+    {:noreply, socket}
+  end
+
+  defp assign_orphaned_to_collection(repo, collection_id) do
+    repo.update_all(
+      from(e in Arcana.Graph.Entity, where: is_nil(e.collection_id)),
+      set: [collection_id: collection_id]
+    )
+
+    repo.update_all(
+      from(r in Arcana.Graph.Relationship, where: is_nil(r.collection_id)),
+      set: [collection_id: collection_id]
+    )
+  end
+
+  defp delete_orphaned_graph_data(repo) do
+    {rel_count, _} =
+      repo.delete_all(from(r in Arcana.Graph.Relationship, where: is_nil(r.collection_id)))
+
+    {entity_count, _} =
+      repo.delete_all(from(e in Arcana.Graph.Entity, where: is_nil(e.collection_id)))
+
+    {entity_count, rel_count}
   end
 
   @impl true
@@ -306,6 +394,57 @@ defmodule ArcanaWeb.MaintenanceLive do
             </div>
           <% end %>
         </div>
+
+        <%= if @orphaned_stats.entities > 0 or @orphaned_stats.relationships > 0 do %>
+          <div class="arcana-maintenance-section arcana-orphan-section">
+            <h3>Orphaned Graph Data</h3>
+            <p style="color: #6b7280; margin-bottom: 1rem; font-size: 0.875rem;">
+              These entities and relationships don't belong to any collection.
+              Assign them to a collection or delete them.
+            </p>
+
+            <div class="arcana-doc-info" style="margin-bottom: 1rem;">
+              <div class="arcana-doc-field">
+                <label>Orphaned Entities</label>
+                <span class="arcana-orphan-count"><%= @orphaned_stats.entities %></span>
+              </div>
+              <div class="arcana-doc-field">
+                <label>Orphaned Relationships</label>
+                <span class="arcana-orphan-count"><%= @orphaned_stats.relationships %></span>
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 0.75rem; align-items: stretch; flex-wrap: wrap;">
+              <select
+                phx-change="select_assign_collection"
+                name="collection"
+                style="padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem; background: white; min-width: 160px;"
+              >
+                <option value="">Select collection...</option>
+                <%= for collection <- @collections do %>
+                  <option value={collection} selected={@assign_orphans_collection == collection}>
+                    <%= collection %>
+                  </option>
+                <% end %>
+              </select>
+              <button
+                phx-click="assign_orphans"
+                disabled={is_nil(@assign_orphans_collection)}
+                class="arcana-assign-btn"
+                style={"background: #3b82f6; color: white; padding: 0.5rem 1rem; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: pointer; white-space: nowrap; opacity: #{if is_nil(@assign_orphans_collection), do: "0.5", else: "1"};"}
+              >
+                Assign to Collection
+              </button>
+              <button
+                phx-click="delete_orphans"
+                data-confirm="Are you sure you want to delete all orphaned entities and relationships? This cannot be undone."
+                style="background: #ef4444; color: white; padding: 0.5rem 1rem; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: pointer; white-space: nowrap;"
+              >
+                Delete All Orphans
+              </button>
+            </div>
+          </div>
+        <% end %>
       </div>
     </.dashboard_layout>
     """
