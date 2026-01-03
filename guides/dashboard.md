@@ -4,7 +4,20 @@ A web UI for managing documents and testing search. The dashboard consists of mu
 
 ## Setup
 
-Add the dashboard route to your router:
+### 1. Add TaskSupervisor to your supervision tree
+
+The dashboard requires `Arcana.TaskSupervisor` for async operations (Ask, Maintenance):
+
+```elixir
+# lib/my_app/application.ex
+children = [
+  MyApp.Repo,
+  Arcana.TaskSupervisor,  # Required for dashboard
+  # ...
+]
+```
+
+### 2. Add the dashboard route
 
 ```elixir
 # lib/my_app_web/router.ex

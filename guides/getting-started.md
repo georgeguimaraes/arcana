@@ -43,16 +43,19 @@ config :arcana, embedder: :local
 config :arcana, embedder: {:local, model: "BAAI/bge-base-en-v1.5"}
 ```
 
-Add the embedding model to your supervision tree:
+Add Arcana components to your supervision tree:
 
 ```elixir
 # application.ex
 children = [
   MyApp.Repo,
-  {Arcana.Embedder.Local, model: "BAAI/bge-small-en-v1.5"},
-  # ...
+  Arcana.TaskSupervisor,  # Required for dashboard async operations
+  Arcana.Embedder.Local   # Only if using local embeddings
 ]
 ```
+
+`Arcana.TaskSupervisor` is required for the dashboard's async operations (Ask, Maintenance).
+`Arcana.Embedder.Local` starts the local embedding model (only needed if using local embeddings).
 
 ### Available Models
 

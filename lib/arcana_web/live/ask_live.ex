@@ -112,7 +112,7 @@ defmodule ArcanaWeb.AskLive do
     selected_collections = params["collections"] || []
     parent = self()
 
-    Task.start(fn ->
+    Arcana.TaskSupervisor.start_child(fn ->
       result =
         run_ask(
           mode,

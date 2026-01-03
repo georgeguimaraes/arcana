@@ -14,6 +14,7 @@ def start(_type, _args) do
 
   children = [
     MyApp.Repo,
+    Arcana.TaskSupervisor,
     Arcana.Embedder.Local
   ]
 

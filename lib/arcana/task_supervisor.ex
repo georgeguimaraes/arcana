@@ -11,7 +11,7 @@ defmodule Arcana.TaskSupervisor do
       ]
 
   This enables supervised async operations in the Arcana dashboard
-  (evaluation runs, test case generation) with:
+  (evaluation runs, test case generation, maintenance tasks) with:
   - Graceful shutdown during deploys
   - Visibility in Observer/LiveDashboard
   - Proper crash logging with `$callers` metadata
@@ -23,5 +23,15 @@ defmodule Arcana.TaskSupervisor do
       start: {Task.Supervisor, :start_link, [[name: __MODULE__]]},
       type: :supervisor
     }
+  end
+
+  @doc """
+  Starts a fire-and-forget task under this supervisor.
+
+  The task is not linked to the caller, so crashes won't bring down
+  the calling process. Crashes are logged by the supervisor.
+  """
+  def start_child(fun) when is_function(fun, 0) do
+    Task.Supervisor.start_child(__MODULE__, fun)
   end
 end

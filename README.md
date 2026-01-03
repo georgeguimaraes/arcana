@@ -127,22 +127,26 @@ services:
       POSTGRES_DB: myapp_dev
 ```
 
-### Add to supervision tree (for local embeddings)
+### Add to supervision tree
 
-If using local Bumblebee embeddings (the default), add the serving to your supervision tree:
+Add Arcana components to your supervision tree:
 
 ```elixir
 # lib/my_app/application.ex
 def start(_type, _args) do
   children = [
     MyApp.Repo,
-    Arcana.Embedder.Local  # Starts the local embedding model
+    Arcana.TaskSupervisor,  # Required for dashboard async operations
+    Arcana.Embedder.Local   # Only if using local Bumblebee embeddings
   ]
 
   opts = [strategy: :one_for_one, name: MyApp.Supervisor]
   Supervisor.start_link(children, opts)
 end
 ```
+
+`Arcana.TaskSupervisor` is required for the dashboard's async operations (Ask, Maintenance).
+`Arcana.Embedder.Local` is only needed if using local Bumblebee embeddings (the default).
 
 ### Configure Nx backend (required for local embeddings)
 
