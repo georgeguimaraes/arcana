@@ -356,7 +356,13 @@ defmodule Arcana.Graph.GraphStore.Memory do
           MapSet.member?(remaining_entity_ids, r.target_id)
       end)
 
-    new_state = %{state | mentions: new_mentions, entities: new_entities, relationships: new_relationships}
+    new_state = %{
+      state
+      | mentions: new_mentions,
+        entities: new_entities,
+        relationships: new_relationships
+    }
+
     {:reply, :ok, new_state}
   end
 

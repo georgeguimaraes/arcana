@@ -348,8 +348,13 @@ defmodule Arcana.Graph.GraphStore.Ecto do
         }
       )
 
-    query = if collection_id, do: where(query, [e], e.collection_id == ^collection_id), else: query
-    query = if type_filter && type_filter != "", do: where(query, [e], e.type == ^type_filter), else: query
+    query =
+      if collection_id, do: where(query, [e], e.collection_id == ^collection_id), else: query
+
+    query =
+      if type_filter && type_filter != "",
+        do: where(query, [e], e.type == ^type_filter),
+        else: query
 
     query =
       if search && search != "" do
@@ -430,7 +435,9 @@ defmodule Arcana.Graph.GraphStore.Ecto do
       )
 
     query =
-      if collection_id, do: where(query, [comm], comm.collection_id == ^collection_id), else: query
+      if collection_id,
+        do: where(query, [comm], comm.collection_id == ^collection_id),
+        else: query
 
     query = if level_filter, do: where(query, [comm], comm.level == ^level_filter), else: query
 
@@ -578,7 +585,9 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     if orphaned_ids != [] do
       # Delete relationships involving orphaned entities
       repo.delete_all(
-        from(r in Relationship, where: r.source_id in ^orphaned_ids or r.target_id in ^orphaned_ids)
+        from(r in Relationship,
+          where: r.source_id in ^orphaned_ids or r.target_id in ^orphaned_ids
+        )
       )
 
       # Delete the orphaned entities
@@ -604,8 +613,13 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   defp maybe_filter_by_strength(query, nil), do: query
   defp maybe_filter_by_strength(query, :strong), do: where(query, [r], r.strength >= 7)
   defp maybe_filter_by_strength(query, "strong"), do: where(query, [r], r.strength >= 7)
-  defp maybe_filter_by_strength(query, :medium), do: where(query, [r], r.strength >= 4 and r.strength < 7)
-  defp maybe_filter_by_strength(query, "medium"), do: where(query, [r], r.strength >= 4 and r.strength < 7)
+
+  defp maybe_filter_by_strength(query, :medium),
+    do: where(query, [r], r.strength >= 4 and r.strength < 7)
+
+  defp maybe_filter_by_strength(query, "medium"),
+    do: where(query, [r], r.strength >= 4 and r.strength < 7)
+
   defp maybe_filter_by_strength(query, :weak), do: where(query, [r], r.strength < 4)
   defp maybe_filter_by_strength(query, "weak"), do: where(query, [r], r.strength < 4)
   defp maybe_filter_by_strength(query, _), do: query

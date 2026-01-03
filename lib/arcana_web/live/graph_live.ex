@@ -151,9 +151,15 @@ defmodule ArcanaWeb.GraphLive do
     # Parse level filter to integer if it's a string
     level =
       case level_filter do
-        nil -> nil
-        "" -> nil
-        level when is_integer(level) -> level
+        nil ->
+          nil
+
+        "" ->
+          nil
+
+        level when is_integer(level) ->
+          level
+
         level when is_binary(level) ->
           case Integer.parse(level) do
             {int, _} -> int
