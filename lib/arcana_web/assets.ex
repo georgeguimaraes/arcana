@@ -287,6 +287,12 @@ defmodule ArcanaWeb.Assets do
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
+  .arcana-stat-divider {
+    width: 1px;
+    height: 2rem;
+    background: rgba(255, 255, 255, 0.3);
+    margin: 0 0.5rem;
+  }
 
   .arcana-pagination {
     display: flex;

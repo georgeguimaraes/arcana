@@ -25,6 +25,21 @@ defmodule ArcanaWeb.DashboardComponents do
           <div class="arcana-stat-value"><%= @stats.chunks %></div>
           <div class="arcana-stat-label">Chunks</div>
         </div>
+        <%= if @stats[:entities] do %>
+          <div class="arcana-stat-divider"></div>
+          <div class="arcana-stat">
+            <div class="arcana-stat-value"><%= @stats.entities %></div>
+            <div class="arcana-stat-label">Entities</div>
+          </div>
+          <div class="arcana-stat">
+            <div class="arcana-stat-value"><%= @stats.relationships %></div>
+            <div class="arcana-stat-label">Relationships</div>
+          </div>
+          <div class="arcana-stat">
+            <div class="arcana-stat-value"><%= @stats.communities %></div>
+            <div class="arcana-stat-label">Communities</div>
+          </div>
+        <% end %>
       </div>
 
       <nav class="arcana-tabs">
@@ -123,7 +138,28 @@ defmodule ArcanaWeb.DashboardComponents do
     doc_count = repo.aggregate(Arcana.Document, :count)
     chunk_count = repo.one(from(c in Arcana.Chunk, select: count(c.id))) || 0
 
-    %{documents: doc_count, chunks: chunk_count}
+    base_stats = %{documents: doc_count, chunks: chunk_count}
+
+    # Add graph stats if GraphRAG is available
+    if Arcana.Graph.enabled?() do
+      graph_stats = load_graph_stats(repo)
+      Map.merge(base_stats, graph_stats)
+    else
+      base_stats
+    end
+  end
+
+  defp load_graph_stats(repo) do
+    import Ecto.Query
+
+    entity_count = repo.one(from(e in Arcana.Graph.Entity, select: count(e.id))) || 0
+    relationship_count = repo.one(from(r in Arcana.Graph.Relationship, select: count(r.id))) || 0
+    community_count = repo.one(from(c in Arcana.Graph.Community, select: count(c.id))) || 0
+
+    %{entities: entity_count, relationships: relationship_count, communities: community_count}
+  rescue
+    # Tables might not exist if GraphRAG not installed
+    _ -> %{}
   end
 
   def load_collections(repo) do
