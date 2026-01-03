@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0](https://github.com/georgeguimaraes/arcana/compare/v1.1.0...v1.2.0) (2026-01-03)
+
+
+### Features
+
+* Add E5 embedding model prefix support ([8a0d8a5](https://github.com/georgeguimaraes/arcana/commit/8a0d8a52d6bada8d1472d9c258dfa1df2b93068f))
+* Add GraphRAG (Graph-enhanced Retrieval Augmented Generation) ([#7](https://github.com/georgeguimaraes/arcana/issues/7)) ([4faca71](https://github.com/georgeguimaraes/arcana/commit/4faca71f390439b6774b7e84638bf4112f881dbe))
+* Add swappable GraphStore backend ([#9](https://github.com/georgeguimaraes/arcana/issues/9)) ([42e7074](https://github.com/georgeguimaraes/arcana/commit/42e7074028c4c9e5269f68a6e49782e36a6adb87))
+* Add swappable GraphStore issues from GitHub [#8](https://github.com/georgeguimaraes/arcana/issues/8) ([7adb131](https://github.com/georgeguimaraes/arcana/commit/7adb13193193ed022050ba8cadcf24a0f2ce413a))
+* Add telemetry to GraphStore and VectorStore ([61f4f3d](https://github.com/georgeguimaraes/arcana/commit/61f4f3d5d7946df8501d5e4caf1e3dcceaea6ae9))
+* Make Nx backend configurable (EXLA, EMLX, Torchx) ([#5](https://github.com/georgeguimaraes/arcana/issues/5)) ([86b8ef9](https://github.com/georgeguimaraes/arcana/commit/86b8ef9e251b8366fb62af0dba0165762ba07478))
+
 ## [1.1.0](https://github.com/georgeguimaraes/arcana/compare/v1.0.0...v1.1.0) (2026-01-01)
 
 
