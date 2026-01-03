@@ -518,7 +518,7 @@ defmodule ArcanaWeb.Assets do
     border: 1px solid #e5e7eb;
     border-radius: 0.5rem;
     padding: 1.25rem;
-    margin-bottom: 1.5rem;
+    margin-bottom: 2rem;
   }
 
   .arcana-maintenance-section h3 {
@@ -1653,12 +1653,12 @@ defmodule ArcanaWeb.Assets do
 
   .arcana-rel-type {
     font-family: monospace;
-    background: #7c3aed;
-    color: white;
+    background: #ede9fe;
+    color: #5b21b6;
     padding: 0.125rem 0.5rem;
     border-radius: 0.25rem;
     font-size: 0.75rem;
-    font-weight: 500;
+    font-weight: 600;
     text-transform: uppercase;
   }
 
