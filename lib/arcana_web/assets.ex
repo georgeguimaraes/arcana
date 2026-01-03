@@ -1820,9 +1820,21 @@ defmodule ArcanaWeb.Assets do
 
   .arcana-graph-toggle .arcana-checkbox-label {
     display: flex;
+    flex-direction: row;
     align-items: center;
     gap: 0.5rem;
+    padding: 0;
+    background: transparent;
+    border: none;
     cursor: pointer;
+  }
+
+  .arcana-graph-toggle .arcana-checkbox-label input[type="checkbox"] {
+    position: static;
+    opacity: 1;
+    width: auto;
+    height: auto;
+    accent-color: #7c3aed;
   }
 
   .arcana-graph-toggle .arcana-checkbox-label span {
@@ -1833,7 +1845,14 @@ defmodule ArcanaWeb.Assets do
   .arcana-graph-toggle .arcana-checkbox-label small {
     color: #9333ea;
     font-size: 0.75rem;
+    margin-top: 0;
     margin-left: 0.25rem;
+  }
+
+  .arcana-graph-toggle .arcana-checkbox-label:hover,
+  .arcana-graph-toggle .arcana-checkbox-label:has(input:checked) {
+    background: transparent;
+    border: none;
   }
 
   /* Graph Context section */
