@@ -15,9 +15,7 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       entities = [%{name: "Test", type: "thing"}]
 
       {:ok, id_map} =
-        GraphStore.persist_entities(collection_id, entities,
-          graph_store: {:memory, pid: pid}
-        )
+        GraphStore.persist_entities(collection_id, entities, graph_store: {:memory, pid: pid})
 
       assert Map.has_key?(id_map, "Test")
 
@@ -30,6 +28,7 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
   describe "persist_entities/3" do
     test "stores entities and returns id map", %{pid: pid} do
       collection_id = "col-1"
+
       entities = [
         %{name: "Alice", type: "person"},
         %{name: "Bob", type: "person"}
@@ -44,6 +43,7 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
 
     test "deduplicates entities by name", %{pid: pid} do
       collection_id = "col-1"
+
       entities = [
         %{name: "Alice", type: "person"},
         %{name: "Alice", type: "person"}
@@ -68,10 +68,12 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
   describe "persist_relationships/3" do
     test "stores relationships between entities", %{pid: pid} do
       collection_id = "col-1"
+
       entities = [
         %{name: "Alice", type: "person"},
         %{name: "Bob", type: "person"}
       ]
+
       {:ok, id_map} = Memory.persist_entities(collection_id, entities, pid: pid)
 
       relationships = [
@@ -106,10 +108,12 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
   describe "search/3" do
     test "finds chunks by entity names and scores by mention count", %{pid: pid} do
       collection_id = "col-1"
+
       entities = [
         %{name: "Alice", type: "person"},
         %{name: "Bob", type: "person"}
       ]
+
       {:ok, id_map} = Memory.persist_entities(collection_id, entities, pid: pid)
 
       # Alice mentioned in chunk-1 and chunk-2, Bob only in chunk-1
@@ -118,6 +122,7 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
         %{entity_name: "Bob", chunk_id: "chunk-1"},
         %{entity_name: "Alice", chunk_id: "chunk-2"}
       ]
+
       :ok = Memory.persist_mentions(mentions, id_map, pid: pid)
 
       results = Memory.search(["Alice", "Bob"], [collection_id], pid: pid)
@@ -144,6 +149,7 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
         %{name: "Alice", type: "person"},
         %{name: "Bob", type: "person"}
       ]
+
       entities2 = [%{name: "Other", type: "person"}]
 
       {:ok, _} = Memory.persist_entities(collection_id, entities1, pid: pid)
@@ -161,11 +167,13 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
   describe "find_related_entities/3" do
     test "finds entities connected within depth", %{pid: pid} do
       collection_id = "col-1"
+
       entities = [
         %{name: "Alice", type: "person"},
         %{name: "Bob", type: "person"},
         %{name: "Charlie", type: "person"}
       ]
+
       {:ok, id_map} = Memory.persist_entities(collection_id, entities, pid: pid)
 
       # Alice -> Bob -> Charlie
@@ -173,6 +181,7 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
         %{source: "Alice", target: "Bob", type: "knows"},
         %{source: "Bob", target: "Charlie", type: "knows"}
       ]
+
       :ok = Memory.persist_relationships(relationships, id_map, pid: pid)
 
       # From Alice, depth 1 should find Bob
@@ -197,6 +206,7 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
   describe "persist_communities/3 and get_community_summaries/2" do
     test "stores and retrieves communities", %{pid: pid} do
       collection_id = "col-1"
+
       communities = [
         %{id: "comm-1", level: 0, summary: "A group of friends", entity_ids: ["e1", "e2"]},
         %{id: "comm-2", level: 1, summary: "Work colleagues", entity_ids: ["e3"]}

@@ -309,7 +309,9 @@ defmodule Arcana.Search do
   defp maybe_add_repo(opts, repo), do: Keyword.put(opts, :repo, repo)
 
   defp maybe_add_vector_store(opts, nil), do: opts
-  defp maybe_add_vector_store(opts, vector_store), do: Keyword.put(opts, :vector_store, vector_store)
+
+  defp maybe_add_vector_store(opts, vector_store),
+    do: Keyword.put(opts, :vector_store, vector_store)
 
   defp maybe_rewrite_query(query, nil), do: query
 

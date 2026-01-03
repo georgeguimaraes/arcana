@@ -127,10 +127,12 @@ defmodule Arcana.Graph.GraphStore.Memory do
         case Map.get(existing_by_name, entity.name) do
           nil ->
             # Insert new entity
-            new_entity = Map.merge(entity, %{
-              id: Ecto.UUID.generate(),
-              collection_id: collection_id
-            })
+            new_entity =
+              Map.merge(entity, %{
+                id: Ecto.UUID.generate(),
+                collection_id: collection_id
+              })
+
             {[new_entity | ents], Map.put(ids, entity.name, new_entity.id)}
 
           existing_entity ->
