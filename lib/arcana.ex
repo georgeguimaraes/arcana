@@ -28,181 +28,32 @@ defmodule Arcana do
     RelationshipExtractor
   }
 
+  # Configuration - delegated to Arcana.Config
+  # See Arcana.Config for documentation on embedder, chunker, and other config options.
+
   @doc """
   Returns the configured embedder as a `{module, opts}` tuple.
-
-  The embedder is configured via application config:
-
-      # Default: Local Bumblebee with bge-small-en-v1.5
-      config :arcana, embedder: :local
-
-      # Local with different model
-      config :arcana, embedder: {:local, model: "BAAI/bge-large-en-v1.5"}
-
-      # OpenAI (requires req_llm and OPENAI_API_KEY)
-      config :arcana, embedder: :openai
-      config :arcana, embedder: {:openai, model: "text-embedding-3-large"}
-
-      # Custom function
-      config :arcana, embedder: fn text -> {:ok, embedding} end
-
-      # Custom module implementing Arcana.Embedder behaviour
-      config :arcana, embedder: MyApp.CohereEmbedder
-      config :arcana, embedder: {MyApp.CohereEmbedder, api_key: "..."}
-
-  ## Custom Embedding Modules
-
-  Implement the `Arcana.Embedder` behaviour:
-
-      defmodule MyApp.CohereEmbedder do
-        @behaviour Arcana.Embedder
-
-        @impl true
-        def embed(text, opts) do
-          api_key = opts[:api_key] || System.get_env("COHERE_API_KEY")
-          # Call Cohere API...
-          {:ok, embedding}
-        end
-
-        @impl true
-        def dimensions(_opts), do: 1024
-      end
-
+  See `Arcana.Config` for configuration options.
   """
-  def embedder do
-    Application.get_env(:arcana, :embedder, :local)
-    |> parse_embedder_config()
-  end
+  defdelegate embedder, to: Arcana.Config
 
   @doc """
   Returns the configured chunker as a `{module, opts}` tuple.
-
-  The chunker is configured via application config:
-
-      # Default: text_chunker-based chunking
-      config :arcana, chunker: :default
-
-      # Default chunker with custom options
-      config :arcana, chunker: {:default, chunk_size: 512, chunk_overlap: 100}
-
-      # Custom function (receives text, opts; returns list of chunk maps)
-      config :arcana, chunker: fn text, _opts ->
-        [%{text: text, chunk_index: 0, token_count: 10}]
-      end
-
-      # Custom module implementing Arcana.Chunker behaviour
-      config :arcana, chunker: MyApp.SemanticChunker
-      config :arcana, chunker: {MyApp.SemanticChunker, model: "..."}
-
-  ## Custom Chunking Modules
-
-  Implement the `Arcana.Chunker` behaviour:
-
-      defmodule MyApp.SemanticChunker do
-        @behaviour Arcana.Chunker
-
-        @impl true
-        def chunk(text, opts) do
-          # Custom chunking logic...
-          [%{text: text, chunk_index: 0, token_count: estimate_tokens(text)}]
-        end
-      end
-
+  See `Arcana.Config` for configuration options.
   """
-  def chunker do
-    Application.get_env(:arcana, :chunker, :text)
-    |> parse_chunker_config()
-  end
+  defdelegate chunker, to: Arcana.Config
 
   @doc """
   Returns the current Arcana configuration.
-
-  Useful for logging, debugging, and storing with evaluation runs
-  to track which settings produced which results.
-
-  ## Example
-
-      Arcana.config()
-      # => %{
-      #   embedding: %{module: Arcana.Embedder.Local, model: "BAAI/bge-small-en-v1.5", dimensions: 384},
-      #   vector_store: :pgvector
-      # }
-
+  See `Arcana.Config.current/0` for details.
   """
-  def config do
-    {emb_module, emb_opts} = embedder()
-    model = Keyword.get(emb_opts, :model, "BAAI/bge-small-en-v1.5")
-
-    %{
-      embedding: %{
-        module: emb_module,
-        model: model,
-        dimensions: Arcana.Embedder.dimensions(embedder())
-      },
-      vector_store: Application.get_env(:arcana, :vector_store, :pgvector),
-      reranker: Application.get_env(:arcana, :reranker, Arcana.Reranker.LLM),
-      graph: Arcana.Graph.config()
-    }
-  end
+  def config, do: Arcana.Config.current()
 
   @doc """
   Returns whether GraphRAG is enabled globally or for specific options.
-
-  Checks the `:graph` option in the provided opts first, then falls back
-  to the global configuration.
-
-  ## Examples
-
-      # Check global config
-      Arcana.graph_enabled?([])
-
-      # Override with per-call option
-      Arcana.graph_enabled?(graph: true)
-
+  See `Arcana.Config.graph_enabled?/1` for details.
   """
-  @spec graph_enabled?(keyword()) :: boolean()
-  def graph_enabled?(opts) do
-    case Keyword.get(opts, :graph) do
-      nil -> Arcana.Graph.enabled?()
-      value -> value
-    end
-  end
-
-  defp parse_embedder_config(:local), do: {Arcana.Embedder.Local, []}
-  defp parse_embedder_config({:local, opts}), do: {Arcana.Embedder.Local, opts}
-  defp parse_embedder_config(:openai), do: {Arcana.Embedder.OpenAI, []}
-  defp parse_embedder_config({:openai, opts}), do: {Arcana.Embedder.OpenAI, opts}
-
-  defp parse_embedder_config(fun) when is_function(fun, 1),
-    do: {Arcana.Embedder.Custom, [fun: fun]}
-
-  defp parse_embedder_config({module, opts}) when is_atom(module) and is_list(opts),
-    do: {module, opts}
-
-  defp parse_embedder_config(module) when is_atom(module), do: {module, []}
-
-  defp parse_embedder_config(other) do
-    raise ArgumentError, "invalid embedding config: #{inspect(other)}"
-  end
-
-  defp parse_chunker_config(:default), do: {Arcana.Chunker.Default, []}
-  defp parse_chunker_config({:default, opts}), do: {Arcana.Chunker.Default, opts}
-
-  defp parse_chunker_config(fun) when is_function(fun, 2),
-    do: {Arcana.Chunker.Custom, [fun: fun]}
-
-  defp parse_chunker_config({module, opts}) when is_atom(module) and is_list(opts),
-    do: {module, opts}
-
-  defp parse_chunker_config(module) when is_atom(module), do: {module, []}
-
-  defp parse_chunker_config(other) do
-    raise ArgumentError, "invalid chunker config: #{inspect(other)}"
-  end
-
-  defp resolve_chunker(opts) do
-    Keyword.get(opts, :chunker, :default) |> parse_chunker_config()
-  end
+  defdelegate graph_enabled?(opts), to: Arcana.Config
 
   @doc """
   Ingests text content, creating a document with embedded chunks.
@@ -241,7 +92,7 @@ defmodule Arcana do
       parse_collection_opt(Keyword.get(opts, :collection, "default"))
 
     chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap, :format, :size_unit])
-    chunker_config = resolve_chunker(opts)
+    chunker_config = Arcana.Config.resolve_chunker(opts)
 
     start_metadata = %{
       text: text,
@@ -381,7 +232,7 @@ defmodule Arcana do
     content_type = Keyword.get(opts, :content_type, "text/plain")
     collection_name = Keyword.get(opts, :collection, "default")
     chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap, :format, :size_unit])
-    chunker_config = resolve_chunker(opts)
+    chunker_config = Arcana.Config.resolve_chunker(opts)
 
     # Get or create collection
     {:ok, collection} = Collection.get_or_create(collection_name, repo)
