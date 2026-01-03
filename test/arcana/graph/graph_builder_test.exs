@@ -26,7 +26,7 @@ defmodule Arcana.Graph.GraphBuilderTest do
         )
 
       assert is_list(graph_data.entities)
-      assert length(graph_data.entities) > 0
+      assert graph_data.entities != []
     end
 
     test "extracts relationships between entities" do
@@ -49,7 +49,7 @@ defmodule Arcana.Graph.GraphBuilderTest do
         )
 
       assert is_list(graph_data.relationships)
-      assert length(graph_data.relationships) > 0
+      assert graph_data.relationships != []
     end
 
     test "tracks entity-chunk mentions" do

@@ -101,7 +101,7 @@ defmodule Arcana.GraphTest do
         )
 
       assert is_map(graph_data)
-      assert length(graph_data.entities) > 0
+      assert graph_data.entities != []
     end
   end
 

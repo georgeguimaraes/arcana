@@ -9,7 +9,7 @@ defmodule Arcana.EndToEnd.GraphRAGTest do
   """
   use Arcana.LLMCase, async: true
 
-  alias Arcana.Graph.{Entity, EntityMention, Relationship, CommunitySummarizer}
+  alias Arcana.Graph.{CommunitySummarizer, Entity, EntityMention, Relationship}
 
   # LLM calls can be slow
   @moduletag timeout: :timer.minutes(5)
@@ -54,7 +54,7 @@ defmodule Arcana.EndToEnd.GraphRAGTest do
       relationships = Arcana.TestRepo.all(Relationship)
 
       # Should have at least some relationships
-      assert length(relationships) >= 1
+      assert relationships != []
 
       # Check relationship types are normalized
       for rel <- relationships do

@@ -138,7 +138,7 @@ defmodule Arcana.Graph.FusionSearchTest do
 
       # Should include both graph results (c1, c2) and vector result (c3)
       ids = Enum.map(results, & &1.id)
-      assert length(ids) > 0
+      assert ids != []
     end
 
     test "deduplicates results from multiple sources" do

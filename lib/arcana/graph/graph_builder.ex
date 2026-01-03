@@ -34,7 +34,7 @@ defmodule Arcana.Graph.GraphBuilder do
 
   """
 
-  alias Arcana.Graph.GraphQuery
+  alias Arcana.Graph.{GraphExtractor, GraphQuery}
 
   @type chunk :: %{id: String.t(), text: String.t()}
   @type entity :: %{id: String.t(), name: String.t(), type: atom()}
@@ -191,7 +191,7 @@ defmodule Arcana.Graph.GraphBuilder do
 
   # Combined extractor mode - single call for entities + relationships
   defp process_chunk_combined(chunk, extractor, ent_acc, ment_acc, rel_acc) do
-    case Arcana.Graph.GraphExtractor.extract(extractor, chunk.text) do
+    case GraphExtractor.extract(extractor, chunk.text) do
       {:ok, %{entities: entities, relationships: relationships}} ->
         # Track mentions
         new_mentions =

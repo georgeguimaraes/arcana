@@ -23,8 +23,8 @@ defmodule Arcana do
 
   alias Arcana.Graph.{
     Entity,
-    EntityMention,
     EntityExtractor,
+    EntityMention,
     GraphExtractor,
     Relationship,
     RelationshipExtractor
@@ -275,28 +275,29 @@ defmodule Arcana do
 
       case result do
         {:ok, chunk_records} ->
-          # Build graph if enabled
-          if graph_enabled?(opts) do
-            build_and_persist_graph(chunk_records, collection, repo, opts)
-          end
-
-          # Update document status
-          {:ok, document} =
-            document
-            |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
-            |> repo.update()
-
-          stop_metadata = %{
-            document: document,
-            chunk_count: length(chunk_records)
-          }
-
-          {{:ok, document}, stop_metadata}
+          finalize_ingest(document, chunk_records, collection, repo, opts)
 
         {:error, reason} ->
           {{:error, reason}, %{error: reason}}
       end
     end)
+  end
+
+  defp finalize_ingest(document, chunk_records, collection, repo, opts) do
+    maybe_build_graph(chunk_records, collection, repo, opts)
+
+    {:ok, document} =
+      document
+      |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
+      |> repo.update()
+
+    {{:ok, document}, %{document: document, chunk_count: length(chunk_records)}}
+  end
+
+  defp maybe_build_graph(chunk_records, collection, repo, opts) do
+    if graph_enabled?(opts) do
+      build_and_persist_graph(chunk_records, collection, repo, opts)
+    end
   end
 
   defp embed_and_store_chunks(chunks, document, repo) do
@@ -637,86 +638,87 @@ defmodule Arcana do
     import Ecto.Query
 
     entity_names = Enum.map(entities, & &1.name)
+    collection_ids = resolve_collection_ids(collections, repo)
+    entity_ids = find_entity_ids(entity_names, collection_ids, repo)
 
-    # Get collection IDs if specified
-    collection_ids =
-      if collections == [nil] do
-        nil
-      else
-        collections
-        |> Enum.reject(&is_nil/1)
-        |> Enum.flat_map(fn name ->
-          case repo.one(from(c in Collection, where: c.name == ^name, select: c.id)) do
-            nil -> []
-            id -> [id]
-          end
-        end)
+    fetch_and_score_chunks(entity_ids, repo)
+  end
+
+  defp resolve_collection_ids([nil], _repo), do: nil
+
+  defp resolve_collection_ids(collections, repo) do
+    import Ecto.Query
+
+    collections
+    |> Enum.reject(&is_nil/1)
+    |> Enum.flat_map(fn name ->
+      case repo.one(from(c in Collection, where: c.name == ^name, select: c.id)) do
+        nil -> []
+        id -> [id]
       end
+    end)
+  end
 
-    # Find entities by name in the graph tables
-    entity_query =
-      from(e in Entity,
-        where: e.name in ^entity_names
+  defp find_entity_ids(entity_names, collection_ids, repo) do
+    import Ecto.Query
+
+    query = from(e in Entity, where: e.name in ^entity_names, select: e.id)
+
+    query =
+      if collection_ids,
+        do: from(e in query, where: e.collection_id in ^collection_ids),
+        else: query
+
+    repo.all(query)
+  end
+
+  defp fetch_and_score_chunks([], _repo), do: []
+
+  defp fetch_and_score_chunks(entity_ids, repo) do
+    import Ecto.Query
+
+    chunk_ids =
+      repo.all(
+        from(m in EntityMention,
+          where: m.entity_id in ^entity_ids,
+          select: m.chunk_id,
+          distinct: true
+        )
       )
 
-    entity_query =
-      if collection_ids do
-        from(e in entity_query, where: e.collection_id in ^collection_ids)
-      else
-        entity_query
-      end
+    score_chunks(chunk_ids, entity_ids, repo)
+  end
 
-    entity_ids =
-      repo.all(from(e in entity_query, select: e.id))
+  defp score_chunks([], _entity_ids, _repo), do: []
 
-    if entity_ids == [] do
-      []
-    else
-      # Get chunks connected to these entities via mentions
-      chunk_ids =
-        repo.all(
-          from(m in EntityMention,
-            where: m.entity_id in ^entity_ids,
-            select: m.chunk_id,
-            distinct: true
-          )
+  defp score_chunks(chunk_ids, entity_ids, repo) do
+    import Ecto.Query
+
+    chunks = repo.all(from(c in Chunk, where: c.id in ^chunk_ids, preload: [:document]))
+
+    chunks
+    |> Enum.map(&score_chunk(&1, entity_ids, repo))
+    |> Enum.sort_by(& &1.score, :desc)
+  end
+
+  defp score_chunk(chunk, entity_ids, repo) do
+    import Ecto.Query
+
+    mention_count =
+      repo.one(
+        from(m in EntityMention,
+          where: m.chunk_id == ^chunk.id and m.entity_id in ^entity_ids,
+          select: count()
         )
+      )
 
-      if chunk_ids == [] do
-        []
-      else
-        # Load chunks with their text
-        chunks =
-          repo.all(
-            from(c in Chunk,
-              where: c.id in ^chunk_ids,
-              preload: [:document]
-            )
-          )
-
-        # Convert to search result format with scores based on entity match count
-        chunks
-        |> Enum.map(fn chunk ->
-          # Count how many entity mentions this chunk has
-          mention_count =
-            repo.one(
-              from(m in EntityMention,
-                where: m.chunk_id == ^chunk.id and m.entity_id in ^entity_ids,
-                select: count()
-              )
-            )
-
-          %{
-            id: chunk.id,
-            text: chunk.text,
-            document_id: chunk.document_id,
-            chunk_index: chunk.chunk_index,
-            score: mention_count * 0.1
-          }
-        end)
-        |> Enum.sort_by(& &1.score, :desc)
-      end
-    end
+    %{
+      id: chunk.id,
+      text: chunk.text,
+      document_id: chunk.document_id,
+      chunk_index: chunk.chunk_index,
+      score: mention_count * 0.1
+    }
   end
 
   defp do_search(:semantic, query, params) do
@@ -1068,44 +1070,11 @@ defmodule Arcana do
       [:arcana, :graph, :build],
       %{chunk_count: length(chunk_records), collection: collection_name},
       fn ->
-        graph_config = Arcana.Graph.config()
-
-        # Check for combined extractor first
-        extractor = resolve_extractor(opts, graph_config)
-
-        # Extract entities and relationships from each chunk
         {all_entities, all_mentions, all_relationships} =
-          if extractor do
-            # Combined extractor mode - single LLM call per chunk
-            chunk_records
-            |> Enum.reduce({[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
-              extract_graph_data_combined(chunk, extractor, ent_acc, ment_acc, rel_acc)
-            end)
-          else
-            # Fallback to separate extractors
-            entity_extractor = resolve_entity_extractor(opts, graph_config)
-            relationship_extractor = resolve_relationship_extractor(opts, graph_config)
+          extract_all_graph_data(chunk_records, opts)
 
-            chunk_records
-            |> Enum.reduce({[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
-              extract_graph_data_from_chunk(
-                chunk,
-                entity_extractor,
-                relationship_extractor,
-                ent_acc,
-                ment_acc,
-                rel_acc
-              )
-            end)
-          end
-
-        # Persist entities (upsert by name + collection) and get ID mapping
         entity_id_map = persist_entities(all_entities, collection, repo)
-
-        # Persist entity mentions
         persist_entity_mentions(all_mentions, entity_id_map, repo)
-
-        # Persist relationships
         persist_relationships(all_relationships, entity_id_map, repo)
 
         {:ok,
@@ -1114,26 +1083,43 @@ defmodule Arcana do
     )
   end
 
-  defp resolve_entity_extractor(opts, graph_config) do
-    llm = opts[:llm] || Application.get_env(:arcana, :llm)
+  defp extract_all_graph_data(chunk_records, opts) do
+    graph_config = Arcana.Graph.config()
+    extractor = resolve_extractor(opts, graph_config)
 
-    case Keyword.get(opts, :entity_extractor) do
-      nil ->
-        case graph_config[:entity_extractor] do
-          nil -> {Arcana.Graph.EntityExtractor.NER, []}
-          :ner -> {Arcana.Graph.EntityExtractor.NER, []}
-          {module, extractor_opts} -> {module, maybe_inject_llm(extractor_opts, llm)}
-          module when is_atom(module) -> {module, maybe_inject_llm([], llm)}
-          fun when is_function(fun, 2) -> fun
-        end
-
-      {module, extractor_opts} ->
-        {module, maybe_inject_llm(extractor_opts, llm)}
-
-      extractor ->
-        extractor
+    if extractor do
+      extract_with_combined_extractor(chunk_records, extractor)
+    else
+      extract_with_separate_extractors(chunk_records, opts, graph_config)
     end
   end
+
+  defp extract_with_combined_extractor(chunk_records, extractor) do
+    Enum.reduce(chunk_records, {[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
+      extract_graph_data_combined(chunk, extractor, ent_acc, ment_acc, rel_acc)
+    end)
+  end
+
+  defp extract_with_separate_extractors(chunk_records, opts, graph_config) do
+    entity_extractor = resolve_entity_extractor(opts, graph_config)
+    relationship_extractor = resolve_relationship_extractor(opts, graph_config)
+
+    Enum.reduce(chunk_records, {[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
+      extract_graph_data_from_chunk(chunk, entity_extractor, relationship_extractor, ent_acc, ment_acc, rel_acc)
+    end)
+  end
+
+  defp resolve_entity_extractor(opts, graph_config) do
+    llm = opts[:llm] || Application.get_env(:arcana, :llm)
+    extractor = Keyword.get(opts, :entity_extractor) || graph_config[:entity_extractor]
+    normalize_entity_extractor(extractor, llm)
+  end
+
+  defp normalize_entity_extractor(nil, _llm), do: {Arcana.Graph.EntityExtractor.NER, []}
+  defp normalize_entity_extractor(:ner, _llm), do: {Arcana.Graph.EntityExtractor.NER, []}
+  defp normalize_entity_extractor({module, opts}, llm), do: {module, maybe_inject_llm(opts, llm)}
+  defp normalize_entity_extractor(fun, _llm) when is_function(fun, 2), do: fun
+  defp normalize_entity_extractor(module, llm) when is_atom(module), do: {module, maybe_inject_llm([], llm)}
 
   defp maybe_inject_llm(opts, nil), do: opts
   defp maybe_inject_llm(opts, llm), do: Keyword.put_new(opts, :llm, llm)
