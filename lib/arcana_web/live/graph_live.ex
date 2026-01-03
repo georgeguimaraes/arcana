@@ -301,7 +301,7 @@ defmodule ArcanaWeb.GraphLive do
     end
   end
 
-  defp load_internal_relationships(entity_ids, repo) when length(entity_ids) < 2, do: []
+  defp load_internal_relationships(entity_ids, _repo) when length(entity_ids) < 2, do: []
 
   defp load_internal_relationships(entity_ids, repo) do
     entity_ids
