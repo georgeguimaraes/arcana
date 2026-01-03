@@ -23,10 +23,12 @@ defmodule Arcana.Telemetry.Logger do
 
       [info] [Arcana] search completed in 42ms (15 results)
       [info] [Arcana] llm.complete completed in 1.23s [zai:glm-4.7] ok (156 chars) prompt=892chars
+      [info] [Arcana] agent.gate completed in 235ms (proceed)
       [info] [Arcana] agent.rewrite completed in 235ms
       [info] [Arcana] llm.complete completed in 2.1s [zai:glm-4.7] ok (45 chars) prompt=1204chars
       [info] [Arcana] agent.expand completed in 2.15s (3 queries)
       [info] [Arcana] agent.search completed in 156ms (25 chunks)
+      [info] [Arcana] agent.reason completed in 1.2s (2 iterations)
       [info] [Arcana] agent.rerank completed in 312ms (10/25 kept)
       [info] [Arcana] llm.complete completed in 3.2s [zai:glm-4.7] ok (1892 chars) prompt=4521chars
       [info] [Arcana] agent.answer completed in 3.25s
@@ -62,11 +64,13 @@ defmodule Arcana.Telemetry.Logger do
     # LLM calls
     [:arcana, :llm, :complete, :stop],
     # Agent pipeline
+    [:arcana, :agent, :gate, :stop],
     [:arcana, :agent, :rewrite, :stop],
     [:arcana, :agent, :select, :stop],
     [:arcana, :agent, :expand, :stop],
     [:arcana, :agent, :decompose, :stop],
     [:arcana, :agent, :search, :stop],
+    [:arcana, :agent, :reason, :stop],
     [:arcana, :agent, :rerank, :stop],
     [:arcana, :agent, :answer, :stop],
     [:arcana, :agent, :self_correct, :stop],
@@ -197,6 +201,10 @@ defmodule Arcana.Telemetry.Logger do
     "[#{model}] #{status} #{response_info} prompt=#{prompt_len}chars"
   end
 
+  defp extract_details("agent.gate", meta) do
+    if meta[:skip_retrieval], do: "(skip retrieval)", else: "(proceed)"
+  end
+
   defp extract_details("agent.rewrite", meta) do
     case meta[:query] do
       query when is_binary(query) and byte_size(query) > 0 ->
@@ -231,6 +239,10 @@ defmodule Arcana.Telemetry.Logger do
 
   defp extract_details("agent.search", meta) do
     "(#{meta[:total_chunks] || "?"} chunks)"
+  end
+
+  defp extract_details("agent.reason", meta) do
+    "(#{meta[:iterations] || "?"} iteration#{if meta[:iterations] == 1, do: "", else: "s"})"
   end
 
   defp extract_details("agent.rerank", meta) do
