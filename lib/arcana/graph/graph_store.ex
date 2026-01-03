@@ -220,6 +220,47 @@ defmodule Arcana.Graph.GraphStore do
     __MODULE__.Ecto.get_community_summaries(collection_id, opts)
   end
 
+  # Dispatch to Memory backend
+  defp dispatch(:persist_entities, :memory, [collection_id, entities], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.persist_entities(collection_id, entities, opts)
+  end
+
+  defp dispatch(:persist_relationships, :memory, [relationships, entity_id_map], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.persist_relationships(relationships, entity_id_map, opts)
+  end
+
+  defp dispatch(:persist_mentions, :memory, [mentions, entity_id_map], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.persist_mentions(mentions, entity_id_map, opts)
+  end
+
+  defp dispatch(:search, :memory, [entity_names, collection_ids], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.search(entity_names, collection_ids, opts)
+  end
+
+  defp dispatch(:find_entities, :memory, [collection_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.find_entities(collection_id, opts)
+  end
+
+  defp dispatch(:find_related_entities, :memory, [entity_id, depth], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.find_related_entities(entity_id, depth, opts)
+  end
+
+  defp dispatch(:persist_communities, :memory, [collection_id, communities], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.persist_communities(collection_id, communities, opts)
+  end
+
+  defp dispatch(:get_community_summaries, :memory, [collection_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.get_community_summaries(collection_id, opts)
+  end
+
   # Dispatch to custom module
   defp dispatch(:persist_entities, module, [collection_id, entities], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
