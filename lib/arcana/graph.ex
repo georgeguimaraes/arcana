@@ -285,8 +285,11 @@ defmodule Arcana.Graph do
         :ok = GraphStore.persist_mentions(all_mentions, entity_id_map, repo: repo)
         :ok = GraphStore.persist_relationships(all_relationships, entity_id_map, repo: repo)
 
-        {:ok,
-         %{entity_count: map_size(entity_id_map), relationship_count: length(all_relationships)}}
+        entity_count = map_size(entity_id_map)
+        relationship_count = length(all_relationships)
+        result = {:ok, %{entity_count: entity_count, relationship_count: relationship_count}}
+        # telemetry.span expects {result, stop_metadata} tuple
+        {result, %{entity_count: entity_count, relationship_count: relationship_count}}
       end
     )
   end

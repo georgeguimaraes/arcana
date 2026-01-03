@@ -192,7 +192,7 @@ defmodule Arcana.Maintenance do
   end
 
   @doc """
-  Rebuilds the knowledge graph for all documents.
+  Rebuilds the knowledge graph for documents.
 
   This clears existing graph data (entities, relationships, mentions) and
   re-extracts from all chunks using the current graph extractor configuration.
@@ -204,13 +204,17 @@ defmodule Arcana.Maintenance do
 
   ## Options
 
+    * `:collection` - Filter to a specific collection by name (default: all collections)
     * `:batch_size` - Number of chunks to process per collection batch (default: 50)
     * `:progress` - Function to call with progress updates `fn current, total -> :ok end`
 
   ## Examples
 
-      # Basic usage
+      # Basic usage - all collections
       Arcana.Maintenance.rebuild_graph(MyApp.Repo)
+
+      # Single collection
+      Arcana.Maintenance.rebuild_graph(MyApp.Repo, collection: "test-graphrag-3")
 
       # With progress callback
       Arcana.Maintenance.rebuild_graph(MyApp.Repo,
@@ -222,9 +226,10 @@ defmodule Arcana.Maintenance do
   """
   def rebuild_graph(repo, opts \\ []) do
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
+    collection_filter = Keyword.get(opts, :collection)
 
-    # Get all collections
-    collections = repo.all(from(c in Collection, select: c))
+    # Get collections (optionally filtered)
+    collections = fetch_collections(repo, collection_filter)
 
     if collections == [] do
       {:ok, %{collections: 0, entities: 0, relationships: 0}}
@@ -281,6 +286,14 @@ defmodule Arcana.Maintenance do
           %{entities: 0, relationships: 0}
       end
     end
+  end
+
+  defp fetch_collections(repo, nil) do
+    repo.all(from(c in Collection, select: c))
+  end
+
+  defp fetch_collections(repo, collection_name) when is_binary(collection_name) do
+    repo.all(from(c in Collection, where: c.name == ^collection_name, select: c))
   end
 
   @doc """
