@@ -8,6 +8,8 @@ defmodule ArcanaWeb.DocumentsLive do
 
   alias Arcana.Document
 
+  import Ecto.Query
+
   @impl true
   def mount(_params, session, socket) do
     repo = get_repo_from_session(session)
@@ -28,6 +30,11 @@ defmodule ArcanaWeb.DocumentsLive do
   end
 
   @impl true
+  def handle_params(%{"doc" => doc_id}, _uri, socket) do
+    socket = load_data(socket)
+    {:noreply, load_document_detail(socket, doc_id)}
+  end
+
   def handle_params(_params, _uri, socket) do
     {:noreply, load_data(socket)}
   end
@@ -46,7 +53,6 @@ defmodule ArcanaWeb.DocumentsLive do
     page = socket.assigns.page
     per_page = socket.assigns.per_page
     filter_collection = socket.assigns.filter_collection
-    import Ecto.Query
 
     base_query =
       from(d in Document,
@@ -82,6 +88,25 @@ defmodule ArcanaWeb.DocumentsLive do
     )
   end
 
+  defp load_document_detail(socket, doc_id) do
+    repo = socket.assigns.repo
+    document = repo.get(Document, doc_id)
+
+    if document do
+      chunks =
+        repo.all(
+          from(c in Arcana.Chunk,
+            where: c.document_id == ^doc_id,
+            order_by: c.chunk_index
+          )
+        )
+
+      assign(socket, viewing_document: %{document: document, chunks: chunks})
+    else
+      socket
+    end
+  end
+
   @impl true
   def handle_event("change_page", %{"page" => page}, socket) do
     page = String.to_integer(page)
@@ -89,20 +114,7 @@ defmodule ArcanaWeb.DocumentsLive do
   end
 
   def handle_event("view_document", %{"id" => id}, socket) do
-    repo = socket.assigns.repo
-    import Ecto.Query
-
-    document = repo.get(Document, id)
-
-    chunks =
-      repo.all(
-        from(c in Arcana.Chunk,
-          where: c.document_id == ^id,
-          order_by: c.chunk_index
-        )
-      )
-
-    {:noreply, assign(socket, viewing_document: %{document: document, chunks: chunks})}
+    {:noreply, load_document_detail(socket, id)}
   end
 
   def handle_event("close_detail", _params, socket) do
