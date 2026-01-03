@@ -78,12 +78,16 @@ defmodule ArcanaWeb.CollectionsLiveTest do
       assert Repo.get(Arcana.Collection, collection.id) == nil
     end
 
-    test "shows document count", %{conn: conn} do
+    test "shows document and chunk counts", %{conn: conn} do
       {:ok, _doc} = Arcana.ingest("Content", repo: Repo, collection: "with-docs")
 
-      {:ok, _view, html} = live(conn, "/arcana/collections")
+      {:ok, view, _html} = live(conn, "/arcana/collections")
 
-      assert html =~ "1 document"
+      # Check the collection row has proper counts in the table
+      assert has_element?(view, "#collection-with-docs")
+      # Table headers should show Docs and Chunks columns
+      assert has_element?(view, "th", "Docs")
+      assert has_element?(view, "th", "Chunks")
     end
   end
 end

@@ -4,6 +4,7 @@ defmodule ArcanaWeb.CollectionsLive do
   """
   use Phoenix.LiveView
 
+  import Ecto.Query
   import ArcanaWeb.DashboardComponents
 
   alias Arcana.Collection
@@ -16,7 +17,7 @@ defmodule ArcanaWeb.CollectionsLive do
      socket
      |> assign(repo: repo)
      |> assign(editing_collection: nil, confirm_delete_collection: nil)
-     |> assign(stats: nil, collections: [])}
+     |> assign(stats: nil, collections: [], graph_enabled: Arcana.Graph.enabled?())}
   end
 
   @impl true
@@ -29,7 +30,89 @@ defmodule ArcanaWeb.CollectionsLive do
 
     socket
     |> assign(stats: load_stats(repo))
-    |> assign(collections: load_collections(repo))
+    |> assign(collections: load_collections_with_stats(repo, socket.assigns.graph_enabled))
+  end
+
+  defp load_collections_with_stats(repo, graph_enabled) do
+    # Base collection data with document count
+    collections =
+      repo.all(
+        from(c in Collection,
+          left_join: d in Arcana.Document,
+          on: d.collection_id == c.id,
+          group_by: c.id,
+          order_by: c.name,
+          select: %{
+            id: c.id,
+            name: c.name,
+            description: c.description,
+            document_count: count(d.id)
+          }
+        )
+      )
+
+    # Add chunk counts
+    chunk_counts =
+      repo.all(
+        from(ch in Arcana.Chunk,
+          join: d in Arcana.Document,
+          on: ch.document_id == d.id,
+          group_by: d.collection_id,
+          select: {d.collection_id, count(ch.id)}
+        )
+      )
+      |> Map.new()
+
+    collections =
+      Enum.map(collections, fn c ->
+        Map.put(c, :chunk_count, Map.get(chunk_counts, c.id, 0))
+      end)
+
+    # Add graph stats if enabled
+    if graph_enabled do
+      add_graph_stats(repo, collections)
+    else
+      collections
+    end
+  end
+
+  defp add_graph_stats(repo, collections) do
+    entity_counts =
+      repo.all(
+        from(e in Arcana.Graph.Entity,
+          group_by: e.collection_id,
+          select: {e.collection_id, count(e.id)}
+        )
+      )
+      |> Map.new()
+
+    relationship_counts =
+      repo.all(
+        from(r in Arcana.Graph.Relationship,
+          group_by: r.collection_id,
+          select: {r.collection_id, count(r.id)}
+        )
+      )
+      |> Map.new()
+
+    community_counts =
+      repo.all(
+        from(c in Arcana.Graph.Community,
+          group_by: c.collection_id,
+          select: {c.collection_id, count(c.id)}
+        )
+      )
+      |> Map.new()
+
+    Enum.map(collections, fn c ->
+      c
+      |> Map.put(:entity_count, Map.get(entity_counts, c.id, 0))
+      |> Map.put(:relationship_count, Map.get(relationship_counts, c.id, 0))
+      |> Map.put(:community_count, Map.get(community_counts, c.id, 0))
+    end)
+  rescue
+    # Tables might not exist
+    _ -> collections
   end
 
   @impl true
@@ -145,7 +228,13 @@ defmodule ArcanaWeb.CollectionsLive do
                 <tr>
                   <th>Name</th>
                   <th>Description</th>
-                  <th>Documents</th>
+                  <th>Docs</th>
+                  <th>Chunks</th>
+                  <%= if @graph_enabled do %>
+                    <th>Entities</th>
+                    <th>Rels</th>
+                    <th>Communities</th>
+                  <% end %>
                   <th style="width: 120px;">Actions</th>
                 </tr>
               </thead>
@@ -153,7 +242,7 @@ defmodule ArcanaWeb.CollectionsLive do
                 <%= for collection <- @collections do %>
                   <tr id={"collection-#{collection.name}"}>
                     <%= if @editing_collection && @editing_collection.id == collection.id do %>
-                      <td colspan="4">
+                      <td colspan={if @graph_enabled, do: 8, else: 5}>
                         <form
                           id={"edit-collection-form-#{collection.id}"}
                           phx-submit="update_collection"
@@ -190,9 +279,13 @@ defmodule ArcanaWeb.CollectionsLive do
                     <% else %>
                       <td><code><%= collection.name %></code></td>
                       <td><%= collection.description || "-" %></td>
-                      <td>
-                        <%= collection.document_count %> <%= if collection.document_count == 1, do: "document", else: "documents" %>
-                      </td>
+                      <td><%= collection.document_count %></td>
+                      <td><%= collection.chunk_count %></td>
+                      <%= if @graph_enabled do %>
+                        <td><%= collection[:entity_count] || 0 %></td>
+                        <td><%= collection[:relationship_count] || 0 %></td>
+                        <td><%= collection[:community_count] || 0 %></td>
+                      <% end %>
                       <td>
                         <%= if @confirm_delete_collection == collection.id do %>
                           <div class="arcana-confirm-delete">

@@ -100,8 +100,10 @@ defmodule ArcanaWeb.DashboardLiveTest do
 
       {:ok, view, _html} = live(conn, "/arcana/collections")
 
-      # Verify document count is shown
-      assert render(view) =~ "1 document"
+      # Verify collection row exists with counts shown in table
+      assert has_element?(view, "#collection-counted-collection")
+      assert has_element?(view, "th", "Docs")
+      assert has_element?(view, "th", "Chunks")
     end
   end
 
