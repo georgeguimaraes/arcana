@@ -512,6 +512,31 @@ defmodule ArcanaWeb.Assets do
     color: #6b7280;
   }
 
+  /* Maintenance page styles */
+  .arcana-maintenance-section {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .arcana-maintenance-section h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #7c3aed;
+    margin: 0 0 0.75rem 0;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #f3e8ff;
+  }
+
+  .arcana-maintenance-section .arcana-doc-info {
+    margin-bottom: 0;
+    background: transparent;
+    border: none;
+    padding: 0;
+  }
+
   .arcana-chunks-list {
     display: flex;
     flex-direction: column;
