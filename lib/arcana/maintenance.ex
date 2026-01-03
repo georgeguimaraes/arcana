@@ -134,17 +134,38 @@ defmodule Arcana.Maintenance do
   end
 
   defp reembed_chunks_from_query(repo, embedder, batch_size, progress_fn, total, chunks_query) do
-    repo.transaction(fn ->
-      chunks_query
-      |> repo.stream(max_rows: batch_size)
-      |> Stream.with_index(1)
-      |> Enum.reduce(0, fn {chunk, index}, count ->
-        reembed_single_chunk(repo, embedder, chunk, index, total, progress_fn, count)
-      end)
-    end)
-    |> case do
-      {:ok, count} -> count
-      {:error, reason} -> raise reason
+    # Process in batches without holding a long transaction
+    # Each embedding can take 1-2 seconds, so we can't hold a connection that long
+    reembed_chunks_in_batches(repo, embedder, batch_size, progress_fn, total, chunks_query, 0, 0)
+  end
+
+  defp reembed_chunks_in_batches(repo, embedder, batch_size, progress_fn, total, base_query, offset, count) do
+    chunks =
+      base_query
+      |> limit(^batch_size)
+      |> offset(^offset)
+      |> repo.all()
+
+    if chunks == [] do
+      count
+    else
+      new_count =
+        chunks
+        |> Enum.with_index(offset + 1)
+        |> Enum.reduce(count, fn {chunk, index}, acc ->
+          reembed_single_chunk(repo, embedder, chunk, index, total, progress_fn, acc)
+        end)
+
+      reembed_chunks_in_batches(
+        repo,
+        embedder,
+        batch_size,
+        progress_fn,
+        total,
+        base_query,
+        offset + batch_size,
+        new_count
+      )
     end
   end
 
@@ -184,19 +205,7 @@ defmodule Arcana.Maintenance do
 
   defp reembed_chunks(repo, embedder, batch_size, progress_fn, total) do
     chunks_query = from(c in Chunk, order_by: c.id, select: [:id, :text])
-
-    repo.transaction(fn ->
-      chunks_query
-      |> repo.stream(max_rows: batch_size)
-      |> Stream.with_index(1)
-      |> Enum.reduce(0, fn {chunk, index}, count ->
-        reembed_single_chunk(repo, embedder, chunk, index, total, progress_fn, count)
-      end)
-    end)
-    |> case do
-      {:ok, count} -> count
-      {:error, reason} -> raise reason
-    end
+    reembed_chunks_in_batches(repo, embedder, batch_size, progress_fn, total, chunks_query, 0, 0)
   end
 
   defp reembed_single_chunk(repo, embedder, chunk, index, total, progress_fn, count) do
