@@ -20,15 +20,6 @@ defmodule Arcana.Graph.RelationshipExtractor.LLM do
 
   @behaviour Arcana.Graph.RelationshipExtractor
 
-  @type entity :: %{name: String.t(), type: atom()}
-  @type relationship :: %{
-          source: String.t(),
-          target: String.t(),
-          type: String.t(),
-          description: String.t() | nil,
-          strength: integer() | nil
-        }
-
   @impl true
   def extract(_text, [], _opts), do: {:ok, []}
 
@@ -63,7 +54,6 @@ defmodule Arcana.Graph.RelationshipExtractor.LLM do
   The prompt includes the source text and a list of entities
   for the LLM to find relationships between.
   """
-  @spec build_prompt(String.t(), [entity()]) :: String.t()
   def build_prompt(text, entities) do
     entity_list =
       Enum.map_join(entities, "\n", fn %{name: name, type: type} ->

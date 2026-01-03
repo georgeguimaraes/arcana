@@ -34,41 +34,6 @@ defmodule Arcana.Graph.GraphQuery do
 
   """
 
-  @type entity :: %{
-          id: String.t(),
-          name: String.t(),
-          type: atom(),
-          embedding: [float()] | nil
-        }
-
-  @type relationship :: %{
-          source_id: String.t(),
-          target_id: String.t(),
-          type: String.t()
-        }
-
-  @type chunk :: %{
-          id: String.t(),
-          entity_ids: [String.t()],
-          content: String.t()
-        }
-
-  @type community :: %{
-          id: String.t(),
-          level: non_neg_integer(),
-          entity_ids: [String.t()],
-          summary: String.t()
-        }
-
-  @type graph :: %{
-          entities: %{String.t() => entity()},
-          relationships: [relationship()],
-          chunks: [chunk()],
-          communities: [community()],
-          adjacency: %{String.t() => [String.t()]},
-          entity_chunks: %{String.t() => [String.t()]}
-        }
-
   @doc """
   Builds a graph structure from entities, relationships, chunks, and communities.
 
@@ -77,7 +42,6 @@ defmodule Arcana.Graph.GraphQuery do
   - Adjacency list for graph traversal
   - Entity-to-chunk mapping for retrieval
   """
-  @spec build_graph([entity()], [relationship()], [chunk()], [community()]) :: graph()
   def build_graph(entities, relationships, chunks, communities) do
     entity_map = Map.new(entities, fn e -> {e.id, e} end)
     adjacency = build_adjacency(relationships)
@@ -109,7 +73,6 @@ defmodule Arcana.Graph.GraphQuery do
       GraphQuery.find_entities_by_name(graph, "Open", fuzzy: true)
 
   """
-  @spec find_entities_by_name(graph(), String.t(), keyword()) :: [entity()]
   def find_entities_by_name(graph, query, opts \\ []) do
     fuzzy = Keyword.get(opts, :fuzzy, false)
     query_lower = String.downcase(query)
@@ -136,7 +99,6 @@ defmodule Arcana.Graph.GraphQuery do
     - `:min_similarity` - Minimum cosine similarity threshold (default: 0.0)
 
   """
-  @spec find_entities_by_embedding(graph(), [float()], keyword()) :: [entity()]
   def find_entities_by_embedding(graph, query_embedding, opts \\ []) do
     top_k = Keyword.get(opts, :top_k, 10)
     min_similarity = Keyword.get(opts, :min_similarity, 0.0)
@@ -165,7 +127,6 @@ defmodule Arcana.Graph.GraphQuery do
     - `:depth` - Maximum traversal depth (default: 1)
 
   """
-  @spec traverse(graph(), String.t(), keyword()) :: [entity()]
   def traverse(graph, entity_id, opts \\ []) do
     depth = Keyword.get(opts, :depth, 1)
 
@@ -180,7 +141,6 @@ defmodule Arcana.Graph.GraphQuery do
 
   Returns unique chunks that contain at least one of the specified entities.
   """
-  @spec get_chunks_for_entities(graph(), [String.t()]) :: [chunk()]
   def get_chunks_for_entities(graph, entity_ids) do
     chunk_ids =
       entity_ids
@@ -203,7 +163,6 @@ defmodule Arcana.Graph.GraphQuery do
     - `:entity_id` - Filter by communities containing a specific entity
 
   """
-  @spec get_community_summaries(graph(), keyword()) :: [community()]
   def get_community_summaries(graph, opts \\ []) do
     level = Keyword.get(opts, :level)
     entity_id = Keyword.get(opts, :entity_id)

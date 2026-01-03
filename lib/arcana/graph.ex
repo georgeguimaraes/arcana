@@ -112,7 +112,6 @@ defmodule Arcana.Graph do
       # => %{enabled: false, community_levels: 5, resolution: 1.0}
 
   """
-  @spec config() :: map()
   def config do
     app_config = Application.get_env(:arcana, :graph, [])
 
@@ -130,7 +129,6 @@ defmodule Arcana.Graph do
       end
 
   """
-  @spec enabled?() :: boolean()
   def enabled? do
     config().enabled
   end
@@ -157,7 +155,6 @@ defmodule Arcana.Graph do
       )
 
   """
-  @spec build([map()], keyword()) :: {:ok, map()} | {:error, term()}
   def build(chunks, opts) do
     GraphBuilder.build(chunks, opts)
   end
@@ -167,7 +164,6 @@ defmodule Arcana.Graph do
 
   Delegates to `Arcana.Graph.GraphBuilder.to_query_graph/2`.
   """
-  @spec to_query_graph(map(), [map()]) :: GraphQuery.graph()
   def to_query_graph(graph_data, chunks) do
     GraphBuilder.to_query_graph(graph_data, chunks)
   end
@@ -188,7 +184,6 @@ defmodule Arcana.Graph do
       results = Arcana.Graph.search(graph, entities, depth: 2)
 
   """
-  @spec search(GraphQuery.graph(), [map()], keyword()) :: [map()]
   def search(graph, entities, opts \\ []) do
     FusionSearch.graph_search(graph, entities, opts)
   end
@@ -217,7 +212,6 @@ defmodule Arcana.Graph do
       results = Arcana.Graph.fusion_search(graph, entities, vector_results)
 
   """
-  @spec fusion_search(GraphQuery.graph(), [map()], [map()], keyword()) :: [map()]
   def fusion_search(graph, entities, vector_results, opts \\ []) do
     FusionSearch.search(graph, entities, vector_results, opts)
   end
@@ -239,7 +233,6 @@ defmodule Arcana.Graph do
       summaries = Arcana.Graph.community_summaries(graph, level: 0)
 
   """
-  @spec community_summaries(GraphQuery.graph(), keyword()) :: [map()]
   def community_summaries(graph, opts \\ []) do
     GraphQuery.get_community_summaries(graph, opts)
   end
@@ -252,7 +245,6 @@ defmodule Arcana.Graph do
     - `:fuzzy` - Enable fuzzy matching (default: false)
 
   """
-  @spec find_entities(GraphQuery.graph(), String.t(), keyword()) :: [map()]
   def find_entities(graph, name, opts \\ []) do
     GraphQuery.find_entities_by_name(graph, name, opts)
   end
@@ -265,7 +257,6 @@ defmodule Arcana.Graph do
     - `:depth` - Maximum traversal depth (default: 1)
 
   """
-  @spec traverse(GraphQuery.graph(), String.t(), keyword()) :: [map()]
   def traverse(graph, entity_id, opts \\ []) do
     GraphQuery.traverse(graph, entity_id, opts)
   end

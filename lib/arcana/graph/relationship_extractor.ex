@@ -60,15 +60,6 @@ defmodule Arcana.Graph.RelationshipExtractor do
 
   """
 
-  @type entity :: %{name: String.t(), type: atom()}
-  @type relationship :: %{
-          source: String.t(),
-          target: String.t(),
-          type: String.t(),
-          description: String.t() | nil,
-          strength: integer() | nil
-        }
-
   @doc """
   Extracts relationships between entities from text.
 
@@ -86,9 +77,9 @@ defmodule Arcana.Graph.RelationshipExtractor do
   """
   @callback extract(
               text :: String.t(),
-              entities :: [entity()],
+              entities :: [map()],
               opts :: keyword()
-            ) :: {:ok, [relationship()]} | {:error, term()}
+            ) :: {:ok, [map()]} | {:error, term()}
 
   @doc """
   Extracts relationships using the configured extractor.
@@ -114,11 +105,6 @@ defmodule Arcana.Graph.RelationshipExtractor do
       {:ok, []} = RelationshipExtractor.extract(nil, text, entities)
 
   """
-  @spec extract(
-          {module(), keyword()} | function() | nil,
-          String.t(),
-          [entity()]
-        ) :: {:ok, [relationship()]} | {:error, term()}
   def extract(nil, _text, _entities), do: {:ok, []}
 
   def extract({module, opts}, text, entities) when is_atom(module) do

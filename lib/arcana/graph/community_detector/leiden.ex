@@ -69,7 +69,6 @@ if Code.ensure_loaded?(ExLeiden) do
         [{"a", "b", 5}]
 
     """
-    @spec to_edges([String.t()], [map()]) :: [{String.t(), String.t(), number()}]
     def to_edges(entity_ids, relationships) do
       entity_set = MapSet.new(entity_ids)
 

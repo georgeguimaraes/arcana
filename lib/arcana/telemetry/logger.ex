@@ -88,7 +88,6 @@ defmodule Arcana.Telemetry.Logger do
     * `:handler_id` - Custom handler ID (default: `"arcana-telemetry-logger"`)
 
   """
-  @spec attach(keyword()) :: :ok | {:error, :already_exists}
   def attach(opts \\ []) do
     handler_id = Keyword.get(opts, :handler_id, @default_handler_id)
     level = Keyword.get(opts, :level, :info)
@@ -109,7 +108,6 @@ defmodule Arcana.Telemetry.Logger do
     * `:handler_id` - The handler ID to detach (default: `"arcana-telemetry-logger"`)
 
   """
-  @spec detach(keyword()) :: :ok | {:error, :not_found}
   def detach(opts \\ []) do
     handler_id = Keyword.get(opts, :handler_id, @default_handler_id)
     :telemetry.detach(handler_id)

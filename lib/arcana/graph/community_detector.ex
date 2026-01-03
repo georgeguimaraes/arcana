@@ -60,14 +60,6 @@ defmodule Arcana.Graph.CommunityDetector do
 
   """
 
-  @type entity :: %{id: String.t(), name: String.t()}
-  @type relationship :: %{
-          source_id: String.t(),
-          target_id: String.t(),
-          strength: integer() | nil
-        }
-  @type community :: %{level: non_neg_integer(), entity_ids: [String.t()]}
-
   @doc """
   Detects communities in the entity graph.
 
@@ -84,10 +76,10 @@ defmodule Arcana.Graph.CommunityDetector do
 
   """
   @callback detect(
-              entities :: [entity()],
-              relationships :: [relationship()],
+              entities :: [map()],
+              relationships :: [map()],
               opts :: keyword()
-            ) :: {:ok, [community()]} | {:error, term()}
+            ) :: {:ok, [map()]} | {:error, term()}
 
   @doc """
   Detects communities using the configured detector.
@@ -113,11 +105,6 @@ defmodule Arcana.Graph.CommunityDetector do
       {:ok, []} = CommunityDetector.detect(nil, entities, relationships)
 
   """
-  @spec detect(
-          {module(), keyword()} | function() | nil,
-          [entity()],
-          [relationship()]
-        ) :: {:ok, [community()]} | {:error, term()}
   def detect(nil, _entities, _relationships), do: {:ok, []}
 
   def detect({module, opts}, entities, relationships) when is_atom(module) do

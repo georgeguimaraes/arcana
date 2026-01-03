@@ -21,14 +21,6 @@ defmodule Arcana.Graph.EntityExtractor.NER do
 
   alias Arcana.Graph.NERServing
 
-  @type entity :: %{
-          name: String.t(),
-          type: String.t(),
-          span_start: non_neg_integer(),
-          span_end: non_neg_integer(),
-          score: float()
-        }
-
   @impl true
   @doc """
   Extracts entities from text using the NER model.
@@ -45,7 +37,6 @@ defmodule Arcana.Graph.EntityExtractor.NER do
       ]}
 
   """
-  @spec extract(String.t(), keyword()) :: {:ok, [entity()]} | {:error, term()}
   def extract("", _opts), do: {:ok, []}
 
   def extract(text, _opts) when is_binary(text) do
@@ -69,7 +60,6 @@ defmodule Arcana.Graph.EntityExtractor.NER do
       {:ok, [[%{name: "Sam Altman", ...}], [%{name: "Elon Musk", ...}]]}
 
   """
-  @spec extract_batch([String.t()], keyword()) :: {:ok, [[entity()]]}
   def extract_batch(texts, opts) when is_list(texts) do
     results = Enum.map(texts, fn text -> elem(extract(text, opts), 1) end)
     {:ok, results}
@@ -85,7 +75,6 @@ defmodule Arcana.Graph.EntityExtractor.NER do
   - MISC, B-MISC, I-MISC → "concept"
   - Other → "other"
   """
-  @spec map_label(String.t()) :: String.t()
   def map_label(label) when is_binary(label) do
     label
     |> String.replace(~r/^[BI]-/, "")

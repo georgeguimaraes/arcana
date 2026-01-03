@@ -43,7 +43,6 @@ defmodule Arcana.Graph.CommunitySummarizer.LLM do
   @doc """
   Builds the prompt for community summarization.
   """
-  @spec build_prompt([map()], [map()]) :: String.t()
   def build_prompt(entities, relationships) do
     entity_section = format_entities(entities)
     relationship_section = format_relationships(relationships)

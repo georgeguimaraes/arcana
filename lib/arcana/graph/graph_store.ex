@@ -23,15 +23,6 @@ defmodule Arcana.Graph.GraphStore do
 
   """
 
-  @type collection_id :: binary()
-  @type entity_id :: binary()
-  @type entity :: map()
-  @type relationship :: map()
-  @type mention :: map()
-  @type community :: map()
-  @type entity_id_map :: %{String.t() => binary()}
-  @type search_result :: %{chunk_id: binary(), score: float()}
-
   # === Storage Callbacks ===
 
   @doc """
@@ -39,19 +30,19 @@ defmodule Arcana.Graph.GraphStore do
 
   Returns a map of entity names to their assigned IDs.
   """
-  @callback persist_entities(collection_id(), [entity()], opts :: keyword()) ::
-              {:ok, entity_id_map()} | {:error, term()}
+  @callback persist_entities(binary(), [map()], opts :: keyword()) ::
+              {:ok, map()} | {:error, term()}
 
   @doc """
   Persists relationships between entities.
   """
-  @callback persist_relationships([relationship()], entity_id_map(), opts :: keyword()) ::
+  @callback persist_relationships([map()], map(), opts :: keyword()) ::
               :ok | {:error, term()}
 
   @doc """
   Persists entity mentions (links between entities and chunks).
   """
-  @callback persist_mentions([mention()], entity_id_map(), opts :: keyword()) ::
+  @callback persist_mentions([map()], map(), opts :: keyword()) ::
               :ok | {:error, term()}
 
   # === Query Callbacks ===
@@ -61,13 +52,13 @@ defmodule Arcana.Graph.GraphStore do
 
   Returns scored chunk results.
   """
-  @callback search([String.t()], [collection_id()] | nil, opts :: keyword()) ::
-              [search_result()]
+  @callback search([String.t()], [binary()] | nil, opts :: keyword()) ::
+              [map()]
 
   @doc """
   Finds all entities in a collection.
   """
-  @callback find_entities(collection_id(), opts :: keyword()) :: [entity()]
+  @callback find_entities(binary(), opts :: keyword()) :: [map()]
 
   # === Traversal Callbacks ===
 
@@ -76,21 +67,21 @@ defmodule Arcana.Graph.GraphStore do
 
   Enables graph-native traversal operations.
   """
-  @callback find_related_entities(entity_id(), depth :: pos_integer(), opts :: keyword()) ::
-              [entity()]
+  @callback find_related_entities(binary(), depth :: pos_integer(), opts :: keyword()) ::
+              [map()]
 
   # === Community Callbacks ===
 
   @doc """
   Persists community data for a collection.
   """
-  @callback persist_communities(collection_id(), [community()], opts :: keyword()) ::
+  @callback persist_communities(binary(), [map()], opts :: keyword()) ::
               :ok | {:error, term()}
 
   @doc """
   Retrieves community summaries for a collection.
   """
-  @callback get_community_summaries(collection_id(), opts :: keyword()) :: [community()]
+  @callback get_community_summaries(binary(), opts :: keyword()) :: [map()]
 
   # === Deletion Callbacks ===
 
@@ -109,7 +100,7 @@ defmodule Arcana.Graph.GraphStore do
   Removes all entities, relationships, mentions, and communities
   associated with the collection.
   """
-  @callback delete_by_collection(collection_id(), opts :: keyword()) ::
+  @callback delete_by_collection(binary(), opts :: keyword()) ::
               :ok | {:error, term()}
 
   # === Detail Query Callbacks ===
@@ -117,34 +108,34 @@ defmodule Arcana.Graph.GraphStore do
   @doc """
   Retrieves a single entity by ID.
   """
-  @callback get_entity(entity_id(), opts :: keyword()) ::
-              {:ok, entity()} | {:error, :not_found}
+  @callback get_entity(binary(), opts :: keyword()) ::
+              {:ok, map()} | {:error, :not_found}
 
   @doc """
   Retrieves all relationships for an entity.
 
   Returns relationships where the entity is either source or target.
   """
-  @callback get_relationships(entity_id(), opts :: keyword()) :: [relationship()]
+  @callback get_relationships(binary(), opts :: keyword()) :: [map()]
 
   @doc """
   Retrieves a single relationship by ID.
   """
   @callback get_relationship(relationship_id :: binary(), opts :: keyword()) ::
-              {:ok, relationship()} | {:error, :not_found}
+              {:ok, map()} | {:error, :not_found}
 
   @doc """
   Retrieves mentions for an entity with chunk context.
 
   Returns mentions with associated chunk text for display.
   """
-  @callback get_mentions(entity_id(), opts :: keyword()) :: [mention()]
+  @callback get_mentions(binary(), opts :: keyword()) :: [map()]
 
   @doc """
   Retrieves a single community by ID.
   """
   @callback get_community(community_id :: binary(), opts :: keyword()) ::
-              {:ok, community()} | {:error, :not_found}
+              {:ok, map()} | {:error, :not_found}
 
   # === List Callbacks (for UI) ===
 
@@ -161,7 +152,7 @@ defmodule Arcana.Graph.GraphStore do
 
   Returns entities with aggregated counts (mention_count, relationship_count).
   """
-  @callback list_entities(opts :: keyword()) :: [entity()]
+  @callback list_entities(opts :: keyword()) :: [map()]
 
   @doc """
   Lists relationships with optional filtering and pagination.
@@ -177,7 +168,7 @@ defmodule Arcana.Graph.GraphStore do
 
   Returns relationships with source/target entity names.
   """
-  @callback list_relationships(opts :: keyword()) :: [relationship()]
+  @callback list_relationships(opts :: keyword()) :: [map()]
 
   @doc """
   Lists communities with optional filtering and pagination.
@@ -192,7 +183,7 @@ defmodule Arcana.Graph.GraphStore do
 
   Returns communities with entity counts.
   """
-  @callback list_communities(opts :: keyword()) :: [community()]
+  @callback list_communities(opts :: keyword()) :: [map()]
 
   # === Dispatch Functions ===
 

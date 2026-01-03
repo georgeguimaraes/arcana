@@ -36,17 +36,6 @@ defmodule Arcana.Graph.GraphBuilder do
 
   alias Arcana.Graph.{GraphExtractor, GraphQuery}
 
-  @type chunk :: %{id: String.t(), text: String.t()}
-  @type entity :: %{id: String.t(), name: String.t(), type: atom()}
-  @type relationship :: %{source: String.t(), target: String.t(), type: String.t()}
-  @type mention :: %{entity_name: String.t(), chunk_id: String.t()}
-
-  @type graph_data :: %{
-          entities: [entity()],
-          relationships: [relationship()],
-          mentions: [mention()]
-        }
-
   @doc """
   Builds graph data from a list of chunks.
 
@@ -68,7 +57,6 @@ defmodule Arcana.Graph.GraphBuilder do
     - `{:error, reason}` - If all extractions fail
 
   """
-  @spec build([chunk()], keyword()) :: {:ok, graph_data()} | {:error, term()}
   def build(chunks, opts) do
     extractor = Keyword.get(opts, :extractor)
 
@@ -116,7 +104,6 @@ defmodule Arcana.Graph.GraphBuilder do
 
   Convenience function for processing a single document without chunks.
   """
-  @spec build_from_text(String.t(), keyword()) :: {:ok, graph_data()} | {:error, term()}
   def build_from_text(text, opts) do
     chunk = %{id: generate_id(), text: text}
     build([chunk], opts)
@@ -128,7 +115,6 @@ defmodule Arcana.Graph.GraphBuilder do
   Combines entities (deduplicating by name), relationships, and mentions.
   Useful for incremental graph building across multiple documents.
   """
-  @spec merge(graph_data(), graph_data()) :: graph_data()
   def merge(graph1, graph2) do
     combined_entities = graph1.entities ++ graph2.entities
     deduplicated = deduplicate_entities(combined_entities)
@@ -146,7 +132,6 @@ defmodule Arcana.Graph.GraphBuilder do
   Takes the graph data and original chunks to build an indexed
   graph structure suitable for querying.
   """
-  @spec to_query_graph(graph_data(), [chunk()]) :: GraphQuery.graph()
   def to_query_graph(graph_data, chunks) do
     # Build entity ID lookup
     entity_ids = build_entity_id_map(graph_data.entities)

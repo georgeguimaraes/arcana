@@ -69,16 +69,10 @@ defmodule Arcana.VectorStore do
 
   alias Arcana.VectorStore.{Memory, Pgvector}
 
-  @type collection :: String.t()
-  @type id :: String.t()
-  @type embedding :: [float()]
-  @type metadata :: map()
-  @type search_result :: %{id: id(), metadata: metadata(), score: float()}
-
   @doc """
   Stores a vector with its id and metadata in a collection.
   """
-  @callback store(collection(), id(), embedding(), metadata(), opts :: keyword()) ::
+  @callback store(binary(), binary(), list(), map(), opts :: keyword()) ::
               :ok | {:error, term()}
 
   @doc """
@@ -86,7 +80,7 @@ defmodule Arcana.VectorStore do
 
   Returns a list of results with `:id`, `:metadata`, and `:score` keys.
   """
-  @callback search(collection(), embedding(), opts :: keyword()) :: [search_result()]
+  @callback search(binary(), list(), opts :: keyword()) :: [map()]
 
   @doc """
   Searches for matching text in a collection (fulltext search).
@@ -94,17 +88,17 @@ defmodule Arcana.VectorStore do
   Returns a list of results with `:id`, `:metadata`, and `:score` keys.
   Score represents relevance based on term matching.
   """
-  @callback search_text(collection(), query :: String.t(), opts :: keyword()) :: [search_result()]
+  @callback search_text(binary(), query :: String.t(), opts :: keyword()) :: [map()]
 
   @doc """
   Deletes a vector from a collection.
   """
-  @callback delete(collection(), id(), opts :: keyword()) :: :ok | {:error, term()}
+  @callback delete(binary(), binary(), opts :: keyword()) :: :ok | {:error, term()}
 
   @doc """
   Clears all vectors from a collection.
   """
-  @callback clear(collection(), opts :: keyword()) :: :ok
+  @callback clear(binary(), opts :: keyword()) :: :ok
 
   # Dispatch Functions
 

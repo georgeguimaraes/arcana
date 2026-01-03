@@ -71,7 +71,6 @@ defmodule Arcana.Graph.GraphExtractor.LLM do
   @doc """
   Builds the prompt for combined entity and relationship extraction.
   """
-  @spec build_prompt(String.t()) :: String.t()
   def build_prompt(text) do
     type_list = Enum.map_join(@default_types, ", ", &to_string/1)
 

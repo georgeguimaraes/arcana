@@ -38,9 +38,6 @@ defmodule Arcana.Graph.FusionSearch do
   @default_depth 1
   @default_limit 10
 
-  @type chunk :: %{id: String.t(), content: String.t()}
-  @type entity :: %{name: String.t(), type: atom()}
-
   @doc """
   Merges multiple ranked lists using Reciprocal Rank Fusion.
 
@@ -57,7 +54,6 @@ defmodule Arcana.Graph.FusionSearch do
   Higher scores indicate documents that appear in multiple lists
   and/or rank highly in individual lists.
   """
-  @spec reciprocal_rank_fusion([[map()]], keyword()) :: [map()]
   def reciprocal_rank_fusion(lists, opts \\ []) do
     k = Keyword.get(opts, :k, @default_k)
 
@@ -101,7 +97,6 @@ defmodule Arcana.Graph.FusionSearch do
     - `:depth` - How many hops to traverse (default: 1)
 
   """
-  @spec graph_search(GraphQuery.graph(), [entity()], keyword()) :: [chunk()]
   def graph_search(graph, entities, opts \\ []) do
     depth = Keyword.get(opts, :depth, @default_depth)
 
@@ -144,7 +139,6 @@ defmodule Arcana.Graph.FusionSearch do
     - `:k` - RRF constant (default: 60)
 
   """
-  @spec search(GraphQuery.graph(), [entity()], [chunk()], keyword()) :: [chunk()]
   def search(graph, entities, vector_results, opts \\ []) do
     limit = Keyword.get(opts, :limit, @default_limit)
     depth = Keyword.get(opts, :depth, @default_depth)

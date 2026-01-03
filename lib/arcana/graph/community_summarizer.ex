@@ -57,14 +57,6 @@ defmodule Arcana.Graph.CommunitySummarizer do
 
   """
 
-  @type entity :: %{name: String.t(), type: atom() | String.t(), description: String.t() | nil}
-  @type relationship :: %{
-          source: String.t(),
-          target: String.t(),
-          type: String.t(),
-          description: String.t() | nil
-        }
-
   @doc """
   Generates a summary for a community.
 
@@ -81,8 +73,8 @@ defmodule Arcana.Graph.CommunitySummarizer do
 
   """
   @callback summarize(
-              entities :: [entity()],
-              relationships :: [relationship()],
+              entities :: [map()],
+              relationships :: [map()],
               opts :: keyword()
             ) :: {:ok, String.t()} | {:error, term()}
 
@@ -98,8 +90,6 @@ defmodule Arcana.Graph.CommunitySummarizer do
 
   Falls back to LLM summarizer if not configured but `:llm` option is provided.
   """
-  @spec summarize([entity()], [relationship()], keyword()) ::
-          {:ok, String.t()} | {:error, term()}
   def summarize(entities, relationships, opts \\ []) do
     summarizer = get_summarizer(opts)
     do_summarize(summarizer, entities, relationships, opts)
@@ -147,7 +137,6 @@ defmodule Arcana.Graph.CommunitySummarizer do
     - `:threshold` - Number of changes before regeneration (default: 10)
 
   """
-  @spec needs_regeneration?(map(), keyword()) :: boolean()
   def needs_regeneration?(community, opts \\ [])
 
   def needs_regeneration?(community, opts) do
@@ -171,7 +160,6 @@ defmodule Arcana.Graph.CommunitySummarizer do
       |> Repo.update()
 
   """
-  @spec reset_change_tracking() :: %{change_count: 0, dirty: false}
   def reset_change_tracking do
     %{change_count: 0, dirty: false}
   end

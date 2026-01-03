@@ -88,7 +88,6 @@ defmodule Arcana.Graph.EntityExtractor.LLM do
   @doc """
   Builds the prompt for entity extraction.
   """
-  @spec build_prompt(String.t(), [atom()]) :: String.t()
   def build_prompt(text, types) do
     type_list = Enum.map_join(types, ", ", &to_string/1)
 

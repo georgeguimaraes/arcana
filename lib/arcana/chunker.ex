@@ -57,12 +57,6 @@ defmodule Arcana.Chunker do
   Additional keys may be included and will be passed through to storage.
   """
 
-  @type chunk :: %{
-          required(:text) => String.t(),
-          required(:chunk_index) => non_neg_integer(),
-          required(:token_count) => pos_integer()
-        }
-
   @doc """
   Splits text into chunks.
 
@@ -78,7 +72,7 @@ defmodule Arcana.Chunker do
     * `:format` - Text format hint (`:plaintext`, `:markdown`, etc.)
 
   """
-  @callback chunk(text :: String.t(), opts :: keyword()) :: [chunk()]
+  @callback chunk(text :: String.t(), opts :: keyword()) :: [map()]
 
   @doc """
   Chunks text using the configured chunker.

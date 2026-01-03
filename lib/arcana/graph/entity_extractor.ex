@@ -68,14 +68,6 @@ defmodule Arcana.Graph.EntityExtractor do
 
   """
 
-  @type entity :: %{
-          name: String.t(),
-          type: atom(),
-          span_start: non_neg_integer() | nil,
-          span_end: non_neg_integer() | nil,
-          score: float() | nil
-        }
-
   @doc """
   Extracts entities from a single text.
 
@@ -91,7 +83,7 @@ defmodule Arcana.Graph.EntityExtractor do
 
   """
   @callback extract(text :: String.t(), opts :: keyword()) ::
-              {:ok, [entity()]} | {:error, term()}
+              {:ok, [map()]} | {:error, term()}
 
   @doc """
   Extracts entities from multiple texts in batch.
@@ -100,7 +92,7 @@ defmodule Arcana.Graph.EntityExtractor do
   Override for extractors that support native batch processing.
   """
   @callback extract_batch(texts :: [String.t()], opts :: keyword()) ::
-              {:ok, [[entity()]]} | {:error, term()}
+              {:ok, [[map()]]} | {:error, term()}
 
   @optional_callbacks extract_batch: 2
 
@@ -122,8 +114,6 @@ defmodule Arcana.Graph.EntityExtractor do
       {:ok, entities} = EntityExtractor.extract(extractor, "some text")
 
   """
-  @spec extract({module(), keyword()} | function(), String.t()) ::
-          {:ok, [entity()]} | {:error, term()}
   def extract({module, opts}, text) when is_atom(module) do
     module.extract(text, opts)
   end
@@ -138,8 +128,6 @@ defmodule Arcana.Graph.EntityExtractor do
   Falls back to sequential extraction if the module doesn't implement
   `extract_batch/2`.
   """
-  @spec extract_batch({module(), keyword()} | function(), [String.t()]) ::
-          {:ok, [[entity()]]} | {:error, term()}
   def extract_batch({module, opts}, texts) when is_atom(module) do
     if function_exported?(module, :extract_batch, 2) do
       module.extract_batch(texts, opts)

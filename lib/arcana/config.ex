@@ -115,7 +115,6 @@ defmodule Arcana.Config do
       Arcana.Config.graph_enabled?(graph: true)
 
   """
-  @spec graph_enabled?(keyword()) :: boolean()
   def graph_enabled?(opts) do
     case Keyword.get(opts, :graph) do
       nil -> Arcana.Graph.enabled?()

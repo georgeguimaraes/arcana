@@ -26,7 +26,6 @@ defprotocol Arcana.LLM do
 
   Returns `{:ok, response}` or `{:error, reason}`.
   """
-  @spec complete(t, String.t(), list(), keyword()) :: {:ok, String.t()} | {:error, term()}
   def complete(llm, prompt, context, opts)
 end
 
