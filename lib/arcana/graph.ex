@@ -269,4 +269,183 @@ defmodule Arcana.Graph do
   def traverse(graph, entity_id, opts \\ []) do
     GraphQuery.traverse(graph, entity_id, opts)
   end
+
+  # === Graph Building for Ingest ===
+
+  alias Arcana.Graph.{EntityExtractor, GraphExtractor, GraphStore, RelationshipExtractor}
+
+  @doc """
+  Builds and persists graph data from chunk records during ingest.
+  """
+  def build_and_persist(chunk_records, collection, repo, opts) do
+    collection_name = if is_binary(collection), do: collection, else: collection.name
+    collection_id = if is_binary(collection), do: collection, else: collection.id
+
+    :telemetry.span(
+      [:arcana, :graph, :build],
+      %{chunk_count: length(chunk_records), collection: collection_name},
+      fn ->
+        {all_entities, all_mentions, all_relationships} =
+          extract_all_graph_data(chunk_records, opts)
+
+        {:ok, entity_id_map} =
+          GraphStore.persist_entities(collection_id, all_entities, repo: repo)
+
+        :ok = GraphStore.persist_mentions(all_mentions, entity_id_map, repo: repo)
+        :ok = GraphStore.persist_relationships(all_relationships, entity_id_map, repo: repo)
+
+        {:ok,
+         %{entity_count: map_size(entity_id_map), relationship_count: length(all_relationships)}}
+      end
+    )
+  end
+
+  @doc """
+  Resolves the entity extractor from options and config.
+  """
+  def resolve_entity_extractor(opts) do
+    graph_config = config()
+    llm = opts[:llm] || Application.get_env(:arcana, :llm)
+    extractor = Keyword.get(opts, :entity_extractor) || graph_config[:entity_extractor]
+    normalize_entity_extractor(extractor, llm)
+  end
+
+  # Private graph building functions
+
+  defp extract_all_graph_data(chunk_records, opts) do
+    graph_config = config()
+    extractor = resolve_extractor(opts, graph_config)
+
+    if extractor do
+      extract_with_combined_extractor(chunk_records, extractor)
+    else
+      extract_with_separate_extractors(chunk_records, opts, graph_config)
+    end
+  end
+
+  defp extract_with_combined_extractor(chunk_records, extractor) do
+    Enum.reduce(chunk_records, {[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
+      extract_graph_data_combined(chunk, extractor, ent_acc, ment_acc, rel_acc)
+    end)
+  end
+
+  defp extract_with_separate_extractors(chunk_records, opts, graph_config) do
+    entity_extractor = resolve_entity_extractor(opts)
+    relationship_extractor = resolve_relationship_extractor(opts, graph_config)
+
+    Enum.reduce(chunk_records, {[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
+      extract_graph_data_from_chunk(
+        chunk,
+        entity_extractor,
+        relationship_extractor,
+        ent_acc,
+        ment_acc,
+        rel_acc
+      )
+    end)
+  end
+
+  defp normalize_entity_extractor(nil, _llm), do: {EntityExtractor.NER, []}
+  defp normalize_entity_extractor(:ner, _llm), do: {EntityExtractor.NER, []}
+  defp normalize_entity_extractor({module, opts}, llm), do: {module, maybe_inject_llm(opts, llm)}
+  defp normalize_entity_extractor(fun, _llm) when is_function(fun, 2), do: fun
+
+  defp normalize_entity_extractor(module, llm) when is_atom(module),
+    do: {module, maybe_inject_llm([], llm)}
+
+  defp maybe_inject_llm(opts, nil), do: opts
+  defp maybe_inject_llm(opts, llm), do: Keyword.put_new(opts, :llm, llm)
+
+  defp resolve_relationship_extractor(opts, graph_config) do
+    llm = opts[:llm] || Application.get_env(:arcana, :llm)
+
+    case Keyword.get(opts, :relationship_extractor) do
+      nil ->
+        case graph_config[:relationship_extractor] do
+          nil -> nil
+          {module, extractor_opts} -> {module, maybe_inject_llm(extractor_opts, llm)}
+          module when is_atom(module) -> {module, maybe_inject_llm([], llm)}
+          fun when is_function(fun, 3) -> fun
+        end
+
+      {module, extractor_opts} ->
+        {module, maybe_inject_llm(extractor_opts, llm)}
+
+      extractor ->
+        extractor
+    end
+  end
+
+  defp resolve_extractor(opts, graph_config) do
+    llm = opts[:llm] || Application.get_env(:arcana, :llm)
+
+    case Keyword.get(opts, :extractor) do
+      nil ->
+        case graph_config[:extractor] do
+          nil -> nil
+          {module, extractor_opts} -> {module, maybe_inject_llm(extractor_opts, llm)}
+          module when is_atom(module) -> {module, maybe_inject_llm([], llm)}
+          fun when is_function(fun, 2) -> fun
+        end
+
+      {module, extractor_opts} ->
+        {module, maybe_inject_llm(extractor_opts, llm)}
+
+      extractor ->
+        extractor
+    end
+  end
+
+  defp extract_graph_data_combined(chunk, extractor, ent_acc, ment_acc, rel_acc) do
+    case GraphExtractor.extract(extractor, chunk.text) do
+      {:ok, %{entities: entities, relationships: relationships}} ->
+        new_mentions =
+          Enum.map(entities, fn entity ->
+            %{
+              entity_name: entity.name,
+              chunk_id: chunk.id,
+              span_start: entity[:span_start],
+              span_end: entity[:span_end]
+            }
+          end)
+
+        {ent_acc ++ entities, ment_acc ++ new_mentions, rel_acc ++ relationships}
+
+      {:error, _reason} ->
+        {ent_acc, ment_acc, rel_acc}
+    end
+  end
+
+  defp extract_graph_data_from_chunk(
+         chunk,
+         entity_extractor,
+         relationship_extractor,
+         ent_acc,
+         ment_acc,
+         rel_acc
+       ) do
+    case EntityExtractor.extract(entity_extractor, chunk.text) do
+      {:ok, entities} ->
+        new_mentions =
+          Enum.map(entities, fn entity ->
+            %{
+              entity_name: entity.name,
+              chunk_id: chunk.id,
+              span_start: entity[:span_start],
+              span_end: entity[:span_end]
+            }
+          end)
+
+        new_relationships =
+          case RelationshipExtractor.extract(relationship_extractor, chunk.text, entities) do
+            {:ok, rels} -> rels
+            {:error, _} -> []
+          end
+
+        {ent_acc ++ entities, ment_acc ++ new_mentions, rel_acc ++ new_relationships}
+
+      {:error, _reason} ->
+        {ent_acc, ment_acc, rel_acc}
+    end
+  end
 end
