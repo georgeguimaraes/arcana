@@ -19,7 +19,9 @@ defmodule ArcanaWeb.MaintenanceLive do
        embedding_info: get_embedding_info(),
        rebuild_graph_running: false,
        rebuild_graph_progress: nil,
+       rebuild_graph_collection: nil,
        graph_info: get_graph_info(),
+       collections: [],
        stats: nil
      )}
   end
@@ -34,6 +36,14 @@ defmodule ArcanaWeb.MaintenanceLive do
 
     socket
     |> assign(stats: load_stats(repo))
+    |> assign(collections: fetch_collection_names(repo))
+  end
+
+  defp fetch_collection_names(repo) do
+    import Ecto.Query
+    repo.all(from(c in Arcana.Collection, select: c.name, order_by: c.name))
+  rescue
+    _ -> []
   end
 
   defp get_embedding_info do
@@ -67,8 +77,14 @@ defmodule ArcanaWeb.MaintenanceLive do
     {:noreply, socket}
   end
 
+  def handle_event("select_rebuild_collection", %{"collection" => collection}, socket) do
+    collection = if collection == "", do: nil, else: collection
+    {:noreply, assign(socket, rebuild_graph_collection: collection)}
+  end
+
   def handle_event("rebuild_graph", _params, socket) do
     repo = socket.assigns.repo
+    collection = socket.assigns.rebuild_graph_collection
     parent = self()
 
     socket =
@@ -79,7 +95,9 @@ defmodule ArcanaWeb.MaintenanceLive do
         send(parent, {:rebuild_graph_progress, current, total})
       end
 
-      result = Arcana.Maintenance.rebuild_graph(repo, progress: progress_fn)
+      opts = [progress: progress_fn]
+      opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
+      result = Arcana.Maintenance.rebuild_graph(repo, opts)
       send(parent, {:rebuild_graph_complete, result})
     end)
 
@@ -219,7 +237,7 @@ defmodule ArcanaWeb.MaintenanceLive do
         <div class="arcana-maintenance-section">
           <h3>Rebuild Knowledge Graph</h3>
           <p style="color: #6b7280; margin-bottom: 1rem; font-size: 0.875rem;">
-            Clear and rebuild the knowledge graph for all documents.
+            Clear and rebuild the knowledge graph.
             Use this after changing graph extractor configuration or enabling relationship extraction.
           </p>
 
@@ -239,13 +257,26 @@ defmodule ArcanaWeb.MaintenanceLive do
               <% end %>
             </div>
           <% else %>
-            <button
-              phx-click="rebuild_graph"
-              class="arcana-reembed-btn"
-              style="background: #10b981; color: white; padding: 0.625rem 1.25rem; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: pointer;"
-            >
-              Rebuild Knowledge Graph
-            </button>
+            <div style="display: flex; gap: 0.75rem; align-items: center;">
+              <select
+                phx-change="select_rebuild_collection"
+                name="collection"
+                style="padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem; background: white;"
+              >
+                <option value="">All Collections</option>
+                <%= for collection <- @collections do %>
+                  <option value={collection} selected={@rebuild_graph_collection == collection}>
+                    <%= collection %>
+                  </option>
+                <% end %>
+              </select>
+              <button
+                phx-click="rebuild_graph"
+                style="background: #10b981; color: white; padding: 0.5rem 1rem; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: pointer;"
+              >
+                Rebuild Graph
+              </button>
+            </div>
           <% end %>
         </div>
       </div>
