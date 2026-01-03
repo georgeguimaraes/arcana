@@ -1131,6 +1131,17 @@ defmodule ArcanaWeb.Assets do
     margin-bottom: 0.5rem;
   }
 
+  .arcana-llm-select-toggle {
+    margin-bottom: 0.75rem;
+    padding: 0.75rem;
+    background: #f5f3ff;
+    border: 1px solid #ddd6fe;
+    border-radius: 0.5rem;
+  }
+  .arcana-llm-select-toggle .arcana-checkbox-label {
+    margin: 0;
+  }
+
   .arcana-collection-checkboxes {
     display: flex;
     flex-wrap: wrap;

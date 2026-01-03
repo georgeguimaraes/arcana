@@ -24,7 +24,8 @@ defmodule ArcanaWeb.AskLive do
        ask_error: nil,
        stats: nil,
        collections: [],
-       graph_context_expanded: true
+       graph_context_expanded: true,
+       llm_select: false
      )}
   end
 
@@ -91,11 +92,18 @@ defmodule ArcanaWeb.AskLive do
   end
 
   def handle_event("ask_switch_mode", %{"mode" => mode}, socket) do
-    {:noreply, assign(socket, ask_mode: String.to_existing_atom(mode))}
+    mode = String.to_existing_atom(mode)
+    # Reset llm_select when switching to simple mode
+    llm_select = if mode == :simple, do: false, else: socket.assigns.llm_select
+    {:noreply, assign(socket, ask_mode: mode, llm_select: llm_select)}
   end
 
   def handle_event("toggle_graph_context", _params, socket) do
     {:noreply, assign(socket, graph_context_expanded: !socket.assigns.graph_context_expanded)}
+  end
+
+  def handle_event("toggle_llm_select", _params, socket) do
+    {:noreply, assign(socket, llm_select: !socket.assigns.llm_select)}
   end
 
   defp start_ask_task(socket, params, llm, question) do
@@ -319,21 +327,33 @@ defmodule ArcanaWeb.AskLive do
 
           <div class="arcana-ask-collections">
             <label>Collections</label>
-            <div class="arcana-collection-checkboxes">
-              <%= if @ask_mode == :agentic and length(@collections) > 1 do %>
-                <label class="arcana-collection-check">
-                  <input type="checkbox" name="llm_select" value="true" disabled={@ask_running} />
-                  <span>Let LLM select</span>
+            <%= if @ask_mode == :agentic and length(@collections) > 1 do %>
+              <div class="arcana-llm-select-toggle">
+                <label class="arcana-checkbox-label">
+                  <input
+                    type="checkbox"
+                    name="llm_select"
+                    value="true"
+                    checked={@llm_select}
+                    disabled={@ask_running}
+                    phx-click="toggle_llm_select"
+                  />
+                  <span>Let LLM select automatically</span>
+                  <small>LLM will choose the most relevant collection(s) based on your question</small>
                 </label>
-              <% end %>
-              <%= for coll <- @collections do %>
-                <label class="arcana-collection-check">
-                  <input type="checkbox" name="collections[]" value={coll.name} disabled={@ask_running} />
-                  <span><%= coll.name %></span>
-                </label>
-              <% end %>
-            </div>
-            <small class="arcana-collection-hint">Select none for all collections</small>
+              </div>
+            <% end %>
+            <%= if not @llm_select do %>
+              <div class="arcana-collection-checkboxes">
+                <%= for coll <- @collections do %>
+                  <label class="arcana-collection-check">
+                    <input type="checkbox" name="collections[]" value={coll.name} disabled={@ask_running} />
+                    <span><%= coll.name %></span>
+                  </label>
+                <% end %>
+              </div>
+              <small class="arcana-collection-hint">Select none for all collections</small>
+            <% end %>
           </div>
 
           <%= if @ask_mode == :agentic do %>
