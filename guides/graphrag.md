@@ -79,6 +79,7 @@ GraphRAG uses pluggable behaviours for extraction and community detection:
 | EntityExtractor | `Arcana.Graph.EntityExtractor.NER` | Extract entities only (fallback) |
 | RelationshipExtractor | `Arcana.Graph.RelationshipExtractor.LLM` | Find relationships (fallback) |
 | CommunityDetector | `Arcana.Graph.CommunityDetector.Leiden` | Detect entity communities |
+| CommunitySummarizer | `Arcana.Graph.CommunitySummarizer.LLM` | Generate community summaries |
 
 **Recommended:** Use the combined `GraphExtractor.LLM` for efficiency (1 LLM call per chunk instead of 2).
 
@@ -316,6 +317,29 @@ config :arcana, :graph,
   community_detector: {MyApp.LouvainDetector, resolution: 0.5}
 ```
 
+### Custom Community Summarizer
+
+```elixir
+defmodule MyApp.ExtractiveSum do
+  @behaviour Arcana.Graph.CommunitySummarizer
+
+  @impl true
+  def summarize(entities, relationships, opts) do
+    max_sentences = Keyword.get(opts, :max_sentences, 3)
+    # Extractive summarization from entity descriptions...
+    {:ok, summary}
+  end
+end
+
+# Configure globally
+config :arcana, :graph,
+  community_summarizer: {MyApp.ExtractiveSum, max_sentences: 3}
+
+# Or disable summarization entirely
+config :arcana, :graph,
+  community_summarizer: nil
+```
+
 ### Inline Functions
 
 All extractors also support inline functions:
@@ -344,6 +368,13 @@ GraphBuilder.build(chunks,
   entity_extractor: entity_extractor,
   relationship_extractor: relationship_extractor
 )
+
+# Inline community summarizer
+summarizer = fn entities, relationships, _opts ->
+  {:ok, "Community with #{length(entities)} entities"}
+end
+
+CommunitySummarizer.summarize(entities, relationships, community_summarizer: summarizer)
 ```
 
 ## Telemetry
