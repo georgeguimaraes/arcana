@@ -127,61 +127,128 @@ Arcana.ingest(text, graph_store: {:memory, name: :test_graph})
 
 ### Custom Backend
 
-Implement the `Arcana.Graph.GraphStore` behaviour:
+Implement the `Arcana.Graph.GraphStore` behaviour. The full interface includes storage, query, deletion, and listing callbacks:
 
 ```elixir
 defmodule MyApp.Neo4jGraphStore do
   @behaviour Arcana.Graph.GraphStore
 
+  # === Storage Callbacks ===
+
   @impl true
   def persist_entities(collection_id, entities, opts) do
-    # Store entities in Neo4j
-    {:ok, id_map}
+    # Store entities, return map of entity names to assigned IDs
+    {:ok, %{"Sam Altman" => "entity_123", "OpenAI" => "entity_456"}}
   end
 
   @impl true
   def persist_relationships(relationships, entity_id_map, opts) do
-    # Store relationships
+    # Store relationships between entities
     :ok
   end
 
   @impl true
   def persist_mentions(mentions, entity_id_map, opts) do
-    # Store entity-chunk mentions
+    # Store entity-chunk mentions (links entities to source chunks)
     :ok
   end
 
   @impl true
+  def persist_communities(collection_id, communities, opts) do
+    # Store community detection results
+    :ok
+  end
+
+  # === Query Callbacks ===
+
+  @impl true
   def search(entity_names, collection_ids, opts) do
     # Find chunks by entity names
-    [%{chunk_id: "...", score: 0.9}]
+    [%{chunk_id: "chunk_123", score: 0.9}]
   end
 
   @impl true
   def find_entities(collection_id, opts) do
     # Return all entities in collection
-    [%{id: "...", name: "...", type: "..."}]
+    [%{id: "entity_123", name: "Sam Altman", type: "person"}]
   end
 
   @impl true
   def find_related_entities(entity_id, depth, opts) do
     # Traverse graph to find related entities
-    [%{id: "...", name: "...", type: "..."}]
-  end
-
-  @impl true
-  def persist_communities(collection_id, communities, opts) do
-    # Store community data
-    :ok
+    [%{id: "entity_456", name: "OpenAI", type: "organization"}]
   end
 
   @impl true
   def get_community_summaries(collection_id, opts) do
     # Return community summaries
-    [%{id: "...", level: 0, summary: "..."}]
+    [%{id: "community_1", level: 0, summary: "AI research organizations..."}]
+  end
+
+  # === Detail Query Callbacks ===
+
+  @impl true
+  def get_entity(entity_id, opts) do
+    {:ok, %{id: entity_id, name: "Sam Altman", type: "person"}}
+  end
+
+  @impl true
+  def get_relationships(entity_id, opts) do
+    [%{id: "rel_1", source_id: entity_id, target_id: "entity_456", type: "LEADS"}]
+  end
+
+  @impl true
+  def get_relationship(relationship_id, opts) do
+    {:ok, %{id: relationship_id, source_id: "entity_123", target_id: "entity_456", type: "LEADS"}}
+  end
+
+  @impl true
+  def get_mentions(entity_id, opts) do
+    [%{entity_id: entity_id, chunk_id: "chunk_123", chunk_text: "..."}]
+  end
+
+  @impl true
+  def get_community(community_id, opts) do
+    {:ok, %{id: community_id, level: 0, summary: "..."}}
+  end
+
+  # === List Callbacks (for UI/Dashboard) ===
+
+  @impl true
+  def list_entities(opts) do
+    # Support :collection_id, :type, :search, :limit, :offset options
+    [%{id: "entity_123", name: "Sam Altman", type: "person", mention_count: 5}]
+  end
+
+  @impl true
+  def list_relationships(opts) do
+    # Support :collection_id, :type, :search, :strength, :limit, :offset options
+    [%{id: "rel_1", source_name: "Sam Altman", target_name: "OpenAI", type: "LEADS"}]
+  end
+
+  @impl true
+  def list_communities(opts) do
+    # Support :collection_id, :level, :search, :limit, :offset options
+    [%{id: "community_1", level: 0, entity_count: 10, summary: "..."}]
+  end
+
+  # === Deletion Callbacks ===
+
+  @impl true
+  def delete_by_chunks(chunk_ids, opts) do
+    # Delete mentions for chunks, cleanup orphaned entities
+    :ok
+  end
+
+  @impl true
+  def delete_by_collection(collection_id, opts) do
+    # Delete all graph data for a collection
+    :ok
   end
 end
 ```
+
+See `Arcana.Graph.GraphStore` for the complete callback documentation.
 
 ## Building a Graph
 
@@ -479,21 +546,43 @@ CommunitySummarizer.summarize(entities, relationships, community_summarizer: sum
 
 ## Telemetry
 
-GraphRAG emits telemetry events for observability:
+GraphRAG emits telemetry events for observability.
 
-- `[:arcana, :graph, :entity_extraction, :start | :stop | :exception]`
-- `[:arcana, :graph, :relationship_extraction, :start | :stop | :exception]`
-- `[:arcana, :graph, :community_detection, :start | :stop | :exception]`
+### Graph Building Events
 
-Attach handlers to monitor performance:
+- `[:arcana, :graph, :build, :start | :stop | :exception]` - Full graph build
+- `[:arcana, :graph, :ner, :start | :stop | :exception]` - Named entity recognition
+- `[:arcana, :graph, :relationship_extraction, :start | :stop | :exception]` - Relationship extraction
+- `[:arcana, :graph, :community_detection, :start | :stop | :exception]` - Community detection
+- `[:arcana, :graph, :community_summary, :start | :stop | :exception]` - Community summarization
+
+### Graph Search Events
+
+- `[:arcana, :graph, :search, :start | :stop | :exception]` - Graph-enhanced search
+
+### Graph Store Events
+
+These events are emitted by the storage layer:
+
+- `[:arcana, :graph_store, :persist_entities, :start | :stop | :exception]`
+- `[:arcana, :graph_store, :persist_relationships, :start | :stop | :exception]`
+- `[:arcana, :graph_store, :persist_mentions, :start | :stop | :exception]`
+- `[:arcana, :graph_store, :search, :start | :stop | :exception]`
+- `[:arcana, :graph_store, :delete_by_chunks, :start | :stop | :exception]`
+- `[:arcana, :graph_store, :delete_by_collection, :start | :stop | :exception]`
+
+### Example Handler
 
 ```elixir
 :telemetry.attach(
   "graph-metrics",
-  [:arcana, :graph, :entity_extraction, :stop],
+  [:arcana, :graph, :build, :stop],
   fn _event, measurements, metadata, _config ->
-    Logger.info("Extracted #{metadata.entity_count} entities in #{measurements.duration}ms")
+    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+    Logger.info("Built graph: #{metadata.entity_count} entities, #{metadata.relationship_count} relationships in #{duration_ms}ms")
   end,
   nil
 )
 ```
+
+See the [Telemetry Guide](telemetry.md) for more details on monitoring and metrics integration.

@@ -84,6 +84,18 @@ Each step in the Agent pipeline emits its own events:
 | `[:arcana, :agent, :answer, :*]` | - |
 | `[:arcana, :agent, :self_correct, :*]` | `attempt` |
 
+### VectorStore Events
+
+Storage layer events for vector operations:
+
+| Event | Metadata |
+|-------|----------|
+| `[:arcana, :vector_store, :store, :*]` | `collection`, `id`, `backend` |
+| `[:arcana, :vector_store, :search, :*]` | `collection`, `limit`, `backend`, `result_count` |
+| `[:arcana, :vector_store, :search_text, :*]` | `collection`, `query`, `limit`, `backend`, `result_count` |
+| `[:arcana, :vector_store, :delete, :*]` | `collection`, `id`, `backend` |
+| `[:arcana, :vector_store, :clear, :*]` | `collection`, `backend` |
+
 ### GraphRAG Events
 
 When using `graph: true`, these events track knowledge graph operations:
@@ -96,6 +108,19 @@ When using `graph: true`, these events track knowledge graph operations:
 | `[:arcana, :graph, :relationship_extraction, :*]` | `text`, `relationship_count` |
 | `[:arcana, :graph, :community_detection, :*]` | `entity_count`, `community_count` |
 | `[:arcana, :graph, :community_summary, :*]` | `entity_count`, `summary_length` |
+
+### GraphStore Events
+
+Storage layer events for graph operations:
+
+| Event | Metadata |
+|-------|----------|
+| `[:arcana, :graph_store, :persist_entities, :*]` | `collection_id`, `entity_count`, `backend` |
+| `[:arcana, :graph_store, :persist_relationships, :*]` | `relationship_count`, `backend` |
+| `[:arcana, :graph_store, :persist_mentions, :*]` | `mention_count`, `backend` |
+| `[:arcana, :graph_store, :search, :*]` | `entity_count`, `backend`, `result_count` |
+| `[:arcana, :graph_store, :delete_by_chunks, :*]` | `chunk_count`, `backend` |
+| `[:arcana, :graph_store, :delete_by_collection, :*]` | `collection_id`, `backend` |
 
 ### Exception Events
 
@@ -122,9 +147,15 @@ defmodule MyApp.ArcanaMetrics do
       # Agent pipeline
       [:arcana, :agent, :rerank, :stop],
       [:arcana, :agent, :answer, :stop],
+      # VectorStore
+      [:arcana, :vector_store, :store, :stop],
+      [:arcana, :vector_store, :search, :stop],
       # GraphRAG
       [:arcana, :graph, :build, :stop],
-      [:arcana, :graph, :search, :stop]
+      [:arcana, :graph, :search, :stop],
+      # GraphStore
+      [:arcana, :graph_store, :persist_entities, :stop],
+      [:arcana, :graph_store, :search, :stop]
     ]
 
     :telemetry.attach_many("my-arcana-metrics", events, &handle_event/4, nil)

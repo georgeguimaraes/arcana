@@ -213,7 +213,9 @@ defmodule Arcana.Graph.GraphStore do
       [:arcana, :graph_store, :persist_entities],
       %{collection_id: collection_id, entity_count: length(entities)},
       fn ->
-        result = dispatch(:persist_entities, backend, [collection_id, entities], backend_opts, opts)
+        result =
+          dispatch(:persist_entities, backend, [collection_id, entities], backend_opts, opts)
+
         {result, %{backend: backend}}
       end
     )
@@ -230,7 +232,13 @@ defmodule Arcana.Graph.GraphStore do
       %{relationship_count: length(relationships)},
       fn ->
         result =
-          dispatch(:persist_relationships, backend, [relationships, entity_id_map], backend_opts, opts)
+          dispatch(
+            :persist_relationships,
+            backend,
+            [relationships, entity_id_map],
+            backend_opts,
+            opts
+          )
 
         {result, %{backend: backend}}
       end

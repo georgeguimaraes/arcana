@@ -683,6 +683,54 @@ end
 IO.puts("The full pipeline: rewrite → select → expand → search → rerank → answer")
 ```
 
+## 12. GraphRAG with Memory Backend
+
+GraphRAG enhances retrieval by building a knowledge graph from your documents. Previously this required pgvector, but now the memory backend also supports GraphRAG.
+
+### Start the Memory Graph Store
+
+```elixir
+# Start the in-memory graph store
+{:ok, graph_pid} = Arcana.Graph.GraphStore.Memory.start_link(name: nil)
+
+IO.puts("Memory graph store started: #{inspect(graph_pid)}")
+```
+
+### How GraphRAG Works
+
+When you ingest with `graph: true`:
+1. **Entity extraction** - Named entities (people, organizations, etc.) are extracted from each chunk
+2. **Relationship extraction** - Semantic relationships between entities are identified
+3. **Graph storage** - Entities, relationships, and chunk mentions are persisted
+4. **Community detection** - Clusters of related entities are identified
+
+When you search with `graph: true`:
+1. **Query entities** - Entities are extracted from your query
+2. **Graph traversal** - Related chunks are found via entity relationships
+3. **Fusion** - Graph results are combined with vector results using Reciprocal Rank Fusion
+
+### Using GraphRAG with Memory Backend
+
+```elixir
+# Note: In a real application, you'd use:
+# Arcana.ingest(text, graph: true, graph_store: {:memory, pid: graph_pid})
+# Arcana.search(query, graph: true, graph_store: {:memory, pid: graph_pid})
+
+# The graph store can also be named for easier reference:
+# {:ok, _} = Arcana.Graph.GraphStore.Memory.start_link(name: :my_graph)
+# Arcana.ingest(text, graph: true, graph_store: {:memory, name: :my_graph})
+
+IO.puts("""
+GraphRAG with memory backend:
+- No database setup required
+- Ideal for testing and experimentation
+- Data is not persisted (lost when process stops)
+- Same API as Ecto backend
+
+For production, use the Ecto backend which persists to PostgreSQL.
+""")
+```
+
 ### Self-Correcting Answers
 
 The `answer/2` step can evaluate and refine answers to ensure they're grounded in the context:
@@ -748,7 +796,7 @@ Use explicit collections when:
 | **Re-ranking** | Filter chunks by LLM-scored relevance |
 | **Self-Correction** | Evaluate and refine answers for grounding |
 | **Agent Pipeline** | Rewrite → Select → Expand → Search → Rerank → Answer |
-| **GraphRAG** | Knowledge graph with entity extraction (pgvector only) |
+| **GraphRAG** | Knowledge graph with entity extraction (supports memory and Ecto backends) |
 
 ### Next Steps
 
@@ -761,5 +809,6 @@ Use explicit collections when:
 ```elixir
 # Cleanup
 GenServer.stop(memory_pid)
-IO.puts("Memory vector store stopped")
+if Process.alive?(graph_pid), do: GenServer.stop(graph_pid)
+IO.puts("Memory stores stopped")
 ```

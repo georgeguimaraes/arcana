@@ -150,7 +150,9 @@ defmodule Arcana.VectorStore do
     {backend, backend_opts, opts} = extract_backend(opts)
 
     :telemetry.span([:arcana, :vector_store, :store], %{collection: collection, id: id}, fn ->
-      result = dispatch(:store, backend, [collection, id, embedding, metadata], backend_opts, opts)
+      result =
+        dispatch(:store, backend, [collection, id, embedding, metadata], backend_opts, opts)
+
       {result, %{backend: backend}}
     end)
   end
