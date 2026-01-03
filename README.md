@@ -313,7 +313,26 @@ See the [LLM Integration Guide](guides/llm-integration.md) for detailed examples
 ```
 
 See the [Search Algorithms Guide](guides/search-algorithms.md) for details on search modes.
-See the [GraphRAG Guide](guides/graphrag.md) for knowledge graph features.
+
+### GraphRAG
+
+GraphRAG enhances retrieval by building a knowledge graph from your documents. Entities (people, organizations, technologies) and their relationships are extracted during ingestion, then used alongside vector search for more contextual results.
+
+```elixir
+# Install GraphRAG tables
+mix arcana.graph.install
+mix ecto.migrate
+
+# Ingest with graph building
+{:ok, document} = Arcana.ingest(content, repo: MyApp.Repo, graph: true)
+
+# Search combines vector + graph traversal with Reciprocal Rank Fusion
+{:ok, results} = Arcana.search("Who leads OpenAI?", repo: MyApp.Repo, graph: true)
+```
+
+Components are pluggable: swap entity extractors (NER, LLM), relationship extractors, community detectors (Leiden), and summarizers with your own implementations.
+
+See the [GraphRAG Guide](guides/graphrag.md) for entity extraction, community detection, and fusion search.
 
 ### Ask (Simple RAG)
 
