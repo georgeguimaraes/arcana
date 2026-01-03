@@ -41,7 +41,10 @@ defmodule ArcanaWeb.InfoLive do
       raw: %{
         embedder: Arcana.Config.redact(Application.get_env(:arcana, :embedder, :local)),
         llm: Arcana.Config.redact(Application.get_env(:arcana, :llm)),
-        reranker: Arcana.Config.redact(Application.get_env(:arcana, :reranker))
+        reranker: Arcana.Config.redact(Application.get_env(:arcana, :reranker)),
+        chunker: Arcana.Config.redact(Application.get_env(:arcana, :chunker, :default)),
+        graph: Arcana.Config.redact(Application.get_env(:arcana, :graph, [])),
+        vector_store: Application.get_env(:arcana, :vector_store, :pgvector)
       }
     }
   end
@@ -150,13 +153,81 @@ defmodule ArcanaWeb.InfoLive do
 
   defp format_graph_config do
     config = Arcana.Graph.config()
+    graph_opts = Application.get_env(:arcana, :graph, [])
+
+    extractor =
+      cond do
+        config[:extractor] -> format_extractor(config[:extractor])
+        graph_opts[:extractor] -> format_extractor(graph_opts[:extractor])
+        true -> nil
+      end
+
+    entity_extractor =
+      cond do
+        config[:entity_extractor] -> format_extractor(config[:entity_extractor])
+        graph_opts[:entity_extractor] -> format_extractor(graph_opts[:entity_extractor])
+        true -> %{type: :ner, description: "Built-in NER (default)"}
+      end
+
+    relationship_extractor =
+      cond do
+        config[:relationship_extractor] ->
+          format_extractor(config[:relationship_extractor])
+
+        graph_opts[:relationship_extractor] ->
+          format_extractor(graph_opts[:relationship_extractor])
+
+        true ->
+          nil
+      end
 
     %{
       enabled: config.enabled,
       community_levels: config.community_levels,
       resolution: config.resolution,
-      store: Application.get_env(:arcana, :graph_store, :ecto)
+      store: Application.get_env(:arcana, :graph_store, :ecto),
+      extractor: extractor,
+      entity_extractor: entity_extractor,
+      relationship_extractor: relationship_extractor
     }
+  end
+
+  defp format_extractor(nil), do: nil
+  defp format_extractor(:ner), do: %{type: :ner, description: "Built-in NER"}
+  defp format_extractor(:llm), do: %{type: :llm, description: "LLM-based extraction"}
+
+  defp format_extractor({module, opts}) when is_atom(module) and is_list(opts) do
+    module_name = module |> Module.split() |> List.last()
+    %{type: :custom, module: module_name, opts: Arcana.Config.do_redact(opts)}
+  end
+
+  defp format_extractor(module) when is_atom(module) do
+    module_name = module |> Module.split() |> List.last()
+    %{type: :module, module: module_name}
+  end
+
+  defp format_extractor(_other), do: %{type: :unknown}
+
+  defp raw_config_section(assigns) do
+    config_text = """
+    config :arcana,
+      repo: #{inspect(assigns.config_info.repo)},
+      embedder: #{inspect(assigns.config_info.raw.embedder)},
+      llm: #{inspect(assigns.config_info.raw.llm)},
+      chunker: #{inspect(assigns.config_info.raw.chunker)},
+      reranker: #{if assigns.config_info.raw.reranker, do: inspect(assigns.config_info.raw.reranker), else: "nil # defaults to Arcana.Reranker.LLM"},
+      vector_store: #{inspect(assigns.config_info.raw.vector_store)},
+      graph: #{inspect(assigns.config_info.raw.graph)}
+    """
+
+    assigns = assign(assigns, :config_text, config_text)
+
+    ~H"""
+    <div class="arcana-info-section arcana-info-full">
+      <h3>Raw Configuration</h3>
+      <pre class="arcana-doc-content" style="font-size: 0.75rem; line-height: 1.5; overflow-x: auto;"><%= @config_text %></pre>
+    </div>
+    """
   end
 
   @impl true
@@ -294,6 +365,28 @@ defmodule ArcanaWeb.InfoLive do
                   <%= if @config_info.graph.enabled, do: "Enabled", else: "Disabled" %>
                 </span>
               </div>
+              <%= if @config_info.graph.extractor do %>
+                <div class="arcana-doc-field">
+                  <label>Extractor</label>
+                  <span>
+                    <%= @config_info.graph.extractor[:module] || @config_info.graph.extractor[:description] || @config_info.graph.extractor[:type] %>
+                    <span style="color: #6b7280; font-size: 0.75rem;">(combined)</span>
+                  </span>
+                </div>
+              <% else %>
+                <%= if @config_info.graph.entity_extractor do %>
+                  <div class="arcana-doc-field">
+                    <label>Entity Extractor</label>
+                    <span><%= @config_info.graph.entity_extractor[:module] || @config_info.graph.entity_extractor[:description] || @config_info.graph.entity_extractor[:type] %></span>
+                  </div>
+                <% end %>
+                <%= if @config_info.graph.relationship_extractor do %>
+                  <div class="arcana-doc-field">
+                    <label>Relationship Extractor</label>
+                    <span><%= @config_info.graph.relationship_extractor[:module] || @config_info.graph.relationship_extractor[:description] || @config_info.graph.relationship_extractor[:type] %></span>
+                  </div>
+                <% end %>
+              <% end %>
               <div class="arcana-doc-field">
                 <label>Community Levels</label>
                 <span><%= @config_info.graph.community_levels %></span>
@@ -320,14 +413,7 @@ defmodule ArcanaWeb.InfoLive do
           </div>
         </div>
 
-        <div class="arcana-info-section arcana-info-full">
-          <h3>Raw Configuration</h3>
-          <pre class="arcana-doc-content" style="font-size: 0.75rem;">config :arcana,
-    repo: <%= inspect(@config_info.repo) %>,
-    embedder: <%= inspect(@config_info.raw.embedder) %>,
-    llm: <%= inspect(@config_info.raw.llm) %>,
-    reranker: <%= inspect(@config_info.raw.reranker) || "Arcana.Reranker.LLM (default)" %></pre>
-        </div>
+        <.raw_config_section config_info={@config_info} />
       </div>
     </.dashboard_layout>
     """

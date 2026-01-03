@@ -257,11 +257,11 @@ defmodule ArcanaWeb.MaintenanceLive do
               <% end %>
             </div>
           <% else %>
-            <div style="display: flex; gap: 0.75rem; align-items: center;">
+            <div style="display: flex; gap: 0.75rem; align-items: stretch;">
               <select
                 phx-change="select_rebuild_collection"
                 name="collection"
-                style="padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem; background: white;"
+                style="padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem; background: white; min-width: 160px;"
               >
                 <option value="">All Collections</option>
                 <%= for collection <- @collections do %>
@@ -272,7 +272,7 @@ defmodule ArcanaWeb.MaintenanceLive do
               </select>
               <button
                 phx-click="rebuild_graph"
-                style="background: #10b981; color: white; padding: 0.5rem 1rem; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: pointer;"
+                style="background: #10b981; color: white; padding: 0.5rem 1rem; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: pointer; white-space: nowrap;"
               >
                 Rebuild Graph
               </button>
