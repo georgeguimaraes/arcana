@@ -729,8 +729,7 @@ defmodule Arcana.Agent do
     chunks_text =
       chunks
       |> Enum.take(10)
-      |> Enum.map(& &1.text)
-      |> Enum.join("\n---\n")
+      |> Enum.map_join("\n---\n", & &1.text)
 
     """
     Evaluate if these search results are sufficient to answer the question.
@@ -781,22 +780,15 @@ defmodule Arcana.Agent do
 
       chunks =
         case Arcana.Search.search(query, Keyword.put(search_opts, :collection, collection)) do
-          {:ok, results} ->
-            Enum.map(results, fn r ->
-              %{
-                id: r.id,
-                text: r.text,
-                score: r.score
-              }
-            end)
-
-          {:error, _} ->
-            []
+          {:ok, results} -> Enum.map(results, &result_to_chunk/1)
+          {:error, _} -> []
         end
 
       %{question: query, collection: collection, chunks: chunks}
     end)
   end
+
+  defp result_to_chunk(r), do: Map.take(r, [:id, :text, :score])
 
   defp merge_results(existing_results, new_results) do
     all_results = (existing_results || []) ++ new_results
@@ -804,22 +796,24 @@ defmodule Arcana.Agent do
     # Deduplicate chunks across results
     {deduped_results, _final_seen} =
       Enum.reduce(all_results, {[], MapSet.new()}, fn result, {acc_results, seen_ids} ->
-        {unique_chunks, new_seen} =
-          Enum.reduce(result.chunks, {[], seen_ids}, fn chunk, {acc, seen} ->
-            if MapSet.member?(seen, chunk.id) do
-              {acc, seen}
-            else
-              {[chunk | acc], MapSet.put(seen, chunk.id)}
-            end
-          end)
-
+        {unique_chunks, new_seen} = dedupe_chunks(result.chunks, seen_ids)
         updated_result = %{result | chunks: Enum.reverse(unique_chunks)}
         {[updated_result | acc_results], new_seen}
       end)
 
     deduped_results
     |> Enum.reverse()
-    |> Enum.reject(fn r -> r.chunks == [] end)
+    |> Enum.reject(& &1.chunks == [])
+  end
+
+  defp dedupe_chunks(chunks, seen_ids) do
+    Enum.reduce(chunks, {[], seen_ids}, fn chunk, {acc, seen} ->
+      if MapSet.member?(seen, chunk.id) do
+        {acc, seen}
+      else
+        {[chunk | acc], MapSet.put(seen, chunk.id)}
+      end
+    end)
   end
 
   @doc """
