@@ -5,6 +5,14 @@ defmodule Arcana.Config do
   Handles parsing and resolving configuration for embedders, chunkers,
   and other pluggable components.
 
+  ## Redacting Sensitive Values
+
+  Use `Arcana.Config.redact/1` to wrap any config value for safe inspection:
+
+      config = Application.get_env(:arcana, :llm)
+      inspect(Arcana.Config.redact(config))
+      # => {"zai:glm-4.7", [api_key: "[REDACTED]"]}
+
   ## Embedder Configuration
 
       # Default: Local Bumblebee with bge-small-en-v1.5
@@ -157,4 +165,52 @@ defmodule Arcana.Config do
   defp parse_chunker_config(other) do
     raise ArgumentError, "invalid chunker config: #{inspect(other)}"
   end
+
+  # Redaction support
+
+  @sensitive_keys [:api_key, :api_secret, :secret_key, :access_key, :token, :password, :secret]
+
+  @doc """
+  Wraps a config value for safe inspection with sensitive data redacted.
+
+  Returns a struct that implements the `Inspect` protocol and automatically
+  redacts sensitive keys like `:api_key`, `:token`, `:password`, etc.
+
+  ## Example
+
+      iex> config = {"zai:glm-4.7", [api_key: "secret123"]}
+      iex> inspect(Arcana.Config.redact(config))
+      ~s|{"zai:glm-4.7", [api_key: "[REDACTED]"]}|
+
+  """
+  def redact(value) do
+    %Arcana.Config.Redacted{value: do_redact(value)}
+  end
+
+  @doc false
+  def do_redact(nil), do: nil
+  def do_redact(val) when is_atom(val), do: val
+  def do_redact(val) when is_binary(val), do: val
+  def do_redact(val) when is_number(val), do: val
+  def do_redact(fun) when is_function(fun), do: "#Function<...>"
+
+  def do_redact(opts) when is_list(opts) do
+    if Keyword.keyword?(opts) do
+      for {k, v} <- opts do
+        if k in @sensitive_keys, do: {k, "[REDACTED]"}, else: {k, do_redact(v)}
+      end
+    else
+      Enum.map(opts, &do_redact/1)
+    end
+  end
+
+  def do_redact(%{} = map) do
+    for {k, v} <- map, into: %{} do
+      if k in @sensitive_keys, do: {k, "[REDACTED]"}, else: {k, do_redact(v)}
+    end
+  end
+
+  def do_redact({a, b}), do: {do_redact(a), do_redact(b)}
+  def do_redact({a, b, c}), do: {do_redact(a), do_redact(b), do_redact(c)}
+  def do_redact(other), do: other
 end

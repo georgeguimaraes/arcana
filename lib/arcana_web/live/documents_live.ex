@@ -126,14 +126,18 @@ defmodule ArcanaWeb.DocumentsLive do
     content = params["content"] || ""
     format = parse_format(params["format"])
     collection = normalize_collection(params["collection"])
+    graph = params["graph"] == "true"
 
-    {:ok, _doc} = Arcana.ingest(content, repo: repo, format: format, collection: collection)
+    {:ok, _doc} =
+      Arcana.ingest(content, repo: repo, format: format, collection: collection, graph: graph)
+
     {:noreply, load_data(socket)}
   end
 
   def handle_event("upload_files", params, socket) do
     repo = socket.assigns.repo
     collection = normalize_collection(params["collection"])
+    graph = params["graph"] == "true"
 
     uploaded_files =
       consume_uploaded_entries(socket, :files, fn %{path: path}, entry ->
@@ -144,7 +148,7 @@ defmodule ArcanaWeb.DocumentsLive do
 
     results =
       Enum.map(uploaded_files, fn path ->
-        result = Arcana.ingest_file(path, repo: repo, collection: collection)
+        result = Arcana.ingest_file(path, repo: repo, collection: collection, graph: graph)
         File.rm(path)
         result
       end)
@@ -237,6 +241,13 @@ defmodule ArcanaWeb.DocumentsLive do
                       <% end %>
                     </select>
                   </label>
+                  <div class="arcana-graph-toggle">
+                    <label class="arcana-checkbox-label">
+                      <input type="checkbox" name="graph" value="true" />
+                      <span>Build Graph</span>
+                      <small>Extract entities and relationships</small>
+                    </label>
+                  </div>
                 </div>
                 <button type="submit" class="arcana-upload-btn">Upload Files</button>
               <% end %>
@@ -265,6 +276,13 @@ defmodule ArcanaWeb.DocumentsLive do
                   <% end %>
                 </select>
               </label>
+              <div class="arcana-graph-toggle">
+                <label class="arcana-checkbox-label">
+                  <input type="checkbox" name="graph" value="true" />
+                  <span>Build Graph</span>
+                  <small>Extract entities and relationships</small>
+                </label>
+              </div>
             </div>
             <button type="submit">Ingest</button>
           </form>

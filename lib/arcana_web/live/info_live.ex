@@ -36,18 +36,12 @@ defmodule ArcanaWeb.InfoLive do
       embedding: format_embedding_config(Application.get_env(:arcana, :embedder, :local)),
       reranker: format_reranker_config(Application.get_env(:arcana, :reranker)),
       raw: %{
-        embedder: redact_config(Application.get_env(:arcana, :embedder, :local)),
-        llm: redact_config(Application.get_env(:arcana, :llm)),
-        reranker: redact_config(Application.get_env(:arcana, :reranker))
+        embedder: Arcana.Config.redact(Application.get_env(:arcana, :embedder, :local)),
+        llm: Arcana.Config.redact(Application.get_env(:arcana, :llm)),
+        reranker: Arcana.Config.redact(Application.get_env(:arcana, :reranker))
       }
     }
   end
-
-  defp redact_config(nil), do: nil
-  defp redact_config(val) when is_atom(val), do: val
-  defp redact_config(fun) when is_function(fun), do: "#Function<...>"
-  defp redact_config({module, opts}) when is_atom(module), do: {module, redact_sensitive(opts)}
-  defp redact_config(other), do: redact_sensitive(other)
 
   defp format_llm_config(nil), do: %{configured: false}
 
@@ -64,8 +58,20 @@ defmodule ArcanaWeb.InfoLive do
           model: Map.get(struct, :model, "unknown")
         }
 
+      {model, _opts} when is_binary(model) ->
+        %{configured: true, type: "Req.LLM", model: model}
+
+      {model, _opts} when is_atom(model) ->
+        %{configured: true, type: "Req.LLM", model: Atom.to_string(model)}
+
+      model when is_binary(model) ->
+        %{configured: true, type: "Req.LLM", model: model}
+
+      model when is_atom(model) ->
+        %{configured: true, type: "Req.LLM", model: Atom.to_string(model)}
+
       _ ->
-        %{configured: true, type: redact_sensitive(llm)}
+        %{configured: true, type: "Custom"}
     end
   end
 
@@ -84,7 +90,7 @@ defmodule ArcanaWeb.InfoLive do
   defp format_embedding_config({:custom, _fun, _opts}), do: %{type: :custom}
 
   defp format_embedding_config({module, opts}) when is_atom(module) and is_list(opts) do
-    %{type: :custom_module, module: module, opts: redact_sensitive(opts)}
+    %{type: :custom_module, module: module, opts: Arcana.Config.do_redact(opts)}
   end
 
   defp format_embedding_config(module) when is_atom(module) do
@@ -99,7 +105,7 @@ defmodule ArcanaWeb.InfoLive do
     do: %{module: module, configured: true}
 
   defp format_reranker_config({module, opts}) when is_atom(module) and is_list(opts) do
-    %{module: module, opts: redact_sensitive(opts), configured: true}
+    %{module: module, opts: Arcana.Config.do_redact(opts), configured: true}
   end
 
   defp format_reranker_config(fun) when is_function(fun) do
@@ -107,23 +113,7 @@ defmodule ArcanaWeb.InfoLive do
   end
 
   defp format_reranker_config(other),
-    do: %{type: :unknown, raw: redact_sensitive(other), configured: true}
-
-  @sensitive_keys [:api_key, :api_secret, :secret_key, :access_key, :token, :password]
-
-  defp redact_sensitive(opts) when is_list(opts) do
-    for {k, v} <- opts do
-      if k in @sensitive_keys, do: {k, "[REDACTED]"}, else: {k, v}
-    end
-  end
-
-  defp redact_sensitive(%{} = map) do
-    for {k, v} <- map, into: %{} do
-      if k in @sensitive_keys, do: {k, "[REDACTED]"}, else: {k, v}
-    end
-  end
-
-  defp redact_sensitive(other), do: inspect(other)
+    do: %{type: :unknown, raw: Arcana.Config.do_redact(other), configured: true}
 
   @impl true
   def render(assigns) do
