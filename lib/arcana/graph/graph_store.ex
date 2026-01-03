@@ -208,7 +208,15 @@ defmodule Arcana.Graph.GraphStore do
   """
   def persist_entities(collection_id, entities, opts \\ []) do
     {backend, backend_opts, opts} = extract_backend(opts)
-    dispatch(:persist_entities, backend, [collection_id, entities], backend_opts, opts)
+
+    :telemetry.span(
+      [:arcana, :graph_store, :persist_entities],
+      %{collection_id: collection_id, entity_count: length(entities)},
+      fn ->
+        result = dispatch(:persist_entities, backend, [collection_id, entities], backend_opts, opts)
+        {result, %{backend: backend}}
+      end
+    )
   end
 
   @doc """
@@ -216,7 +224,17 @@ defmodule Arcana.Graph.GraphStore do
   """
   def persist_relationships(relationships, entity_id_map, opts \\ []) do
     {backend, backend_opts, opts} = extract_backend(opts)
-    dispatch(:persist_relationships, backend, [relationships, entity_id_map], backend_opts, opts)
+
+    :telemetry.span(
+      [:arcana, :graph_store, :persist_relationships],
+      %{relationship_count: length(relationships)},
+      fn ->
+        result =
+          dispatch(:persist_relationships, backend, [relationships, entity_id_map], backend_opts, opts)
+
+        {result, %{backend: backend}}
+      end
+    )
   end
 
   @doc """
@@ -224,7 +242,17 @@ defmodule Arcana.Graph.GraphStore do
   """
   def persist_mentions(mentions, entity_id_map, opts \\ []) do
     {backend, backend_opts, opts} = extract_backend(opts)
-    dispatch(:persist_mentions, backend, [mentions, entity_id_map], backend_opts, opts)
+
+    :telemetry.span(
+      [:arcana, :graph_store, :persist_mentions],
+      %{mention_count: length(mentions)},
+      fn ->
+        result =
+          dispatch(:persist_mentions, backend, [mentions, entity_id_map], backend_opts, opts)
+
+        {result, %{backend: backend}}
+      end
+    )
   end
 
   @doc """
@@ -232,7 +260,15 @@ defmodule Arcana.Graph.GraphStore do
   """
   def search(entity_names, collection_ids, opts \\ []) do
     {backend, backend_opts, opts} = extract_backend(opts)
-    dispatch(:search, backend, [entity_names, collection_ids], backend_opts, opts)
+
+    :telemetry.span(
+      [:arcana, :graph_store, :search],
+      %{entity_count: length(entity_names)},
+      fn ->
+        results = dispatch(:search, backend, [entity_names, collection_ids], backend_opts, opts)
+        {results, %{backend: backend, result_count: length(results)}}
+      end
+    )
   end
 
   @doc """
@@ -272,7 +308,15 @@ defmodule Arcana.Graph.GraphStore do
   """
   def delete_by_chunks(chunk_ids, opts \\ []) do
     {backend, backend_opts, opts} = extract_backend(opts)
-    dispatch(:delete_by_chunks, backend, [chunk_ids], backend_opts, opts)
+
+    :telemetry.span(
+      [:arcana, :graph_store, :delete_by_chunks],
+      %{chunk_count: length(chunk_ids)},
+      fn ->
+        result = dispatch(:delete_by_chunks, backend, [chunk_ids], backend_opts, opts)
+        {result, %{backend: backend}}
+      end
+    )
   end
 
   @doc """
@@ -280,7 +324,15 @@ defmodule Arcana.Graph.GraphStore do
   """
   def delete_by_collection(collection_id, opts \\ []) do
     {backend, backend_opts, opts} = extract_backend(opts)
-    dispatch(:delete_by_collection, backend, [collection_id], backend_opts, opts)
+
+    :telemetry.span(
+      [:arcana, :graph_store, :delete_by_collection],
+      %{collection_id: collection_id},
+      fn ->
+        result = dispatch(:delete_by_collection, backend, [collection_id], backend_opts, opts)
+        {result, %{backend: backend}}
+      end
+    )
   end
 
   @doc """

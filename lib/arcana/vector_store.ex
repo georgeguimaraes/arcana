@@ -148,7 +148,11 @@ defmodule Arcana.VectorStore do
   """
   def store(collection, id, embedding, metadata, opts \\ []) do
     {backend, backend_opts, opts} = extract_backend(opts)
-    dispatch(:store, backend, [collection, id, embedding, metadata], backend_opts, opts)
+
+    :telemetry.span([:arcana, :vector_store, :store], %{collection: collection, id: id}, fn ->
+      result = dispatch(:store, backend, [collection, id, embedding, metadata], backend_opts, opts)
+      {result, %{backend: backend}}
+    end)
   end
 
   @doc """
@@ -172,7 +176,16 @@ defmodule Arcana.VectorStore do
   """
   def search(collection, query_embedding, opts \\ []) do
     {backend, backend_opts, opts} = extract_backend(opts)
-    dispatch(:search, backend, [collection, query_embedding], backend_opts, opts)
+    limit = Keyword.get(opts, :limit, 10)
+
+    :telemetry.span(
+      [:arcana, :vector_store, :search],
+      %{collection: collection, limit: limit},
+      fn ->
+        results = dispatch(:search, backend, [collection, query_embedding], backend_opts, opts)
+        {results, %{backend: backend, result_count: length(results)}}
+      end
+    )
   end
 
   @doc """
@@ -196,7 +209,16 @@ defmodule Arcana.VectorStore do
   """
   def search_text(collection, query_text, opts \\ []) do
     {backend, backend_opts, opts} = extract_backend(opts)
-    dispatch(:search_text, backend, [collection, query_text], backend_opts, opts)
+    limit = Keyword.get(opts, :limit, 10)
+
+    :telemetry.span(
+      [:arcana, :vector_store, :search_text],
+      %{collection: collection, query: query_text, limit: limit},
+      fn ->
+        results = dispatch(:search_text, backend, [collection, query_text], backend_opts, opts)
+        {results, %{backend: backend, result_count: length(results)}}
+      end
+    )
   end
 
   @doc """
@@ -209,7 +231,11 @@ defmodule Arcana.VectorStore do
   """
   def delete(collection, id, opts \\ []) do
     {backend, backend_opts, opts} = extract_backend(opts)
-    dispatch(:delete, backend, [collection, id], backend_opts, opts)
+
+    :telemetry.span([:arcana, :vector_store, :delete], %{collection: collection, id: id}, fn ->
+      result = dispatch(:delete, backend, [collection, id], backend_opts, opts)
+      {result, %{backend: backend}}
+    end)
   end
 
   @doc """
@@ -222,7 +248,11 @@ defmodule Arcana.VectorStore do
   """
   def clear(collection, opts \\ []) do
     {backend, backend_opts, opts} = extract_backend(opts)
-    dispatch(:clear, backend, [collection], backend_opts, opts)
+
+    :telemetry.span([:arcana, :vector_store, :clear], %{collection: collection}, fn ->
+      result = dispatch(:clear, backend, [collection], backend_opts, opts)
+      {result, %{backend: backend}}
+    end)
   end
 
   # Extract backend and its options from opts

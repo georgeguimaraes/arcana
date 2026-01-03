@@ -168,6 +168,98 @@ defmodule Arcana.Telemetry do
     * Measurement: `%{duration: integer}`
     * Metadata: `%{summary_length: integer}`
 
+  ### VectorStore Events
+
+  * `[:arcana, :vector_store, :store, :start]` - Emitted when storing a vector.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{collection: String.t(), id: String.t()}`
+
+  * `[:arcana, :vector_store, :store, :stop]` - Emitted when vector storage completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{backend: atom()}`
+
+  * `[:arcana, :vector_store, :search, :start]` - Emitted when vector search begins.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{collection: String.t(), limit: integer}`
+
+  * `[:arcana, :vector_store, :search, :stop]` - Emitted when vector search completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{backend: atom(), result_count: integer}`
+
+  * `[:arcana, :vector_store, :search_text, :start]` - Emitted when fulltext search begins.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{collection: String.t(), query: String.t(), limit: integer}`
+
+  * `[:arcana, :vector_store, :search_text, :stop]` - Emitted when fulltext search completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{backend: atom(), result_count: integer}`
+
+  * `[:arcana, :vector_store, :delete, :start]` - Emitted when deleting a vector.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{collection: String.t(), id: String.t()}`
+
+  * `[:arcana, :vector_store, :delete, :stop]` - Emitted when vector deletion completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{backend: atom()}`
+
+  * `[:arcana, :vector_store, :clear, :start]` - Emitted when clearing a collection.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{collection: String.t()}`
+
+  * `[:arcana, :vector_store, :clear, :stop]` - Emitted when collection clearing completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{backend: atom()}`
+
+  ### GraphStore Events
+
+  * `[:arcana, :graph_store, :persist_entities, :start]` - Emitted when persisting entities.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{collection_id: String.t(), entity_count: integer}`
+
+  * `[:arcana, :graph_store, :persist_entities, :stop]` - Emitted when entity persistence completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{backend: atom()}`
+
+  * `[:arcana, :graph_store, :persist_relationships, :start]` - Emitted when persisting relationships.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{relationship_count: integer}`
+
+  * `[:arcana, :graph_store, :persist_relationships, :stop]` - Emitted when relationship persistence completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{backend: atom()}`
+
+  * `[:arcana, :graph_store, :persist_mentions, :start]` - Emitted when persisting mentions.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{mention_count: integer}`
+
+  * `[:arcana, :graph_store, :persist_mentions, :stop]` - Emitted when mention persistence completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{backend: atom()}`
+
+  * `[:arcana, :graph_store, :search, :start]` - Emitted when searching graph store.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{entity_count: integer}`
+
+  * `[:arcana, :graph_store, :search, :stop]` - Emitted when graph search completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{backend: atom(), result_count: integer}`
+
+  * `[:arcana, :graph_store, :delete_by_chunks, :start]` - Emitted when deleting by chunks.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{chunk_count: integer}`
+
+  * `[:arcana, :graph_store, :delete_by_chunks, :stop]` - Emitted when chunk deletion completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{backend: atom()}`
+
+  * `[:arcana, :graph_store, :delete_by_collection, :start]` - Emitted when deleting by collection.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{collection_id: String.t()}`
+
+  * `[:arcana, :graph_store, :delete_by_collection, :stop]` - Emitted when collection deletion completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{backend: atom()}`
+
   ## Quick Start with Built-in Logger
 
   For quick setup, use the built-in logger:
