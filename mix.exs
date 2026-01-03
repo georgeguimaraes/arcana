@@ -73,8 +73,8 @@ defmodule Arcana.MixProject do
       {:pgvector, "~> 0.3"},
       {:bumblebee, "~> 0.6"},
       {:nx, "~> 0.9"},
-      {:exla, "~> 0.9", only: :test},
-      {:emlx, "~> 0.2", only: :test},
+      {:exla, "~> 0.10", optional: true},
+      {:emlx, "~> 0.2", optional: true},
       {:text_chunker, "~> 0.3"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
@@ -92,7 +92,10 @@ defmodule Arcana.MixProject do
       {:req_llm, "~> 1.2"},
 
       # Optional: In-memory vector store with HNSW
-      {:hnswlib, "~> 0.1", optional: true}
+      {:hnswlib, "~> 0.1", optional: true},
+
+      # Community detection for GraphRAG
+      {:ex_leiden, "~> 0.5", optional: true}
     ]
   end
 end

@@ -108,6 +108,66 @@ defmodule Arcana.Telemetry do
   * `[:arcana, :agent, :self_correct, :*]` - Self-correction iteration.
     * Stop metadata: `%{attempt: integer}`
 
+  ### GraphRAG Events
+
+  When using GraphRAG features (`graph: true`), these events are emitted:
+
+  * `[:arcana, :graph, :build, :start]` - Emitted when graph building begins during ingest.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{chunk_count: integer, collection: String.t()}`
+
+  * `[:arcana, :graph, :build, :stop]` - Emitted when graph building completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{entity_count: integer, relationship_count: integer}`
+
+  * `[:arcana, :graph, :build, :exception]` - Emitted when graph building fails.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{kind: atom(), reason: term(), stacktrace: list()}`
+
+  * `[:arcana, :graph, :search, :start]` - Emitted when graph-enhanced search begins.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{query: String.t(), entity_count: integer}`
+
+  * `[:arcana, :graph, :search, :stop]` - Emitted when graph-enhanced search completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{graph_result_count: integer, combined_count: integer}`
+
+  * `[:arcana, :graph, :search, :exception]` - Emitted when graph-enhanced search fails.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{kind: atom(), reason: term(), stacktrace: list()}`
+
+  * `[:arcana, :graph, :ner, :start]` - Emitted when NER entity extraction begins.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{text: String.t()}`
+
+  * `[:arcana, :graph, :ner, :stop]` - Emitted when NER entity extraction completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{entity_count: integer}`
+
+  * `[:arcana, :graph, :relationship_extraction, :start]` - Emitted when relationship extraction begins.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{text: String.t()}`
+
+  * `[:arcana, :graph, :relationship_extraction, :stop]` - Emitted when relationship extraction completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{relationship_count: integer}`
+
+  * `[:arcana, :graph, :community_detection, :start]` - Emitted when community detection begins.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{entity_count: integer}`
+
+  * `[:arcana, :graph, :community_detection, :stop]` - Emitted when community detection completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{community_count: integer}`
+
+  * `[:arcana, :graph, :community_summary, :start]` - Emitted when community summarization begins.
+    * Measurement: `%{system_time: integer}`
+    * Metadata: `%{entity_count: integer}`
+
+  * `[:arcana, :graph, :community_summary, :stop]` - Emitted when community summarization completes.
+    * Measurement: `%{duration: integer}`
+    * Metadata: `%{summary_length: integer}`
+
   ## Quick Start with Built-in Logger
 
   For quick setup, use the built-in logger:

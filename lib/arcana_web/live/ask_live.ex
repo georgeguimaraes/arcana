@@ -4,7 +4,10 @@ defmodule ArcanaWeb.AskLive do
   """
   use Phoenix.LiveView
 
+  import Ecto.Query
   import ArcanaWeb.DashboardComponents
+
+  alias Arcana.Graph.Entity
 
   @impl true
   def mount(_params, session, socket) do
@@ -20,7 +23,8 @@ defmodule ArcanaWeb.AskLive do
        ask_context: nil,
        ask_error: nil,
        stats: nil,
-       collections: []
+       collections: [],
+       graph_context_expanded: true
      )}
   end
 
@@ -34,7 +38,30 @@ defmodule ArcanaWeb.AskLive do
 
     socket
     |> assign(stats: load_stats(repo))
-    |> assign(collections: load_collections(repo))
+    |> assign(collections: load_collections_with_graph_status(repo))
+  end
+
+  defp load_collections_with_graph_status(repo) do
+    collections = load_collections(repo)
+
+    # Get entity counts per collection
+    entity_counts =
+      repo.all(
+        from(e in Entity,
+          group_by: e.collection_id,
+          select: {e.collection_id, count(e.id)}
+        )
+      )
+      |> Map.new()
+
+    Enum.map(collections, fn c ->
+      entity_count = Map.get(entity_counts, c.id, 0)
+      Map.put(c, :graph_enabled, entity_count > 0)
+    end)
+  end
+
+  defp any_graph_enabled?(collections) do
+    Enum.any?(collections, & &1[:graph_enabled])
   end
 
   @impl true
@@ -65,6 +92,10 @@ defmodule ArcanaWeb.AskLive do
 
   def handle_event("ask_switch_mode", %{"mode" => mode}, socket) do
     {:noreply, assign(socket, ask_mode: String.to_existing_atom(mode))}
+  end
+
+  def handle_event("toggle_graph_context", _params, socket) do
+    {:noreply, assign(socket, graph_context_expanded: !socket.assigns.graph_context_expanded)}
   end
 
   defp start_ask_task(socket, params, llm, question) do
@@ -276,6 +307,16 @@ defmodule ArcanaWeb.AskLive do
             ><%= @ask_question %></textarea>
           </div>
 
+          <%= if any_graph_enabled?(@collections) do %>
+            <div class="arcana-graph-toggle">
+              <label class="arcana-checkbox-label">
+                <input type="checkbox" name="graph_enhanced" value="true" disabled={@ask_running} />
+                <span>Graph-Enhanced</span>
+                <small>Uses entity/relationship context for better retrieval</small>
+              </label>
+            </div>
+          <% end %>
+
           <div class="arcana-ask-collections">
             <label>Collections</label>
             <div class="arcana-collection-checkboxes">
@@ -387,6 +428,14 @@ defmodule ArcanaWeb.AskLive do
               </div>
             <% end %>
 
+            <%= if Map.get(@ask_context, :graph_enhanced) do %>
+              <.graph_context_section
+                matched_entities={Map.get(@ask_context, :matched_entities, [])}
+                matched_relationships={Map.get(@ask_context, :matched_relationships, [])}
+                expanded={@graph_context_expanded}
+              />
+            <% end %>
+
             <%= if @ask_context.results && length(@ask_context.results) > 0 do %>
               <% all_chunks = @ask_context.results %>
               <div class="arcana-ask-section">
@@ -397,6 +446,11 @@ defmodule ArcanaWeb.AskLive do
                       <div class="arcana-result-header">
                         <div class="arcana-result-score">
                           <span class="score-value"><%= Float.round(chunk.score, 4) %></span>
+                          <%= if Map.get(chunk, :graph_sources) && length(chunk.graph_sources) > 0 do %>
+                            <span class="arcana-graph-attribution">
+                              via: <%= Enum.join(chunk.graph_sources, ", ") %>
+                            </span>
+                          <% end %>
                         </div>
                         <div class="arcana-result-meta">
                           <code><%= chunk.document_id %></code>
@@ -415,6 +469,61 @@ defmodule ArcanaWeb.AskLive do
         <% end %>
       </div>
     </.dashboard_layout>
+    """
+  end
+
+  defp graph_context_section(assigns) do
+    ~H"""
+    <div class="arcana-graph-context">
+      <div class="arcana-graph-context-header">
+        <h4>Graph Context</h4>
+        <button type="button" phx-click="toggle_graph_context" class="arcana-toggle-btn">
+          <%= if @expanded, do: "▼", else: "▶" %>
+        </button>
+      </div>
+
+      <%= if @expanded do %>
+        <div class="arcana-graph-context-content">
+          <%= if length(@matched_entities) == 0 and length(@matched_relationships) == 0 do %>
+            <p class="arcana-no-matches">No entity matches — used vector search only</p>
+          <% else %>
+            <%= if length(@matched_entities) > 0 do %>
+              <div class="arcana-matched-entities">
+                <h5>Matched Entities</h5>
+                <ul>
+                  <%= for entity <- @matched_entities do %>
+                    <li>
+                      <span class="arcana-entity-name"><%= entity.name %></span>
+                      <span class="arcana-entity-type"><%= entity.type %></span>
+                      <%= if Map.get(entity, :id) do %>
+                        <a href={"/arcana/graph?entity=#{entity.id}"} class="arcana-view-in-graph">
+                          View in Graph
+                        </a>
+                      <% end %>
+                    </li>
+                  <% end %>
+                </ul>
+              </div>
+            <% end %>
+
+            <%= if length(@matched_relationships) > 0 do %>
+              <div class="arcana-matched-relationships">
+                <h5>Key Relationships</h5>
+                <ul>
+                  <%= for rel <- @matched_relationships do %>
+                    <li>
+                      <span class="arcana-rel-source"><%= rel.source %></span>
+                      <span class="arcana-rel-type">—<%= rel.type %>→</span>
+                      <span class="arcana-rel-target"><%= rel.target %></span>
+                    </li>
+                  <% end %>
+                </ul>
+              </div>
+            <% end %>
+          <% end %>
+        </div>
+      <% end %>
+    </div>
     """
   end
 end

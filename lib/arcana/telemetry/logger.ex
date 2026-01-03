@@ -69,7 +69,14 @@ defmodule Arcana.Telemetry.Logger do
     [:arcana, :agent, :search, :stop],
     [:arcana, :agent, :rerank, :stop],
     [:arcana, :agent, :answer, :stop],
-    [:arcana, :agent, :self_correct, :stop]
+    [:arcana, :agent, :self_correct, :stop],
+    # GraphRAG operations
+    [:arcana, :graph, :build, :stop],
+    [:arcana, :graph, :search, :stop],
+    [:arcana, :graph, :ner, :stop],
+    [:arcana, :graph, :relationship_extraction, :stop],
+    [:arcana, :graph, :community_detection, :stop],
+    [:arcana, :graph, :community_summary, :stop]
   ]
 
   @doc """
@@ -236,6 +243,32 @@ defmodule Arcana.Telemetry.Logger do
 
   defp extract_details("agent.self_correct", meta) do
     "(attempt #{meta[:attempt] || "?"})"
+  end
+
+  # GraphRAG operations
+
+  defp extract_details("graph.build", meta) do
+    "(#{meta[:entity_count] || "?"} entities, #{meta[:relationship_count] || "?"} relationships)"
+  end
+
+  defp extract_details("graph.search", meta) do
+    "(#{meta[:graph_result_count] || "?"} graph results, #{meta[:combined_count] || "?"} combined)"
+  end
+
+  defp extract_details("graph.ner", meta) do
+    "(#{meta[:entity_count] || "?"} entities)"
+  end
+
+  defp extract_details("graph.relationship_extraction", meta) do
+    "(#{meta[:relationship_count] || "?"} relationships)"
+  end
+
+  defp extract_details("graph.community_detection", meta) do
+    "(#{meta[:community_count] || "?"} communities)"
+  end
+
+  defp extract_details("graph.community_summary", meta) do
+    "(#{meta[:summary_length] || "?"} chars)"
   end
 
   defp extract_details(_event, _meta), do: ""

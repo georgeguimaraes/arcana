@@ -13,6 +13,7 @@ Embeddable RAG library for Elixir/Phoenix. Add vector search, document retrieval
 - **Agentic RAG** - Pipeline with query expansion, decomposition, re-ranking, and self-correction
 - **Pluggable components** - Replace any pipeline step with custom implementations
 - **Hybrid search** - Vector, full-text, or combined with Reciprocal Rank Fusion
+- **GraphRAG** - Optional knowledge graph with entity extraction, community detection, and fusion search
 - **Multiple backends** - pgvector (default) or in-memory HNSWLib
 - **Configurable embeddings** - Local Bumblebee, OpenAI, or custom providers
 - **File ingestion** - Text, Markdown, and PDF support
@@ -278,6 +279,9 @@ See the [LLM Integration Guide](guides/llm-integration.md) for detailed examples
 
 # Ingest from file (supports .txt, .md, .pdf)
 {:ok, document} = Arcana.ingest_file("path/to/document.pdf", repo: MyApp.Repo)
+
+# With GraphRAG (extracts entities and relationships)
+{:ok, document} = Arcana.ingest(content, repo: MyApp.Repo, graph: true)
 ```
 
 ### Search
@@ -303,9 +307,32 @@ See the [LLM Integration Guide](guides/llm-integration.md) for detailed examples
   limit: 5,
   collection: "products"
 )
+
+# With GraphRAG (combines vector + graph search with RRF)
+{:ok, results} = Arcana.search("query", repo: MyApp.Repo, graph: true)
 ```
 
 See the [Search Algorithms Guide](guides/search-algorithms.md) for details on search modes.
+
+### GraphRAG
+
+GraphRAG enhances retrieval by building a knowledge graph from your documents. Entities (people, organizations, technologies) and their relationships are extracted during ingestion, then used alongside vector search for more contextual results.
+
+```elixir
+# Install GraphRAG tables
+mix arcana.graph.install
+mix ecto.migrate
+
+# Ingest with graph building
+{:ok, document} = Arcana.ingest(content, repo: MyApp.Repo, graph: true)
+
+# Search combines vector + graph traversal with Reciprocal Rank Fusion
+{:ok, results} = Arcana.search("Who leads OpenAI?", repo: MyApp.Repo, graph: true)
+```
+
+Components are pluggable: swap entity extractors (NER, LLM), relationship extractors, community detectors (Leiden), and summarizers with your own implementations.
+
+See the [GraphRAG Guide](guides/graphrag.md) for entity extraction, community detection, and fusion search.
 
 ### Ask (Simple RAG)
 
@@ -449,6 +476,7 @@ See the [Agentic RAG Guide](guides/agentic-rag.md) for detailed examples.
 
 - [Getting Started](guides/getting-started.md) - Installation, embedding models, basic usage
 - [Agentic RAG](guides/agentic-rag.md) - Build sophisticated RAG pipelines
+- [GraphRAG](guides/graphrag.md) - Knowledge graphs with entity extraction and community detection
 - [LLM Integration](guides/llm-integration.md) - Connect to OpenAI, Anthropic, or custom LLMs
 - [Search Algorithms](guides/search-algorithms.md) - Semantic, fulltext, and hybrid search
 - [Re-ranking](guides/reranking.md) - Improve retrieval quality
@@ -477,7 +505,7 @@ See the [Agentic RAG Guide](guides/agentic-rag.md) for detailed examples.
   - [ ] ChromaDB
 - [ ] Async ingestion with Oban
 - [ ] HyDE (Hypothetical Document Embeddings)
-- [ ] GraphRAG (knowledge graph + community summaries)
+- [x] GraphRAG (knowledge graph + community summaries)
 
 ## Development
 

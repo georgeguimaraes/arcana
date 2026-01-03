@@ -1350,6 +1350,610 @@ defmodule ArcanaWeb.Assets do
     font-size: 0.75rem;
     font-weight: 500;
   }
+
+  /* Graph Tab Styles */
+  .arcana-graph-subtabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .arcana-subtab-btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid #d1d5db;
+    background: white;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .arcana-subtab-btn:hover {
+    border-color: #7c3aed;
+    color: #7c3aed;
+  }
+
+  .arcana-subtab-btn.active {
+    background: #7c3aed;
+    border-color: #7c3aed;
+    color: white;
+  }
+
+  .arcana-graph-table {
+    margin-top: 1rem;
+  }
+
+  /* Entity type badges */
+  .arcana-entity-type-badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: lowercase;
+  }
+
+  .arcana-entity-type-badge.person {
+    background: #dbeafe;
+    color: #1e40af;
+  }
+
+  .arcana-entity-type-badge.organization {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .arcana-entity-type-badge.technology {
+    background: #fce7f3;
+    color: #9d174d;
+  }
+
+  .arcana-entity-type-badge.concept {
+    background: #fef3c7;
+    color: #92400e;
+  }
+
+  .arcana-entity-type-badge.location {
+    background: #e0e7ff;
+    color: #3730a3;
+  }
+
+  .arcana-entity-type-badge.event {
+    background: #f3e8ff;
+    color: #6b21a8;
+  }
+
+  /* Relationship strength meter */
+  .arcana-strength-meter {
+    display: inline-flex;
+    gap: 2px;
+    align-items: center;
+  }
+
+  .arcana-strength-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #e5e7eb;
+  }
+
+  .arcana-strength-dot.filled {
+    background: #7c3aed;
+  }
+
+  /* Community status indicators */
+  .arcana-status-ready {
+    color: #16a34a;
+  }
+
+  .arcana-status-pending {
+    color: #d97706;
+  }
+
+  .arcana-status-empty {
+    color: #9ca3af;
+  }
+
+  .arcana-no-summary {
+    color: #9ca3af;
+    font-style: italic;
+  }
+
+  /* Graph empty state */
+  .arcana-empty-state {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    padding: 2rem;
+    text-align: center;
+  }
+
+  .arcana-empty-state h3 {
+    margin: 0 0 1rem 0;
+    color: #374151;
+  }
+
+  .arcana-empty-state p {
+    color: #6b7280;
+    margin: 0.5rem 0;
+  }
+
+  .arcana-empty-state pre {
+    background: #1f2937;
+    color: #e5e7eb;
+    padding: 0.75rem 1rem;
+    border-radius: 0.375rem;
+    display: inline-block;
+    margin: 1rem 0;
+    font-size: 0.875rem;
+  }
+
+  .arcana-empty-state code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  }
+
+  /* Entity detail panel */
+  .arcana-entity-row {
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+
+  .arcana-entity-row.selected {
+    background: #ede9fe;
+  }
+
+  .arcana-entity-detail {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    background: #faf5ff;
+    border: 1px solid #e9d5ff;
+    border-radius: 0.5rem;
+  }
+
+  .arcana-entity-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .arcana-entity-detail-header h3 {
+    margin: 0;
+    font-size: 1.125rem;
+    color: #1f2937;
+  }
+
+  .arcana-entity-detail-close {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    font-size: 1.5rem;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .arcana-entity-detail-close:hover {
+    color: #374151;
+  }
+
+  .arcana-entity-description {
+    color: #4b5563;
+    margin: 0 0 1rem 0;
+  }
+
+  .arcana-entity-relationships h4,
+  .arcana-entity-mentions h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .arcana-entity-relationships ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .arcana-entity-relationships li {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .arcana-entity-relationships li:last-child {
+    border-bottom: none;
+  }
+
+  .arcana-mention-preview {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .arcana-mention-preview p {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    color: #374151;
+  }
+
+  .arcana-view-in-docs {
+    font-size: 0.75rem;
+    color: #7c3aed;
+    text-decoration: none;
+  }
+
+  .arcana-view-in-docs:hover {
+    text-decoration: underline;
+  }
+
+  /* Relationship detail panel */
+  .arcana-relationship-row {
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+
+  .arcana-relationship-row.selected {
+    background: #ede9fe;
+  }
+
+  .arcana-relationship-detail {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    background: #faf5ff;
+    border: 1px solid #e9d5ff;
+    border-radius: 0.5rem;
+  }
+
+  .arcana-relationship-detail-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+  }
+
+  .arcana-relationship-visual {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1rem;
+  }
+
+  .arcana-relationship-source,
+  .arcana-relationship-target {
+    font-weight: 600;
+    color: #1f2937;
+  }
+
+  .arcana-relationship-arrow {
+    color: #9ca3af;
+  }
+
+  .arcana-relationship-type {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    font-size: 0.875rem;
+    background: #ede9fe;
+    color: #6d28d9;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+  }
+
+  .arcana-relationship-detail-close {
+    background: transparent;
+    border: none;
+    font-size: 1.5rem;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .arcana-relationship-detail-close:hover {
+    color: #374151;
+  }
+
+  .arcana-relationship-strength {
+    margin-bottom: 0.75rem;
+    color: #4b5563;
+  }
+
+  .arcana-relationship-description {
+    color: #4b5563;
+    margin: 0;
+  }
+
+  .arcana-empty-hint {
+    font-size: 0.8125rem;
+  }
+
+  /* Community detail panel */
+  .arcana-community-row {
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+
+  .arcana-community-row.selected {
+    background: #ede9fe;
+  }
+
+  .arcana-community-detail {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    background: #faf5ff;
+    border: 1px solid #e9d5ff;
+    border-radius: 0.5rem;
+  }
+
+  .arcana-community-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .arcana-community-detail-header h3 {
+    margin: 0;
+    font-size: 1.125rem;
+    color: #1f2937;
+  }
+
+  .arcana-community-level-badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background: #ddd6fe;
+    color: #5b21b6;
+  }
+
+  .arcana-community-detail-close {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    font-size: 1.5rem;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .arcana-community-detail-close:hover {
+    color: #374151;
+  }
+
+  .arcana-community-summary,
+  .arcana-community-entities,
+  .arcana-community-relationships {
+    margin-bottom: 1rem;
+  }
+
+  .arcana-community-summary h4,
+  .arcana-community-entities h4,
+  .arcana-community-relationships h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .arcana-community-summary p {
+    margin: 0;
+    color: #374151;
+    line-height: 1.5;
+  }
+
+  .arcana-community-entities ul,
+  .arcana-community-relationships ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .arcana-community-entities li,
+  .arcana-community-relationships li {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .arcana-community-entities li:last-child,
+  .arcana-community-relationships li:last-child {
+    border-bottom: none;
+  }
+
+  .arcana-community-no-summary {
+    color: #9ca3af;
+    font-style: italic;
+  }
+
+  /* Collection selector */
+  .arcana-collection-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .arcana-collection-selector label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #374151;
+  }
+
+  .arcana-collection-selector select {
+    padding: 0.5rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    min-width: 200px;
+  }
+
+  .arcana-collection-selector select:focus {
+    outline: none;
+    border-color: #7c3aed;
+    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+  }
+
+  /* Entity/Relationship/Community views */
+  .arcana-entities-view,
+  .arcana-relationships-view,
+  .arcana-communities-view {
+    margin-top: 1rem;
+  }
+
+  /* Graph-Enhanced toggle */
+  .arcana-graph-toggle {
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    background: linear-gradient(to right, #f3e8ff, #faf5ff);
+    border: 1px solid #e9d5ff;
+    border-radius: 0.5rem;
+  }
+
+  .arcana-graph-toggle .arcana-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+
+  .arcana-graph-toggle .arcana-checkbox-label span {
+    font-weight: 500;
+    color: #7c3aed;
+  }
+
+  .arcana-graph-toggle .arcana-checkbox-label small {
+    color: #9333ea;
+    font-size: 0.75rem;
+    margin-left: 0.25rem;
+  }
+
+  /* Graph Context section */
+  .arcana-graph-context {
+    margin: 1.5rem 0;
+    padding: 1rem;
+    background: linear-gradient(to right, #faf5ff, #f3e8ff);
+    border: 1px solid #e9d5ff;
+    border-radius: 0.5rem;
+  }
+
+  .arcana-graph-context-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
+
+  .arcana-graph-context-header h4 {
+    margin: 0;
+    color: #7c3aed;
+    font-size: 1rem;
+  }
+
+  .arcana-toggle-btn {
+    background: transparent;
+    border: 1px solid #d8b4fe;
+    border-radius: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    color: #7c3aed;
+    font-size: 0.75rem;
+  }
+
+  .arcana-toggle-btn:hover {
+    background: #f3e8ff;
+  }
+
+  .arcana-no-matches {
+    color: #9ca3af;
+    font-style: italic;
+    margin: 0.5rem 0;
+  }
+
+  .arcana-matched-entities,
+  .arcana-matched-relationships {
+    margin-top: 0.75rem;
+  }
+
+  .arcana-matched-entities h5,
+  .arcana-matched-relationships h5 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    color: #6b21a8;
+  }
+
+  .arcana-matched-entities ul,
+  .arcana-matched-relationships ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .arcana-matched-entities li,
+  .arcana-matched-relationships li {
+    padding: 0.375rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-bottom: 1px solid #f3e8ff;
+  }
+
+  .arcana-matched-entities li:last-child,
+  .arcana-matched-relationships li:last-child {
+    border-bottom: none;
+  }
+
+  .arcana-entity-name {
+    font-weight: 500;
+    color: #1f2937;
+  }
+
+  .arcana-entity-type {
+    font-size: 0.75rem;
+    padding: 0.125rem 0.5rem;
+    background: #e9d5ff;
+    color: #7c3aed;
+    border-radius: 9999px;
+  }
+
+  .arcana-view-in-graph {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: #7c3aed;
+    text-decoration: none;
+  }
+
+  .arcana-view-in-graph:hover {
+    text-decoration: underline;
+  }
+
+  .arcana-rel-source,
+  .arcana-rel-target {
+    color: #1f2937;
+  }
+
+  .arcana-rel-type {
+    font-size: 0.75rem;
+    color: #7c3aed;
+    font-family: monospace;
+  }
+
+  /* Graph attribution in chunks */
+  .arcana-graph-attribution {
+    display: block;
+    font-size: 0.75rem;
+    color: #7c3aed;
+    margin-top: 0.25rem;
+    font-style: italic;
+  }
   """
   @css_hash :crypto.hash(:md5, @css) |> Base.encode16(case: :lower) |> binary_part(0, 8)
 
