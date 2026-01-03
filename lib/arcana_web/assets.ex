@@ -455,6 +455,63 @@ defmodule ArcanaWeb.Assets do
     overflow-y: auto;
   }
 
+  /* Info page grid layout */
+  .arcana-info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .arcana-info-section {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    padding: 1rem;
+  }
+
+  .arcana-info-section h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #7c3aed;
+    margin: 0 0 0.75rem 0;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #f3e8ff;
+  }
+
+  .arcana-info-section .arcana-doc-info {
+    margin-bottom: 0;
+    background: transparent;
+    border: none;
+    padding: 0;
+  }
+
+  .arcana-info-full {
+    grid-column: 1 / -1;
+  }
+
+  .arcana-not-configured {
+    color: #9ca3af;
+  }
+
+  .arcana-status-badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .arcana-status-badge.enabled {
+    background: #d1fae5;
+    color: #065f46;
+  }
+
+  .arcana-status-badge.disabled {
+    background: #f3f4f6;
+    color: #6b7280;
+  }
+
   .arcana-chunks-list {
     display: flex;
     flex-direction: column;

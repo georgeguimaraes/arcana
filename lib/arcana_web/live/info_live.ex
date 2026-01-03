@@ -34,7 +34,10 @@ defmodule ArcanaWeb.InfoLive do
       repo: Application.get_env(:arcana, :repo),
       llm: format_llm_config(Application.get_env(:arcana, :llm)),
       embedding: format_embedding_config(Application.get_env(:arcana, :embedder, :local)),
+      chunker: format_chunker_config(Application.get_env(:arcana, :chunker, :default)),
       reranker: format_reranker_config(Application.get_env(:arcana, :reranker)),
+      vector_store: format_vector_store_config(),
+      graph: format_graph_config(),
       raw: %{
         embedder: Arcana.Config.redact(Application.get_env(:arcana, :embedder, :local)),
         llm: Arcana.Config.redact(Application.get_env(:arcana, :llm)),
@@ -115,6 +118,47 @@ defmodule ArcanaWeb.InfoLive do
   defp format_reranker_config(other),
     do: %{type: :unknown, raw: Arcana.Config.do_redact(other), configured: true}
 
+  defp format_chunker_config(:default), do: %{type: :default, chunk_size: 512, chunk_overlap: 100}
+
+  defp format_chunker_config({:default, opts}) do
+    %{
+      type: :default,
+      chunk_size: Keyword.get(opts, :chunk_size, 512),
+      chunk_overlap: Keyword.get(opts, :chunk_overlap, 100)
+    }
+  end
+
+  defp format_chunker_config(fun) when is_function(fun), do: %{type: :function}
+
+  defp format_chunker_config({module, opts}) when is_atom(module) and is_list(opts) do
+    %{type: :custom, module: module, opts: Arcana.Config.do_redact(opts)}
+  end
+
+  defp format_chunker_config(module) when is_atom(module), do: %{type: :custom, module: module}
+  defp format_chunker_config(_other), do: %{type: :unknown}
+
+  defp format_vector_store_config do
+    store = Application.get_env(:arcana, :vector_store, :pgvector)
+
+    case store do
+      :pgvector -> %{type: :pgvector, description: "PostgreSQL with pgvector extension"}
+      :memory -> %{type: :memory, description: "In-memory vector store"}
+      module when is_atom(module) -> %{type: :custom, module: module}
+      _ -> %{type: :unknown}
+    end
+  end
+
+  defp format_graph_config do
+    config = Arcana.Graph.config()
+
+    %{
+      enabled: config.enabled,
+      community_levels: config.community_levels,
+      resolution: config.resolution,
+      store: Application.get_env(:arcana, :graph_store, :ecto)
+    }
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -125,7 +169,148 @@ defmodule ArcanaWeb.InfoLive do
           View current Arcana configuration including embedding, LLM, and chunking settings.
         </p>
 
-        <div class="arcana-info-section">
+        <div class="arcana-info-grid">
+          <div class="arcana-info-section">
+            <h3>Embedding</h3>
+            <div class="arcana-doc-info">
+              <div class="arcana-doc-field">
+                <label>Type</label>
+                <span><%= @config_info.embedding.type %></span>
+              </div>
+              <%= if @config_info.embedding[:model] do %>
+                <div class="arcana-doc-field">
+                  <label>Model</label>
+                  <span><%= @config_info.embedding.model %></span>
+                </div>
+              <% end %>
+              <%= if @config_info.embedding[:module] do %>
+                <div class="arcana-doc-field">
+                  <label>Module</label>
+                  <code><%= inspect(@config_info.embedding.module) %></code>
+                </div>
+              <% end %>
+            </div>
+          </div>
+
+          <div class="arcana-info-section">
+            <h3>LLM</h3>
+            <div class="arcana-doc-info">
+              <%= if @config_info.llm.configured do %>
+                <div class="arcana-doc-field">
+                  <label>Type</label>
+                  <span><%= @config_info.llm.type %></span>
+                </div>
+                <%= if @config_info.llm[:model] do %>
+                  <div class="arcana-doc-field">
+                    <label>Model</label>
+                    <span><%= @config_info.llm.model %></span>
+                  </div>
+                <% end %>
+              <% else %>
+                <div class="arcana-doc-field">
+                  <label>Status</label>
+                  <span class="arcana-not-configured">Not configured</span>
+                </div>
+              <% end %>
+            </div>
+          </div>
+
+          <div class="arcana-info-section">
+            <h3>Chunker</h3>
+            <div class="arcana-doc-info">
+              <div class="arcana-doc-field">
+                <label>Type</label>
+                <span><%= @config_info.chunker.type %></span>
+              </div>
+              <%= if @config_info.chunker[:chunk_size] do %>
+                <div class="arcana-doc-field">
+                  <label>Chunk Size</label>
+                  <span><%= @config_info.chunker.chunk_size %> tokens</span>
+                </div>
+              <% end %>
+              <%= if @config_info.chunker[:chunk_overlap] do %>
+                <div class="arcana-doc-field">
+                  <label>Overlap</label>
+                  <span><%= @config_info.chunker.chunk_overlap %> tokens</span>
+                </div>
+              <% end %>
+              <%= if @config_info.chunker[:module] do %>
+                <div class="arcana-doc-field">
+                  <label>Module</label>
+                  <code><%= inspect(@config_info.chunker.module) %></code>
+                </div>
+              <% end %>
+            </div>
+          </div>
+
+          <div class="arcana-info-section">
+            <h3>Reranker</h3>
+            <div class="arcana-doc-info">
+              <div class="arcana-doc-field">
+                <label>Module</label>
+                <code><%= inspect(@config_info.reranker[:module] || @config_info.reranker[:type]) %></code>
+              </div>
+              <%= if @config_info.reranker[:opts] do %>
+                <div class="arcana-doc-field">
+                  <label>Options</label>
+                  <span><%= inspect(@config_info.reranker.opts) %></span>
+                </div>
+              <% end %>
+              <div class="arcana-doc-field">
+                <label>Status</label>
+                <span><%= if @config_info.reranker.configured, do: "Configured", else: "Default" %></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="arcana-info-section">
+            <h3>Vector Store</h3>
+            <div class="arcana-doc-info">
+              <div class="arcana-doc-field">
+                <label>Type</label>
+                <span><%= @config_info.vector_store.type %></span>
+              </div>
+              <%= if @config_info.vector_store[:description] do %>
+                <div class="arcana-doc-field">
+                  <label>Description</label>
+                  <span><%= @config_info.vector_store.description %></span>
+                </div>
+              <% end %>
+              <%= if @config_info.vector_store[:module] do %>
+                <div class="arcana-doc-field">
+                  <label>Module</label>
+                  <code><%= inspect(@config_info.vector_store.module) %></code>
+                </div>
+              <% end %>
+            </div>
+          </div>
+
+          <div class="arcana-info-section">
+            <h3>GraphRAG</h3>
+            <div class="arcana-doc-info">
+              <div class="arcana-doc-field">
+                <label>Status</label>
+                <span class={"arcana-status-badge #{if @config_info.graph.enabled, do: "enabled", else: "disabled"}"}>
+                  <%= if @config_info.graph.enabled, do: "Enabled", else: "Disabled" %>
+                </span>
+              </div>
+              <div class="arcana-doc-field">
+                <label>Community Levels</label>
+                <span><%= @config_info.graph.community_levels %></span>
+              </div>
+              <div class="arcana-doc-field">
+                <label>Resolution</label>
+                <span><%= @config_info.graph.resolution %></span>
+              </div>
+              <div class="arcana-doc-field">
+                <label>Store</label>
+                <span><%= @config_info.graph.store %></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="arcana-info-section arcana-info-full">
           <h3>Repository</h3>
           <div class="arcana-doc-info">
             <div class="arcana-doc-field">
@@ -135,72 +320,7 @@ defmodule ArcanaWeb.InfoLive do
           </div>
         </div>
 
-        <div class="arcana-info-section">
-          <h3>Embedding</h3>
-          <div class="arcana-doc-info">
-            <div class="arcana-doc-field">
-              <label>Type</label>
-              <span><%= @config_info.embedding.type %></span>
-            </div>
-            <%= if @config_info.embedding[:model] do %>
-              <div class="arcana-doc-field">
-                <label>Model</label>
-                <span><%= @config_info.embedding.model %></span>
-              </div>
-            <% end %>
-            <%= if @config_info.embedding[:module] do %>
-              <div class="arcana-doc-field">
-                <label>Module</label>
-                <code><%= inspect(@config_info.embedding.module) %></code>
-              </div>
-            <% end %>
-          </div>
-        </div>
-
-        <div class="arcana-info-section">
-          <h3>LLM</h3>
-          <div class="arcana-doc-info">
-            <%= if @config_info.llm.configured do %>
-              <div class="arcana-doc-field">
-                <label>Type</label>
-                <span><%= @config_info.llm.type %></span>
-              </div>
-              <%= if @config_info.llm[:model] do %>
-                <div class="arcana-doc-field">
-                  <label>Model</label>
-                  <span><%= @config_info.llm.model %></span>
-                </div>
-              <% end %>
-            <% else %>
-              <div class="arcana-doc-field">
-                <label>Status</label>
-                <span style="color: #9ca3af;">Not configured</span>
-              </div>
-            <% end %>
-          </div>
-        </div>
-
-        <div class="arcana-info-section">
-          <h3>Reranker</h3>
-          <div class="arcana-doc-info">
-            <div class="arcana-doc-field">
-              <label>Module</label>
-              <code><%= inspect(@config_info.reranker[:module] || @config_info.reranker[:type]) %></code>
-            </div>
-            <%= if @config_info.reranker[:opts] do %>
-              <div class="arcana-doc-field">
-                <label>Options</label>
-                <span><%= inspect(@config_info.reranker.opts) %></span>
-              </div>
-            <% end %>
-            <div class="arcana-doc-field">
-              <label>Status</label>
-              <span><%= if @config_info.reranker.configured, do: "Configured", else: "Default" %></span>
-            </div>
-          </div>
-        </div>
-
-        <div class="arcana-info-section">
+        <div class="arcana-info-section arcana-info-full">
           <h3>Raw Configuration</h3>
           <pre class="arcana-doc-content" style="font-size: 0.75rem;">config :arcana,
     repo: <%= inspect(@config_info.repo) %>,
