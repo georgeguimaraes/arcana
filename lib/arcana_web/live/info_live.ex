@@ -181,6 +181,18 @@ defmodule ArcanaWeb.InfoLive do
           nil
       end
 
+    community_detector =
+      cond do
+        config[:community_detector] ->
+          format_community_detector(config[:community_detector])
+
+        graph_opts[:community_detector] ->
+          format_community_detector(graph_opts[:community_detector])
+
+        true ->
+          %{type: :leiden, description: "Leiden (default)"}
+      end
+
     %{
       enabled: config.enabled,
       community_levels: config.community_levels,
@@ -188,7 +200,8 @@ defmodule ArcanaWeb.InfoLive do
       store: Application.get_env(:arcana, :graph_store, :ecto),
       extractor: extractor,
       entity_extractor: entity_extractor,
-      relationship_extractor: relationship_extractor
+      relationship_extractor: relationship_extractor,
+      community_detector: community_detector
     }
   end
 
@@ -207,6 +220,21 @@ defmodule ArcanaWeb.InfoLive do
   end
 
   defp format_extractor(_other), do: %{type: :unknown}
+
+  defp format_community_detector(nil), do: nil
+  defp format_community_detector(:leiden), do: %{type: :leiden, description: "Leiden"}
+
+  defp format_community_detector({module, opts}) when is_atom(module) and is_list(opts) do
+    module_name = module |> Module.split() |> List.last()
+    %{type: :custom, module: module_name, opts: Arcana.Config.do_redact(opts)}
+  end
+
+  defp format_community_detector(module) when is_atom(module) do
+    module_name = module |> Module.split() |> List.last()
+    %{type: :module, module: module_name}
+  end
+
+  defp format_community_detector(_other), do: %{type: :unknown}
 
   defp raw_config_section(assigns) do
     config_text = """
@@ -399,6 +427,12 @@ defmodule ArcanaWeb.InfoLive do
                 <label>Store</label>
                 <span><%= @config_info.graph.store %></span>
               </div>
+              <%= if @config_info.graph.community_detector do %>
+                <div class="arcana-doc-field">
+                  <label>Community Detector</label>
+                  <span><%= @config_info.graph.community_detector[:module] || @config_info.graph.community_detector[:description] || @config_info.graph.community_detector[:type] %></span>
+                </div>
+              <% end %>
             </div>
           </div>
 

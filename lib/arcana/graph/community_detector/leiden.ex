@@ -25,6 +25,8 @@ if Code.ensure_loaded?(ExLeiden) do
     @impl true
     def detect([], _relationships, _opts), do: {:ok, []}
 
+    require Logger
+
     def detect(entities, relationships, opts) do
       resolution = Keyword.get(opts, :resolution, 1.0)
       max_level = Keyword.get(opts, :max_level, 3)
@@ -32,17 +34,32 @@ if Code.ensure_loaded?(ExLeiden) do
       entity_ids = Enum.map(entities, & &1.id)
       edges = to_edges(entity_ids, relationships)
 
+      Logger.info(
+        "[Leiden] Starting: #{length(entity_ids)} entities, #{length(edges)} edges, " <>
+          "resolution=#{resolution}, max_level=#{max_level}"
+      )
+
       :telemetry.span(
         [:arcana, :graph, :community_detection],
         %{entity_count: length(entities)},
         fn ->
+          start_time = System.monotonic_time(:millisecond)
+
           result =
             case ExLeiden.call({entity_ids, edges}, resolution: resolution, max_level: max_level) do
               {:ok, %{source: source, result: level_results}} ->
+                elapsed = System.monotonic_time(:millisecond) - start_time
+
+                Logger.info(
+                  "[Leiden] Completed in #{elapsed}ms: #{map_size(level_results)} levels"
+                )
+
                 communities = format_communities(level_results, source)
                 {:ok, communities}
 
               {:error, reason} ->
+                elapsed = System.monotonic_time(:millisecond) - start_time
+                Logger.error("[Leiden] Failed after #{elapsed}ms: #{inspect(reason)}")
                 {:error, reason}
             end
 
