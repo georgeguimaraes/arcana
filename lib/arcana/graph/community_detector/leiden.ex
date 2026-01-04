@@ -17,6 +17,8 @@ if Code.ensure_loaded?(ExLeiden) do
       - `:resolution` - Controls community granularity (default: 1.0)
         Higher values produce smaller communities
       - `:max_level` - Maximum hierarchy levels (default: 3)
+      - `:theta` - Convergence threshold (default: 0.01)
+        Higher values converge faster but may be less precise
 
     """
 
@@ -30,13 +32,14 @@ if Code.ensure_loaded?(ExLeiden) do
     def detect(entities, relationships, opts) do
       resolution = Keyword.get(opts, :resolution, 1.0)
       max_level = Keyword.get(opts, :max_level, 3)
+      theta = Keyword.get(opts, :theta, 0.01)
 
       entity_ids = Enum.map(entities, & &1.id)
       edges = to_edges(entity_ids, relationships)
 
       Logger.info(
         "[Leiden] Starting: #{length(entity_ids)} entities, #{length(edges)} edges, " <>
-          "resolution=#{resolution}, max_level=#{max_level}"
+          "resolution=#{resolution}, max_level=#{max_level}, theta=#{theta}"
       )
 
       :telemetry.span(
@@ -45,8 +48,10 @@ if Code.ensure_loaded?(ExLeiden) do
         fn ->
           start_time = System.monotonic_time(:millisecond)
 
+          leiden_opts = [resolution: resolution, max_level: max_level, theta: theta]
+
           result =
-            case ExLeiden.call({entity_ids, edges}, resolution: resolution, max_level: max_level) do
+            case ExLeiden.call({entity_ids, edges}, leiden_opts) do
               {:ok, %{source: source, result: level_results}} ->
                 elapsed = System.monotonic_time(:millisecond) - start_time
 

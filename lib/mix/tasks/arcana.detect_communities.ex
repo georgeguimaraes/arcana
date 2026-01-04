@@ -12,6 +12,7 @@ defmodule Mix.Tasks.Arcana.DetectCommunities do
     * `--collection` - Only detect communities for the specified collection
     * `--resolution` - Community detection resolution (default: 1.0, higher = smaller communities)
     * `--max-level` - Maximum hierarchy levels (default: 3)
+    * `--theta` - Convergence threshold (default: 0.01, higher = faster but less precise)
     * `--quiet` - Suppress progress output
 
   ## Examples
@@ -24,6 +25,9 @@ defmodule Mix.Tasks.Arcana.DetectCommunities do
 
       # With custom resolution (higher = more, smaller communities)
       mix arcana.detect_communities --resolution 1.5
+
+      # Faster convergence (less precise)
+      mix arcana.detect_communities --theta 0.1
 
       # Quiet mode (no progress output)
       mix arcana.detect_communities --quiet
@@ -42,7 +46,8 @@ defmodule Mix.Tasks.Arcana.DetectCommunities do
           quiet: :boolean,
           collection: :string,
           resolution: :float,
-          max_level: :integer
+          max_level: :integer,
+          theta: :float
         ]
       )
 
@@ -50,6 +55,7 @@ defmodule Mix.Tasks.Arcana.DetectCommunities do
     collection = Keyword.get(opts, :collection)
     resolution = Keyword.get(opts, :resolution, 1.0)
     max_level = Keyword.get(opts, :max_level, 3)
+    theta = Keyword.get(opts, :theta, 0.01)
 
     # Start the host application (which will start the repo)
     Mix.Task.run("app.start")
@@ -63,7 +69,7 @@ defmodule Mix.Tasks.Arcana.DetectCommunities do
     # Show current graph info
     info = Arcana.Maintenance.graph_info()
     Mix.shell().info("Graph config: #{format_info(info)}")
-    Mix.shell().info("Community detection: resolution=#{resolution}, max_level=#{max_level}")
+    Mix.shell().info("Community detection: resolution=#{resolution}, max_level=#{max_level}, theta=#{theta}")
 
     # Build progress callback
     progress_fn =
@@ -79,7 +85,8 @@ defmodule Mix.Tasks.Arcana.DetectCommunities do
     detect_opts = [
       progress: progress_fn,
       resolution: resolution,
-      max_level: max_level
+      max_level: max_level,
+      theta: theta
     ]
 
     detect_opts =

@@ -608,6 +608,7 @@ defmodule Arcana.Maintenance do
     collection_filter = Keyword.get(opts, :collection)
     resolution = Keyword.get(opts, :resolution, 1.0)
     max_level = Keyword.get(opts, :max_level, 3)
+    theta = Keyword.get(opts, :theta, 0.01)
 
     collections = fetch_collections(repo, collection_filter)
 
@@ -615,6 +616,8 @@ defmodule Arcana.Maintenance do
       {:ok, %{collections: 0, communities: 0}}
     else
       total_collections = length(collections)
+
+      detector_opts = [resolution: resolution, max_level: max_level, theta: theta]
 
       results =
         collections
@@ -624,8 +627,7 @@ defmodule Arcana.Maintenance do
             detect_communities_for_collection(
               collection,
               repo,
-              resolution,
-              max_level,
+              detector_opts,
               progress_fn
             )
 
@@ -649,7 +651,7 @@ defmodule Arcana.Maintenance do
     end
   end
 
-  defp detect_communities_for_collection(collection, repo, resolution, max_level, progress_fn) do
+  defp detect_communities_for_collection(collection, repo, detector_opts, progress_fn) do
     alias Arcana.Graph.{CommunityDetector, Entity, Relationship}
 
     # Report start
@@ -685,7 +687,7 @@ defmodule Arcana.Maintenance do
       repo.delete_all(from(c in Arcana.Graph.Community, where: c.collection_id == ^collection.id))
 
       # Run Leiden community detection
-      detector = {CommunityDetector.Leiden, resolution: resolution, max_level: max_level}
+      detector = {CommunityDetector.Leiden, detector_opts}
 
       case CommunityDetector.detect(detector, entities, relationships) do
         {:ok, communities} ->
