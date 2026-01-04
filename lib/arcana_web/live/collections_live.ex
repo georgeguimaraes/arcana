@@ -17,7 +17,7 @@ defmodule ArcanaWeb.CollectionsLive do
      socket
      |> assign(repo: repo)
      |> assign(editing_collection: nil, confirm_delete_collection: nil)
-     |> assign(stats: nil, collections: [], graph_enabled: Arcana.Graph.enabled?())}
+     |> assign(stats: nil, collections: [], show_graph_stats: false)}
   end
 
   @impl true
@@ -27,13 +27,15 @@ defmodule ArcanaWeb.CollectionsLive do
 
   defp load_data(socket) do
     repo = socket.assigns.repo
+    {collections, has_graph_data} = load_collections_with_stats(repo)
 
     socket
     |> assign(stats: load_stats(repo))
-    |> assign(collections: load_collections_with_stats(repo, socket.assigns.graph_enabled))
+    |> assign(collections: collections)
+    |> assign(show_graph_stats: has_graph_data)
   end
 
-  defp load_collections_with_stats(repo, graph_enabled) do
+  defp load_collections_with_stats(repo) do
     # Base collection data with document count
     collections =
       repo.all(
@@ -68,12 +70,8 @@ defmodule ArcanaWeb.CollectionsLive do
         Map.put(c, :chunk_count, Map.get(chunk_counts, c.id, 0))
       end)
 
-    # Add graph stats if enabled
-    if graph_enabled do
-      add_graph_stats(repo, collections)
-    else
-      collections
-    end
+    # Always try to add graph stats - show columns if any data exists
+    add_graph_stats(repo, collections)
   end
 
   defp add_graph_stats(repo, collections) do
@@ -104,15 +102,20 @@ defmodule ArcanaWeb.CollectionsLive do
       )
       |> Map.new()
 
-    Enum.map(collections, fn c ->
-      c
-      |> Map.put(:entity_count, Map.get(entity_counts, c.id, 0))
-      |> Map.put(:relationship_count, Map.get(relationship_counts, c.id, 0))
-      |> Map.put(:community_count, Map.get(community_counts, c.id, 0))
-    end)
+    has_graph_data = map_size(entity_counts) > 0 or map_size(relationship_counts) > 0
+
+    collections_with_stats =
+      Enum.map(collections, fn c ->
+        c
+        |> Map.put(:entity_count, Map.get(entity_counts, c.id, 0))
+        |> Map.put(:relationship_count, Map.get(relationship_counts, c.id, 0))
+        |> Map.put(:community_count, Map.get(community_counts, c.id, 0))
+      end)
+
+    {collections_with_stats, has_graph_data}
   rescue
     # Tables might not exist
-    _ -> collections
+    _ -> {collections, false}
   end
 
   @impl true
@@ -230,7 +233,7 @@ defmodule ArcanaWeb.CollectionsLive do
                   <th>Description</th>
                   <th>Docs</th>
                   <th>Chunks</th>
-                  <%= if @graph_enabled do %>
+                  <%= if @show_graph_stats do %>
                     <th>Entities</th>
                     <th>Rels</th>
                     <th>Communities</th>
@@ -242,7 +245,7 @@ defmodule ArcanaWeb.CollectionsLive do
                 <%= for collection <- @collections do %>
                   <tr id={"collection-#{collection.name}"}>
                     <%= if @editing_collection && @editing_collection.id == collection.id do %>
-                      <td colspan={if @graph_enabled, do: 8, else: 5}>
+                      <td colspan={if @show_graph_stats, do: 8, else: 5}>
                         <form
                           id={"edit-collection-form-#{collection.id}"}
                           phx-submit="update_collection"
@@ -281,7 +284,7 @@ defmodule ArcanaWeb.CollectionsLive do
                       <td><%= collection.description || "-" %></td>
                       <td><%= collection.document_count %></td>
                       <td><%= collection.chunk_count %></td>
-                      <%= if @graph_enabled do %>
+                      <%= if @show_graph_stats do %>
                         <td><%= collection[:entity_count] || 0 %></td>
                         <td><%= collection[:relationship_count] || 0 %></td>
                         <td><%= collection[:community_count] || 0 %></td>
