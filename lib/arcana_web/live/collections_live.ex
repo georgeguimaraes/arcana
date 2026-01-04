@@ -84,11 +84,14 @@ defmodule ArcanaWeb.CollectionsLive do
       )
       |> Map.new()
 
+    # Relationships don't have collection_id directly - join through source entity
     relationship_counts =
       repo.all(
         from(r in Arcana.Graph.Relationship,
-          group_by: r.collection_id,
-          select: {r.collection_id, count(r.id)}
+          join: e in Arcana.Graph.Entity,
+          on: r.source_id == e.id,
+          group_by: e.collection_id,
+          select: {e.collection_id, count(r.id)}
         )
       )
       |> Map.new()
