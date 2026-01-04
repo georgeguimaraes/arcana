@@ -12,7 +12,9 @@ defmodule ArcanaWeb.GraphLive do
   import ArcanaWeb.DashboardComponents
   import Ecto.Query
 
-  alias Arcana.Graph.{Entity, GraphStore}
+  alias Arcana.Graph.{Community, Entity, GraphStore, Relationship}
+
+  @page_size 50
 
   @impl true
   def mount(_params, session, socket) do
@@ -33,15 +35,21 @@ defmodule ArcanaWeb.GraphLive do
        entity_type_filter: nil,
        selected_entity: nil,
        entity_details: nil,
+       entities_page: 1,
+       entities_total: 0,
        relationship_filter: "",
        relationship_type_filter: nil,
        relationship_strength_filter: nil,
        selected_relationship: nil,
        relationship_details: nil,
+       relationships_page: 1,
+       relationships_total: 0,
        community_filter: "",
        community_level_filter: nil,
        selected_community: nil,
-       community_details: nil
+       community_details: nil,
+       communities_page: 1,
+       communities_total: 0
      )}
   end
 
@@ -113,15 +121,41 @@ defmodule ArcanaWeb.GraphLive do
     collection_id = get_selected_collection_id(socket)
     name_filter = socket.assigns.entity_filter || ""
     type_filter = socket.assigns.entity_type_filter
+    page = socket.assigns.entities_page
+
+    offset = (page - 1) * @page_size
 
     opts =
-      [repo: repo, limit: 50]
+      [repo: repo, limit: @page_size, offset: offset]
       |> maybe_add_opt(:collection_id, collection_id)
       |> maybe_add_opt(:search, if(name_filter != "", do: name_filter))
       |> maybe_add_opt(:type, if(type_filter && type_filter != "", do: type_filter))
 
     entities = GraphStore.list_entities(opts)
-    assign(socket, entities: entities)
+    total = count_entities(repo, collection_id, name_filter, type_filter)
+
+    assign(socket, entities: entities, entities_total: total)
+  end
+
+  defp count_entities(repo, collection_id, name_filter, type_filter) do
+    query = from(e in Entity, select: count(e.id))
+
+    query =
+      if collection_id, do: where(query, [e], e.collection_id == ^collection_id), else: query
+
+    query =
+      if name_filter && name_filter != "",
+        do: where(query, [e], ilike(e.name, ^"%#{name_filter}%")),
+        else: query
+
+    query =
+      if type_filter && type_filter != "",
+        do: where(query, [e], e.type == ^type_filter),
+        else: query
+
+    repo.one(query) || 0
+  rescue
+    _ -> 0
   end
 
   defp load_relationships(socket) do
@@ -130,16 +164,68 @@ defmodule ArcanaWeb.GraphLive do
     search_filter = socket.assigns.relationship_filter
     type_filter = socket.assigns.relationship_type_filter
     strength_filter = socket.assigns.relationship_strength_filter
+    page = socket.assigns.relationships_page
+
+    offset = (page - 1) * @page_size
 
     opts =
-      [repo: repo, limit: 50]
+      [repo: repo, limit: @page_size, offset: offset]
       |> maybe_add_opt(:collection_id, collection_id)
       |> maybe_add_opt(:search, if(search_filter && search_filter != "", do: search_filter))
       |> maybe_add_opt(:type, if(type_filter && type_filter != "", do: type_filter))
       |> maybe_add_opt(:strength, strength_filter)
 
     relationships = GraphStore.list_relationships(opts)
-    assign(socket, relationships: relationships)
+    total = count_relationships(repo, collection_id, search_filter, type_filter, strength_filter)
+
+    assign(socket, relationships: relationships, relationships_total: total)
+  end
+
+  defp count_relationships(repo, collection_id, search_filter, type_filter, strength_filter) do
+    query =
+      from(r in Relationship,
+        join: source in Entity,
+        on: source.id == r.source_id,
+        select: count(r.id)
+      )
+
+    query =
+      if collection_id,
+        do: where(query, [r, source], source.collection_id == ^collection_id),
+        else: query
+
+    query =
+      if search_filter && search_filter != "" do
+        search_pattern = "%#{search_filter}%"
+
+        from([r, source] in query,
+          join: target in Entity,
+          on: target.id == r.target_id,
+          where:
+            ilike(source.name, ^search_pattern) or
+              ilike(target.name, ^search_pattern) or
+              ilike(r.type, ^search_pattern)
+        )
+      else
+        query
+      end
+
+    query =
+      if type_filter && type_filter != "",
+        do: where(query, [r], r.type == ^type_filter),
+        else: query
+
+    query =
+      case strength_filter do
+        "strong" -> where(query, [r], r.strength >= 7)
+        "medium" -> where(query, [r], r.strength >= 4 and r.strength < 7)
+        "weak" -> where(query, [r], r.strength < 4)
+        _ -> query
+      end
+
+    repo.one(query) || 0
+  rescue
+    _ -> 0
   end
 
   defp load_communities(socket) do
@@ -147,34 +233,52 @@ defmodule ArcanaWeb.GraphLive do
     collection_id = get_selected_collection_id(socket)
     search_filter = socket.assigns.community_filter
     level_filter = socket.assigns.community_level_filter
+    page = socket.assigns.communities_page
+
+    offset = (page - 1) * @page_size
 
     # Parse level filter to integer if it's a string
-    level =
-      case level_filter do
-        nil ->
-          nil
-
-        "" ->
-          nil
-
-        level when is_integer(level) ->
-          level
-
-        level when is_binary(level) ->
-          case Integer.parse(level) do
-            {int, _} -> int
-            :error -> nil
-          end
-      end
+    level = parse_level_filter(level_filter)
 
     opts =
-      [repo: repo, limit: 50]
+      [repo: repo, limit: @page_size, offset: offset]
       |> maybe_add_opt(:collection_id, collection_id)
       |> maybe_add_opt(:search, if(search_filter && search_filter != "", do: search_filter))
       |> maybe_add_opt(:level, level)
 
     communities = GraphStore.list_communities(opts)
-    assign(socket, communities: communities)
+    total = count_communities(repo, collection_id, search_filter, level)
+
+    assign(socket, communities: communities, communities_total: total)
+  end
+
+  defp parse_level_filter(nil), do: nil
+  defp parse_level_filter(""), do: nil
+  defp parse_level_filter(level) when is_integer(level), do: level
+
+  defp parse_level_filter(level) when is_binary(level) do
+    case Integer.parse(level) do
+      {int, _} -> int
+      :error -> nil
+    end
+  end
+
+  defp count_communities(repo, collection_id, search_filter, level) do
+    query = from(c in Community, select: count(c.id))
+
+    query =
+      if collection_id, do: where(query, [c], c.collection_id == ^collection_id), else: query
+
+    query =
+      if search_filter && search_filter != "",
+        do: where(query, [c], ilike(c.summary, ^"%#{search_filter}%")),
+        else: query
+
+    query = if level, do: where(query, [c], c.level == ^level), else: query
+
+    repo.one(query) || 0
+  rescue
+    _ -> 0
   end
 
   @impl true
@@ -196,7 +300,7 @@ defmodule ArcanaWeb.GraphLive do
 
     {:noreply,
      socket
-     |> assign(entity_filter: name_filter, entity_type_filter: type_filter)
+     |> assign(entity_filter: name_filter, entity_type_filter: type_filter, entities_page: 1)
      |> load_entities()}
   end
 
@@ -219,7 +323,8 @@ defmodule ArcanaWeb.GraphLive do
      |> assign(
        relationship_filter: search_filter,
        relationship_type_filter: type_filter,
-       relationship_strength_filter: strength_filter
+       relationship_strength_filter: strength_filter,
+       relationships_page: 1
      )
      |> load_relationships()}
   end
@@ -241,7 +346,8 @@ defmodule ArcanaWeb.GraphLive do
      socket
      |> assign(
        community_filter: search_filter,
-       community_level_filter: level_filter
+       community_level_filter: level_filter,
+       communities_page: 1
      )
      |> load_communities()}
   end
@@ -253,6 +359,22 @@ defmodule ArcanaWeb.GraphLive do
 
   def handle_event("close_community_detail", _params, socket) do
     {:noreply, assign(socket, selected_community: nil, community_details: nil)}
+  end
+
+  # Pagination handlers
+  def handle_event("entities_page", %{"page" => page}, socket) do
+    page = String.to_integer(page)
+    {:noreply, socket |> assign(entities_page: page) |> load_entities()}
+  end
+
+  def handle_event("relationships_page", %{"page" => page}, socket) do
+    page = String.to_integer(page)
+    {:noreply, socket |> assign(relationships_page: page) |> load_relationships()}
+  end
+
+  def handle_event("communities_page", %{"page" => page}, socket) do
+    page = String.to_integer(page)
+    {:noreply, socket |> assign(communities_page: page) |> load_communities()}
   end
 
   defp load_relationship_details(repo, relationship_id) do
@@ -356,6 +478,10 @@ defmodule ArcanaWeb.GraphLive do
   defp maybe_add_opt(opts, _key, nil), do: opts
   defp maybe_add_opt(opts, key, value), do: Keyword.put(opts, key, value)
 
+  defp total_pages(total) do
+    max(1, ceil(total / @page_size))
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -419,6 +545,9 @@ defmodule ArcanaWeb.GraphLive do
                 entity_type_filter={@entity_type_filter}
                 selected_entity={@selected_entity}
                 entity_details={@entity_details}
+                page={@entities_page}
+                total={@entities_total}
+                total_pages={total_pages(@entities_total)}
               />
             <% :relationships -> %>
               <.relationships_view
@@ -428,6 +557,9 @@ defmodule ArcanaWeb.GraphLive do
                 relationship_strength_filter={@relationship_strength_filter}
                 selected_relationship={@selected_relationship}
                 relationship_details={@relationship_details}
+                page={@relationships_page}
+                total={@relationships_total}
+                total_pages={total_pages(@relationships_total)}
               />
             <% :communities -> %>
               <.communities_view
@@ -436,6 +568,9 @@ defmodule ArcanaWeb.GraphLive do
                 community_level_filter={@community_level_filter}
                 selected_community={@selected_community}
                 community_details={@community_details}
+                page={@communities_page}
+                total={@communities_total}
+                total_pages={total_pages(@communities_total)}
               />
           <% end %>
         <% end %>
@@ -501,6 +636,13 @@ defmodule ArcanaWeb.GraphLive do
             <% end %>
           </tbody>
         </table>
+
+        <.pagination
+          page={@page}
+          total={@total}
+          total_pages={@total_pages}
+          event="entities_page"
+        />
       <% end %>
 
       <%= if @entity_details do %>
@@ -633,6 +775,13 @@ defmodule ArcanaWeb.GraphLive do
             <% end %>
           </tbody>
         </table>
+
+        <.pagination
+          page={@page}
+          total={@total}
+          total_pages={@total_pages}
+          event="relationships_page"
+        />
       <% end %>
 
       <%= if @relationship_details do %>
@@ -738,6 +887,13 @@ defmodule ArcanaWeb.GraphLive do
             <% end %>
           </tbody>
         </table>
+
+        <.pagination
+          page={@page}
+          total={@total}
+          total_pages={@total_pages}
+          event="communities_page"
+        />
       <% end %>
 
       <%= if @community_details do %>
@@ -809,6 +965,36 @@ defmodule ArcanaWeb.GraphLive do
         <span class={"arcana-strength-dot #{if i <= @filled, do: "filled", else: ""}"}></span>
       <% end %>
     </span>
+    """
+  end
+
+  defp pagination(assigns) do
+    ~H"""
+    <div class="arcana-pagination">
+      <span class="arcana-pagination-info">
+        Page <%= @page %> of <%= @total_pages %> (<%= @total %> items)
+      </span>
+      <div class="arcana-pagination-buttons">
+        <button
+          type="button"
+          class="arcana-btn"
+          phx-click={@event}
+          phx-value-page={@page - 1}
+          disabled={@page <= 1}
+        >
+          ← Prev
+        </button>
+        <button
+          type="button"
+          class="arcana-btn"
+          phx-click={@event}
+          phx-value-page={@page + 1}
+          disabled={@page >= @total_pages}
+        >
+          Next →
+        </button>
+      </div>
+    </div>
     """
   end
 end
