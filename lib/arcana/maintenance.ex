@@ -16,7 +16,7 @@ defmodule Arcana.Maintenance do
   """
 
   alias Arcana.{Chunk, Chunker, Collection, Document, Embedder}
-  alias Arcana.Graph.GraphStore
+  alias Arcana.Graph.{EntityMention, GraphStore}
 
   import Ecto.Query
 
@@ -29,6 +29,8 @@ defmodule Arcana.Maintenance do
   ## Options
 
     * `:batch_size` - Number of items to process at once (default: 50)
+    * `:concurrency` - Number of parallel embedding requests (default: 5)
+    * `:skip` - Number of chunks to skip (for resuming interrupted runs)
     * `:progress` - Function to call with progress updates `fn current, total -> :ok end`
 
   ## Examples
@@ -36,17 +38,23 @@ defmodule Arcana.Maintenance do
       # Basic usage
       Arcana.Maintenance.reembed(MyApp.Repo)
 
-      # With progress callback
+      # With progress callback and concurrency
       Arcana.Maintenance.reembed(MyApp.Repo,
         batch_size: 100,
+        concurrency: 10,
         progress: fn current, total ->
           IO.puts("Progress: \#{current}/\#{total}")
         end
       )
 
+      # Resume from chunk 500
+      Arcana.Maintenance.reembed(MyApp.Repo, skip: 500)
+
   """
   def reembed(repo, opts \\ []) do
     batch_size = Keyword.get(opts, :batch_size, 50)
+    concurrency = Keyword.get(opts, :concurrency, 5)
+    skip = Keyword.get(opts, :skip, 0)
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
     collection_filter = Keyword.get(opts, :collection)
 
@@ -64,10 +72,24 @@ defmodule Arcana.Maintenance do
       end
 
     # Then re-embed existing chunks
-    {total_chunks, reembedded} =
-      reembed_filtered_chunks(repo, embedder, batch_size, progress_fn, collection_id)
+    {total_chunks, reembedded, skipped} =
+      reembed_filtered_chunks(
+        repo,
+        embedder,
+        batch_size,
+        concurrency,
+        skip,
+        progress_fn,
+        collection_id
+      )
 
-    {:ok, %{rechunked_documents: rechunked, reembedded: reembedded, total_chunks: total_chunks}}
+    {:ok,
+     %{
+       rechunked_documents: rechunked,
+       reembedded: reembedded,
+       total_chunks: total_chunks,
+       skipped: skipped
+     }}
   end
 
   defp get_collection_id(_repo, nil), do: nil
@@ -91,20 +113,38 @@ defmodule Arcana.Maintenance do
     )
   end
 
-  defp reembed_filtered_chunks(repo, embedder, batch_size, progress_fn, nil) do
+  defp reembed_filtered_chunks(repo, embedder, batch_size, concurrency, skip, progress_fn, nil) do
     total_chunks = repo.aggregate(Chunk, :count)
+    chunks_query = from(c in Chunk, order_by: c.id, select: [:id, :text])
 
     reembedded =
       if total_chunks > 0 do
-        reembed_chunks(repo, embedder, batch_size, progress_fn, total_chunks)
+        reembed_chunks_concurrent(
+          repo,
+          embedder,
+          batch_size,
+          concurrency,
+          skip,
+          progress_fn,
+          total_chunks,
+          chunks_query
+        )
       else
         0
       end
 
-    {total_chunks, reembedded}
+    {total_chunks, reembedded, skip}
   end
 
-  defp reembed_filtered_chunks(repo, embedder, batch_size, progress_fn, collection_id) do
+  defp reembed_filtered_chunks(
+         repo,
+         embedder,
+         batch_size,
+         concurrency,
+         skip,
+         progress_fn,
+         collection_id
+       ) do
     chunks_query =
       from(c in Chunk,
         join: d in Document,
@@ -118,10 +158,12 @@ defmodule Arcana.Maintenance do
 
     reembedded =
       if total_chunks > 0 do
-        reembed_chunks_from_query(
+        reembed_chunks_concurrent(
           repo,
           embedder,
           batch_size,
+          concurrency,
+          skip,
           progress_fn,
           total_chunks,
           chunks_query
@@ -130,43 +172,94 @@ defmodule Arcana.Maintenance do
         0
       end
 
-    {total_chunks, reembedded}
+    {total_chunks, reembedded, skip}
   end
 
-  defp reembed_chunks_from_query(repo, embedder, batch_size, progress_fn, total, chunks_query) do
-    # Process in batches without holding a long transaction
-    # Each embedding can take 1-2 seconds, so we can't hold a connection that long
-    reembed_chunks_in_batches(repo, embedder, batch_size, progress_fn, total, chunks_query, 0, 0)
-  end
+  defp reembed_chunks_concurrent(
+         repo,
+         embedder,
+         batch_size,
+         concurrency,
+         skip,
+         progress_fn,
+         total,
+         chunks_query
+       ) do
+    # Apply skip offset to the query
+    query_with_skip = if skip > 0, do: offset(chunks_query, ^skip), else: chunks_query
+    chunks_to_process = total - skip
 
-  defp reembed_chunks_in_batches(repo, embedder, batch_size, progress_fn, total, base_query, offset, count) do
-    chunks =
-      base_query
-      |> limit(^batch_size)
-      |> offset(^offset)
-      |> repo.all()
-
-    if chunks == [] do
-      count
+    if chunks_to_process <= 0 do
+      0
     else
-      new_count =
-        chunks
-        |> Enum.with_index(offset + 1)
-        |> Enum.reduce(count, fn {chunk, index}, acc ->
-          reembed_single_chunk(repo, embedder, chunk, index, total, progress_fn, acc)
-        end)
+      ctx = %{
+        repo: repo,
+        embedder: embedder,
+        batch_size: batch_size,
+        concurrency: concurrency,
+        progress_fn: progress_fn,
+        base_query: query_with_skip,
+        skip: skip,
+        total: total
+      }
 
-      reembed_chunks_in_batches(
-        repo,
-        embedder,
-        batch_size,
-        progress_fn,
-        total,
-        base_query,
-        offset + batch_size,
-        new_count
-      )
+      reembed_batches_concurrent(ctx, 0)
     end
+  end
+
+  defp reembed_batches_concurrent(ctx, batch_offset) do
+    chunks =
+      ctx.base_query
+      |> limit(^ctx.batch_size)
+      |> offset(^batch_offset)
+      |> ctx.repo.all()
+
+    case chunks do
+      [] ->
+        0
+
+      _ ->
+        embedded_count = embed_batch_concurrent(ctx, chunks, batch_offset)
+
+        if length(chunks) < ctx.batch_size do
+          embedded_count
+        else
+          embedded_count + reembed_batches_concurrent(ctx, batch_offset + ctx.batch_size)
+        end
+    end
+  end
+
+  defp embed_batch_concurrent(ctx, chunks, batch_offset) do
+    chunks
+    |> Task.async_stream(
+      fn chunk ->
+        case Embedder.embed(ctx.embedder, chunk.text, intent: :document) do
+          {:ok, embedding} -> {:ok, chunk.id, embedding}
+          {:error, reason} -> {:error, chunk.id, reason}
+        end
+      end,
+      max_concurrency: ctx.concurrency,
+      timeout: :infinity,
+      ordered: true
+    )
+    |> Enum.with_index(batch_offset + ctx.skip + 1)
+    |> Enum.reduce(0, fn {{:ok, result}, index}, acc ->
+      persist_embedding(ctx, result, index)
+      acc + 1
+    end)
+  end
+
+  defp persist_embedding(ctx, {:ok, chunk_id, embedding}, index) do
+    ctx.repo.update_all(
+      from(c in Chunk, where: c.id == ^chunk_id),
+      set: [embedding: embedding, updated_at: DateTime.utc_now()]
+    )
+
+    ctx.progress_fn.(index, ctx.total)
+  end
+
+  defp persist_embedding(_ctx, {:error, chunk_id, reason}, _index) do
+    raise "Failed to embed chunk #{chunk_id}: #{inspect(reason)}"
   end
 
   defp rechunk_documents(documents, embedder, repo, progress_fn) do
@@ -201,27 +294,6 @@ defmodule Arcana.Maintenance do
 
       count + 1
     end)
-  end
-
-  defp reembed_chunks(repo, embedder, batch_size, progress_fn, total) do
-    chunks_query = from(c in Chunk, order_by: c.id, select: [:id, :text])
-    reembed_chunks_in_batches(repo, embedder, batch_size, progress_fn, total, chunks_query, 0, 0)
-  end
-
-  defp reembed_single_chunk(repo, embedder, chunk, index, total, progress_fn, count) do
-    case Embedder.embed(embedder, chunk.text, intent: :document) do
-      {:ok, embedding} ->
-        repo.update_all(
-          from(c in Chunk, where: c.id == ^chunk.id),
-          set: [embedding: embedding, updated_at: DateTime.utc_now()]
-        )
-
-        progress_fn.(index, total)
-        count + 1
-
-      {:error, reason} ->
-        raise "Failed to embed chunk #{chunk.id}: #{inspect(reason)}"
-    end
   end
 
   @doc """
@@ -313,7 +385,7 @@ defmodule Arcana.Maintenance do
     collections = fetch_collections(repo, collection_filter)
 
     if collections == [] do
-      {:ok, %{collections: 0, entities: 0, relationships: 0}}
+      {:ok, %{collections: 0, entities: 0, relationships: 0, skipped: 0}}
     else
       total_collections = length(collections)
 
@@ -322,12 +394,14 @@ defmodule Arcana.Maintenance do
 
       total_entities = Enum.sum(Enum.map(results, & &1.entities))
       total_relationships = Enum.sum(Enum.map(results, & &1.relationships))
+      total_skipped = Enum.sum(Enum.map(results, & &1.skipped))
 
       {:ok,
        %{
          collections: total_collections,
          entities: total_entities,
-         relationships: total_relationships
+         relationships: total_relationships,
+         skipped: total_skipped
        }}
     end
   end
@@ -336,17 +410,34 @@ defmodule Arcana.Maintenance do
     collections
     |> Enum.with_index(1)
     |> Enum.map(fn {collection, index} ->
-      progress_fn.(index, total)
-      rebuild_graph_for_collection(collection, repo, opts)
+      result = rebuild_graph_for_collection(collection, repo, opts, progress_fn)
+
+      # Try calling with detailed info, fall back to simple progress
+      try do
+        progress_fn.(:collection_complete, %{
+          index: index,
+          total: total,
+          collection: collection.name,
+          result: result
+        })
+      rescue
+        FunctionClauseError -> progress_fn.(index, total)
+      end
+
+      result
     end)
   end
 
-  defp rebuild_graph_for_collection(collection, repo, opts) do
-    # Clear existing graph data for this collection
-    :ok = GraphStore.delete_by_collection(collection.id, repo: repo)
+  defp rebuild_graph_for_collection(collection, repo, opts, progress_fn) do
+    resume = Keyword.get(opts, :resume, false)
+
+    # Only clear existing graph data if not resuming
+    unless resume do
+      :ok = GraphStore.delete_by_collection(collection.id, repo: repo)
+    end
 
     # Get all chunks for this collection
-    chunk_records =
+    all_chunk_records =
       repo.all(
         from(c in Chunk,
           join: d in Document,
@@ -356,17 +447,77 @@ defmodule Arcana.Maintenance do
         )
       )
 
+    # Filter out already-processed chunks if resuming
+    {chunk_records, skipped_count} =
+      if resume do
+        processed_chunk_ids = get_processed_chunk_ids(collection.id, repo)
+        filtered = Enum.reject(all_chunk_records, &MapSet.member?(processed_chunk_ids, &1.id))
+        {filtered, length(all_chunk_records) - length(filtered)}
+      else
+        {all_chunk_records, 0}
+      end
+
+    chunk_count = length(chunk_records)
+    total_chunks = length(all_chunk_records)
+
+    # Report chunk count via callback if it accepts :chunk_start
+    try do
+      skip_info = if skipped_count > 0, do: " (#{skipped_count} already processed)", else: ""
+
+      progress_fn.(:chunk_start, %{
+        collection: collection.name,
+        chunk_count: chunk_count,
+        skip_info: skip_info
+      })
+    rescue
+      _ -> :ok
+    end
+
     if chunk_records == [] do
-      %{entities: 0, relationships: 0}
+      %{entities: 0, relationships: 0, chunks: 0, skipped: skipped_count}
     else
-      case Arcana.Graph.build_and_persist(chunk_records, collection, repo, opts) do
+      # Build chunk progress callback that reports to the main progress_fn
+      chunk_progress_fn = fn current, _total ->
+        try do
+          progress_fn.(:chunk_progress, %{
+            collection: collection.name,
+            current: current + skipped_count,
+            total: total_chunks
+          })
+        rescue
+          _ -> :ok
+        end
+      end
+
+      graph_opts = Keyword.put(opts, :progress, chunk_progress_fn)
+
+      case Arcana.Graph.build_and_persist(chunk_records, collection, repo, graph_opts) do
         {:ok, %{entity_count: entities, relationship_count: relationships}} ->
-          %{entities: entities, relationships: relationships}
+          %{
+            entities: entities,
+            relationships: relationships,
+            chunks: chunk_count,
+            skipped: skipped_count
+          }
 
         {:error, _reason} ->
-          %{entities: 0, relationships: 0}
+          %{entities: 0, relationships: 0, chunks: chunk_count, skipped: skipped_count}
       end
     end
+  end
+
+  defp get_processed_chunk_ids(collection_id, repo) do
+    # Find all chunk IDs that have entity mentions (meaning they've been processed)
+    repo.all(
+      from(em in EntityMention,
+        join: e in Arcana.Graph.Entity,
+        on: e.id == em.entity_id,
+        where: e.collection_id == ^collection_id,
+        select: em.chunk_id,
+        distinct: true
+      )
+    )
+    |> MapSet.new()
   end
 
   defp fetch_collections(repo, nil) do

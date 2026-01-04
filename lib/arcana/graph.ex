@@ -267,31 +267,166 @@ defmodule Arcana.Graph do
 
   @doc """
   Builds and persists graph data from chunk records during ingest.
+
+  Processes chunks incrementally, persisting after each chunk so progress
+  is saved continuously. Accepts an optional `:progress` callback that
+  receives `{current_chunk, total_chunks}` after each chunk is processed.
+
+  ## Options
+
+    * `:progress` - Callback function `fn current, total -> ... end` called after each chunk
+
+  ## Examples
+
+      # With progress logging
+      Arcana.Graph.build_and_persist(chunks, collection, repo,
+        progress: fn current, total ->
+          IO.puts("Processed chunk \#{current}/\#{total}")
+        end
+      )
+
   """
+  @default_concurrency 3
+
   def build_and_persist(chunk_records, collection, repo, opts) do
     collection_name = if is_binary(collection), do: collection, else: collection.name
     collection_id = if is_binary(collection), do: collection, else: collection.id
+    progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
+    concurrency = Keyword.get(opts, :concurrency, @default_concurrency)
+    total_chunks = length(chunk_records)
 
     :telemetry.span(
       [:arcana, :graph, :build],
-      %{chunk_count: length(chunk_records), collection: collection_name},
+      %{chunk_count: total_chunks, collection: collection_name},
       fn ->
-        {all_entities, all_mentions, all_relationships} =
-          extract_all_graph_data(chunk_records, opts)
+        graph_config = config()
+        extractor = resolve_extractor(opts, graph_config)
 
-        {:ok, entity_id_map} =
-          GraphStore.persist_entities(collection_id, all_entities, repo: repo)
+        # Process and persist each chunk incrementally
+        {entity_id_map, total_relationships} =
+          if extractor do
+            process_chunks_concurrently(
+              chunk_records,
+              collection_id,
+              repo,
+              progress_fn,
+              total_chunks,
+              concurrency,
+              &extract_single_chunk_combined(&1, extractor)
+            )
+          else
+            entity_extractor = resolve_entity_extractor(opts)
+            relationship_extractor = resolve_relationship_extractor(opts, graph_config)
 
-        :ok = GraphStore.persist_mentions(all_mentions, entity_id_map, repo: repo)
-        :ok = GraphStore.persist_relationships(all_relationships, entity_id_map, repo: repo)
+            process_chunks_concurrently(
+              chunk_records,
+              collection_id,
+              repo,
+              progress_fn,
+              total_chunks,
+              concurrency,
+              &extract_single_chunk_separate(&1, entity_extractor, relationship_extractor)
+            )
+          end
 
         entity_count = map_size(entity_id_map)
-        relationship_count = length(all_relationships)
-        result = {:ok, %{entity_count: entity_count, relationship_count: relationship_count}}
-        # telemetry.span expects {result, stop_metadata} tuple
-        {result, %{entity_count: entity_count, relationship_count: relationship_count}}
+        result = {:ok, %{entity_count: entity_count, relationship_count: total_relationships}}
+        {result, %{entity_count: entity_count, relationship_count: total_relationships}}
       end
     )
+  end
+
+  defp process_chunks_concurrently(
+         chunks,
+         collection_id,
+         repo,
+         progress_fn,
+         total_chunks,
+         concurrency,
+         extract_fn
+       ) do
+    # Use Task.async_stream for parallel extraction, ordered results
+    # Persistence happens sequentially to maintain entity_id_map consistency
+    chunks
+    |> Enum.with_index(1)
+    |> Task.async_stream(
+      fn {chunk, index} ->
+        # Extract in parallel (the slow LLM part)
+        {entities, mentions, relationships} = extract_fn.(chunk)
+        {index, entities, mentions, relationships}
+      end,
+      max_concurrency: concurrency,
+      timeout: :infinity,
+      ordered: true
+    )
+    |> Enum.reduce({%{}, 0}, fn {:ok, {index, entities, mentions, relationships}},
+                                {entity_id_map, rel_count} ->
+      # Persist sequentially (fast DB operations)
+      {:ok, new_entity_ids} =
+        GraphStore.persist_entities(collection_id, entities, repo: repo)
+
+      merged_entity_id_map = Map.merge(entity_id_map, new_entity_ids)
+
+      :ok = GraphStore.persist_mentions(mentions, merged_entity_id_map, repo: repo)
+      :ok = GraphStore.persist_relationships(relationships, merged_entity_id_map, repo: repo)
+
+      # Report progress
+      progress_fn.(index, total_chunks)
+
+      {merged_entity_id_map, rel_count + length(relationships)}
+    end)
+  end
+
+  defp extract_single_chunk_combined(chunk, extractor) do
+    case GraphExtractor.extract(extractor, chunk.text) do
+      {:ok, %{entities: entities, relationships: relationships}} ->
+        mentions =
+          Enum.map(entities, fn entity ->
+            %{
+              entity_name: entity.name,
+              chunk_id: chunk.id,
+              span_start: entity[:span_start],
+              span_end: entity[:span_end]
+            }
+          end)
+
+        {entities, mentions, relationships}
+
+      {:error, _reason} ->
+        {[], [], []}
+    end
+  end
+
+  defp extract_single_chunk_separate(chunk, entity_extractor, relationship_extractor) do
+    case EntityExtractor.extract(entity_extractor, chunk.text) do
+      {:ok, entities} ->
+        mentions =
+          Enum.map(entities, fn entity ->
+            %{
+              entity_name: entity.name,
+              chunk_id: chunk.id,
+              span_start: entity[:span_start],
+              span_end: entity[:span_end]
+            }
+          end)
+
+        relationships = extract_relationships(chunk, entities, relationship_extractor)
+        {entities, mentions, relationships}
+
+      {:error, _reason} ->
+        {[], [], []}
+    end
+  end
+
+  defp extract_relationships(_chunk, _entities, nil), do: []
+
+  defp extract_relationships(chunk, entities, relationship_extractor) do
+    entity_names = Enum.map(entities, & &1.name)
+
+    case RelationshipExtractor.extract(relationship_extractor, chunk.text, entity_names) do
+      {:ok, relationships} -> relationships
+      {:error, _reason} -> []
+    end
   end
 
   @doc """
@@ -305,39 +440,6 @@ defmodule Arcana.Graph do
   end
 
   # Private graph building functions
-
-  defp extract_all_graph_data(chunk_records, opts) do
-    graph_config = config()
-    extractor = resolve_extractor(opts, graph_config)
-
-    if extractor do
-      extract_with_combined_extractor(chunk_records, extractor)
-    else
-      extract_with_separate_extractors(chunk_records, opts, graph_config)
-    end
-  end
-
-  defp extract_with_combined_extractor(chunk_records, extractor) do
-    Enum.reduce(chunk_records, {[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
-      extract_graph_data_combined(chunk, extractor, ent_acc, ment_acc, rel_acc)
-    end)
-  end
-
-  defp extract_with_separate_extractors(chunk_records, opts, graph_config) do
-    entity_extractor = resolve_entity_extractor(opts)
-    relationship_extractor = resolve_relationship_extractor(opts, graph_config)
-
-    Enum.reduce(chunk_records, {[], [], []}, fn chunk, {ent_acc, ment_acc, rel_acc} ->
-      extract_graph_data_from_chunk(
-        chunk,
-        entity_extractor,
-        relationship_extractor,
-        ent_acc,
-        ment_acc,
-        rel_acc
-      )
-    end)
-  end
 
   defp normalize_entity_extractor(nil, _llm), do: {EntityExtractor.NER, []}
   defp normalize_entity_extractor(:ner, _llm), do: {EntityExtractor.NER, []}
@@ -387,59 +489,6 @@ defmodule Arcana.Graph do
 
       extractor ->
         extractor
-    end
-  end
-
-  defp extract_graph_data_combined(chunk, extractor, ent_acc, ment_acc, rel_acc) do
-    case GraphExtractor.extract(extractor, chunk.text) do
-      {:ok, %{entities: entities, relationships: relationships}} ->
-        new_mentions =
-          Enum.map(entities, fn entity ->
-            %{
-              entity_name: entity.name,
-              chunk_id: chunk.id,
-              span_start: entity[:span_start],
-              span_end: entity[:span_end]
-            }
-          end)
-
-        {ent_acc ++ entities, ment_acc ++ new_mentions, rel_acc ++ relationships}
-
-      {:error, _reason} ->
-        {ent_acc, ment_acc, rel_acc}
-    end
-  end
-
-  defp extract_graph_data_from_chunk(
-         chunk,
-         entity_extractor,
-         relationship_extractor,
-         ent_acc,
-         ment_acc,
-         rel_acc
-       ) do
-    case EntityExtractor.extract(entity_extractor, chunk.text) do
-      {:ok, entities} ->
-        new_mentions =
-          Enum.map(entities, fn entity ->
-            %{
-              entity_name: entity.name,
-              chunk_id: chunk.id,
-              span_start: entity[:span_start],
-              span_end: entity[:span_end]
-            }
-          end)
-
-        new_relationships =
-          case RelationshipExtractor.extract(relationship_extractor, chunk.text, entities) do
-            {:ok, rels} -> rels
-            {:error, _} -> []
-          end
-
-        {ent_acc ++ entities, ment_acc ++ new_mentions, rel_acc ++ new_relationships}
-
-      {:error, _reason} ->
-        {ent_acc, ment_acc, rel_acc}
     end
   end
 end

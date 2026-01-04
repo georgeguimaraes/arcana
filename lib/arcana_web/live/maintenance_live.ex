@@ -55,7 +55,9 @@ defmodule ArcanaWeb.MaintenanceLive do
 
   defp count_orphaned_graph_data(repo) do
     entities =
-      repo.one(from(e in Arcana.Graph.Entity, where: is_nil(e.collection_id), select: count(e.id))) ||
+      repo.one(
+        from(e in Arcana.Graph.Entity, where: is_nil(e.collection_id), select: count(e.id))
+      ) ||
         0
 
     relationships =
