@@ -576,4 +576,131 @@ defmodule Arcana.Maintenance do
   end
 
   defp format_extractor_name(_other), do: nil
+
+  @doc """
+  Detects communities in the knowledge graph using the Leiden algorithm.
+
+  This runs community detection on entities and relationships, producing
+  hierarchical community clusters. Existing communities for the collection(s)
+  are cleared before detection.
+
+  ## Options
+
+    * `:collection` - Filter to a specific collection by name (default: all collections)
+    * `:resolution` - Community detection resolution (default: 1.0)
+    * `:max_level` - Maximum hierarchy levels (default: 3)
+    * `:progress` - Function to call with progress updates `fn current, total -> :ok end`
+
+  ## Examples
+
+      # Basic usage - all collections
+      Arcana.Maintenance.detect_communities(MyApp.Repo)
+
+      # Single collection
+      Arcana.Maintenance.detect_communities(MyApp.Repo, collection: "my-docs")
+
+      # With custom resolution
+      Arcana.Maintenance.detect_communities(MyApp.Repo, resolution: 0.5)
+
+  """
+  def detect_communities(repo, opts \\ []) do
+    progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
+    collection_filter = Keyword.get(opts, :collection)
+    resolution = Keyword.get(opts, :resolution, 1.0)
+    max_level = Keyword.get(opts, :max_level, 3)
+
+    collections = fetch_collections(repo, collection_filter)
+
+    if collections == [] do
+      {:ok, %{collections: 0, communities: 0}}
+    else
+      total_collections = length(collections)
+
+      results =
+        collections
+        |> Enum.with_index(1)
+        |> Enum.map(fn {collection, index} ->
+          result =
+            detect_communities_for_collection(
+              collection,
+              repo,
+              resolution,
+              max_level,
+              progress_fn
+            )
+
+          try do
+            progress_fn.(:collection_complete, %{
+              index: index,
+              total: total_collections,
+              collection: collection.name,
+              result: result
+            })
+          rescue
+            FunctionClauseError -> progress_fn.(index, total_collections)
+          end
+
+          result
+        end)
+
+      total_communities = Enum.sum(Enum.map(results, & &1.communities))
+
+      {:ok, %{collections: total_collections, communities: total_communities}}
+    end
+  end
+
+  defp detect_communities_for_collection(collection, repo, resolution, max_level, progress_fn) do
+    alias Arcana.Graph.{CommunityDetector, Entity, Relationship}
+
+    # Report start
+    try do
+      progress_fn.(:collection_start, %{collection: collection.name})
+    rescue
+      _ -> :ok
+    end
+
+    # Fetch entities and relationships for this collection
+    entities =
+      repo.all(
+        from(e in Entity,
+          where: e.collection_id == ^collection.id,
+          select: %{id: e.id, name: e.name, type: e.type}
+        )
+      )
+
+    relationships =
+      repo.all(
+        from(r in Relationship,
+          join: e in Entity,
+          on: r.source_id == e.id,
+          where: e.collection_id == ^collection.id,
+          select: %{source_id: r.source_id, target_id: r.target_id, strength: r.strength}
+        )
+      )
+
+    if entities == [] do
+      %{communities: 0, entities: 0, relationships: 0}
+    else
+      # Clear existing communities for this collection
+      repo.delete_all(from(c in Arcana.Graph.Community, where: c.collection_id == ^collection.id))
+
+      # Run Leiden community detection
+      detector = {CommunityDetector.Leiden, resolution: resolution, max_level: max_level}
+
+      case CommunityDetector.detect(detector, entities, relationships) do
+        {:ok, communities} ->
+          # Persist communities
+          :ok = GraphStore.persist_communities(collection.id, communities, repo: repo)
+
+          %{
+            communities: length(communities),
+            entities: length(entities),
+            relationships: length(relationships)
+          }
+
+        {:error, _reason} ->
+          %{communities: 0, entities: length(entities), relationships: length(relationships)}
+      end
+    end
+  end
 end

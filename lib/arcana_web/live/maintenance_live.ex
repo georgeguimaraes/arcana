@@ -23,6 +23,9 @@ defmodule ArcanaWeb.MaintenanceLive do
        rebuild_graph_progress: nil,
        rebuild_graph_collection: nil,
        graph_info: get_graph_info(),
+       detect_communities_running: false,
+       detect_communities_progress: nil,
+       detect_communities_collection: nil,
        collections: [],
        collections_for_assign: [],
        orphaned_stats: %{entities: 0, relationships: 0},
@@ -131,6 +134,36 @@ defmodule ArcanaWeb.MaintenanceLive do
       opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
       result = Arcana.Maintenance.rebuild_graph(repo, opts)
       send(parent, {:rebuild_graph_complete, result})
+    end)
+
+    {:noreply, socket}
+  end
+
+  def handle_event("select_detect_communities_collection", %{"collection" => collection}, socket) do
+    collection = if collection == "", do: nil, else: collection
+    {:noreply, assign(socket, detect_communities_collection: collection)}
+  end
+
+  def handle_event("detect_communities", _params, socket) do
+    repo = socket.assigns.repo
+    collection = socket.assigns.detect_communities_collection
+    parent = self()
+
+    socket =
+      assign(socket,
+        detect_communities_running: true,
+        detect_communities_progress: %{current: 0, total: 0}
+      )
+
+    Arcana.TaskSupervisor.start_child(fn ->
+      progress_fn = fn current, total ->
+        send(parent, {:detect_communities_progress, current, total})
+      end
+
+      opts = [progress: progress_fn]
+      opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
+      result = Arcana.Maintenance.detect_communities(repo, opts)
+      send(parent, {:detect_communities_complete, result})
     end)
 
     {:noreply, socket}
@@ -245,6 +278,28 @@ defmodule ArcanaWeb.MaintenanceLive do
           socket
           |> assign(rebuild_graph_running: false, rebuild_graph_progress: nil)
           |> put_flash(:error, "Rebuild graph failed: #{inspect(reason)}")
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:detect_communities_progress, current, total}, socket) do
+    {:noreply, assign(socket, detect_communities_progress: %{current: current, total: total})}
+  end
+
+  def handle_info({:detect_communities_complete, result}, socket) do
+    socket =
+      case result do
+        {:ok, %{communities: communities}} ->
+          socket
+          |> assign(detect_communities_running: false, detect_communities_progress: nil)
+          |> load_data()
+          |> put_flash(:info, "Detected #{communities} communities successfully!")
+
+        {:error, reason} ->
+          socket
+          |> assign(detect_communities_running: false, detect_communities_progress: nil)
+          |> put_flash(:error, "Community detection failed: #{inspect(reason)}")
       end
 
     {:noreply, socket}
@@ -392,6 +447,52 @@ defmodule ArcanaWeb.MaintenanceLive do
                 style="background: #10b981; color: white; padding: 0.5rem 1rem; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: pointer; white-space: nowrap;"
               >
                 Rebuild Graph
+              </button>
+            </div>
+          <% end %>
+        </div>
+
+        <div class="arcana-maintenance-section">
+          <h3>Detect Communities</h3>
+          <p style="color: #6b7280; margin-bottom: 1rem; font-size: 0.875rem;">
+            Run Leiden community detection on the knowledge graph.
+            Communities enable global queries by grouping related entities.
+          </p>
+
+          <%= if @detect_communities_running do %>
+            <div class="arcana-progress">
+              <div class="arcana-progress-text">
+                Detecting communities... <%= @detect_communities_progress.current %>/<%= @detect_communities_progress.total %> collections
+              </div>
+              <%= if @detect_communities_progress.total > 0 do %>
+                <progress
+                  value={@detect_communities_progress.current}
+                  max={@detect_communities_progress.total}
+                  style="width: 100%; height: 1rem;"
+                >
+                  <%= round(@detect_communities_progress.current / @detect_communities_progress.total * 100) %>%
+                </progress>
+              <% end %>
+            </div>
+          <% else %>
+            <div style="display: flex; gap: 0.75rem; align-items: stretch;">
+              <select
+                phx-change="select_detect_communities_collection"
+                name="collection"
+                style="padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem; background: white; min-width: 160px;"
+              >
+                <option value="">All Collections</option>
+                <%= for collection <- @collections do %>
+                  <option value={collection} selected={@detect_communities_collection == collection}>
+                    <%= collection %>
+                  </option>
+                <% end %>
+              </select>
+              <button
+                phx-click="detect_communities"
+                style="background: #8b5cf6; color: white; padding: 0.5rem 1rem; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: pointer; white-space: nowrap;"
+              >
+                Detect Communities
               </button>
             </div>
           <% end %>
