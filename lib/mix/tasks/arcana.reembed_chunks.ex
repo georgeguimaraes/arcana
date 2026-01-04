@@ -1,10 +1,10 @@
-defmodule Mix.Tasks.Arcana.Reembed do
+defmodule Mix.Tasks.Arcana.ReembedChunks do
   @moduledoc """
-  Re-embeds all documents with the current embedding configuration.
+  Re-embeds all chunks with the current embedding configuration.
 
   Use this after switching embedding models or updating to a new version.
 
-      $ mix arcana.reembed
+      $ mix arcana.reembed_chunks
 
   ## Options
 
@@ -15,22 +15,22 @@ defmodule Mix.Tasks.Arcana.Reembed do
   ## Examples
 
       # Default usage (all collections)
-      mix arcana.reembed
+      mix arcana.reembed_chunks
 
       # Re-embed only a specific collection
-      mix arcana.reembed --collection my-docs
+      mix arcana.reembed_chunks --collection my-docs
 
       # With larger batch size
-      mix arcana.reembed --batch-size 100
+      mix arcana.reembed_chunks --batch-size 100
 
       # Quiet mode (no progress bar)
-      mix arcana.reembed --quiet
+      mix arcana.reembed_chunks --quiet
 
   """
 
   use Mix.Task
 
-  @shortdoc "Re-embeds all documents with current embedding config"
+  @shortdoc "Re-embeds all chunks with current embedding config"
 
   @impl Mix.Task
   def run(args) do
