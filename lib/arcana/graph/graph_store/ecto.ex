@@ -324,16 +324,37 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     limit = Keyword.get(opts, :limit, 50)
     offset = Keyword.get(opts, :offset, 0)
 
+    # Subquery for mention counts
+    mention_counts =
+      from(m in EntityMention,
+        group_by: m.entity_id,
+        select: %{entity_id: m.entity_id, count: count(m.id)}
+      )
+
+    # Subquery for relationship counts (source + target)
+    source_counts =
+      from(r in Relationship,
+        group_by: r.source_id,
+        select: %{entity_id: r.source_id, count: count(r.id)}
+      )
+
+    target_counts =
+      from(r in Relationship,
+        group_by: r.target_id,
+        select: %{entity_id: r.target_id, count: count(r.id)}
+      )
+
     query =
       from(e in Entity,
-        left_join: m in EntityMention,
-        on: m.entity_id == e.id,
-        left_join: r in Relationship,
-        on: r.source_id == e.id or r.target_id == e.id,
         join: c in Arcana.Collection,
         on: c.id == e.collection_id,
-        group_by: [e.id, c.name],
-        order_by: [desc: count(m.id, :distinct)],
+        left_join: mc in subquery(mention_counts),
+        on: mc.entity_id == e.id,
+        left_join: sc in subquery(source_counts),
+        on: sc.entity_id == e.id,
+        left_join: tc in subquery(target_counts),
+        on: tc.entity_id == e.id,
+        order_by: [desc: coalesce(mc.count, 0)],
         limit: ^limit,
         offset: ^offset,
         select: %{
@@ -343,8 +364,8 @@ defmodule Arcana.Graph.GraphStore.Ecto do
           description: e.description,
           collection_id: e.collection_id,
           collection: c.name,
-          mention_count: count(m.id, :distinct),
-          relationship_count: count(r.id, :distinct)
+          mention_count: coalesce(mc.count, 0),
+          relationship_count: coalesce(sc.count, 0) + coalesce(tc.count, 0)
         }
       )
 
