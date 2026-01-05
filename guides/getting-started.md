@@ -140,6 +140,107 @@ config :arcana, chunker: MyApp.SemanticChunker
 Arcana.ingest(text, repo: MyApp.Repo, chunker: MyApp.SemanticChunker)
 ```
 
+## PDF Parsing Configuration
+
+Arcana supports PDF file ingestion with pluggable parsers. The default uses Poppler's `pdftotext` command-line tool.
+
+### Default Parser (Poppler)
+
+```elixir
+# config/config.exs
+
+# Default: Poppler's pdftotext
+config :arcana, pdf_parser: :poppler
+
+# With options
+config :arcana, pdf_parser: {:poppler, layout: true}
+```
+
+**Installing Poppler:**
+
+| Platform | Command |
+|----------|---------|
+| macOS | `brew install poppler` |
+| Ubuntu/Debian | `apt-get install poppler-utils` |
+| Fedora | `dnf install poppler-utils` |
+
+Check availability:
+
+```elixir
+iex> Arcana.FileParser.PDF.Poppler.available?()
+true
+```
+
+### Poppler Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:layout` | `true` | Preserve original text layout |
+
+### Custom PDF Parsers
+
+For alternative PDF parsing (e.g., Apache PDFBox, pdf2htmlex, cloud APIs), implement the `Arcana.FileParser.PDF` behaviour:
+
+```elixir
+defmodule MyApp.PDFBoxParser do
+  @behaviour Arcana.FileParser.PDF
+
+  @impl true
+  def parse(path, opts) when is_binary(path) do
+    # Your PDF parsing logic
+    case extract_with_pdfbox(path, opts) do
+      {:ok, text} -> {:ok, text}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Optional: declare support for binary content
+  # (default is false - parser only accepts file paths)
+  def supports_binary?, do: false
+
+  defp extract_with_pdfbox(path, _opts) do
+    # Call PDFBox CLI, Rustler NIF, or port
+    {:ok, "extracted text"}
+  end
+end
+```
+
+Configure your custom parser:
+
+```elixir
+# config/config.exs
+config :arcana, pdf_parser: MyApp.PDFBoxParser
+config :arcana, pdf_parser: {MyApp.PDFBoxParser, some_option: "value"}
+```
+
+### Binary Content Support
+
+Some parsers can accept binary PDF content directly (useful for processing uploads without saving to disk). Declare this capability:
+
+```elixir
+defmodule MyApp.InMemoryPDFParser do
+  @behaviour Arcana.FileParser.PDF
+
+  @impl true
+  def parse(binary, opts) when is_binary(binary) do
+    # Parse binary PDF content directly
+    {:ok, extracted_text}
+  end
+
+  def supports_binary?, do: true
+end
+```
+
+Check if a parser supports binary input:
+
+```elixir
+iex> Arcana.FileParser.PDF.supports_binary?({MyApp.InMemoryPDFParser, []})
+true
+
+iex> Arcana.FileParser.PDF.supports_binary?({Arcana.FileParser.PDF.Poppler, []})
+false
+```
+
 ## Basic Usage
 
 ### Ingesting Documents
@@ -180,10 +281,8 @@ Arcana.ingest(text, repo: MyApp.Repo, chunker: MyApp.SemanticChunker)
 )
 ```
 
-> **Note:** PDF support requires `pdftotext` from the Poppler library. Install with:
-> - macOS: `brew install poppler`
-> - Ubuntu/Debian: `apt-get install poppler-utils`
-> - Check availability: `Arcana.Parser.pdf_support_available?()`
+> **Note:** PDF support requires a PDF parser. The default uses Poppler's `pdftotext`.
+> See [PDF Parsing Configuration](#pdf-parsing-configuration) for installation and custom parsers.
 
 ### Searching
 

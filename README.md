@@ -257,6 +257,52 @@ You can also pass `:chunker` directly to `ingest/2`:
 Arcana.ingest(text, repo: MyApp.Repo, chunker: MyApp.SemanticChunker)
 ```
 
+### PDF parsing
+
+Arcana supports PDF ingestion with pluggable parsers. The default uses Poppler's `pdftotext`:
+
+```elixir
+# config/config.exs
+
+# Default: Poppler (requires pdftotext installed)
+config :arcana, pdf_parser: :poppler
+config :arcana, pdf_parser: {:poppler, layout: true}
+
+# Custom module implementing Arcana.FileParser.PDF behaviour
+config :arcana, pdf_parser: MyApp.PDFParser
+config :arcana, pdf_parser: {MyApp.PDFParser, some_option: "value"}
+```
+
+**Installing Poppler:**
+
+```bash
+# macOS
+brew install poppler
+
+# Ubuntu/Debian
+apt-get install poppler-utils
+
+# Fedora
+dnf install poppler-utils
+```
+
+**Custom PDF parsers** implement the `Arcana.FileParser.PDF` behaviour:
+
+```elixir
+defmodule MyApp.PDFParser do
+  @behaviour Arcana.FileParser.PDF
+
+  @impl true
+  def parse(path, opts) do
+    # Your PDF parsing logic (e.g., using pdf2htmlex, Apache PDFBox, etc.)
+    {:ok, extracted_text}
+  end
+
+  # Optional: support binary content (default: false)
+  def supports_binary?, do: true
+end
+```
+
 ### LLM configuration
 
 Configure the LLM for `ask/2` and the Agent pipeline:
