@@ -97,8 +97,7 @@ if Code.ensure_loaded?(Leidenfold) do
                 level_summary =
                   by_level
                   |> Enum.sort_by(&elem(&1, 0))
-                  |> Enum.map(fn {lvl, comms} -> "L#{lvl}=#{length(comms)}" end)
-                  |> Enum.join(", ")
+                  |> Enum.map_join(", ", fn {lvl, comms} -> "L#{lvl}=#{length(comms)}" end)
 
                 Logger.info("[Leiden] Completed in #{elapsed}ms: #{level_summary}")
                 {:ok, communities}

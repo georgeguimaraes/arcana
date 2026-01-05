@@ -2,12 +2,13 @@ defmodule Arcana.FileParser.PDFTest do
   use ExUnit.Case, async: true
 
   alias Arcana.FileParser.PDF
+  alias Arcana.FileParser.PDF.Poppler
 
   describe "parse/3" do
     test "delegates to configured parser module" do
-      parser = {Arcana.FileParser.PDF.Poppler, []}
+      parser = {Poppler, []}
 
-      if Arcana.FileParser.PDF.Poppler.available?() do
+      if Poppler.available?() do
         path = fixture_path("sample.pdf")
         assert {:ok, text} = PDF.parse(parser, path)
         assert String.contains?(text, "Hello PDF")
@@ -15,9 +16,9 @@ defmodule Arcana.FileParser.PDFTest do
     end
 
     test "merges call options with parser options" do
-      parser = {Arcana.FileParser.PDF.Poppler, [layout: true]}
+      parser = {Poppler, [layout: true]}
 
-      if Arcana.FileParser.PDF.Poppler.available?() do
+      if Poppler.available?() do
         path = fixture_path("sample.pdf")
         # Override layout option
         assert {:ok, _text} = PDF.parse(parser, path, layout: false)
@@ -27,7 +28,7 @@ defmodule Arcana.FileParser.PDFTest do
 
   describe "supports_binary?/1" do
     test "returns false for Poppler parser" do
-      parser = {Arcana.FileParser.PDF.Poppler, []}
+      parser = {Poppler, []}
       refute PDF.supports_binary?(parser)
     end
   end
