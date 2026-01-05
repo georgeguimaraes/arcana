@@ -587,3 +587,97 @@ These events are emitted by the storage layer:
 ```
 
 See the [Telemetry Guide](telemetry.md) for more details on monitoring and metrics integration.
+
+## Maintenance Tasks
+
+GraphRAG provides mix tasks for managing the knowledge graph.
+
+### Rebuild Graph
+
+Re-extract entities and relationships from all chunks:
+
+```bash
+# Rebuild all collections
+mix arcana.graph.rebuild
+
+# Rebuild specific collection
+mix arcana.graph.rebuild --collection my-docs
+
+# Resume interrupted rebuild
+mix arcana.graph.rebuild --resume
+```
+
+Use this when:
+- You've changed the graph extractor configuration
+- You want to regenerate entity/relationship data
+- You've enabled relationship extraction after initial ingest
+
+### Detect Communities
+
+Run Leiden community detection on the graph:
+
+```bash
+# Detect communities for all collections
+mix arcana.graph.detect_communities
+
+# Specific collection
+mix arcana.graph.detect_communities --collection my-docs
+
+# Custom resolution (higher = smaller communities)
+mix arcana.graph.detect_communities --resolution 1.5
+
+# Multiple hierarchy levels
+mix arcana.graph.detect_communities --max-level 3
+```
+
+### Summarize Communities
+
+Generate LLM summaries for detected communities:
+
+```bash
+# Summarize dirty communities (those needing regeneration)
+mix arcana.graph.summarize_communities
+
+# Force regenerate all summaries
+mix arcana.graph.summarize_communities --force
+
+# Specific collection
+mix arcana.graph.summarize_communities --collection my-docs
+
+# Parallel summarization (faster)
+mix arcana.graph.summarize_communities --concurrency 4
+
+# Quiet mode (less output)
+mix arcana.graph.summarize_communities --quiet
+```
+
+Requires an LLM to be configured:
+
+```elixir
+config :arcana, :llm, {"openai:gpt-4o-mini", api_key: "..."}
+```
+
+### Typical Workflow
+
+After ingesting new documents:
+
+```bash
+# 1. Detect communities in the graph
+mix arcana.graph.detect_communities
+
+# 2. Generate summaries for communities
+mix arcana.graph.summarize_communities
+```
+
+To refresh everything:
+
+```bash
+# 1. Rebuild the graph (re-extract entities/relationships)
+mix arcana.graph.rebuild
+
+# 2. Re-detect communities
+mix arcana.graph.detect_communities
+
+# 3. Regenerate all summaries
+mix arcana.graph.summarize_communities --force
+```
