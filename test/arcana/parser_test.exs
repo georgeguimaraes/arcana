@@ -52,17 +52,18 @@ defmodule Arcana.ParserTest do
       path = create_temp_file("not a real pdf", ".pdf")
 
       assert {:error, reason} = Parser.parse(path)
-      assert reason in [:invalid_pdf, :pdf_parse_error, :pdf_support_not_available]
+      # :invalid_pdf when file doesn't start with %PDF magic bytes
+      assert reason == :invalid_pdf
     end
 
-    test "returns pdf_support_not_available when pdftotext missing" do
+    test "returns error when PDF parser not available" do
       # This tests the error path - we can't easily test without pdftotext
       # but we verify the function exists and returns expected types
       path = fixture_path("sample.pdf")
 
       case Parser.parse(path) do
         {:ok, _text} -> assert Parser.pdf_support_available?()
-        {:error, :pdf_support_not_available} -> refute Parser.pdf_support_available?()
+        {:error, :poppler_not_available} -> refute Parser.pdf_support_available?()
         {:error, other} -> flunk("Unexpected error: #{inspect(other)}")
       end
     end

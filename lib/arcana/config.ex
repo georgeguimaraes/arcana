@@ -49,6 +49,15 @@ defmodule Arcana.Config do
       config :arcana, chunker: MyApp.SemanticChunker
       config :arcana, chunker: {MyApp.SemanticChunker, model: "..."}
 
+  ## PDF Parser Configuration
+
+      # Default: poppler's pdftotext
+      config :arcana, pdf_parser: :poppler
+
+      # Custom module implementing Arcana.FileParser.PDF behaviour
+      config :arcana, pdf_parser: MyApp.PDFParser
+      config :arcana, pdf_parser: {MyApp.PDFParser, some_option: "value"}
+
   """
 
   @doc """
@@ -75,6 +84,14 @@ defmodule Arcana.Config do
       {:ok, config} -> parse_chunker_config(config)
       :error -> chunker()
     end
+  end
+
+  @doc """
+  Returns the configured PDF parser as a `{module, opts}` tuple.
+  """
+  def pdf_parser do
+    Application.get_env(:arcana, :pdf_parser, :poppler)
+    |> parse_pdf_parser_config()
   end
 
   @doc """
@@ -164,6 +181,20 @@ defmodule Arcana.Config do
 
   defp parse_chunker_config(other) do
     raise ArgumentError, "invalid chunker config: #{inspect(other)}"
+  end
+
+  # PDF parser config parsing
+
+  defp parse_pdf_parser_config(:poppler), do: {Arcana.FileParser.PDF.Poppler, []}
+  defp parse_pdf_parser_config({:poppler, opts}), do: {Arcana.FileParser.PDF.Poppler, opts}
+
+  defp parse_pdf_parser_config({module, opts}) when is_atom(module) and is_list(opts),
+    do: {module, opts}
+
+  defp parse_pdf_parser_config(module) when is_atom(module), do: {module, []}
+
+  defp parse_pdf_parser_config(other) do
+    raise ArgumentError, "invalid pdf_parser config: #{inspect(other)}"
   end
 
   # Redaction support

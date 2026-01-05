@@ -4,9 +4,15 @@ defmodule Arcana.Parser do
 
   Supports multiple file formats including plain text, markdown, and PDF.
 
-  ## PDF Support (Optional)
+  ## PDF Support
 
-  PDF parsing requires `pdftotext` from the Poppler library to be installed:
+  PDF parsing is handled by a configurable parser. The default uses
+  `pdftotext` from the Poppler library. See `Arcana.FileParser.PDF` for
+  implementing custom PDF parsers.
+
+  ### Default Parser (Poppler)
+
+  The default PDF parser requires `pdftotext` to be installed:
 
       # macOS
       brew install poppler
@@ -17,8 +23,16 @@ defmodule Arcana.Parser do
       # Fedora
       dnf install poppler-utils
 
-  Use `Arcana.Parser.pdf_support_available?/0` to check if PDF support is enabled.
+  ### Custom PDF Parser
+
+  Configure a custom parser in `config.exs`:
+
+      config :arcana, pdf_parser: MyApp.PDFParser
+
+  See `Arcana.FileParser.PDF` for the behaviour specification.
   """
+
+  alias Arcana.FileParser
 
   @text_extensions [".txt", ".md", ".markdown"]
   @pdf_extensions [".pdf"]
@@ -31,18 +45,24 @@ defmodule Arcana.Parser do
   end
 
   @doc """
-  Checks if PDF support is available (pdftotext installed).
+  Checks if PDF support is available.
+
+  For the default Poppler parser, this checks if `pdftotext` is installed.
+  Custom parsers may have different availability requirements.
 
   ## Examples
 
       iex> Arcana.Parser.pdf_support_available?()
-      true  # or false if poppler not installed
+      true  # or false if parser not available
 
   """
   def pdf_support_available? do
-    case System.find_executable("pdftotext") do
-      nil -> false
-      _path -> true
+    {module, _opts} = Arcana.Config.pdf_parser()
+
+    if function_exported?(module, :available?, 0) do
+      module.available?()
+    else
+      true
     end
   end
 
@@ -100,16 +120,7 @@ defmodule Arcana.Parser do
   end
 
   defp extract_pdf_text(path) do
-    if pdf_support_available?() do
-      case System.cmd("pdftotext", ["-layout", path, "-"], stderr_to_stdout: true) do
-        {text, 0} ->
-          {:ok, String.trim(text)}
-
-        {_, _} ->
-          {:error, :pdf_parse_error}
-      end
-    else
-      {:error, :pdf_support_not_available}
-    end
+    pdf_parser = Arcana.Config.pdf_parser()
+    FileParser.PDF.parse(pdf_parser, path)
   end
 end
