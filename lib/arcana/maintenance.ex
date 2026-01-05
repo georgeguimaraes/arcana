@@ -718,4 +718,239 @@ defmodule Arcana.Maintenance do
     end
   end
 
+  @doc """
+  Generates summaries for communities that need them.
+
+  This function iterates through communities and generates LLM summaries
+  for those that are dirty, have no summary, or have accumulated changes.
+
+  ## Options
+
+    - `:collection` - Only summarize communities in this collection (default: all)
+    - `:progress` - Progress callback function
+    - `:force` - Regenerate all summaries even if not dirty (default: false)
+    - `:concurrency` - Number of parallel summarization tasks (default: 1)
+    - `:llm` - LLM function for summarization (uses config if not provided)
+
+  ## Returns
+
+  `{:ok, %{communities: count, summaries: count}}` on success.
+
+  ## Examples
+
+      # Summarize all dirty communities
+      Maintenance.summarize_communities(repo)
+
+      # Force regenerate all summaries
+      Maintenance.summarize_communities(repo, force: true)
+
+      # Summarize a specific collection
+      Maintenance.summarize_communities(repo, collection: "my-docs")
+
+  """
+  def summarize_communities(repo, opts \\ []) do
+    progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
+    collection_filter = Keyword.get(opts, :collection)
+    force = Keyword.get(opts, :force, false)
+    concurrency = Keyword.get(opts, :concurrency, 1)
+
+    # Get LLM function from opts or config
+    llm =
+      Keyword.get_lazy(opts, :llm, fn ->
+        case Application.get_env(:arcana, :llm) do
+          {provider, llm_opts} -> build_llm_fn(provider, llm_opts)
+          nil -> nil
+        end
+      end)
+
+    unless llm do
+      raise "No LLM configured. Set config :arcana, :llm or pass :llm option"
+    end
+
+    collections = fetch_collections(repo, collection_filter)
+
+    if collections == [] do
+      {:ok, %{communities: 0, summaries: 0}}
+    else
+      total_collections = length(collections)
+
+      results =
+        collections
+        |> Enum.with_index(1)
+        |> Enum.map(fn {collection, index} ->
+          result =
+            summarize_communities_for_collection(
+              collection,
+              repo,
+              llm,
+              force,
+              concurrency,
+              progress_fn
+            )
+
+          try do
+            progress_fn.(:collection_complete, %{
+              index: index,
+              total: total_collections,
+              collection: collection.name,
+              result: result
+            })
+          rescue
+            FunctionClauseError -> progress_fn.(index, total_collections)
+          end
+
+          result
+        end)
+
+      total_communities = Enum.sum(Enum.map(results, & &1.communities))
+      total_summaries = Enum.sum(Enum.map(results, & &1.summaries))
+
+      {:ok, %{communities: total_communities, summaries: total_summaries}}
+    end
+  end
+
+  defp summarize_communities_for_collection(collection, repo, llm, force, concurrency, progress_fn) do
+    alias Arcana.Graph.{Community, CommunitySummarizer, Entity, Relationship}
+
+    # Report start
+    try do
+      progress_fn.(:collection_start, %{collection: collection.name})
+    rescue
+      _ -> :ok
+    end
+
+    # Fetch communities for this collection
+    communities =
+      repo.all(
+        from(c in Community,
+          where: c.collection_id == ^collection.id,
+          select: c
+        )
+      )
+
+    if communities == [] do
+      %{communities: 0, summaries: 0}
+    else
+      # Filter to communities that need summarization
+      to_summarize =
+        if force do
+          communities
+        else
+          Enum.filter(communities, &CommunitySummarizer.needs_regeneration?/1)
+        end
+
+      # Build entity ID to entity map for lookups
+      all_entity_ids =
+        communities
+        |> Enum.flat_map(& &1.entity_ids)
+        |> Enum.uniq()
+
+      entities_by_id =
+        if all_entity_ids == [] do
+          %{}
+        else
+          repo.all(
+            from(e in Entity,
+              where: e.id in ^all_entity_ids,
+              select: {e.id, %{id: e.id, name: e.name, type: e.type, description: e.description}}
+            )
+          )
+          |> Map.new()
+        end
+
+      # Fetch relationships for this collection
+      relationships =
+        repo.all(
+          from(r in Relationship,
+            join: src in Entity,
+            on: r.source_id == src.id,
+            join: tgt in Entity,
+            on: r.target_id == tgt.id,
+            where: src.collection_id == ^collection.id,
+            select: %{
+              source_id: r.source_id,
+              target_id: r.target_id,
+              source: src.name,
+              target: tgt.name,
+              type: r.type,
+              description: r.description
+            }
+          )
+        )
+
+      # Process communities (with optional concurrency)
+      summaries_generated =
+        if concurrency > 1 do
+          to_summarize
+          |> Task.async_stream(
+            fn community ->
+              summarize_single_community(community, entities_by_id, relationships, llm, repo)
+            end,
+            max_concurrency: concurrency,
+            timeout: 60_000
+          )
+          |> Enum.count(fn
+            {:ok, :ok} -> true
+            _ -> false
+          end)
+        else
+          to_summarize
+          |> Enum.count(fn community ->
+            summarize_single_community(community, entities_by_id, relationships, llm, repo) == :ok
+          end)
+        end
+
+      %{communities: length(communities), summaries: summaries_generated}
+    end
+  end
+
+  defp summarize_single_community(community, entities_by_id, all_relationships, llm, repo) do
+    alias Arcana.Graph.{Community, CommunitySummarizer}
+
+    # Get entities for this community
+    entity_ids = MapSet.new(community.entity_ids || [])
+
+    entities =
+      community.entity_ids
+      |> Enum.map(&Map.get(entities_by_id, &1))
+      |> Enum.reject(&is_nil/1)
+
+    # Filter relationships to those between community entities
+    relationships =
+      Enum.filter(all_relationships, fn rel ->
+        MapSet.member?(entity_ids, rel.source_id) and MapSet.member?(entity_ids, rel.target_id)
+      end)
+
+    # Generate summary
+    case CommunitySummarizer.summarize(entities, relationships, llm: llm) do
+      {:ok, summary} ->
+        # Update community with summary
+        community
+        |> Community.changeset(%{
+          summary: summary,
+          dirty: false,
+          change_count: 0
+        })
+        |> repo.update()
+
+        :ok
+
+      {:error, _reason} ->
+        :error
+    end
+  end
+
+  defp build_llm_fn(provider, llm_opts) when is_binary(provider) do
+    fn prompt, context, opts ->
+      Arcana.LLM.complete(provider, prompt, context, Keyword.merge(llm_opts, opts))
+    end
+  end
+
+  defp build_llm_fn({provider, provider_opts}, llm_opts) do
+    fn prompt, context, opts ->
+      merged = Keyword.merge(llm_opts, opts) |> Keyword.merge(provider_opts)
+      Arcana.LLM.complete(provider, prompt, context, merged)
+    end
+  end
+
 end
