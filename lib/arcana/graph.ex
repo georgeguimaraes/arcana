@@ -113,10 +113,23 @@ defmodule Arcana.Graph do
 
   """
   def config do
+    raw_config()
+    |> sanitize_for_serialization()
+  end
+
+  # Returns raw config including non-serializable values (for internal use)
+  defp raw_config do
     app_config = Application.get_env(:arcana, :graph, [])
 
     @default_config
     |> Map.merge(Map.new(app_config))
+  end
+
+  # Filter out non-serializable values (functions, pids, etc.)
+  defp sanitize_for_serialization(config) do
+    config
+    |> Enum.reject(fn {_k, v} -> is_function(v) or is_pid(v) or is_reference(v) end)
+    |> Map.new()
   end
 
   @doc """
@@ -433,7 +446,7 @@ defmodule Arcana.Graph do
   Resolves the entity extractor from options and config.
   """
   def resolve_entity_extractor(opts) do
-    graph_config = config()
+    graph_config = raw_config()
     llm = opts[:llm] || Application.get_env(:arcana, :llm)
     extractor = Keyword.get(opts, :entity_extractor) || graph_config[:entity_extractor]
     normalize_entity_extractor(extractor, llm)

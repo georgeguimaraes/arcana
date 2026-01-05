@@ -65,4 +65,28 @@ config :arcana, ArcanaWeb.Endpoint,
   render_errors: [view: ArcanaWeb.ErrorView, accepts: ~w(html json), layout: false],
   live_view: [signing_salt: "test_live_view_salt"]
 
+# Use a mock entity extractor for tests (avoids loading real NER model)
+# Returns deterministic entities based on simple pattern matching
+config :arcana, :graph,
+  entity_extractor: fn text, _opts ->
+    # Simple pattern-based extraction for tests
+    entities =
+      Regex.scan(~r/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/, text)
+      |> Enum.map(fn [full, _] -> full end)
+      |> Enum.uniq()
+      |> Enum.with_index()
+      |> Enum.map(fn {name, idx} ->
+        type =
+          cond do
+            String.contains?(name, " ") -> "person"
+            idx == 0 -> "organization"
+            true -> "concept"
+          end
+
+        %{name: name, type: type, span_start: 0, span_end: String.length(name)}
+      end)
+
+    {:ok, entities}
+  end
+
 config :logger, level: :warning

@@ -76,9 +76,11 @@ defmodule Arcana.Graph.NERServing do
         defn_options: [compiler: EXLA]
       )
 
-    {:ok, _pid} =
-      Nx.Serving.start_link(serving: serving, name: __MODULE__.Serving, batch_timeout: 100)
-
-    :ok
+    # Handle race condition where another process started the serving
+    # while we were loading the model (global lock may have timed out)
+    case Nx.Serving.start_link(serving: serving, name: __MODULE__.Serving, batch_timeout: 100) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
   end
 end

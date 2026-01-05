@@ -1,6 +1,9 @@
 defmodule Arcana.Graph.EntityExtractor.NERTest do
   use Arcana.DataCase, async: true
 
+  # Requires real Bumblebee NER model - excluded in CI, run with: mix test --include serving
+  @moduletag :serving
+
   alias Arcana.Graph.EntityExtractor.NER
 
   describe "extract/2" do
