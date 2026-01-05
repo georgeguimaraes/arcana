@@ -51,6 +51,10 @@ defmodule Arcana.IngestFileTest do
         {:error, :pdf_support_not_available} ->
           refute Parser.pdf_support_available?()
 
+        # Poppler returns :poppler_not_available when pdftotext is not installed
+        {:error, :poppler_not_available} ->
+          refute Parser.pdf_support_available?()
+
         {:error, other} ->
           flunk("Unexpected error: #{inspect(other)}")
       end
