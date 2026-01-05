@@ -62,6 +62,11 @@ defmodule Arcana.Graph.CommunitySummarizer.LLM do
     2. Names the most important entities (those with the most connections)
     3. Describes how the key entities relate to each other
 
+    IMPORTANT: Start directly with the substance. Do NOT begin with generic phrases like:
+    - "This community centers on..."
+    - "This community is about..."
+    - "This community focuses on..."
+
     Output only the summary paragraph, nothing else.
     """
   end
