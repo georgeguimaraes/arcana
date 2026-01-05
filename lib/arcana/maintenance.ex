@@ -606,6 +606,7 @@ defmodule Arcana.Maintenance do
   def detect_communities(repo, opts \\ []) do
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
     collection_filter = Keyword.get(opts, :collection)
+    detector_name = Keyword.get(opts, :detector, "leidenalg")
     resolution = Keyword.get(opts, :resolution, 1.0)
     max_level = Keyword.get(opts, :max_level, 3)
     theta = Keyword.get(opts, :theta, 0.01)
@@ -618,6 +619,7 @@ defmodule Arcana.Maintenance do
       total_collections = length(collections)
 
       detector_opts = [resolution: resolution, max_level: max_level, theta: theta]
+      detector_module = detector_module(detector_name)
 
       results =
         collections
@@ -627,6 +629,7 @@ defmodule Arcana.Maintenance do
             detect_communities_for_collection(
               collection,
               repo,
+              detector_module,
               detector_opts,
               progress_fn
             )
@@ -651,7 +654,7 @@ defmodule Arcana.Maintenance do
     end
   end
 
-  defp detect_communities_for_collection(collection, repo, detector_opts, progress_fn) do
+  defp detect_communities_for_collection(collection, repo, detector_module, detector_opts, progress_fn) do
     alias Arcana.Graph.{CommunityDetector, Entity, Relationship}
 
     # Report start
@@ -686,8 +689,8 @@ defmodule Arcana.Maintenance do
       # Clear existing communities for this collection
       repo.delete_all(from(c in Arcana.Graph.Community, where: c.collection_id == ^collection.id))
 
-      # Run Leiden community detection
-      detector = {CommunityDetector.Leiden, detector_opts}
+      # Run community detection with configured detector
+      detector = {detector_module, detector_opts}
 
       case CommunityDetector.detect(detector, entities, relationships) do
         {:ok, communities} ->
@@ -705,4 +708,8 @@ defmodule Arcana.Maintenance do
       end
     end
   end
+
+  defp detector_module("leidenalg"), do: Arcana.Graph.CommunityDetector.Leidenalg
+  defp detector_module("leiden"), do: Arcana.Graph.CommunityDetector.Leiden
+  defp detector_module(other), do: raise("Unknown detector: #{other}. Use 'leidenalg' or 'leiden'.")
 end

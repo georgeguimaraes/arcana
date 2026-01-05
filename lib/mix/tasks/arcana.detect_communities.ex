@@ -10,24 +10,30 @@ defmodule Mix.Tasks.Arcana.DetectCommunities do
   ## Options
 
     * `--collection` - Only detect communities for the specified collection
+    * `--detector` - Algorithm implementation: "leidenalg" (default, fast) or "leiden" (ex_leiden, slow)
     * `--resolution` - Community detection resolution (default: 1.0, higher = smaller communities)
-    * `--max-level` - Maximum hierarchy levels (default: 3)
-    * `--theta` - Convergence threshold (default: 0.01, higher = faster but less precise)
+    * `--max-level` - Maximum hierarchy levels (default: 3, only for ex_leiden)
+    * `--theta` - Convergence threshold (default: 0.01, only for ex_leiden)
     * `--quiet` - Suppress progress output
+
+  ## Detectors
+
+    * `leidenalg` - Python leidenalg via uv (recommended, <1 second for 15k entities)
+    * `leiden` - ex_leiden Elixir NIF (slow, ~25 minutes for 15k entities)
 
   ## Examples
 
-      # Default usage (all collections)
+      # Default usage with leidenalg (fast)
       mix arcana.detect_communities
+
+      # Use ex_leiden (slow) with hierarchical levels
+      mix arcana.detect_communities --detector leiden --max-level 3
 
       # Detect communities for a specific collection
       mix arcana.detect_communities --collection my-docs
 
       # With custom resolution (higher = more, smaller communities)
       mix arcana.detect_communities --resolution 1.5
-
-      # Faster convergence (less precise)
-      mix arcana.detect_communities --theta 0.1
 
       # Quiet mode (no progress output)
       mix arcana.detect_communities --quiet
@@ -45,6 +51,7 @@ defmodule Mix.Tasks.Arcana.DetectCommunities do
         strict: [
           quiet: :boolean,
           collection: :string,
+          detector: :string,
           resolution: :float,
           max_level: :integer,
           theta: :float
@@ -53,6 +60,7 @@ defmodule Mix.Tasks.Arcana.DetectCommunities do
 
     quiet = Keyword.get(opts, :quiet, false)
     collection = Keyword.get(opts, :collection)
+    detector = Keyword.get(opts, :detector, "leidenalg")
     resolution = Keyword.get(opts, :resolution, 1.0)
     max_level = Keyword.get(opts, :max_level, 3)
     theta = Keyword.get(opts, :theta, 0.01)
@@ -69,7 +77,7 @@ defmodule Mix.Tasks.Arcana.DetectCommunities do
     # Show current graph info
     info = Arcana.Maintenance.graph_info()
     Mix.shell().info("Graph config: #{format_info(info)}")
-    Mix.shell().info("Community detection: resolution=#{resolution}, max_level=#{max_level}, theta=#{theta}")
+    Mix.shell().info("Detector: #{detector}, resolution=#{resolution}" <> format_detector_opts(detector, max_level, theta))
 
     # Build progress callback
     progress_fn =
@@ -84,6 +92,7 @@ defmodule Mix.Tasks.Arcana.DetectCommunities do
 
     detect_opts = [
       progress: progress_fn,
+      detector: detector,
       resolution: resolution,
       max_level: max_level,
       theta: theta
@@ -109,6 +118,12 @@ defmodule Mix.Tasks.Arcana.DetectCommunities do
     status = if enabled, do: "enabled", else: "disabled"
     "#{status}, extractor: #{type}, community levels: #{levels}"
   end
+
+  defp format_detector_opts("leiden", max_level, theta) do
+    ", max_level=#{max_level}, theta=#{theta}"
+  end
+
+  defp format_detector_opts(_detector, _max_level, _theta), do: ""
 
   defp build_progress_fn do
     fn
