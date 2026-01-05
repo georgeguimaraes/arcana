@@ -16,8 +16,11 @@ jobs:
     name: OTP ${{matrix.otp}} / Elixir ${{matrix.elixir}}
     strategy:
       matrix:
-        elixir: ["1.18"]
-        otp: ["27"]
+        include:
+          - elixir: "1.18"
+            otp: "27"
+          - elixir: "1.19"
+            otp: "28"
 
     services:
       postgres:

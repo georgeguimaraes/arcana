@@ -147,7 +147,8 @@ if Code.ensure_loaded?(Leidenfold) do
     defp format_communities(membership, index_to_id, level, min_size) do
       membership
       |> Enum.with_index()
-      |> Enum.group_by(fn {community_id, _node_idx} -> community_id end, fn {_community_id, node_idx} ->
+      |> Enum.group_by(fn {community_id, _node_idx} -> community_id end, fn {_community_id,
+                                                                             node_idx} ->
         Map.fetch!(index_to_id, node_idx)
       end)
       |> Enum.map(fn {_community_id, entity_ids} ->

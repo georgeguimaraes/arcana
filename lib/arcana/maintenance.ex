@@ -628,6 +628,7 @@ defmodule Arcana.Maintenance do
         min_size: min_size,
         max_level: max_level
       ]
+
       detector_module = Arcana.Graph.CommunityDetector.Leiden
 
       results =
@@ -663,7 +664,13 @@ defmodule Arcana.Maintenance do
     end
   end
 
-  defp detect_communities_for_collection(collection, repo, detector_module, detector_opts, progress_fn) do
+  defp detect_communities_for_collection(
+         collection,
+         repo,
+         detector_module,
+         detector_opts,
+         progress_fn
+       ) do
     alias Arcana.Graph.{CommunityDetector, Entity, Relationship}
 
     # Report start
@@ -809,7 +816,14 @@ defmodule Arcana.Maintenance do
     end
   end
 
-  defp summarize_communities_for_collection(collection, repo, llm, force, concurrency, progress_fn) do
+  defp summarize_communities_for_collection(
+         collection,
+         repo,
+         llm,
+         force,
+         concurrency,
+         progress_fn
+       ) do
     alias Arcana.Graph.{Community, CommunitySummarizer, Entity, Relationship}
 
     # Report start
@@ -952,5 +966,4 @@ defmodule Arcana.Maintenance do
       Arcana.LLM.complete(provider, prompt, context, merged)
     end
   end
-
 end

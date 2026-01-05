@@ -141,5 +141,4 @@ defmodule Arcana.Graph.CommunityDetectorTest do
       assert is_list(communities)
     end
   end
-
 end

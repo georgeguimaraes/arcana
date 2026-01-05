@@ -103,7 +103,9 @@ defmodule Mix.Tasks.Arcana.Graph.SummarizeCommunities do
     ]
 
     summarize_opts =
-      if collection, do: Keyword.put(summarize_opts, :collection, collection), else: summarize_opts
+      if collection,
+        do: Keyword.put(summarize_opts, :collection, collection),
+        else: summarize_opts
 
     {:ok, %{communities: communities, summaries: summaries}} =
       Arcana.Maintenance.summarize_communities(repo, summarize_opts)

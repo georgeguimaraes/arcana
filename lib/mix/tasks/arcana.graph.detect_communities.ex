@@ -99,7 +99,10 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
     # Show current graph info
     info = Arcana.Maintenance.graph_info()
     Mix.shell().info("Graph config: #{format_info(info)}")
-    Mix.shell().info("Leiden: resolution=#{resolution}, objective=#{objective}, min_size=#{min_size}, max_level=#{max_level}")
+
+    Mix.shell().info(
+      "Leiden: resolution=#{resolution}, objective=#{objective}, min_size=#{min_size}, max_level=#{max_level}"
+    )
 
     # Build progress callback
     progress_fn =
