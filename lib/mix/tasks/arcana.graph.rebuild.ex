@@ -1,11 +1,11 @@
-defmodule Mix.Tasks.Arcana.RebuildGraph do
+defmodule Mix.Tasks.Arcana.Graph.Rebuild do
   @moduledoc """
   Rebuilds the knowledge graph for all documents.
 
   Use this after changing graph extractor configuration or enabling
   relationship extraction.
 
-      $ mix arcana.rebuild_graph
+      $ mix arcana.graph.rebuild
 
   ## Options
 
@@ -17,19 +17,19 @@ defmodule Mix.Tasks.Arcana.RebuildGraph do
   ## Examples
 
       # Default usage (all collections)
-      mix arcana.rebuild_graph
+      mix arcana.graph.rebuild
 
       # Rebuild only a specific collection
-      mix arcana.rebuild_graph --collection my-docs
+      mix arcana.graph.rebuild --collection my-docs
 
       # Resume an interrupted build
-      mix arcana.rebuild_graph --resume
+      mix arcana.graph.rebuild --resume
 
       # Control parallelism (default is 3)
-      mix arcana.rebuild_graph --concurrency 5
+      mix arcana.graph.rebuild --concurrency 5
 
       # Quiet mode (no progress bar)
-      mix arcana.rebuild_graph --quiet
+      mix arcana.graph.rebuild --quiet
 
   """
 

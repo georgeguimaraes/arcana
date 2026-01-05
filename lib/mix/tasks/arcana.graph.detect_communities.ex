@@ -1,11 +1,11 @@
-defmodule Mix.Tasks.Arcana.DetectCommunities do
+defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
   @moduledoc """
   Detects communities in the knowledge graph using the Leiden algorithm.
 
   Use this after building or rebuilding the knowledge graph to generate
   hierarchical community clusters for global queries.
 
-      $ mix arcana.detect_communities
+      $ mix arcana.graph.detect_communities
 
   ## Options
 
@@ -24,19 +24,19 @@ defmodule Mix.Tasks.Arcana.DetectCommunities do
   ## Examples
 
       # Default usage with leidenalg (fast)
-      mix arcana.detect_communities
+      mix arcana.graph.detect_communities
 
       # Use ex_leiden (slow) with hierarchical levels
-      mix arcana.detect_communities --detector leiden --max-level 3
+      mix arcana.graph.detect_communities --detector leiden --max-level 3
 
       # Detect communities for a specific collection
-      mix arcana.detect_communities --collection my-docs
+      mix arcana.graph.detect_communities --collection my-docs
 
       # With custom resolution (higher = more, smaller communities)
-      mix arcana.detect_communities --resolution 1.5
+      mix arcana.graph.detect_communities --resolution 1.5
 
       # Quiet mode (no progress output)
-      mix arcana.detect_communities --quiet
+      mix arcana.graph.detect_communities --quiet
 
   """
 
