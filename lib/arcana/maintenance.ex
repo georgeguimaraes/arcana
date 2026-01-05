@@ -606,10 +606,10 @@ defmodule Arcana.Maintenance do
   def detect_communities(repo, opts \\ []) do
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
     collection_filter = Keyword.get(opts, :collection)
-    detector_name = Keyword.get(opts, :detector, "leidenalg")
     resolution = Keyword.get(opts, :resolution, 1.0)
-    max_level = Keyword.get(opts, :max_level, 3)
-    theta = Keyword.get(opts, :theta, 0.01)
+    objective = Keyword.get(opts, :objective, :cpm)
+    iterations = Keyword.get(opts, :iterations, 2)
+    seed = Keyword.get(opts, :seed, 0)
 
     collections = fetch_collections(repo, collection_filter)
 
@@ -618,8 +618,8 @@ defmodule Arcana.Maintenance do
     else
       total_collections = length(collections)
 
-      detector_opts = [resolution: resolution, max_level: max_level, theta: theta]
-      detector_module = detector_module(detector_name)
+      detector_opts = [resolution: resolution, objective: objective, iterations: iterations, seed: seed]
+      detector_module = Arcana.Graph.CommunityDetector.Leiden
 
       results =
         collections
@@ -709,7 +709,4 @@ defmodule Arcana.Maintenance do
     end
   end
 
-  defp detector_module("leidenalg"), do: Arcana.Graph.CommunityDetector.Leidenalg
-  defp detector_module("leiden"), do: Arcana.Graph.CommunityDetector.Leiden
-  defp detector_module(other), do: raise("Unknown detector: #{other}. Use 'leidenalg' or 'leiden'.")
 end

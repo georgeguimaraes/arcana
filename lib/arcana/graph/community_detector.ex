@@ -8,13 +8,26 @@ defmodule Arcana.Graph.CommunityDetector do
 
   ## Built-in Implementations
 
-  - `Arcana.Graph.CommunityDetector.Leiden` - Leiden algorithm via ExLeiden (default)
+  - `Arcana.Graph.CommunityDetector.Leiden` - Leiden algorithm via Leidenfold (Rust NIF)
+
+  ## Installation
+
+  To enable community detection, add `leidenfold` to your dependencies:
+
+      defp deps do
+        [
+          {:arcana, "~> 1.2"},
+          {:leidenfold, "~> 0.2"}
+        ]
+      end
+
+  Precompiled binaries are available for macOS (Apple Silicon) and Linux (x86_64, ARM64).
 
   ## Configuration
 
   Configure your community detector in `config.exs`:
 
-      # Default: Leiden algorithm (requires ex_leiden)
+      # Default: Leiden algorithm (requires leidenfold)
       config :arcana, :graph,
         community_detector: :leiden
 

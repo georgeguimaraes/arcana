@@ -1,11 +1,24 @@
-if Code.ensure_loaded?(ExLeiden) do
+if Code.ensure_loaded?(Leidenfold) do
   defmodule Arcana.Graph.CommunityDetector.Leiden do
     @moduledoc """
     Leiden algorithm implementation for community detection.
 
-    Uses the ExLeiden library to detect communities in entity graphs.
+    Uses the Leidenfold library (Rust NIF) to detect communities in entity graphs.
     The Leiden algorithm is a refinement of the Louvain algorithm that
     guarantees well-connected communities.
+
+    ## Installation
+
+    Add `leidenfold` to your dependencies in `mix.exs`:
+
+        defp deps do
+          [
+            {:arcana, "~> 1.2"},
+            {:leidenfold, "~> 0.2"}
+          ]
+        end
+
+    Precompiled binaries are available for macOS (Apple Silicon) and Linux (x86_64, ARM64).
 
     ## Usage
 
@@ -16,50 +29,61 @@ if Code.ensure_loaded?(ExLeiden) do
 
       - `:resolution` - Controls community granularity (default: 1.0)
         Higher values produce smaller communities
-      - `:max_level` - Maximum hierarchy levels (default: 3)
-      - `:theta` - Convergence threshold (default: 0.01)
-        Higher values converge faster but may be less precise
+      - `:objective` - Quality function to optimize (default: :cpm)
+        Options: :cpm, :modularity, :rber, :rbc, :significance, :surprise
+      - `:iterations` - Number of optimization iterations (default: 2)
+      - `:seed` - Random seed for reproducibility (default: 0 = random)
 
     """
 
     @behaviour Arcana.Graph.CommunityDetector
 
+    require Logger
+
     @impl true
     def detect([], _relationships, _opts), do: {:ok, []}
 
-    require Logger
-
     def detect(entities, relationships, opts) do
       resolution = Keyword.get(opts, :resolution, 1.0)
-      max_level = Keyword.get(opts, :max_level, 3)
-      theta = Keyword.get(opts, :theta, 0.01)
+      objective = Keyword.get(opts, :objective, :cpm)
+      iterations = Keyword.get(opts, :iterations, 2)
+      seed = Keyword.get(opts, :seed, 0)
 
+      # Build index mappings
       entity_ids = Enum.map(entities, & &1.id)
-      edges = to_edges(entity_ids, relationships)
+      id_to_index = entity_ids |> Enum.with_index() |> Map.new()
+      index_to_id = entity_ids |> Enum.with_index() |> Map.new(fn {id, idx} -> {idx, id} end)
+
+      # Convert to weighted edge tuples with integer indices
+      edges = to_weighted_edges(id_to_index, relationships)
 
       Logger.info(
         "[Leiden] Starting: #{length(entity_ids)} entities, #{length(edges)} edges, " <>
-          "resolution=#{resolution}, max_level=#{max_level}, theta=#{theta}"
+          "resolution=#{resolution}, objective=#{objective}"
       )
 
       :telemetry.span(
         [:arcana, :graph, :community_detection],
-        %{entity_count: length(entities)},
+        %{entity_count: length(entities), detector: :leiden},
         fn ->
           start_time = System.monotonic_time(:millisecond)
 
-          leiden_opts = [resolution: resolution, max_level: max_level, theta: theta]
-
           result =
-            case ExLeiden.call({entity_ids, edges}, leiden_opts) do
-              {:ok, %{source: source, result: level_results}} ->
+            case Leidenfold.detect_from_weighted_edges(edges,
+                   n_nodes: length(entity_ids),
+                   objective: objective,
+                   resolution: resolution,
+                   iterations: iterations,
+                   seed: seed
+                 ) do
+              {:ok, %{membership: membership, n_communities: n_communities}} ->
                 elapsed = System.monotonic_time(:millisecond) - start_time
 
                 Logger.info(
-                  "[Leiden] Completed in #{elapsed}ms: #{map_size(level_results)} levels"
+                  "[Leiden] Completed in #{elapsed}ms: #{n_communities} communities"
                 )
 
-                communities = format_communities(level_results, source)
+                communities = format_communities(membership, index_to_id)
                 {:ok, communities}
 
               {:error, reason} ->
@@ -79,65 +103,32 @@ if Code.ensure_loaded?(ExLeiden) do
       )
     end
 
-    @doc """
-    Converts relationships to weighted edge tuples for ExLeiden.
-
-    Filters out relationships that reference unknown entities and
-    defaults missing strength values to 1.
-
-    ## Examples
-
-        iex> to_edges(["a", "b"], [%{source_id: "a", target_id: "b", strength: 5}])
-        [{"a", "b", 5}]
-
-    """
-    def to_edges(entity_ids, relationships) do
-      entity_set = MapSet.new(entity_ids)
-
+    # Convert relationships to weighted edge tuples {source_idx, target_idx, weight}
+    defp to_weighted_edges(id_to_index, relationships) do
       relationships
       |> Enum.filter(fn rel ->
-        MapSet.member?(entity_set, rel.source_id) and
-          MapSet.member?(entity_set, rel.target_id)
+        Map.has_key?(id_to_index, rel.source_id) and
+          Map.has_key?(id_to_index, rel.target_id)
       end)
       |> Enum.map(fn rel ->
-        weight = Map.get(rel, :strength, 1) || 1
-        {rel.source_id, rel.target_id, weight}
+        source_idx = Map.fetch!(id_to_index, rel.source_id)
+        target_idx = Map.fetch!(id_to_index, rel.target_id)
+        weight = (Map.get(rel, :strength, 1) || 1) / 1
+        {source_idx, target_idx, weight}
       end)
     end
 
-    defp format_communities(level_results, source) do
-      # level_results is a map of level => {communities, _edges}
-      # Each community has :id and :children (indices into source.degree_sequence)
-      # degree_sequence contains the original vertex IDs
-      vertices = source.degree_sequence
-
-      # Also handle orphan communities (disconnected nodes)
-      orphans = source.orphan_communities || []
-
-      communities =
-        level_results
-        |> Enum.flat_map(fn {level, {communities, _edges}} ->
-          Enum.map(communities, fn community ->
-            entity_ids =
-              community.children
-              |> Enum.map(&Enum.at(vertices, &1))
-              |> Enum.reject(&is_nil/1)
-
-            %{
-              level: level - 1,
-              entity_ids: entity_ids
-            }
-          end)
-        end)
-
-      # Add orphan communities at level 0
-      orphan_communities =
-        Enum.map(orphans, fn orphan_id ->
-          %{level: 0, entity_ids: [orphan_id]}
-        end)
-
-      (communities ++ orphan_communities)
-      |> Enum.sort_by(& &1.level)
+    # Convert membership list to community maps
+    # membership[node_idx] = community_id
+    defp format_communities(membership, index_to_id) do
+      membership
+      |> Enum.with_index()
+      |> Enum.group_by(fn {community_id, _node_idx} -> community_id end, fn {_community_id, node_idx} ->
+        Map.fetch!(index_to_id, node_idx)
+      end)
+      |> Enum.map(fn {_community_id, entity_ids} ->
+        %{level: 0, entity_ids: entity_ids}
+      end)
     end
   end
 end

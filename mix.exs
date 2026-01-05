@@ -95,7 +95,7 @@ defmodule Arcana.MixProject do
       {:hnswlib, "~> 0.1", optional: true},
 
       # Community detection for GraphRAG
-      {:ex_leiden, "~> 0.5", optional: true}
+      {:leidenfold, "~> 0.2", optional: true}
     ]
   end
 end

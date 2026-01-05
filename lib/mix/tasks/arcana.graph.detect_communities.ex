@@ -3,31 +3,23 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
   Detects communities in the knowledge graph using the Leiden algorithm.
 
   Use this after building or rebuilding the knowledge graph to generate
-  hierarchical community clusters for global queries.
+  community clusters for global queries.
 
       $ mix arcana.graph.detect_communities
 
   ## Options
 
     * `--collection` - Only detect communities for the specified collection
-    * `--detector` - Algorithm implementation: "leidenalg" (default, fast) or "leiden" (ex_leiden, slow)
     * `--resolution` - Community detection resolution (default: 1.0, higher = smaller communities)
-    * `--max-level` - Maximum hierarchy levels (default: 3, only for ex_leiden)
-    * `--theta` - Convergence threshold (default: 0.01, only for ex_leiden)
+    * `--objective` - Quality function: cpm (default), modularity, rber, rbc, significance, surprise
+    * `--iterations` - Number of optimization iterations (default: 2)
+    * `--seed` - Random seed for reproducibility (default: 0 = random)
     * `--quiet` - Suppress progress output
-
-  ## Detectors
-
-    * `leidenalg` - Python leidenalg via uv (recommended, <1 second for 15k entities)
-    * `leiden` - ex_leiden Elixir NIF (slow, ~25 minutes for 15k entities)
 
   ## Examples
 
-      # Default usage with leidenalg (fast)
+      # Default usage
       mix arcana.graph.detect_communities
-
-      # Use ex_leiden (slow) with hierarchical levels
-      mix arcana.graph.detect_communities --detector leiden --max-level 3
 
       # Detect communities for a specific collection
       mix arcana.graph.detect_communities --collection my-docs
@@ -35,8 +27,17 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
       # With custom resolution (higher = more, smaller communities)
       mix arcana.graph.detect_communities --resolution 1.5
 
+      # Using modularity optimization
+      mix arcana.graph.detect_communities --objective modularity
+
       # Quiet mode (no progress output)
       mix arcana.graph.detect_communities --quiet
+
+  ## Requirements
+
+  This task requires the `leidenfold` package. Add it to your dependencies:
+
+      {:leidenfold, "~> 0.2"}
 
   """
 
@@ -51,19 +52,19 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
         strict: [
           quiet: :boolean,
           collection: :string,
-          detector: :string,
           resolution: :float,
-          max_level: :integer,
-          theta: :float
+          objective: :string,
+          iterations: :integer,
+          seed: :integer
         ]
       )
 
     quiet = Keyword.get(opts, :quiet, false)
     collection = Keyword.get(opts, :collection)
-    detector = Keyword.get(opts, :detector, "leidenalg")
     resolution = Keyword.get(opts, :resolution, 1.0)
-    max_level = Keyword.get(opts, :max_level, 3)
-    theta = Keyword.get(opts, :theta, 0.01)
+    objective = Keyword.get(opts, :objective, "cpm") |> String.to_atom()
+    iterations = Keyword.get(opts, :iterations, 2)
+    seed = Keyword.get(opts, :seed, 0)
 
     # Start the host application (which will start the repo)
     Mix.Task.run("app.start")
@@ -74,10 +75,18 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
       Mix.raise("No repo configured. Set config :arcana, repo: YourApp.Repo")
     end
 
+    # Check leidenfold is available
+    unless Code.ensure_loaded?(Leidenfold) do
+      Mix.raise("""
+      Community detection requires the leidenfold package.
+      Add {:leidenfold, "~> 0.2"} to your dependencies.
+      """)
+    end
+
     # Show current graph info
     info = Arcana.Maintenance.graph_info()
     Mix.shell().info("Graph config: #{format_info(info)}")
-    Mix.shell().info("Detector: #{detector}, resolution=#{resolution}" <> format_detector_opts(detector, max_level, theta))
+    Mix.shell().info("Leiden: resolution=#{resolution}, objective=#{objective}, iterations=#{iterations}")
 
     # Build progress callback
     progress_fn =
@@ -92,10 +101,10 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
 
     detect_opts = [
       progress: progress_fn,
-      detector: detector,
       resolution: resolution,
-      max_level: max_level,
-      theta: theta
+      objective: objective,
+      iterations: iterations,
+      seed: seed
     ]
 
     detect_opts =
@@ -118,12 +127,6 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
     status = if enabled, do: "enabled", else: "disabled"
     "#{status}, extractor: #{type}, community levels: #{levels}"
   end
-
-  defp format_detector_opts("leiden", max_level, theta) do
-    ", max_level=#{max_level}, theta=#{theta}"
-  end
-
-  defp format_detector_opts(_detector, _max_level, _theta), do: ""
 
   defp build_progress_fn do
     fn

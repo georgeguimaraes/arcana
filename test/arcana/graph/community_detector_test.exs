@@ -142,42 +142,4 @@ defmodule Arcana.Graph.CommunityDetectorTest do
     end
   end
 
-  describe "Leiden.to_edges/2" do
-    test "converts relationships to weighted edge tuples" do
-      entity_ids = ["a", "b", "c"]
-
-      relationships = [
-        %{source_id: "a", target_id: "b", strength: 5},
-        %{source_id: "b", target_id: "c", strength: 8}
-      ]
-
-      edges = Leiden.to_edges(entity_ids, relationships)
-
-      assert {"a", "b", 5} in edges or {"a", "b", 5.0} in edges
-      assert {"b", "c", 8} in edges or {"b", "c", 8.0} in edges
-    end
-
-    test "filters out relationships with unknown entities" do
-      entity_ids = ["a", "b"]
-
-      relationships = [
-        %{source_id: "a", target_id: "b", strength: 5},
-        %{source_id: "a", target_id: "unknown", strength: 3}
-      ]
-
-      edges = Leiden.to_edges(entity_ids, relationships)
-
-      assert length(edges) == 1
-    end
-
-    test "defaults strength to 1 when missing" do
-      entity_ids = ["a", "b"]
-      relationships = [%{source_id: "a", target_id: "b"}]
-
-      edges = Leiden.to_edges(entity_ids, relationships)
-
-      assert [{"a", "b", weight}] = edges
-      assert weight == 1 or weight == 1.0
-    end
-  end
 end
