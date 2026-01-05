@@ -127,7 +127,7 @@ if Code.ensure_loaded?(Leidenfold) do
             {:ok, level_0}
           else
             # Build higher levels by aggregation
-            higher_levels = build_higher_levels(membership, edges, n_nodes, leiden_opts, 1, max_level, min_size)
+            higher_levels = build_higher_levels(membership, edges, n_nodes, index_to_id, leiden_opts, 1, max_level, min_size)
             {:ok, level_0 ++ higher_levels}
           end
 
@@ -137,12 +137,12 @@ if Code.ensure_loaded?(Leidenfold) do
     end
 
     # Build higher hierarchy levels by aggregating communities
-    defp build_higher_levels(_membership, _edges, _n_nodes, _opts, current_level, max_level, _min_size)
+    defp build_higher_levels(_membership, _edges, _n_nodes, _index_to_id, _opts, current_level, max_level, _min_size)
          when current_level >= max_level do
       []
     end
 
-    defp build_higher_levels(membership, edges, n_nodes, leiden_opts, current_level, max_level, min_size) do
+    defp build_higher_levels(membership, edges, n_nodes, index_to_id, leiden_opts, current_level, max_level, min_size) do
       # Aggregate: create graph where nodes are communities from previous level
       {agg_edges, n_communities, community_to_entities} =
         aggregate_graph(membership, edges, n_nodes)
@@ -156,13 +156,13 @@ if Code.ensure_loaded?(Leidenfold) do
         case Leidenfold.detect_from_weighted_edges(agg_edges, agg_opts) do
           {:ok, %{membership: agg_membership}} ->
             # Map aggregated communities back to entity IDs
-            communities = format_aggregated_communities(agg_membership, community_to_entities, current_level, min_size)
+            communities = format_aggregated_communities(agg_membership, community_to_entities, index_to_id, current_level, min_size)
 
             if length(communities) <= 1 do
               communities
             else
               # Recurse for even higher levels
-              communities ++ build_higher_levels(agg_membership, agg_edges, n_communities, leiden_opts, current_level + 1, max_level, min_size)
+              communities ++ build_higher_levels(agg_membership, agg_edges, n_communities, index_to_id, leiden_opts, current_level + 1, max_level, min_size)
             end
 
           {:error, _} ->
@@ -210,7 +210,7 @@ if Code.ensure_loaded?(Leidenfold) do
     end
 
     # Format aggregated communities back to entity IDs
-    defp format_aggregated_communities(agg_membership, community_to_entities, level, min_size) do
+    defp format_aggregated_communities(agg_membership, community_to_entities, index_to_id, level, min_size) do
       # Group lower-level communities by their higher-level community assignment
       agg_membership
       |> Enum.with_index()
@@ -218,7 +218,9 @@ if Code.ensure_loaded?(Leidenfold) do
       |> Enum.map(fn {_higher_comm, lower_comms} ->
         # Flatten all entity indices from the grouped lower-level communities
         entity_indices = Enum.flat_map(lower_comms, &Map.get(community_to_entities, &1, []))
-        %{level: level, entity_ids: entity_indices}
+        # Convert indices back to entity IDs
+        entity_ids = Enum.map(entity_indices, &Map.fetch!(index_to_id, &1))
+        %{level: level, entity_ids: entity_ids}
       end)
       |> Enum.filter(fn %{entity_ids: ids} -> length(ids) >= min_size end)
     end
