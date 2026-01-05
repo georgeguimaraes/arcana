@@ -610,6 +610,8 @@ defmodule Arcana.Maintenance do
     objective = Keyword.get(opts, :objective, :cpm)
     iterations = Keyword.get(opts, :iterations, 2)
     seed = Keyword.get(opts, :seed, 0)
+    min_size = Keyword.get(opts, :min_size, 1)
+    max_level = Keyword.get(opts, :max_level, 1)
 
     collections = fetch_collections(repo, collection_filter)
 
@@ -618,7 +620,14 @@ defmodule Arcana.Maintenance do
     else
       total_collections = length(collections)
 
-      detector_opts = [resolution: resolution, objective: objective, iterations: iterations, seed: seed]
+      detector_opts = [
+        resolution: resolution,
+        objective: objective,
+        iterations: iterations,
+        seed: seed,
+        min_size: min_size,
+        max_level: max_level
+      ]
       detector_module = Arcana.Graph.CommunityDetector.Leiden
 
       results =

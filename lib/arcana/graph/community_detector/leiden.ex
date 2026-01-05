@@ -33,6 +33,10 @@ if Code.ensure_loaded?(Leidenfold) do
         Options: :cpm, :modularity, :rber, :rbc, :significance, :surprise
       - `:iterations` - Number of optimization iterations (default: 2)
       - `:seed` - Random seed for reproducibility (default: 0 = random)
+      - `:min_size` - Minimum community size to include (default: 1)
+        Set to 2 to exclude singleton communities
+      - `:max_level` - Maximum hierarchy levels to generate (default: 1)
+        Higher levels contain coarser communities built by aggregating lower levels
 
     """
 
@@ -48,6 +52,8 @@ if Code.ensure_loaded?(Leidenfold) do
       objective = Keyword.get(opts, :objective, :cpm)
       iterations = Keyword.get(opts, :iterations, 2)
       seed = Keyword.get(opts, :seed, 0)
+      min_size = Keyword.get(opts, :min_size, 1)
+      max_level = Keyword.get(opts, :max_level, 1)
 
       # Build index mappings
       entity_ids = Enum.map(entities, & &1.id)
@@ -59,7 +65,7 @@ if Code.ensure_loaded?(Leidenfold) do
 
       Logger.info(
         "[Leiden] Starting: #{length(entity_ids)} entities, #{length(edges)} edges, " <>
-          "resolution=#{resolution}, objective=#{objective}"
+          "resolution=#{resolution}, objective=#{objective}, min_size=#{min_size}, max_level=#{max_level}"
       )
 
       :telemetry.span(
@@ -68,22 +74,27 @@ if Code.ensure_loaded?(Leidenfold) do
         fn ->
           start_time = System.monotonic_time(:millisecond)
 
+          leiden_opts = [
+            n_nodes: length(entity_ids),
+            objective: objective,
+            resolution: resolution,
+            iterations: iterations,
+            seed: seed
+          ]
+
           result =
-            case Leidenfold.detect_from_weighted_edges(edges,
-                   n_nodes: length(entity_ids),
-                   objective: objective,
-                   resolution: resolution,
-                   iterations: iterations,
-                   seed: seed
-                 ) do
-              {:ok, %{membership: membership, n_communities: n_communities}} ->
+            case detect_hierarchical(edges, index_to_id, leiden_opts, max_level, min_size) do
+              {:ok, communities} ->
                 elapsed = System.monotonic_time(:millisecond) - start_time
+                by_level = Enum.group_by(communities, & &1.level)
 
-                Logger.info(
-                  "[Leiden] Completed in #{elapsed}ms: #{n_communities} communities"
-                )
+                level_summary =
+                  by_level
+                  |> Enum.sort_by(&elem(&1, 0))
+                  |> Enum.map(fn {lvl, comms} -> "L#{lvl}=#{length(comms)}" end)
+                  |> Enum.join(", ")
 
-                communities = format_communities(membership, index_to_id)
+                Logger.info("[Leiden] Completed in #{elapsed}ms: #{level_summary}")
                 {:ok, communities}
 
               {:error, reason} ->
@@ -103,6 +114,115 @@ if Code.ensure_loaded?(Leidenfold) do
       )
     end
 
+    # Detect communities hierarchically by aggregating and re-running Leiden
+    defp detect_hierarchical(edges, index_to_id, leiden_opts, max_level, min_size) do
+      n_nodes = Keyword.fetch!(leiden_opts, :n_nodes)
+
+      case Leidenfold.detect_from_weighted_edges(edges, leiden_opts) do
+        {:ok, %{membership: membership}} ->
+          # Build level 0 communities
+          level_0 = format_communities(membership, index_to_id, 0, min_size)
+
+          if max_level <= 1 or length(level_0) <= 1 do
+            {:ok, level_0}
+          else
+            # Build higher levels by aggregation
+            higher_levels = build_higher_levels(membership, edges, n_nodes, leiden_opts, 1, max_level, min_size)
+            {:ok, level_0 ++ higher_levels}
+          end
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+
+    # Build higher hierarchy levels by aggregating communities
+    defp build_higher_levels(_membership, _edges, _n_nodes, _opts, current_level, max_level, _min_size)
+         when current_level >= max_level do
+      []
+    end
+
+    defp build_higher_levels(membership, edges, n_nodes, leiden_opts, current_level, max_level, min_size) do
+      # Aggregate: create graph where nodes are communities from previous level
+      {agg_edges, n_communities, community_to_entities} =
+        aggregate_graph(membership, edges, n_nodes)
+
+      # Stop if we can't aggregate further
+      if n_communities <= 1 or length(agg_edges) == 0 do
+        []
+      else
+        agg_opts = Keyword.put(leiden_opts, :n_nodes, n_communities)
+
+        case Leidenfold.detect_from_weighted_edges(agg_edges, agg_opts) do
+          {:ok, %{membership: agg_membership}} ->
+            # Map aggregated communities back to entity IDs
+            communities = format_aggregated_communities(agg_membership, community_to_entities, current_level, min_size)
+
+            if length(communities) <= 1 do
+              communities
+            else
+              # Recurse for even higher levels
+              communities ++ build_higher_levels(agg_membership, agg_edges, n_communities, leiden_opts, current_level + 1, max_level, min_size)
+            end
+
+          {:error, _} ->
+            []
+        end
+      end
+    end
+
+    # Aggregate the graph: communities become nodes, edges weighted by inter-community connections
+    defp aggregate_graph(membership, edges, n_nodes) do
+      # Build mapping from node to community
+      node_to_community = membership |> Enum.with_index() |> Map.new(fn {comm, idx} -> {idx, comm} end)
+
+      # Count unique communities
+      n_communities = membership |> Enum.max(fn -> -1 end) |> Kernel.+(1)
+
+      # Build community_to_entities mapping (list of node indices per community)
+      community_to_entities =
+        0..(n_nodes - 1)
+        |> Enum.group_by(&Map.get(node_to_community, &1, 0))
+
+      # Aggregate edges between communities
+      edge_weights =
+        edges
+        |> Enum.reduce(%{}, fn {src, tgt, weight}, acc ->
+          src_comm = Map.get(node_to_community, src, 0)
+          tgt_comm = Map.get(node_to_community, tgt, 0)
+
+          # Skip self-loops (edges within same community)
+          if src_comm != tgt_comm do
+            # Normalize edge to smaller community first for consistency
+            key = if src_comm < tgt_comm, do: {src_comm, tgt_comm}, else: {tgt_comm, src_comm}
+            Map.update(acc, key, weight, &(&1 + weight))
+          else
+            acc
+          end
+        end)
+
+      # Convert to edge list
+      agg_edges =
+        edge_weights
+        |> Enum.map(fn {{src, tgt}, weight} -> {src, tgt, weight} end)
+
+      {agg_edges, n_communities, community_to_entities}
+    end
+
+    # Format aggregated communities back to entity IDs
+    defp format_aggregated_communities(agg_membership, community_to_entities, level, min_size) do
+      # Group lower-level communities by their higher-level community assignment
+      agg_membership
+      |> Enum.with_index()
+      |> Enum.group_by(fn {higher_comm, _lower_comm} -> higher_comm end, fn {_, lower_comm} -> lower_comm end)
+      |> Enum.map(fn {_higher_comm, lower_comms} ->
+        # Flatten all entity indices from the grouped lower-level communities
+        entity_indices = Enum.flat_map(lower_comms, &Map.get(community_to_entities, &1, []))
+        %{level: level, entity_ids: entity_indices}
+      end)
+      |> Enum.filter(fn %{entity_ids: ids} -> length(ids) >= min_size end)
+    end
+
     # Convert relationships to weighted edge tuples {source_idx, target_idx, weight}
     defp to_weighted_edges(id_to_index, relationships) do
       relationships
@@ -120,15 +240,16 @@ if Code.ensure_loaded?(Leidenfold) do
 
     # Convert membership list to community maps
     # membership[node_idx] = community_id
-    defp format_communities(membership, index_to_id) do
+    defp format_communities(membership, index_to_id, level, min_size) do
       membership
       |> Enum.with_index()
       |> Enum.group_by(fn {community_id, _node_idx} -> community_id end, fn {_community_id, node_idx} ->
         Map.fetch!(index_to_id, node_idx)
       end)
       |> Enum.map(fn {_community_id, entity_ids} ->
-        %{level: 0, entity_ids: entity_ids}
+        %{level: level, entity_ids: entity_ids}
       end)
+      |> Enum.filter(fn %{entity_ids: ids} -> length(ids) >= min_size end)
     end
   end
 end

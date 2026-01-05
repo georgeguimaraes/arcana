@@ -14,6 +14,8 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
     * `--objective` - Quality function: cpm (default), modularity, rber, rbc, significance, surprise
     * `--iterations` - Number of optimization iterations (default: 2)
     * `--seed` - Random seed for reproducibility (default: 0 = random)
+    * `--min-size` - Minimum community size to include (default: 1, set to 2+ to exclude singletons)
+    * `--max-level` - Maximum hierarchy levels to generate (default: 1)
     * `--quiet` - Suppress progress output
 
   ## Examples
@@ -29,6 +31,12 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
 
       # Using modularity optimization
       mix arcana.graph.detect_communities --objective modularity
+
+      # Exclude small communities (less than 5 members)
+      mix arcana.graph.detect_communities --min-size 5
+
+      # Generate hierarchical communities (3 levels)
+      mix arcana.graph.detect_communities --max-level 3
 
       # Quiet mode (no progress output)
       mix arcana.graph.detect_communities --quiet
@@ -55,8 +63,11 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
           resolution: :float,
           objective: :string,
           iterations: :integer,
-          seed: :integer
-        ]
+          seed: :integer,
+          min_size: :integer,
+          max_level: :integer
+        ],
+        aliases: [s: :min_size, l: :max_level]
       )
 
     quiet = Keyword.get(opts, :quiet, false)
@@ -65,6 +76,8 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
     objective = Keyword.get(opts, :objective, "cpm") |> String.to_atom()
     iterations = Keyword.get(opts, :iterations, 2)
     seed = Keyword.get(opts, :seed, 0)
+    min_size = Keyword.get(opts, :min_size, 1)
+    max_level = Keyword.get(opts, :max_level, 1)
 
     # Start the host application (which will start the repo)
     Mix.Task.run("app.start")
@@ -86,7 +99,7 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
     # Show current graph info
     info = Arcana.Maintenance.graph_info()
     Mix.shell().info("Graph config: #{format_info(info)}")
-    Mix.shell().info("Leiden: resolution=#{resolution}, objective=#{objective}, iterations=#{iterations}")
+    Mix.shell().info("Leiden: resolution=#{resolution}, objective=#{objective}, min_size=#{min_size}, max_level=#{max_level}")
 
     # Build progress callback
     progress_fn =
@@ -104,7 +117,9 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
       resolution: resolution,
       objective: objective,
       iterations: iterations,
-      seed: seed
+      seed: seed,
+      min_size: min_size,
+      max_level: max_level
     ]
 
     detect_opts =
