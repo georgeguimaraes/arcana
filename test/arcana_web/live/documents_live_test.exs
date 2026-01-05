@@ -127,10 +127,11 @@ defmodule ArcanaWeb.DocumentsLiveTest do
       # Before clicking, button says "Build Graph"
       assert render(view) =~ "Build Graph"
 
-      view |> element("button[phx-click='build_graph']") |> render_click()
+      # Use render_click's return value to capture the immediate state after click
+      # (before async task completes and sends :graph_complete message)
+      html = view |> element("button[phx-click='build_graph']") |> render_click()
 
       # After clicking, button shows loading state
-      html = render(view)
       assert html =~ "Building..."
     end
 
@@ -139,9 +140,9 @@ defmodule ArcanaWeb.DocumentsLiveTest do
 
       {:ok, view, _html} = live(conn, "/arcana/documents?doc=#{doc.id}")
 
-      # Click to start loading
-      view |> element("button[phx-click='build_graph']") |> render_click()
-      assert render(view) =~ "Building..."
+      # Click to start loading - use render_click's return value to verify loading state
+      html = view |> element("button[phx-click='build_graph']") |> render_click()
+      assert html =~ "Building..."
 
       # Send completion message
       send(view.pid, {:graph_complete, {:ok, %{entity_count: 5, relationship_count: 3}}})
