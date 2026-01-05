@@ -51,7 +51,9 @@ config :arcana, Arcana.TestRepo,
   port: String.to_integer(System.get_env("POSTGRES_PORT", "5433")),
   database: "arcana_test",
   pool: Ecto.Adapters.SQL.Sandbox,
-  pool_size: 10,
+  pool_size: System.schedulers_online() * 2,
+  queue_target: 5000,
+  queue_interval: 5000,
   priv: "priv/test_repo",
   types: Arcana.PostgrexTypes
 

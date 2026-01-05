@@ -28,7 +28,12 @@ defmodule Arcana.DataCase do
   end
 
   setup tags do
-    pid = Sandbox.start_owner!(Arcana.TestRepo, shared: not tags[:async])
+    pid =
+      Sandbox.start_owner!(Arcana.TestRepo,
+        shared: not tags[:async],
+        ownership_timeout: 60_000
+      )
+
     on_exit(fn -> Sandbox.stop_owner(pid) end)
     :ok
   end
