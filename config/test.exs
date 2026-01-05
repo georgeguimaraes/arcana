@@ -68,6 +68,7 @@ config :arcana, ArcanaWeb.Endpoint,
 # Use a mock entity extractor for tests (avoids loading real NER model)
 # Returns deterministic entities based on simple pattern matching
 config :arcana, :graph,
+  enabled: false,
   entity_extractor: fn text, _opts ->
     # Simple pattern-based extraction for tests
     entities =
