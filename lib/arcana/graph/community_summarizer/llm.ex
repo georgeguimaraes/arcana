@@ -62,10 +62,15 @@ defmodule Arcana.Graph.CommunitySummarizer.LLM do
     2. Names the most important entities (those with the most connections)
     3. Describes how the key entities relate to each other
 
-    IMPORTANT: Start directly with the substance. Do NOT begin with generic phrases like:
-    - "This community centers on..."
-    - "This community is about..."
-    - "This community focuses on..."
+    CRITICAL FORMATTING RULE: Start directly with the main subject/entity, never with meta-commentary.
+
+    FORBIDDEN opening patterns (never use these):
+    - "This community..." / "The community..."
+    - "This group..." / "The group..."
+    - "This network..." / "The network..."
+
+    CORRECT example: "The Doctor travels through time with companions Rose and Clara, facing enemies like the Daleks across multiple regenerations."
+    WRONG example: "This community centers on the Doctor Who universe, featuring the Doctor who travels..."
 
     Output only the summary paragraph, nothing else.
     """
@@ -82,6 +87,8 @@ defmodule Arcana.Graph.CommunitySummarizer.LLM do
     - Prioritize entities that have more relationships (they are more central)
     - Focus on factual descriptions, not speculation or interpretation
     - Write in a neutral, informative tone suitable for search context
+    - NEVER start with "This community", "The community", or similar meta-phrases
+    - Start directly with the main entity or subject matter
     """
   end
 
