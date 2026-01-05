@@ -63,9 +63,15 @@ defmodule ArcanaWeb.MaintenanceLive do
       ) ||
         0
 
+    # Relationships don't have collection_id - count those connected to orphaned entities
     relationships =
       repo.one(
-        from(r in Arcana.Graph.Relationship, where: is_nil(r.collection_id), select: count(r.id))
+        from(r in Arcana.Graph.Relationship,
+          join: source in Arcana.Graph.Entity,
+          on: r.source_id == source.id,
+          where: is_nil(source.collection_id),
+          select: count(r.id)
+        )
       ) || 0
 
     %{entities: entities, relationships: relationships}
@@ -215,21 +221,36 @@ defmodule ArcanaWeb.MaintenanceLive do
   end
 
   defp assign_orphaned_to_collection(repo, collection_id) do
+    # Only entities have collection_id - relationships reference entities
     repo.update_all(
       from(e in Arcana.Graph.Entity, where: is_nil(e.collection_id)),
-      set: [collection_id: collection_id]
-    )
-
-    repo.update_all(
-      from(r in Arcana.Graph.Relationship, where: is_nil(r.collection_id)),
       set: [collection_id: collection_id]
     )
   end
 
   defp delete_orphaned_graph_data(repo) do
-    {rel_count, _} =
-      repo.delete_all(from(r in Arcana.Graph.Relationship, where: is_nil(r.collection_id)))
+    # Get orphaned entity IDs first
+    orphaned_entity_ids =
+      repo.all(
+        from(e in Arcana.Graph.Entity,
+          where: is_nil(e.collection_id),
+          select: e.id
+        )
+      )
 
+    # Delete relationships connected to orphaned entities (must be done first)
+    {rel_count, _} =
+      if orphaned_entity_ids != [] do
+        repo.delete_all(
+          from(r in Arcana.Graph.Relationship,
+            where: r.source_id in ^orphaned_entity_ids or r.target_id in ^orphaned_entity_ids
+          )
+        )
+      else
+        {0, nil}
+      end
+
+    # Then delete orphaned entities
     {entity_count, _} =
       repo.delete_all(from(e in Arcana.Graph.Entity, where: is_nil(e.collection_id)))
 
