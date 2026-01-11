@@ -13,6 +13,12 @@ defmodule ArcanaWeb.Endpoint do
 
   socket("/live", Phoenix.LiveView.Socket, websocket: [connect_info: [session: @session_options]])
 
+  # Enable Ecto sandbox for LiveView tests - allows async tests to share
+  # database connections properly between test process and LiveView process
+  if Application.compile_env(:arcana, :sandbox) do
+    plug(Phoenix.Ecto.SQL.Sandbox)
+  end
+
   plug(Plug.Static,
     at: "/",
     from: :arcana,

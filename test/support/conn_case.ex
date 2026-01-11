@@ -24,6 +24,18 @@ defmodule ArcanaWeb.ConnCase do
       )
 
     on_exit(fn -> Sandbox.stop_owner(pid) end)
-    {:ok, conn: Phoenix.ConnTest.build_conn()}
+
+    # Set up sandbox metadata for Phoenix.Ecto.SQL.Sandbox plug
+    # This allows LiveView processes to share the test's database connection
+    metadata = Phoenix.Ecto.SQL.Sandbox.metadata_for(Arcana.TestRepo, pid)
+
+    conn =
+      Phoenix.ConnTest.build_conn()
+      |> Plug.Conn.put_req_header(
+        "user-agent",
+        Phoenix.Ecto.SQL.Sandbox.encode_metadata(metadata)
+      )
+
+    {:ok, conn: conn}
   end
 end

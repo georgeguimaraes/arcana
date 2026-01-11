@@ -73,7 +73,8 @@ defmodule Arcana.SearchTest do
     end
 
     test "hybrid mode returns individual semantic and fulltext scores" do
-      {:ok, results} = Arcana.search("Elixir functional", repo: Repo, mode: :hybrid)
+      # Explicitly disable graph to avoid race with other tests that enable it globally
+      {:ok, results} = Arcana.search("Elixir functional", repo: Repo, mode: :hybrid, graph: false)
 
       refute Enum.empty?(results)
       first = hd(results)

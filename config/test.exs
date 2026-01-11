@@ -51,9 +51,10 @@ config :arcana, Arcana.TestRepo,
   port: String.to_integer(System.get_env("POSTGRES_PORT", "5433")),
   database: "arcana_test",
   pool: Ecto.Adapters.SQL.Sandbox,
-  pool_size: max(System.schedulers_online() * 2, 20),
-  queue_target: 5000,
-  queue_interval: 5000,
+  pool_size: max(System.schedulers_online() * 8, 80),
+  ownership_timeout: 180_000,
+  queue_target: 30_000,
+  queue_interval: 30_000,
   priv: "priv/test_repo",
   types: Arcana.PostgrexTypes
 
@@ -91,3 +92,6 @@ config :arcana, :graph,
   end
 
 config :logger, level: :warning
+
+# Enable sandbox plug for LiveView tests
+config :arcana, :sandbox, true

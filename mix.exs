@@ -84,6 +84,7 @@ defmodule Arcana.MixProject do
       {:phoenix_html, "~> 4.1", optional: true},
       {:floki, "~> 0.36", only: :test},
       {:lazy_html, "~> 0.1.8", only: :test},
+      {:phoenix_ecto, "~> 4.7", only: :test},
 
       # Optional: Enhanced installer
       {:igniter, "~> 0.5", optional: true},

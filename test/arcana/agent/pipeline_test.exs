@@ -25,10 +25,12 @@ defmodule Arcana.Agent.PipelineTest do
       end
 
       # Query shares "Elixir", "programming", "language" with document
+      # Explicitly disable graph to avoid race with tests that enable it globally
       ctx =
         Agent.new("What programming language is Elixir?",
           repo: Arcana.TestRepo,
-          llm: llm
+          llm: llm,
+          graph: false
         )
         |> Agent.search()
         |> Agent.answer()

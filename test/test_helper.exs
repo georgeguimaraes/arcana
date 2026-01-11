@@ -1,4 +1,9 @@
 {:ok, _} = Arcana.TestRepo.start_link()
+
+# Vacuum the database before starting sandbox mode to clear dead tuples from prior runs
+# This prevents performance degradation from accumulated dead tuples
+Ecto.Adapters.SQL.query!(Arcana.TestRepo, "VACUUM ANALYZE", [])
+
 Ecto.Adapters.SQL.Sandbox.mode(Arcana.TestRepo, :manual)
 
 # Start the endpoint for LiveView tests
@@ -9,4 +14,5 @@ Ecto.Adapters.SQL.Sandbox.mode(Arcana.TestRepo, :manual)
 # - :memory - hnswlib NIFs slow on CI
 # - :serving - requires real Bumblebee model (slow)
 # Run with: mix test --include serving --include memory --include end_to_end
+#
 ExUnit.start(exclude: [:memory, :end_to_end, :serving])

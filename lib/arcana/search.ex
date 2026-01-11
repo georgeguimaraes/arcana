@@ -172,11 +172,42 @@ defmodule Arcana.Search do
   end
 
   defp graph_search_db(entities, collections, repo) do
+    import Ecto.Query
+    alias Arcana.Chunk
+
     entity_names = Enum.map(entities, & &1.name)
     collection_ids = resolve_collection_ids(collections, repo)
 
-    GraphStore.search(entity_names, collection_ids, repo: repo)
-    |> Enum.map(fn result -> Map.put(result, :id, result.chunk_id) end)
+    graph_results = GraphStore.search(entity_names, collection_ids, repo: repo)
+    chunk_ids = Enum.map(graph_results, & &1.chunk_id)
+
+    # Fetch full chunk data for graph results
+    chunks_by_id =
+      if chunk_ids == [] do
+        %{}
+      else
+        repo.all(from(c in Chunk, where: c.id in ^chunk_ids, select: {c.id, c}))
+        |> Map.new()
+      end
+
+    # Build results with the same shape as vector search results
+    Enum.flat_map(graph_results, fn result ->
+      case Map.get(chunks_by_id, result.chunk_id) do
+        nil ->
+          []
+
+        chunk ->
+          [
+            %{
+              id: chunk.id,
+              text: chunk.text,
+              document_id: chunk.document_id,
+              chunk_index: chunk.chunk_index,
+              score: result.score
+            }
+          ]
+      end
+    end)
   end
 
   defp resolve_collection_ids([nil], _repo), do: nil
