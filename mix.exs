@@ -96,7 +96,10 @@ defmodule Arcana.MixProject do
       {:hnswlib, "~> 0.1", optional: true},
 
       # Community detection for GraphRAG
-      {:leidenfold, "~> 0.3", optional: true}
+      {:leidenfold, "~> 0.3", optional: true},
+
+      # Optional: ColBERT-style neural reranking
+      {:stephen, github: "georgeguimaraes/stephen", optional: true}
     ]
   end
 end

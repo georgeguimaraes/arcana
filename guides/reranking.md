@@ -123,6 +123,46 @@ Uses your LLM to score each chunk:
 
 This is the default when you call `Arcana.Agent.rerank/2`.
 
+### Arcana.Agent.Reranker.ColBERT
+
+ColBERT-style neural reranking using per-token embeddings and MaxSim scoring. Provides more nuanced relevance scoring than single-vector methods by matching individual query tokens to document tokens.
+
+Add the optional dependency:
+
+```elixir
+{:stephen, "~> 0.1"}
+```
+
+Use it:
+
+```elixir
+Agent.rerank(ctx, reranker: Arcana.Agent.Reranker.ColBERT)
+
+# With options
+Agent.rerank(ctx, reranker: {Arcana.Agent.Reranker.ColBERT, top_k: 5})
+```
+
+**Options:**
+
+- `:encoder` - Pre-loaded Stephen encoder (loads default on first use if not provided)
+- `:threshold` - Minimum score to keep (default: 0.0)
+- `:top_k` - Maximum results to return
+
+**When to use ColBERT:**
+
+- When you need high-quality reranking without LLM latency/cost
+- When semantic nuance matters (e.g., technical documentation)
+- When you want deterministic, reproducible scores
+
+**Trade-offs vs LLM reranker:**
+
+| Aspect | ColBERT | LLM |
+|--------|---------|-----|
+| Latency | Fast (local inference) | Slow (API call per chunk) |
+| Cost | Free after model load | Per-token API cost |
+| Quality | Excellent for semantic similarity | Can understand complex relevance |
+| Customization | Fixed model behavior | Custom prompts |
+
 ## Telemetry
 
 Re-ranking emits telemetry events:

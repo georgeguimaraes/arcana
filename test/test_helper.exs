@@ -13,6 +13,6 @@ Ecto.Adapters.SQL.Sandbox.mode(Arcana.TestRepo, :manual)
 # - :end_to_end - calls real LLM APIs
 # - :memory - hnswlib NIFs slow on CI
 # - :serving - requires real Bumblebee model (slow)
-# Run with: mix test --include serving --include memory --include end_to_end
-#
-ExUnit.start(exclude: [:memory, :end_to_end, :serving])
+# - :colbert - requires Stephen/ColBERT model (slow)
+# Run with: mix test --include serving --include memory --include end_to_end --include colbert
+ExUnit.start(exclude: [:memory, :end_to_end, :serving, :colbert])
