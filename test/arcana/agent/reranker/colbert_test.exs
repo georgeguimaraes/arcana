@@ -14,12 +14,12 @@ defmodule Arcana.Agent.Reranker.ColBERTTest do
   describe "rerank/3" do
     setup do
       # Skip if Stephen is not available
-      unless Code.ensure_loaded?(Stephen) do
-        {:skip, "Stephen not available"}
-      else
+      if Code.ensure_loaded?(Stephen) do
         # Load encoder once for all tests
         {:ok, encoder} = Stephen.load_encoder()
         {:ok, encoder: encoder}
+      else
+        {:skip, "Stephen not available"}
       end
     end
 
@@ -37,7 +37,7 @@ defmodule Arcana.Agent.Reranker.ColBERTTest do
       {:ok, results} = ColBERT.rerank("functional programming language", chunks, encoder: encoder)
 
       # Elixir chunk should rank highest for this query
-      assert length(results) > 0
+      assert results != []
       first = hd(results)
       assert first.text =~ "Elixir" or first.text =~ "functional"
       assert Map.has_key?(first, :rerank_score)
