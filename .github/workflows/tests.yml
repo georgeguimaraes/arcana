@@ -38,7 +38,7 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install cmake (for hnswlib)
         run: sudo apt-get update && sudo apt-get install -y cmake
       - name: Set up Elixir
