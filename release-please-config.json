@@ -4,7 +4,6 @@
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
   "always-bump-patch": true,
-  "last-release-sha": "e1764cd4173232da6c5e7699b7c56683c5b74247",
   "packages": {
     ".": {
       "release-type": "elixir",
