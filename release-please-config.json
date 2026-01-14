@@ -1,6 +1,6 @@
 {
   "pull-request-header": ":rocket: Want to release this?",
-  "pull-request-title-pattern": "chore: release ${version}",
+  "pull-request-title-pattern": "chore(main): release ${version}",
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
   "always-bump-patch": true,
