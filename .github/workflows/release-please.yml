@@ -18,5 +18,3 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-release: true
-          # TODO: remove after first successful release PR is created
-          bootstrap-sha: 60ced9a47638d6d1134a74513bcef11b12a6395d
