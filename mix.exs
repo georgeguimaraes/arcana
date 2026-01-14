@@ -99,7 +99,7 @@ defmodule Arcana.MixProject do
       {:leidenfold, "~> 0.3", optional: true},
 
       # Optional: ColBERT-style neural reranking
-      {:stephen, github: "georgeguimaraes/stephen", optional: true}
+      {:stephen, "~> 1.0", optional: true}
     ]
   end
 end
