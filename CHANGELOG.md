@@ -5,6 +5,106 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0](https://github.com/georgeguimaraes/arcana/compare/v1.2.0...v1.3.0) (2026-01-14)
+
+
+### Features
+
+* Add Build Graph button and mix arcana.rebuild_graph task ([d4f8aec](https://github.com/georgeguimaraes/arcana/commit/d4f8aec82f0188a38b9f49688ba8ed478d1e51cf))
+* add ColBERT reranker using Stephen library ([7d078a0](https://github.com/georgeguimaraes/arcana/commit/7d078a01bd77389c908dd646bfc5a1985f785127))
+* Add collection selector to Re-embed and improve displays ([950bb24](https://github.com/georgeguimaraes/arcana/commit/950bb249c2bfb99d8fffc6a2aec5c9375f0430af))
+* Add collection selector to Rebuild Knowledge Graph ([abf7288](https://github.com/georgeguimaraes/arcana/commit/abf728891e03a1f702a1b9f56637c61e28c0a0ca))
+* Add community detection maintenance task and UI ([d5e77e7](https://github.com/georgeguimaraes/arcana/commit/d5e77e74ecb71f3f7268b5be4a4d96beffb49f83))
+* Add concurrency, resume and skip to rebuild_graph and reembed_chunks ([b023fa5](https://github.com/georgeguimaraes/arcana/commit/b023fa5eb08435143f2ccd6b0fbb0fc70fb46660))
+* Add detailed stats to Collections page ([5f3d61e](https://github.com/georgeguimaraes/arcana/commit/5f3d61ef1fea4ca2cc001358daf2343edda34a26))
+* Add fast Python leidenalg community detector ([78e00a2](https://github.com/georgeguimaraes/arcana/commit/78e00a27f7fb75375bc21d773ad92e9e3a34dc8e))
+* Add gate and reason telemetry events to logger ([787becc](https://github.com/georgeguimaraes/arcana/commit/787becc0c7c2b6bb7031e9a1e8a25fecd8377b70))
+* Add gate/2 and reason/2 for agentic RAG, split agent tests ([38dc6a1](https://github.com/georgeguimaraes/arcana/commit/38dc6a1a4e44c393c045be4ab8727a37843b862c))
+* Add graph toggle to ingest and fix API key redaction ([c978452](https://github.com/georgeguimaraes/arcana/commit/c97845268b2f1df99e53d1554b00e68f3cd90033))
+* Add hierarchical community detection with min_size filtering ([0648f4d](https://github.com/georgeguimaraes/arcana/commit/0648f4dcec9fa4caa76e66e9b81d6a27fd14452a))
+* Add Leiden logging and CommunityDetector to Info page ([a7a04f3](https://github.com/georgeguimaraes/arcana/commit/a7a04f3b4c58bd683f015953b687866070bce193))
+* Add mix arcana.graph.summarize_communities task ([ad42ed4](https://github.com/georgeguimaraes/arcana/commit/ad42ed4fd8e42cb5d65694af0ef557fb384eb417))
+* Add orphaned graph data management to Maintenance page ([8d942fe](https://github.com/georgeguimaraes/arcana/commit/8d942fe26ec0b2a2994d3eacf2aff9f6183ebebe))
+* Add pagination to graph explorer ([6797792](https://github.com/georgeguimaraes/arcana/commit/6797792bccce4a1d3c30ea2daff30b0de9f070a2))
+* Add PDF parser behaviour for custom implementations ([08922bf](https://github.com/georgeguimaraes/arcana/commit/08922bfd9f242fa80464510eacf32205f4783c01))
+* Add Rebuild Knowledge Graph to Maintenance page ([c9bc768](https://github.com/georgeguimaraes/arcana/commit/c9bc768efb5cc49c0d6ad9ab57d93a82662f22bf))
+* Add theta option for faster Leiden convergence ([8e25236](https://github.com/georgeguimaraes/arcana/commit/8e2523661447e62cbee6c7d67c5837d9b00ae089))
+* Display graph stats in dashboard when GraphRAG enabled ([ce1df09](https://github.com/georgeguimaraes/arcana/commit/ce1df095e4b7d853a3c783b971b29b9cfe418a94))
+* Enhance Info page with more config details ([8d9a864](https://github.com/georgeguimaraes/arcana/commit/8d9a8649ae2c517d7b0fce18153086a62bf53853))
+* Improve LLM select UI in Ask page ([acb71a8](https://github.com/georgeguimaraes/arcana/commit/acb71a8d5f69cce41db20116807d2b6f20ecd461))
+* Pipeline components respect skip_retrieval flag ([ae65cb5](https://github.com/georgeguimaraes/arcana/commit/ae65cb5f45a96556bea8ec699140c072e4050420))
+* Restructure Info page with expanded config display ([f6c1796](https://github.com/georgeguimaraes/arcana/commit/f6c1796602797e7520a7298f1731de0fc183335d))
+
+
+### Bug Fixes
+
+* Address Credo issues ([40387e2](https://github.com/georgeguimaraes/arcana/commit/40387e2f68e8d59e9881845a375652d517b027f9))
+* Capture loading state from render_click return value ([3ecc10a](https://github.com/georgeguimaraes/arcana/commit/3ecc10aa2fe313c9b2d5f23f78d3de148b126591))
+* **ci:** add include-v-in-tag to match existing tags ([4133649](https://github.com/georgeguimaraes/arcana/commit/4133649937dcdc2226d5d51e71d2c572dc2b2fa9))
+* **ci:** add last-release-sha to bootstrap release-please state ([60ced9a](https://github.com/georgeguimaraes/arcana/commit/60ced9a47638d6d1134a74513bcef11b12a6395d))
+* **ci:** bootstrap release-please to skip past PR [#6](https://github.com/georgeguimaraes/arcana/issues/6) ([de259ab](https://github.com/georgeguimaraes/arcana/commit/de259abb587a6b1eb625c6236206fbc1eec700c8))
+* **ci:** match release PR title pattern to existing PRs ([0faf498](https://github.com/georgeguimaraes/arcana/commit/0faf4988273b6cc4d32baaff0c74bfbe7894f307))
+* **ci:** update release PR label after creating release ([d121a13](https://github.com/georgeguimaraes/arcana/commit/d121a13252a3a95bdc4c7b5805899f8ec2617dd3))
+* **ci:** use manifest mode for release-please ([710e659](https://github.com/georgeguimaraes/arcana/commit/710e6594f95241a283c97f91436cac97a26d8ed8))
+* Convert indices to entity IDs in hierarchical community detection ([d387fd6](https://github.com/georgeguimaraes/arcana/commit/d387fd64fd7e316ee7c61c64f3a04c0b0b865118))
+* credo warnings in ColBERT test ([39da83f](https://github.com/georgeguimaraes/arcana/commit/39da83f4078daf97833869e3e4882fe8e6014dac))
+* Explicitly set enabled: false in test graph config ([662437f](https://github.com/georgeguimaraes/arcana/commit/662437ffc0ef6e4505565a28b7f2e7835e1390d3))
+* Fix telemetry.span return value and add collection filter ([e2c9d22](https://github.com/georgeguimaraes/arcana/commit/e2c9d22b65d1d228700fc56123eccf017e1afd7d))
+* Graph-Enhanced toggle styled as inline checkbox ([98fe03c](https://github.com/georgeguimaraes/arcana/commit/98fe03ce6bb807355edb87b640f6a291ad3187d1))
+* Handle doc query param in documents page ([414046c](https://github.com/georgeguimaraes/arcana/commit/414046c232330bbe91d8f57801aafd2da1ee724d))
+* Handle poppler_not_available error in PDF ingest test ([d33c409](https://github.com/georgeguimaraes/arcana/commit/d33c4097647656054416b9ddd5cd9f57508f6191))
+* Improve community summary prompt to avoid generic intros ([b82471e](https://github.com/georgeguimaraes/arcana/commit/b82471e8d3dbdcd99adfab50cdd1f56ece3a5fb8))
+* Join through Entity for relationship counts per collection ([87c5e18](https://github.com/georgeguimaraes/arcana/commit/87c5e182d79a7d89dd2e54bf34536cefada8bfc5))
+* Lighten rel-type background and add section spacing ([ad3867c](https://github.com/georgeguimaraes/arcana/commit/ad3867ccd56e6cd8ca25b0824eab26d666d27909))
+* Move Repository to info grid as card ([28d221e](https://github.com/georgeguimaraes/arcana/commit/28d221e238515add59ea419f7144caf1b5cb804a))
+* Remove invalid collection_id queries from Relationship schema ([49ff631](https://github.com/georgeguimaraes/arcana/commit/49ff63181ce758aec1ed3f136c3b5eaee4011267))
+* Remove long transactions from reembed to prevent DB timeout ([579b43d](https://github.com/georgeguimaraes/arcana/commit/579b43d8196592fc428ac717cae8da44a2993435))
+* Reorganize Build Graph checkbox layout ([26a3bd4](https://github.com/georgeguimaraes/arcana/commit/26a3bd4838479a3690ede50a154bba033450cd11))
+* Resolve DBConnection timeout errors in CI tests ([1e3dd63](https://github.com/georgeguimaraes/arcana/commit/1e3dd63750d0db8cf0b137f1ab2349d57c495b2d))
+* Resolve NER serving race conditions and test isolation ([73510a1](https://github.com/georgeguimaraes/arcana/commit/73510a1c7187c3c704ac204a3aa96868f94a6aeb))
+* Set minimum pool_size of 20 for CI environments ([035fdd6](https://github.com/georgeguimaraes/arcana/commit/035fdd631cd677a818ed21757b792f5eec9312cb))
+* Show graph stats on collections page when data exists ([8a82559](https://github.com/georgeguimaraes/arcana/commit/8a82559a65c7ad477009094cc7058d7e4743f30f))
+* Stabilize async tests with VACUUM on startup ([ab471da](https://github.com/georgeguimaraes/arcana/commit/ab471daad07c22c29e9561161c8b5c107bd3679d))
+* Strengthen community summary prompt to prevent generic intros ([19d9c25](https://github.com/georgeguimaraes/arcana/commit/19d9c25ec181097d97c307992609ba9da5fe89d6))
+
+
+### Miscellaneous
+
+* add dependabot for daily dependency updates ([#11](https://github.com/georgeguimaraes/arcana/issues/11)) ([9ab9f70](https://github.com/georgeguimaraes/arcana/commit/9ab9f709de8a5c946a0cbf52caa8248f5bcc5974))
+* **beads:** remove beads issue tracking system files ([6af715e](https://github.com/georgeguimaraes/arcana/commit/6af715e443c59c45cb4859afb780c51ba0bac7f8))
+* **deps:** bump actions/cache from 3 to 5 ([#13](https://github.com/georgeguimaraes/arcana/issues/13)) ([2d649a9](https://github.com/georgeguimaraes/arcana/commit/2d649a984559854244dd0b72f219dfc336cc7c63))
+* **deps:** bump actions/checkout from 4 to 6 ([#14](https://github.com/georgeguimaraes/arcana/issues/14)) ([315aefd](https://github.com/georgeguimaraes/arcana/commit/315aefd3c0fa34a6e1cc9d6af40ab1cc2fecf293))
+* **deps:** bump amannn/action-semantic-pull-request from 5 to 6 ([#12](https://github.com/georgeguimaraes/arcana/issues/12)) ([7480a37](https://github.com/georgeguimaraes/arcana/commit/7480a37e77578c19afd5fbcbf259c9526d626c87))
+* **deps:** use released stephen package from hex ([#16](https://github.com/georgeguimaraes/arcana/issues/16)) ([f8c1722](https://github.com/georgeguimaraes/arcana/commit/f8c1722cd3788a158479bab4757f7941da8651cd))
+* Fix formatting and add Elixir 1.19/OTP 28 to test matrix ([ba4acb4](https://github.com/georgeguimaraes/arcana/commit/ba4acb49624a7a537ec6c95ca74ba0abe5b2b6fb))
+* trigger release-please ([f75e54d](https://github.com/georgeguimaraes/arcana/commit/f75e54d2d8405dde7bc7bb38d0efb4d2eadf0e13))
+* trigger release-please ([ba32722](https://github.com/georgeguimaraes/arcana/commit/ba3272202315a5475f9e96528b7deb4dfce9acc5))
+* trigger release-please ([b03b4a7](https://github.com/georgeguimaraes/arcana/commit/b03b4a71e1869b235d3b63edd0a05dee3a333e0c))
+* Update leidenfold to 0.3.2 ([fb364e2](https://github.com/georgeguimaraes/arcana/commit/fb364e271b36a54a11e42c83a4d85983443c5855))
+* Use proper Elixir/OTP version matrix in CI ([56e5db6](https://github.com/georgeguimaraes/arcana/commit/56e5db61045ecacdfe11d46e07cbb17e57f24c5b))
+
+
+### Documentation
+
+* Add Maintenance Tasks section to GraphRAG guide ([61dae86](https://github.com/georgeguimaraes/arcana/commit/61dae860e9c32bd82c51399c1ae5f6a4054bf4d2))
+* Add PDF parser configuration documentation ([c958e2f](https://github.com/georgeguimaraes/arcana/commit/c958e2f42d66a8ed38ed043c3057161911717a72))
+* Update 'How it works' section with current architecture ([0f1d00a](https://github.com/georgeguimaraes/arcana/commit/0f1d00a4f07e20c1b5edd7d351cfd5970d27f2f0))
+* Update arcana version to ~&gt; 1.0 ([6ea1fa7](https://github.com/georgeguimaraes/arcana/commit/6ea1fa746cf621e2881e28364b9a46f3ebe01d0b))
+
+
+### Code Refactoring
+
+* Fix credo issues in agent.ex ([b1f3ee2](https://github.com/georgeguimaraes/arcana/commit/b1f3ee2b68e33ff53ed718b63d430fb29674bbd5))
+* Remove typespecs from codebase ([2c34f0d](https://github.com/georgeguimaraes/arcana/commit/2c34f0d514b09ea962d9b4fb6a897aab49ce04d1))
+* Replace ex_leiden/leidenalg with leidenfold for community detection ([addef8d](https://github.com/georgeguimaraes/arcana/commit/addef8d1c90b23925600f428f45f4fe62068e55e))
+* Use leidenfold native hierarchical detection ([70c4ed8](https://github.com/georgeguimaraes/arcana/commit/70c4ed8265b0df6923981c755e960653cfee1819))
+* Use TaskSupervisor for dashboard async operations ([14de97f](https://github.com/georgeguimaraes/arcana/commit/14de97f8d69837db87e00a0848978daabfd9028d))
+
+
+### Performance Improvements
+
+* Optimize list_entities query with subqueries ([f343e51](https://github.com/georgeguimaraes/arcana/commit/f343e51ff3f6d6940158a77099fea154118d4bf4))
+
 ## [1.2.0](https://github.com/georgeguimaraes/arcana/compare/v1.1.0...v1.2.0) (2026-01-03)
 
 
