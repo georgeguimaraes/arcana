@@ -767,6 +767,8 @@ defmodule Arcana.Maintenance do
         case Application.get_env(:arcana, :llm) do
           {provider, llm_opts} -> build_llm_fn(provider, llm_opts)
           nil -> nil
+          provider when is_binary(provider) -> build_llm_fn(provider, [])
+          fun when is_function(fun) -> fun
         end
       end)
 

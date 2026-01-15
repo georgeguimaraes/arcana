@@ -33,9 +33,12 @@ defmodule Mix.Tasks.Arcana.Graph.SummarizeCommunities do
 
   ## Requirements
 
-  This task requires an LLM to be configured:
-
-      config :arcana, :llm, {"openai:gpt-4o-mini", api_key: "..."}
+  This task requires an LLM to be configured. Supported formats:
+    config :arcana, :llm, "openai:gpt-4o-mini"
+    config :arcana, :llm, {"openai:gpt-4o-mini", api_key: "..."}
+    config :arcana, :llm, fn prompt, context, opts ->
+      {:ok, MyApp.LLM.complete(prompt)}
+    end
 
   """
 
@@ -76,7 +79,16 @@ defmodule Mix.Tasks.Arcana.Graph.SummarizeCommunities do
       No LLM configured for community summarization.
       Add to your config:
 
+          # String format (simplest)
+          config :arcana, :llm, "openai:gpt-4o-mini"
+
+          # Or tuple with options
           config :arcana, :llm, {"openai:gpt-4o-mini", api_key: "..."}
+
+          # Or function
+          config :arcana, :llm, fn prompt, context, opts ->
+            {:ok, MyApp.LLM.complete(prompt)}
+          end
       """)
     end
 

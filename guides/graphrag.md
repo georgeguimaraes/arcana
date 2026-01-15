@@ -651,11 +651,22 @@ mix arcana.graph.summarize_communities --concurrency 4
 mix arcana.graph.summarize_communities --quiet
 ```
 
-Requires an LLM to be configured:
+Requires an LLM to be configured. All standard `:llm` config formats are supported:
 
 ```elixir
+# String format (simplest, uses req_llm config for API key)
+config :arcana, :llm, "openai:gpt-4o-mini"
+
+# Tuple with options (explicit API key)
 config :arcana, :llm, {"openai:gpt-4o-mini", api_key: "..."}
+
+# Function (full control)
+config :arcana, :llm, fn prompt, context, opts ->
+  {:ok, MyApp.LLM.complete(prompt)}
+end
 ```
+
+See the [LLM Integration guide](llm-integration.md) for more details.
 
 ### Typical Workflow
 
