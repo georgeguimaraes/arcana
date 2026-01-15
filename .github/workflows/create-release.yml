@@ -1,11 +1,17 @@
-name: Release
+name: Create Release
 
 # Triggers when a release PR is merged with the 'autorelease: pending' label
+# Can also be triggered manually with a version input
 on:
   pull_request:
     types:
       - closed
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., 1.3.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,7 +19,7 @@ permissions:
 
 jobs:
   release:
-    if: "${{ github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'autorelease: pending') }}"
+    if: "${{ github.event_name == 'workflow_dispatch' || (github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'autorelease: pending')) }}"
     runs-on: ubuntu-latest
 
     services:
@@ -36,12 +42,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract version from PR title
+      - name: Extract version
         id: version
         env:
+          INPUT_VERSION: ${{ inputs.version }}
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          VERSION=$(echo "$PR_TITLE" | grep -oP 'release \K[0-9]+\.[0-9]+\.[0-9]+')
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION=$(echo "$PR_TITLE" | grep -oP 'release \K[0-9]+\.[0-9]+\.[0-9]+')
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
 
@@ -91,7 +102,9 @@ jobs:
         run: mix hex.publish --yes
 
       - name: Mark release PR as tagged
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: gh pr edit "$PR_NUMBER" --remove-label "autorelease: pending" --add-label "autorelease: tagged"
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+        run: |
+          gh pr edit "$PR_NUMBER" --remove-label "autorelease: pending" --add-label "autorelease: tagged"

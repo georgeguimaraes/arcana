@@ -14,5 +14,6 @@ Ecto.Adapters.SQL.Sandbox.mode(Arcana.TestRepo, :manual)
 # - :memory - hnswlib NIFs slow on CI
 # - :serving - requires real Bumblebee model (slow)
 # - :colbert - requires Stephen/ColBERT model (slow)
-# Run with: mix test --include serving --include memory --include end_to_end --include colbert
-ExUnit.start(exclude: [:memory, :end_to_end, :serving, :colbert])
+# - :pdf_support - requires poppler (pdftotext) installed
+# Run with: mix test --include serving --include memory --include end_to_end --include colbert --include pdf_support
+ExUnit.start(exclude: [:memory, :end_to_end, :serving, :colbert, :pdf_support])

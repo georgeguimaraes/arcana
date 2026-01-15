@@ -37,15 +37,10 @@ defmodule Arcana.ParserTest do
   describe "parse/2 with PDF files" do
     @tag :pdf_support
     test "extracts text from PDF files" do
-      if Parser.pdf_support_available?() do
-        path = fixture_path("sample.pdf")
+      path = fixture_path("sample.pdf")
 
-        assert {:ok, text} = Parser.parse(path)
-        assert String.contains?(text, "Hello PDF")
-      else
-        # Skip if pdftotext not installed
-        :ok
-      end
+      assert {:ok, text} = Parser.parse(path)
+      assert String.contains?(text, "Hello PDF")
     end
 
     test "returns error for corrupted PDF" do

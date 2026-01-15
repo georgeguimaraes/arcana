@@ -747,11 +747,11 @@ defmodule Arcana.Agent do
 
   defp parse_sufficiency_response(response) do
     case Jason.decode(response) do
-      {:ok, %{"sufficient" => true}} ->
-        {:sufficient, nil}
-
       {:ok, %{"sufficient" => true, "reasoning" => reasoning}} ->
         {:sufficient, reasoning}
+
+      {:ok, %{"sufficient" => true}} ->
+        {:sufficient, nil}
 
       {:ok, %{"sufficient" => false, "follow_up_query" => query}} ->
         {:insufficient, query}
