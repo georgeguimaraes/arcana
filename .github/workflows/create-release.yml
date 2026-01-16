@@ -66,10 +66,7 @@ jobs:
         with:
           hex-api-key: ${{ secrets.HEX_API_KEY }}
 
-      - name: Mark release PR as tagged
+      - uses: georgeguimaraes/workflows/actions/mark-release-tagged@main
         if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          gh pr edit "$PR_NUMBER" --remove-label "autorelease: pending" --add-label "autorelease: tagged"
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
