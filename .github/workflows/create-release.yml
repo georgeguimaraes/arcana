@@ -41,18 +41,11 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
 
-      - name: Extract version
+      - uses: georgeguimaraes/workflows/actions/extract-version@main
         id: version
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          if [ -n "$INPUT_VERSION" ]; then
-            VERSION="$INPUT_VERSION"
-          else
-            VERSION=$(echo "$PR_TITLE" | grep -oP 'release \K[0-9]+\.[0-9]+\.[0-9]+')
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        with:
+          version: ${{ inputs.version }}
+          pr-title: ${{ github.event.pull_request.title }}
 
       - uses: georgeguimaraes/workflows/actions/elixir-setup@main
 
