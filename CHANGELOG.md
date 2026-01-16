@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1](https://github.com/georgeguimaraes/arcana/compare/v1.3.0...v1.3.1) (2026-01-16)
+
+
+### Bug Fixes
+
+* **ci:** checkout merge commit SHA when creating release tag ([f4d5a50](https://github.com/georgeguimaraes/arcana/commit/f4d5a50fe91f6b354c2a66e48003d8c842b5b341))
+* **ci:** handle workflow_dispatch and yaml escaping issues ([149bfac](https://github.com/georgeguimaraes/arcana/commit/149bfacbe342918bcd145eb89ee3a89520f1c39a))
+* support all forms of llm configuration on maintenance.ex ([#22](https://github.com/georgeguimaraes/arcana/issues/22)) ([6fec8f6](https://github.com/georgeguimaraes/arcana/commit/6fec8f6ed8b2477364202de6e052d7f010a8ec9d))
+
+
+### Miscellaneous
+
+* add fallback section for non-conventional commits in release-please ([5ec9e78](https://github.com/georgeguimaraes/arcana/commit/5ec9e7889ea090444ad0d18f00c2a386c6d3be77))
+
 ## [1.3.0](https://github.com/georgeguimaraes/arcana/compare/v1.2.0...v1.3.0) (2026-01-14)
 
 
