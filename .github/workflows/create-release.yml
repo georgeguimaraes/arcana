@@ -1,7 +1,5 @@
 name: Create Release
 
-# Triggers when a release PR is merged with the 'autorelease: pending' label
-# Can also be triggered manually with a version input
 on:
   pull_request:
     types:
@@ -55,23 +53,8 @@ jobs:
             VERSION=$(echo "$PR_TITLE" | grep -oP 'release \K[0-9]+\.[0-9]+\.[0-9]+')
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Set up Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          otp-version: "27"
-          elixir-version: "1.18"
-
-      - name: Restore dependencies cache
-        uses: actions/cache@v5
-        with:
-          path: deps
-          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
-          restore-keys: ${{ runner.os }}-mix-
-
-      - name: Install dependencies
-        run: mix deps.get
+      - uses: georgeguimaraes/workflows/actions/elixir-setup@main
 
       - name: Run tests
         env:
@@ -82,30 +65,18 @@ jobs:
           mix ecto.migrate -r Arcana.TestRepo
           mix test --exclude memory
 
-      - name: Create tag
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG"
-          git push origin "$TAG"
+      - uses: georgeguimaraes/workflows/actions/create-release@main
+        with:
+          version: ${{ steps.version.outputs.version }}
 
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
-        run: gh release create "$TAG" --generate-notes
-
-      - name: Publish to Hex.pm
-        env:
-          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
-        run: mix hex.publish --yes
+      - uses: georgeguimaraes/workflows/actions/hex-publish@main
+        with:
+          hex-api-key: ${{ secrets.HEX_API_KEY }}
 
       - name: Mark release PR as tagged
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           gh pr edit "$PR_NUMBER" --remove-label "autorelease: pending" --add-label "autorelease: tagged"
