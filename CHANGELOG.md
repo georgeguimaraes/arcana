@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2](https://github.com/georgeguimaraes/arcana/compare/v1.3.1...v1.3.2) (2026-01-16)
+
+
+### Miscellaneous
+
+* **deps:** bump hnswlib from 0.1.6 to 0.1.7 ([#20](https://github.com/georgeguimaraes/arcana/issues/20)) ([6fb3b99](https://github.com/georgeguimaraes/arcana/commit/6fb3b991b94396005ba2802bcf832774192ccabb))
+* **deps:** bump phoenix_live_view from 1.1.19 to 1.1.20 ([#21](https://github.com/georgeguimaraes/arcana/issues/21)) ([b1c298a](https://github.com/georgeguimaraes/arcana/commit/b1c298ad4117f5937e27d5ad3c60794554e23b24))
+* **deps:** bump postgrex from 0.21.1 to 0.22.0 ([#19](https://github.com/georgeguimaraes/arcana/issues/19)) ([01410e1](https://github.com/georgeguimaraes/arcana/commit/01410e192180656c905263712fb7cb728c321605))
+* **deps:** bump text_chunker from 0.5.2 to 0.6.0 ([#18](https://github.com/georgeguimaraes/arcana/issues/18)) ([c5ab08b](https://github.com/georgeguimaraes/arcana/commit/c5ab08b6130a010a96adeb9a2d38c766736a3ac0))
+
+
+### Code Refactoring
+
+* **ci:** remove redundant if from mark-release-tagged ([a8c7f4e](https://github.com/georgeguimaraes/arcana/commit/a8c7f4e34ebaab8a988816f8a77910e9ac992298))
+* **ci:** use extract-version action ([2bd7ddc](https://github.com/georgeguimaraes/arcana/commit/2bd7ddcbafd9e24e842910ab6c1bf9f8a4183a4f))
+* **ci:** use mark-release-tagged action ([3edb4b8](https://github.com/georgeguimaraes/arcana/commit/3edb4b883e4331e404a080b7d73e63c29832f9c1))
+* **ci:** use shared workflows from georgeguimaraes/workflows ([9b8cab4](https://github.com/georgeguimaraes/arcana/commit/9b8cab4004f0d4104ce84e1913325e5a7f96a8cd))
+
 ## [1.3.1](https://github.com/georgeguimaraes/arcana/compare/v1.3.0...v1.3.1) (2026-01-16)
 
 
