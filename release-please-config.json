@@ -19,7 +19,8 @@
         {"type": "ci", "section": "Continuous Integration", "hidden": false},
         {"type": "perf", "section": "Performance Improvements", "hidden": false},
         {"type": "style", "section": "Styles", "hidden": true},
-        {"type": "revert", "section": "Reverts", "hidden": false}
+        {"type": "revert", "section": "Reverts", "hidden": false},
+        {"type": "", "section": "Other Changes", "hidden": false}
       ]
     }
   },
