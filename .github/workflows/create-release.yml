@@ -67,6 +67,5 @@ jobs:
           hex-api-key: ${{ secrets.HEX_API_KEY }}
 
       - uses: georgeguimaraes/workflows/actions/mark-release-tagged@main
-        if: github.event_name == 'pull_request'
         with:
           pr-number: ${{ github.event.pull_request.number }}
