@@ -6,6 +6,44 @@ defmodule ArcanaWeb.AskLiveTest do
   alias Arcana.Collection
   alias Arcana.Graph.{Entity, Relationship}
 
+  describe "agentic result rendering with nested chunks" do
+    test "handles agentic results with nested %{chunks: [...]} structure", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/ask")
+
+      # Simulate what format_agentic_result produces after flattening
+      # This verifies the template can render the normalized format
+      result = %{
+        question: "What is Elixir?",
+        answer: "Elixir is a dynamic, functional language.",
+        results: [
+          %{
+            id: 1,
+            text: "Elixir is a language",
+            score: 0.95,
+            document_id: "doc1",
+            chunk_index: 0
+          },
+          %{id: 2, text: "Built on Erlang VM", score: 0.90, document_id: "doc1", chunk_index: 1}
+        ],
+        expanded_query: "Elixir programming language functional",
+        sub_questions: ["What is Elixir?", "How does Elixir work?"],
+        selected_collections: ["docs"]
+      }
+
+      send(view.pid, {:ask_complete, {:ok, result}})
+      html = render(view)
+
+      # Verify chunks render correctly
+      assert html =~ "0.95"
+      assert html =~ "0.9"
+      assert html =~ "Elixir is a language"
+      assert html =~ "Built on Erlang VM"
+      assert html =~ "doc1"
+      assert html =~ "Chunk 0"
+      assert html =~ "Chunk 1"
+    end
+  end
+
   describe "Ask page" do
     test "mounts successfully", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/arcana/ask")

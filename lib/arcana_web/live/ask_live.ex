@@ -251,11 +251,20 @@ defmodule ArcanaWeb.AskLive do
   end
 
   defp format_agentic_result(ctx, question) do
+    # Flatten chunks from nested results to match simple mode format
+    all_chunks =
+      (ctx.results || [])
+      |> Enum.flat_map(fn
+        %{chunks: chunks} -> chunks
+        chunk -> [chunk]
+      end)
+      |> Enum.uniq_by(& &1.id)
+
     {:ok,
      %{
        question: question,
        answer: ctx.answer,
-       results: ctx.results,
+       results: all_chunks,
        expanded_query: ctx.expanded_query,
        sub_questions: ctx.sub_questions,
        selected_collections: ctx.collections
