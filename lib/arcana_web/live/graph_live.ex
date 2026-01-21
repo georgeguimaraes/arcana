@@ -33,6 +33,7 @@ defmodule ArcanaWeb.GraphLive do
        stats: nil,
        entity_filter: "",
        entity_type_filter: nil,
+       entity_types: [],
        selected_entity: nil,
        entity_details: nil,
        entities_page: 1,
@@ -133,8 +134,9 @@ defmodule ArcanaWeb.GraphLive do
 
     entities = GraphStore.list_entities(opts)
     total = count_entities(repo, collection_id, name_filter, type_filter)
+    entity_types = load_entity_types(repo, collection_id)
 
-    assign(socket, entities: entities, entities_total: total)
+    assign(socket, entities: entities, entities_total: total, entity_types: entity_types)
   end
 
   defp count_entities(repo, collection_id, name_filter, type_filter) do
@@ -156,6 +158,23 @@ defmodule ArcanaWeb.GraphLive do
     repo.one(query) || 0
   rescue
     _ -> 0
+  end
+
+  defp load_entity_types(repo, collection_id) do
+    query =
+      from(e in Entity,
+        group_by: e.type,
+        select: %{type: e.type, count: count(e.id)},
+        order_by: [desc: count(e.id), asc: e.type]
+      )
+
+    query =
+      if collection_id, do: where(query, [e], e.collection_id == ^collection_id), else: query
+
+    repo.all(query)
+    |> Enum.map(& &1.type)
+  rescue
+    _ -> []
   end
 
   defp load_relationships(socket) do
@@ -543,6 +562,7 @@ defmodule ArcanaWeb.GraphLive do
                 entities={@entities}
                 entity_filter={@entity_filter}
                 entity_type_filter={@entity_type_filter}
+                entity_types={@entity_types}
                 selected_entity={@selected_entity}
                 entity_details={@entity_details}
                 page={@entities_page}
@@ -593,14 +613,11 @@ defmodule ArcanaWeb.GraphLive do
         />
         <select name="type" class="arcana-input">
           <option value="">All Types</option>
-          <option value="person" selected={@entity_type_filter == "person"}>Person</option>
-          <option value="organization" selected={@entity_type_filter == "organization"}>
-            Organization
-          </option>
-          <option value="technology" selected={@entity_type_filter == "technology"}>Technology</option>
-          <option value="concept" selected={@entity_type_filter == "concept"}>Concept</option>
-          <option value="location" selected={@entity_type_filter == "location"}>Location</option>
-          <option value="event" selected={@entity_type_filter == "event"}>Event</option>
+          <%= for entity_type <- @entity_types do %>
+            <option value={entity_type} selected={@entity_type_filter == entity_type}>
+              <%= String.capitalize(entity_type) %>
+            </option>
+          <% end %>
         </select>
       </form>
 
