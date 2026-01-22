@@ -475,6 +475,20 @@ defmodule ArcanaWeb.GraphLiveTest do
       refute html =~ "Big Partner Corp"
     end
 
+    test "shows dynamic relationship type options from database", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=relationships")
+
+      html = render(view)
+
+      # Should show the relationship types that exist in the database
+      assert html =~ ~r/<option[^>]*value="LEADS"/
+      assert html =~ ~r/<option[^>]*value="PARTNERED"/
+
+      # Should not show hardcoded types that don't exist
+      refute html =~ ~r/<option[^>]*value="CREATED"/
+      refute html =~ ~r/<option[^>]*value="ENABLES"/
+    end
+
     test "clicking relationship row expands detail panel", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/arcana/graph?tab=relationships")
 
