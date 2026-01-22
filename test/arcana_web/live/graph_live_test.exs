@@ -197,6 +197,84 @@ defmodule ArcanaWeb.GraphLiveTest do
       refute html =~ "Acme Corp"
       refute html =~ "Phoenix Framework"
     end
+
+    test "shows dynamic entity type options from database", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+
+      html = render(view)
+
+      # Should show the entity types that exist in the database
+      assert html =~ ~r/<option[^>]*value="person"/
+      assert html =~ ~r/<option[^>]*value="organization"/
+      assert html =~ ~r/<option[^>]*value="technology"/
+
+      # Should not show hardcoded types that don't exist
+      refute html =~ ~r/<option[^>]*value="location"/
+      refute html =~ ~r/<option[^>]*value="event"/
+    end
+
+    test "entity type dropdown updates when collection filter changes", %{conn: conn} do
+      entity_extractor_collection = fn _text, _opts ->
+        {:ok,
+         [
+           %{name: "Malaga", type: "location"},
+           %{name: "ElixirConf EU", type: "event"}
+         ]}
+      end
+
+      {:ok, _doc2} =
+        Arcana.ingest(
+          "ElixirConf EU 2026 will be held in Malaga.",
+          repo: Repo,
+          graph: true,
+          entity_extractor: entity_extractor_collection,
+          collection: "other-collection"
+        )
+
+      # Load with no collection filter - should show all types
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+      html = render(view)
+
+      assert html =~ ~r/<option[^>]*value="person"/
+      assert html =~ ~r/<option[^>]*value="organization"/
+      assert html =~ ~r/<option[^>]*value="technology"/
+      assert html =~ ~r/<option[^>]*value="location"/
+      assert html =~ ~r/<option[^>]*value="event"/
+
+      # Filter by entities-test collection - should only show its types
+      view
+      |> element("select[name=collection]")
+      |> render_change(%{"collection" => "entities-test"})
+
+      html = render(view)
+
+      assert html =~ ~r/<option[^>]*value="person"/
+      assert html =~ ~r/<option[^>]*value="organization"/
+      assert html =~ ~r/<option[^>]*value="technology"/
+      refute html =~ ~r/<option[^>]*value="location"/
+      refute html =~ ~r/<option[^>]*value="event"/
+    end
+
+    test "entity type dropdown shows only types from selected collection", %{conn: conn} do
+      # Load with entities-test collection selected
+      {:ok, view, _html} = live(conn, "/arcana/graph?collection=entities-test")
+      html = render(view)
+
+      # Should only show types from entities-test collection
+      assert html =~ ~r/<option[^>]*value="person"/
+      assert html =~ ~r/<option[^>]*value="organization"/
+      assert html =~ ~r/<option[^>]*value="technology"/
+    end
+
+    test "entity type options are capitalized in display", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph")
+      html = render(view)
+
+      # Verify they appear in the dropdown (not just in the table)
+      assert html =~ ~r/<option[^>]*>\s*Person/
+      assert html =~ ~r/<option[^>]*>\s*Organization/
+      assert html =~ ~r/<option[^>]*>\s*Technology/
+    end
   end
 
   describe "Entity detail panel" do
@@ -395,6 +473,20 @@ defmodule ArcanaWeb.GraphLiveTest do
       html = render(view)
       assert html =~ "CEO Smith"
       refute html =~ "Big Partner Corp"
+    end
+
+    test "shows dynamic relationship type options from database", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/arcana/graph?tab=relationships")
+
+      html = render(view)
+
+      # Should show the relationship types that exist in the database
+      assert html =~ ~r/<option[^>]*value="LEADS"/
+      assert html =~ ~r/<option[^>]*value="PARTNERED"/
+
+      # Should not show hardcoded types that don't exist
+      refute html =~ ~r/<option[^>]*value="CREATED"/
+      refute html =~ ~r/<option[^>]*value="ENABLES"/
     end
 
     test "clicking relationship row expands detail panel", %{conn: conn} do

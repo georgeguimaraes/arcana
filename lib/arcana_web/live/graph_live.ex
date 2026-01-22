@@ -33,12 +33,14 @@ defmodule ArcanaWeb.GraphLive do
        stats: nil,
        entity_filter: "",
        entity_type_filter: nil,
+       entity_types: [],
        selected_entity: nil,
        entity_details: nil,
        entities_page: 1,
        entities_total: 0,
        relationship_filter: "",
        relationship_type_filter: nil,
+       relationship_types: [],
        relationship_strength_filter: nil,
        selected_relationship: nil,
        relationship_details: nil,
@@ -133,8 +135,9 @@ defmodule ArcanaWeb.GraphLive do
 
     entities = GraphStore.list_entities(opts)
     total = count_entities(repo, collection_id, name_filter, type_filter)
+    entity_types = load_entity_types(repo, collection_id)
 
-    assign(socket, entities: entities, entities_total: total)
+    assign(socket, entities: entities, entities_total: total, entity_types: entity_types)
   end
 
   defp count_entities(repo, collection_id, name_filter, type_filter) do
@@ -158,6 +161,45 @@ defmodule ArcanaWeb.GraphLive do
     _ -> 0
   end
 
+  defp load_entity_types(repo, collection_id) do
+    query =
+      from(e in Entity,
+        group_by: e.type,
+        select: %{type: e.type, count: count(e.id)},
+        order_by: [desc: count(e.id), asc: e.type]
+      )
+
+    query =
+      if collection_id, do: where(query, [e], e.collection_id == ^collection_id), else: query
+
+    repo.all(query)
+    |> Enum.map(& &1.type)
+  rescue
+    _ -> []
+  end
+
+  defp load_relationship_types(repo, collection_id) do
+    query =
+      from(r in Relationship,
+        join: source in Entity,
+        on: source.id == r.source_id,
+        group_by: r.type,
+        select: %{type: r.type, count: count(r.id)},
+        order_by: [desc: count(r.id), asc: r.type],
+        limit: 100
+      )
+
+    query =
+      if collection_id,
+        do: where(query, [r, source], source.collection_id == ^collection_id),
+        else: query
+
+    repo.all(query)
+    |> Enum.map(& &1.type)
+  rescue
+    _ -> []
+  end
+
   defp load_relationships(socket) do
     repo = socket.assigns.repo
     collection_id = get_selected_collection_id(socket)
@@ -177,8 +219,9 @@ defmodule ArcanaWeb.GraphLive do
 
     relationships = GraphStore.list_relationships(opts)
     total = count_relationships(repo, collection_id, search_filter, type_filter, strength_filter)
+    relationship_types = load_relationship_types(repo, collection_id)
 
-    assign(socket, relationships: relationships, relationships_total: total)
+    assign(socket, relationships: relationships, relationships_total: total, relationship_types: relationship_types)
   end
 
   defp count_relationships(repo, collection_id, search_filter, type_filter, strength_filter) do
@@ -543,6 +586,7 @@ defmodule ArcanaWeb.GraphLive do
                 entities={@entities}
                 entity_filter={@entity_filter}
                 entity_type_filter={@entity_type_filter}
+                entity_types={@entity_types}
                 selected_entity={@selected_entity}
                 entity_details={@entity_details}
                 page={@entities_page}
@@ -554,6 +598,7 @@ defmodule ArcanaWeb.GraphLive do
                 relationships={@relationships}
                 relationship_filter={@relationship_filter}
                 relationship_type_filter={@relationship_type_filter}
+                relationship_types={@relationship_types}
                 relationship_strength_filter={@relationship_strength_filter}
                 selected_relationship={@selected_relationship}
                 relationship_details={@relationship_details}
@@ -593,14 +638,11 @@ defmodule ArcanaWeb.GraphLive do
         />
         <select name="type" class="arcana-input">
           <option value="">All Types</option>
-          <option value="person" selected={@entity_type_filter == "person"}>Person</option>
-          <option value="organization" selected={@entity_type_filter == "organization"}>
-            Organization
-          </option>
-          <option value="technology" selected={@entity_type_filter == "technology"}>Technology</option>
-          <option value="concept" selected={@entity_type_filter == "concept"}>Concept</option>
-          <option value="location" selected={@entity_type_filter == "location"}>Location</option>
-          <option value="event" selected={@entity_type_filter == "event"}>Event</option>
+          <%= for entity_type <- @entity_types do %>
+            <option value={entity_type} selected={@entity_type_filter == entity_type}>
+              <%= String.capitalize(entity_type) %>
+            </option>
+          <% end %>
         </select>
       </form>
 
@@ -724,16 +766,11 @@ defmodule ArcanaWeb.GraphLive do
         />
         <select name="type" class="arcana-input">
           <option value="">All Types</option>
-          <option value="LEADS" selected={@relationship_type_filter == "LEADS"}>LEADS</option>
-          <option value="CREATED" selected={@relationship_type_filter == "CREATED"}>CREATED</option>
-          <option value="PARTNERED" selected={@relationship_type_filter == "PARTNERED"}>
-            PARTNERED
-          </option>
-          <option value="ENABLES" selected={@relationship_type_filter == "ENABLES"}>ENABLES</option>
-          <option value="WORKS_AT" selected={@relationship_type_filter == "WORKS_AT"}>WORKS_AT</option>
-          <option value="RELATED_TO" selected={@relationship_type_filter == "RELATED_TO"}>
-            RELATED_TO
-          </option>
+          <%= for relationship_type <- @relationship_types do %>
+            <option value={relationship_type} selected={@relationship_type_filter == relationship_type}>
+              <%= relationship_type %>
+            </option>
+          <% end %>
         </select>
         <select name="strength" class="arcana-input">
           <option value="">Any Strength</option>
