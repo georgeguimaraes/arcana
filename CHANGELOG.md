@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0](https://github.com/georgeguimaraes/arcana/compare/v1.3.3...v1.4.0) (2026-01-22)
+
+
+### Features
+
+* **dashboard:** add dynamic entity type and relationship options at graph_live.ex ([#29](https://github.com/georgeguimaraes/arcana/issues/29)) ([41ee981](https://github.com/georgeguimaraes/arcana/commit/41ee9811a26bd3699fe4e066a09edc92f0cc6ab8))
+
+
+### Miscellaneous
+
+* **deps-dev:** bump ex_doc from 0.39.3 to 0.40.0 ([#28](https://github.com/georgeguimaraes/arcana/issues/28)) ([8c1fb1f](https://github.com/georgeguimaraes/arcana/commit/8c1fb1f241c4440970fa72c7deda92ec4786c9fb))
+* **deps:** bump igniter from 0.7.0 to 0.7.1 ([#31](https://github.com/georgeguimaraes/arcana/issues/31)) ([fcd441f](https://github.com/georgeguimaraes/arcana/commit/fcd441fdcc91f96043c1642098afdc44c264875f))
+
+
+### Code Refactoring
+
+* **ci:** use release-please for GitHub releases ([34f45c8](https://github.com/georgeguimaraes/arcana/commit/34f45c86721db54238fae141fec19dd9570c51bc))
+
 ## [1.3.3](https://github.com/georgeguimaraes/arcana/compare/v1.3.2...v1.3.3) (2026-01-20)
 
 
