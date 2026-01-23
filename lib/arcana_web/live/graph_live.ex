@@ -221,7 +221,11 @@ defmodule ArcanaWeb.GraphLive do
     total = count_relationships(repo, collection_id, search_filter, type_filter, strength_filter)
     relationship_types = load_relationship_types(repo, collection_id)
 
-    assign(socket, relationships: relationships, relationships_total: total, relationship_types: relationship_types)
+    assign(socket,
+      relationships: relationships,
+      relationships_total: total,
+      relationship_types: relationship_types
+    )
   end
 
   defp count_relationships(repo, collection_id, search_filter, type_filter, strength_filter) do
