@@ -11,4 +11,19 @@ permissions:
 
 jobs:
   release-please:
-    uses: georgeguimaraes/workflows/.github/workflows/release-please.yml@main
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+
+  hex-publish:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: georgeguimaraes/workflows/.github/workflows/on-release-published.yml@main
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    secrets:
+      hex-api-key: ${{ secrets.HEX_API_KEY }}
