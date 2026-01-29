@@ -52,7 +52,8 @@ defmodule Arcana.Graph.GraphStore.Ecto do
           target_id: target_id,
           type: rel.type,
           description: rel[:description],
-          strength: rel[:strength]
+          strength: rel[:strength],
+          metadata: rel[:metadata]
         })
         |> repo.insert!()
       end
