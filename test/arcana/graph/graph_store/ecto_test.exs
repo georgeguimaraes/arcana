@@ -113,6 +113,30 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       assert rel.type == "knows"
     end
 
+    test "inserts relationships with metadata" do
+      collection = create_collection()
+      alice = create_entity(collection, "Alice")
+      bob = create_entity(collection, "Bob")
+      entity_id_map = %{"Alice" => alice.id, "Bob" => bob.id}
+
+      relationships = [
+        %{
+          source: "Alice",
+          target: "Bob",
+          type: "knows",
+          description: "Alice knows Bob",
+          metadata: %{"since" => "2020"}
+        }
+      ]
+
+      assert :ok = EctoStore.persist_relationships(relationships, entity_id_map, repo: Repo)
+
+      rel = Repo.get_by(Relationship, source_id: alice.id, target_id: bob.id)
+      assert rel.type == "knows"
+      assert rel.description == "Alice knows Bob"
+      assert rel.metadata == %{"since" => "2020"}
+    end
+
     test "skips relationships with missing entities" do
       entity_id_map = %{"Alice" => Ecto.UUID.generate()}
 
