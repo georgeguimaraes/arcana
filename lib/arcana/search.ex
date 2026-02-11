@@ -297,9 +297,9 @@ defmodule Arcana.Search do
            metadata = result.metadata || %{}
 
            %{
-             id: result.id,
+             id: Ecto.UUID.cast!(result.id),
              text: metadata[:text] || "",
-             document_id: metadata[:document_id],
+             document_id: Ecto.UUID.cast!(metadata[:document_id]),
              chunk_index: metadata[:chunk_index],
              score: result.score,
              semantic_score: metadata[:semantic_score],

@@ -239,6 +239,26 @@ defmodule Arcana.GraphIntegrationTest do
 
       refute Enum.empty?(results)
     end
+
+    test "does not duplicate chunks that appear in both vector and graph results when doing hybrid search",
+         %{
+           document: doc
+         } do
+      entity_extractor = fn _text, _opts ->
+        {:ok, [%{name: "Elixir", type: "technology"}]}
+      end
+
+      {:ok, results} =
+        Arcana.search("Elixir",
+          repo: Repo,
+          graph: true,
+          mode: :hybrid,
+          entity_extractor: entity_extractor,
+          collection: "search-graph-test"
+        )
+
+      assert length(results) == 1
+    end
   end
 
   describe "config/0" do
