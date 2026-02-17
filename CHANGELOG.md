@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1](https://github.com/georgeguimaraes/arcana/compare/v1.4.0...v1.4.1) (2026-02-17)
+
+
+### Bug Fixes
+
+* **ci:** chain hex-publish in release-please workflow ([6dbe46c](https://github.com/georgeguimaraes/arcana/commit/6dbe46c973663d915b92191b7f72f607f14ca592))
+* **graphstore.ecto:** add metadata field to relationship persistence ([#37](https://github.com/georgeguimaraes/arcana/issues/37)) ([30483ce](https://github.com/georgeguimaraes/arcana/commit/30483ce5c4ee4c00bc98301d75d0abad55161d6f))
+
+
+### Miscellaneous
+
+* **deps-dev:** bump credo from 1.7.15 to 1.7.16 ([#34](https://github.com/georgeguimaraes/arcana/issues/34)) ([81d7849](https://github.com/georgeguimaraes/arcana/commit/81d78498cbeb5b28d78d5169484aea6821349e95))
+* **deps-dev:** bump ex_doc from 0.40.0 to 0.40.1 ([#38](https://github.com/georgeguimaraes/arcana/issues/38)) ([30931fb](https://github.com/georgeguimaraes/arcana/commit/30931fb556f62175b8e5dae811d8fb28aa38b284))
+* **deps:** bump igniter from 0.7.1 to 0.7.2 ([#36](https://github.com/georgeguimaraes/arcana/issues/36)) ([2f9e025](https://github.com/georgeguimaraes/arcana/commit/2f9e025b80249bcf413f8ffbb90d00caf351fc7f))
+* **deps:** bump phoenix_live_view from 1.1.20 to 1.1.22 ([#35](https://github.com/georgeguimaraes/arcana/issues/35)) ([f44e877](https://github.com/georgeguimaraes/arcana/commit/f44e877f6d694d6815f55c13163f02cdb536a557))
+* **deps:** bump req_llm from 1.2.0 to 1.3.0 ([#30](https://github.com/georgeguimaraes/arcana/issues/30)) ([09ce949](https://github.com/georgeguimaraes/arcana/commit/09ce949c091b8aa51aae9a57e232263f533388e4))
+* **deps:** bump req_llm from 1.3.0 to 1.5.1 ([#40](https://github.com/georgeguimaraes/arcana/issues/40)) ([0dfa8d7](https://github.com/georgeguimaraes/arcana/commit/0dfa8d774215d59495b292ff61b0d3c05b1c7262))
+* remove unused on-release workflow ([df5ff15](https://github.com/georgeguimaraes/arcana/commit/df5ff156e6972574ad6510f2b66855838c5d6824))
+
 ## [1.4.0](https://github.com/georgeguimaraes/arcana/compare/v1.3.3...v1.4.0) (2026-01-22)
 
 
