@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0](https://github.com/georgeguimaraes/arcana/compare/v1.4.1...v1.5.0) (2026-02-19)
+
+
+### Features
+
+* **seach:** fix rrf search (graph results and vector results ids were on different format) ([#44](https://github.com/georgeguimaraes/arcana/issues/44)) ([f8c76f5](https://github.com/georgeguimaraes/arcana/commit/f8c76f54da2164c6921f3ee276e388d2654f296b))
+
+
+### Miscellaneous
+
+* **deps-dev:** bump lazy_html from 0.1.8 to 0.1.10 ([#42](https://github.com/georgeguimaraes/arcana/issues/42)) ([e3ac07c](https://github.com/georgeguimaraes/arcana/commit/e3ac07c61bee19c11f411ab1531ca63bec0dc4b1))
+* **deps:** bump phoenix_live_view from 1.1.22 to 1.1.24 ([#41](https://github.com/georgeguimaraes/arcana/issues/41)) ([7b4be4f](https://github.com/georgeguimaraes/arcana/commit/7b4be4fe0ae95f5484296dea08bdefba3e7ae450))
+
 ## [1.4.1](https://github.com/georgeguimaraes/arcana/compare/v1.4.0...v1.4.1) (2026-02-17)
 
 
