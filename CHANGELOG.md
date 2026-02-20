@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1](https://github.com/georgeguimaraes/arcana/compare/v1.5.0...v1.5.1) (2026-02-20)
+
+
+### Miscellaneous
+
+* **deps:** bump req_llm from 1.5.1 to 1.6.0 ([#45](https://github.com/georgeguimaraes/arcana/issues/45)) ([1913830](https://github.com/georgeguimaraes/arcana/commit/1913830d1edd229cf9e9d000944ad1f4e8b086cd))
+
 ## [1.5.0](https://github.com/georgeguimaraes/arcana/compare/v1.4.1...v1.5.0) (2026-02-19)
 
 
