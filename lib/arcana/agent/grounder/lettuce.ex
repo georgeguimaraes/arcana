@@ -28,6 +28,8 @@ defmodule Arcana.Agent.Grounder.Lettuce do
 
   @behaviour Arcana.Agent.Grounder
 
+  alias Arcana.Grounding
+
   @impl Arcana.Agent.Grounder
   def ground(answer, chunks, opts) do
     unless Code.ensure_loaded?(Ortex) do
@@ -43,6 +45,6 @@ defmodule Arcana.Agent.Grounder.Lettuce do
     end
 
     question = Keyword.fetch!(opts, :question)
-    Arcana.Grounding.Serving.run(question, chunks, answer, opts)
+    Grounding.Serving.run(question, chunks, answer, opts)
   end
 end

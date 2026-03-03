@@ -27,9 +27,7 @@ defmodule Arcana.Grounding.InputFormatter do
   """
   def format(question, chunks) do
     context =
-      chunks
-      |> Enum.map(& &1.text)
-      |> Enum.join(@passage_separator)
+      Enum.map_join(chunks, @passage_separator, & &1.text)
 
     "#{context} Question: #{question}"
   end

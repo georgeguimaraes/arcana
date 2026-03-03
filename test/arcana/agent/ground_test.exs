@@ -9,7 +9,7 @@ defmodule Arcana.Agent.GroundTest do
     test "grounds answer with custom grounder function" do
       grounder = fn answer, chunks, opts ->
         assert answer == "Elixir is a functional language."
-        assert length(chunks) > 0
+        assert chunks != []
         assert Keyword.get(opts, :question) == "What is Elixir?"
 
         {:ok, %Result{score: 0.95, hallucinated_spans: [], faithful_spans: [], token_labels: []}}
@@ -216,7 +216,7 @@ defmodule Arcana.Agent.GroundPipelineTest do
     test "full pipeline: search -> answer -> ground" do
       grounder = fn answer, chunks, _opts ->
         assert is_binary(answer)
-        assert length(chunks) > 0
+        assert chunks != []
         {:ok, %Result{score: 0.95, hallucinated_spans: [], token_labels: []}}
       end
 
