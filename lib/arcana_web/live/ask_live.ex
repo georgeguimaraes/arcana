@@ -434,7 +434,11 @@ defmodule ArcanaWeb.AskLive do
               <h3>Answer</h3>
               <div class="arcana-answer-content">
                 <%= if @ask_context.answer do %>
-                  <%= @ask_context.answer %>
+                  <%= if Map.get(@ask_context, :grounding) do %>
+                    <%= render_highlighted_answer(@ask_context.answer, @ask_context.grounding) %>
+                  <% else %>
+                    <%= @ask_context.answer %>
+                  <% end %>
                 <% else %>
                   <span style="color: #9ca3af; font-style: italic;">No answer generated</span>
                 <% end %>
@@ -450,6 +454,8 @@ defmodule ArcanaWeb.AskLive do
                   </span>
                 </h4>
 
+                <% chunks = Map.get(@ask_context, :results, []) %>
+
                 <%= if length(@ask_context.grounding.hallucinated_spans) > 0 do %>
                   <div class="arcana-grounding-spans">
                     <h5>Hallucinated Spans</h5>
@@ -457,15 +463,7 @@ defmodule ArcanaWeb.AskLive do
                       <div class="arcana-span hallucinated">
                         <span class="arcana-span-text"><%= span.text %></span>
                         <span class="arcana-span-score"><%= Float.round(span.score, 2) %></span>
-                        <%= if Map.get(span, :sources, []) != [] do %>
-                          <div class="arcana-span-sources">
-                            <%= for source <- span.sources do %>
-                              <span class="arcana-source-badge">
-                                chunk <%= inspect(source.chunk_id) %> (<%= Float.round(source.score, 2) %>)
-                              </span>
-                            <% end %>
-                          </div>
-                        <% end %>
+                        <.source_previews sources={Map.get(span, :sources, [])} chunks={chunks} />
                       </div>
                     <% end %>
                   </div>
@@ -477,15 +475,7 @@ defmodule ArcanaWeb.AskLive do
                     <%= for span <- @ask_context.grounding.faithful_spans do %>
                       <div class="arcana-span faithful">
                         <span class="arcana-span-text"><%= span.text %></span>
-                        <%= if Map.get(span, :sources, []) != [] do %>
-                          <div class="arcana-span-sources">
-                            <%= for source <- span.sources do %>
-                              <span class="arcana-source-badge">
-                                chunk <%= inspect(source.chunk_id) %> (<%= Float.round(source.score, 2) %>)
-                              </span>
-                            <% end %>
-                          </div>
-                        <% end %>
+                        <.source_previews sources={Map.get(span, :sources, [])} chunks={chunks} />
                       </div>
                     <% end %>
                   </div>
@@ -619,5 +609,95 @@ defmodule ArcanaWeb.AskLive do
       <% end %>
     </div>
     """
+  end
+
+  defp source_previews(assigns) do
+    ~H"""
+    <%= if @sources != [] do %>
+      <div class="arcana-span-sources">
+        <%= for source <- @sources do %>
+          <% chunk = find_chunk(@chunks, source.chunk_id) %>
+          <details class="arcana-source-detail">
+            <summary class="arcana-source-badge clickable">
+              <span class="arcana-source-label">
+                <%= chunk_label(chunk) %>
+              </span>
+              <span class="arcana-source-overlap"><%= Float.round(source.score * 100) %>% overlap</span>
+            </summary>
+            <%= if chunk do %>
+              <div class="arcana-source-preview">
+                <%= String.slice(chunk.text, 0, 300) %><%= if String.length(chunk.text) > 300, do: "…", else: "" %>
+              </div>
+            <% end %>
+          </details>
+        <% end %>
+      </div>
+    <% end %>
+    """
+  end
+
+  defp find_chunk(chunks, chunk_id) do
+    Enum.find(chunks, fn chunk ->
+      id = if is_struct(chunk), do: chunk.id, else: Map.get(chunk, :id)
+      to_string(id) == to_string(chunk_id)
+    end)
+  end
+
+  defp chunk_label(nil), do: "unknown chunk"
+
+  defp chunk_label(chunk) do
+    index = Map.get(chunk, :chunk_index, nil)
+    if index, do: "Chunk #{index}", else: "Source"
+  end
+
+  defp render_highlighted_answer(answer, grounding) do
+    hallucinated = Map.get(grounding, :hallucinated_spans, [])
+    faithful = Map.get(grounding, :faithful_spans, [])
+
+    spans =
+      (Enum.map(hallucinated, &Map.put(&1, :type, :hallucinated)) ++
+         Enum.map(faithful, &Map.put(&1, :type, :faithful)))
+      |> Enum.sort_by(& &1.start)
+
+    build_highlighted_parts(answer, spans, 0, [])
+    |> Enum.reverse()
+    |> Phoenix.HTML.raw()
+  end
+
+  defp build_highlighted_parts(answer, [], pos, acc) do
+    rest = binary_slice(answer, pos, byte_size(answer) - pos)
+    if rest == "", do: acc, else: [html_escape(rest) | acc]
+  end
+
+  defp build_highlighted_parts(answer, [span | rest], pos, acc) do
+    span_start = span.start
+    span_end = Map.get(span, :end, span_start)
+
+    # Text before this span
+    acc =
+      if span_start > pos do
+        gap = binary_slice(answer, pos, span_start - pos)
+        [html_escape(gap) | acc]
+      else
+        acc
+      end
+
+    # The span itself
+    span_text = binary_slice(answer, span_start, span_end - span_start)
+
+    class =
+      if span.type == :hallucinated, do: "arcana-hl-hallucinated", else: "arcana-hl-faithful"
+
+    acc = [
+      "<mark class=\"#{class}\" title=\"#{span.type}\">#{html_escape(span_text)}</mark>" | acc
+    ]
+
+    build_highlighted_parts(answer, rest, span_end, acc)
+  end
+
+  defp html_escape(text) do
+    text
+    |> Phoenix.HTML.html_escape()
+    |> Phoenix.HTML.safe_to_string()
   end
 end

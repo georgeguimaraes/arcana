@@ -1530,6 +1530,63 @@ defmodule ArcanaWeb.Assets do
     border-radius: 0.25rem;
   }
 
+  .arcana-source-badge.clickable {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    list-style: none;
+  }
+
+  .arcana-source-badge.clickable:hover {
+    background: #e5e7eb;
+  }
+
+  .arcana-source-badge.clickable::-webkit-details-marker {
+    display: none;
+  }
+
+  .arcana-source-label {
+    font-weight: 600;
+    color: #4b5563;
+  }
+
+  .arcana-source-overlap {
+    color: #9ca3af;
+  }
+
+  .arcana-source-detail {
+    display: inline;
+  }
+
+  .arcana-source-preview {
+    font-size: 0.7rem;
+    color: #4b5563;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.25rem;
+    padding: 0.5rem;
+    margin-top: 0.375rem;
+    margin-bottom: 0.25rem;
+    line-height: 1.5;
+    width: 100%;
+  }
+
+  /* Answer highlighting */
+  .arcana-hl-hallucinated {
+    background: #fecaca;
+    border-bottom: 2px solid #ef4444;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+
+  .arcana-hl-faithful {
+    background: #bbf7d0;
+    border-bottom: 2px solid #22c55e;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+
   /* Graph Tab Styles */
   .arcana-graph-subtabs {
     display: flex;
