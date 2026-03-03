@@ -689,7 +689,7 @@ defmodule ArcanaWeb.AskLive do
       if span.type == :hallucinated, do: "arcana-hl-hallucinated", else: "arcana-hl-faithful"
 
     acc = [
-      "<mark class=\"#{class}\" title=\"#{span.type}\">#{html_escape(span_text)}</mark>" | acc
+      ~s(<mark class="#{class}" title="#{span.type}">#{html_escape(span_text)}</mark>) | acc
     ]
 
     build_highlighted_parts(answer, rest, span_end, acc)
