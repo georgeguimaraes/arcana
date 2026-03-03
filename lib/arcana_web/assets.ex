@@ -1463,6 +1463,73 @@ defmodule ArcanaWeb.Assets do
     font-weight: 500;
   }
 
+  /* Grounding Styles */
+
+  .arcana-grounding-score {
+    font-weight: 500;
+    font-size: 0.75rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    margin-left: 0.5rem;
+  }
+
+  .arcana-grounding-score.good { background: #d1fae5; color: #065f46; }
+  .arcana-grounding-score.warn { background: #fef3c7; color: #92400e; }
+  .arcana-grounding-score.bad { background: #fee2e2; color: #991b1b; }
+
+  .arcana-grounding-spans h5 {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #6b7280;
+    margin: 0.75rem 0 0.5rem 0;
+  }
+
+  .arcana-span {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem 0.5rem;
+    border-radius: 0.375rem;
+    margin-bottom: 0.25rem;
+    font-size: 0.8rem;
+  }
+
+  .arcana-span.hallucinated {
+    background: #fef2f2;
+    border-left: 3px solid #ef4444;
+  }
+
+  .arcana-span.faithful {
+    background: #f0fdf4;
+    border-left: 3px solid #22c55e;
+  }
+
+  .arcana-span-text {
+    font-family: ui-monospace, monospace;
+    font-size: 0.8rem;
+  }
+
+  .arcana-span-score {
+    font-size: 0.7rem;
+    color: #9ca3af;
+  }
+
+  .arcana-span-sources {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .arcana-source-badge {
+    font-size: 0.65rem;
+    background: #f3f4f6;
+    color: #6b7280;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+  }
+
   /* Graph Tab Styles */
   .arcana-graph-subtabs {
     display: flex;

@@ -451,6 +451,7 @@ ctx.answer
 | `reason/2` | Multi-hop reasoning; evaluates if results are sufficient and searches again if needed |
 | `rerank/2` | Score each chunk's relevance (0-10) and filter below threshold |
 | `answer/2` | Generate final answer using retrieved context (or from knowledge if `skip_retrieval: true`) |
+| `ground/2` | Detect hallucinations in the answer using [LettuceDetect](https://huggingface.co/KRLabsOrg/lettucedect-base-modernbert-en-v1) (token-level faithfulness scoring) |
 
 #### Example: Building a Pipeline
 
@@ -523,30 +524,66 @@ All steps support custom implementations via behaviours:
 | `search/2` | `Arcana.Agent.Searcher` | `:searcher` |
 | `rerank/2` | `Arcana.Agent.Reranker` | `:reranker` |
 | `answer/2` | `Arcana.Agent.Answerer` | `:answerer` |
+| `ground/2` | `Arcana.Agent.Grounder` | `:grounder` |
 
 See the [Agentic RAG Guide](guides/agentic-rag.md) for detailed examples.
+
+#### Grounding (Hallucination Detection)
+
+The `ground/2` step detects hallucinations in the generated answer by checking each token against the retrieved context. It uses [LettuceDetect](https://huggingface.co/KRLabsOrg/lettucedect-base-modernbert-en-v1), a ModernBERT-based token classifier, running via ONNX Runtime.
+
+```elixir
+ctx =
+  Agent.new(question, repo: MyApp.Repo, llm: llm)
+  |> Agent.search()
+  |> Agent.answer()
+  |> Agent.ground()
+
+ctx.grounding.score              # 0.0-1.0 (fraction of faithful tokens)
+ctx.grounding.hallucinated_spans # [%{text: "...", start: 0, end: 10, score: 0.95}]
+```
+
+Setup requires the `ortex` dependency and a one-time model export:
+
+```bash
+# Add to mix.exs: {:ortex, "~> 0.1"}
+python scripts/export_lettuce_onnx.py --output-dir priv/models/lettucedect
+```
+
+```elixir
+# config/config.exs
+config :arcana, Arcana.Grounding.Serving,
+  model_path: "priv/models/lettucedect/model.onnx"
+```
+
+You can also use a custom grounder without the ONNX model:
+
+```elixir
+ctx |> Agent.ground(grounder: fn answer, chunks, opts ->
+  {:ok, %Arcana.Grounding.Result{score: 1.0, hallucinated_spans: [], token_labels: []}}
+end)
+```
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     Your Phoenix App                    │
-├─────────────────────────────────────────────────────────┤
-│                    Arcana.Agent                         │
-│  (rewrite → select → expand → search → rerank → answer) │
-├─────────────────────────────────────────────────────────┤
-│  Arcana.ask/2   │  Arcana.search/2  │  Arcana.ingest/2  │
-├─────────────────┴───────────────────┴───────────────────┤
-│                                                         │
-│  ┌─────────────┐  ┌─────────────────┐  ┌─────────────┐  │
-│  │   Chunker   │  │   Embeddings    │  │   Search    │  │
-│  │ (splitting) │  │   (Bumblebee)   │  │ (pgvector)  │  │
-│  └─────────────┘  └─────────────────┘  └─────────────┘  │
-│                                                         │
-├─────────────────────────────────────────────────────────┤
-│              Your Existing Ecto Repo                    │
-│         PostgreSQL + pgvector extension                 │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                           Your Phoenix App                           │
+├──────────────────────────────────────────────────────────────────────┤
+│                             Arcana.Agent                             │
+│  (rewrite → select → expand → search → rerank → answer → ground)     │
+├──────────────────────────────────────────────────────────────────────┤
+│  Arcana.ask/2        │  Arcana.search/2       │  Arcana.ingest/2     │
+├──────────────────────┴────────────────────────┴──────────────────────┤
+│                                                                      │
+│  ┌──────────┐   ┌────────────┐   ┌──────────┐   ┌────────────────┐   │
+│  │ Chunker  │   │ Embeddings │   │  Search  │   │   Grounding    │   │
+│  └──────────┘   └────────────┘   └──────────┘   └────────────────┘   │
+│                                                                      │
+├──────────────────────────────────────────────────────────────────────┤
+│                       Your Existing Ecto Repo                        │
+│                   PostgreSQL + pgvector extension                    │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Guides

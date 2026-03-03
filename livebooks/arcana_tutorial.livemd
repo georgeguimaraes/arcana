@@ -789,6 +789,106 @@ Use explicit collections when:
 """)
 ```
 
+## 13. Grounding & Chunk Attribution
+
+After generating an answer, `ground/2` checks if each part is faithful to the retrieved context. It labels every token as faithful or hallucinated, merges them into spans, and attributes each span back to specific chunks using word overlap.
+
+### How It Works
+
+```
+Answer tokens:   "Elixir" "was" "invented" "in" "2010" "by" "José"
+Labels:           faith   faith   halluc   halluc halluc faith faith
+                    ↓                 ↓                    ↓
+Faithful spans:  ["Elixir was", "by José"]    Hallucinated: ["invented in 2010"]
+                    ↓                                ↓
+Attribution:     sources: [chunk_2: 1.0]       sources: [chunk_1: 0.75]
+```
+
+### Using Grounding in the Pipeline
+
+```elixir
+# In a real pipeline with LettuceDetect:
+# ctx = Agent.new("When was Elixir created?", repo: repo, llm: llm)
+#   |> Agent.search(collection: "docs")
+#   |> Agent.answer()
+#   |> Agent.ground()
+#
+# ctx.grounding.score              # 0.85 (fraction of faithful tokens)
+# ctx.grounding.hallucinated_spans # spans the model made up
+# ctx.grounding.faithful_spans     # spans backed by context
+
+IO.puts("""
+Grounding result fields:
+- score: fraction of faithful tokens (0.0 to 1.0)
+- hallucinated_spans: unsupported parts of the answer
+- faithful_spans: parts backed by retrieved context
+- token_labels: raw per-token labels for debugging
+""")
+```
+
+### Chunk Attribution
+
+Each span carries a `:sources` list linking it to context chunks by word overlap:
+
+```elixir
+# Every span has sources: [%{chunk_id: term(), score: float()}]
+# Score = fraction of span words found in that chunk
+
+# Find fully invented claims (no overlap with any chunk)
+# fully_invented =
+#   Enum.filter(ctx.grounding.hallucinated_spans, &(&1.sources == []))
+
+# Find contradictions (high word overlap but still hallucinated)
+# contradicted =
+#   ctx.grounding.hallucinated_spans
+#   |> Enum.flat_map(fn span ->
+#     span.sources
+#     |> Enum.filter(&(&1.score > 0.5))
+#     |> Enum.map(&{span.text, &1.chunk_id})
+#   end)
+
+# See which chunks actually supported the answer
+# cited_chunk_ids =
+#   ctx.grounding.faithful_spans
+#   |> Enum.flat_map(& &1.sources)
+#   |> Enum.map(& &1.chunk_id)
+#   |> Enum.uniq()
+
+IO.puts("""
+Attribution patterns:
+- Empty sources on hallucinated span → fully invented
+- High overlap + hallucinated → words match but facts wrong (contradiction)
+- faithful_spans sources → chunks that backed the answer
+""")
+```
+
+### Custom Grounder
+
+Replace the default LettuceDetect grounder with your own logic:
+
+```elixir
+# Module-based
+# defmodule MyGrounder do
+#   @behaviour Arcana.Agent.Grounder
+#
+#   @impl true
+#   def ground(answer, chunks, _opts) do
+#     {:ok, %Arcana.Grounding.Result{
+#       score: 1.0,
+#       hallucinated_spans: [],
+#       faithful_spans: []
+#     }}
+#   end
+# end
+
+# Inline function
+# Agent.ground(ctx, grounder: fn answer, chunks, _opts ->
+#   {:ok, %Arcana.Grounding.Result{score: 1.0, hallucinated_spans: [], faithful_spans: []}}
+# end)
+
+IO.puts("Grounding is pluggable: use LettuceDetect, a custom module, or an inline function")
+```
+
 ## Summary
 
 | Concept | Description |
@@ -803,7 +903,8 @@ Use explicit collections when:
 | **Query Expansion** | Add synonyms for better recall |
 | **Multi-hop Reasoning** | Search again if results are insufficient |
 | **Re-ranking** | Filter chunks by LLM-scored relevance |
-| **Agent Pipeline** | Gate → Rewrite → Select → Expand → Search → Reason → Rerank → Answer |
+| **Agent Pipeline** | Gate → Rewrite → Select → Expand → Search → Reason → Rerank → Answer → Ground |
+| **Grounding** | Detect hallucinated vs faithful spans with chunk attribution |
 | **GraphRAG** | Knowledge graph with entity extraction (supports memory and Ecto backends) |
 
 ### Next Steps

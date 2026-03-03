@@ -99,7 +99,10 @@ defmodule Arcana.MixProject do
       {:leidenfold, "~> 0.3", optional: true},
 
       # Optional: ColBERT-style neural reranking
-      {:stephen, "~> 1.0", optional: true}
+      {:stephen, "~> 1.0", optional: true},
+
+      # Optional: ONNX Runtime for model-based grounding (LettuceDetect)
+      {:ortex, "~> 0.1", optional: true}
     ]
   end
 end

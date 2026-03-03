@@ -143,6 +143,7 @@ defmodule ArcanaWeb.AskLive do
       use_expand: params["use_expand"] == "true",
       use_decompose: params["use_decompose"] == "true",
       use_rerank: params["use_rerank"] == "true",
+      use_ground: params["use_ground"] == "true",
       self_correct: params["self_correct"] == "true"
     )
   end
@@ -206,6 +207,7 @@ defmodule ArcanaWeb.AskLive do
     |> Agent.search(search_opts)
     |> maybe_rerank(opts)
     |> Agent.answer()
+    |> maybe_ground(opts)
     |> format_agentic_result(question)
   rescue
     e -> {:error, Exception.message(e)}
@@ -229,6 +231,10 @@ defmodule ArcanaWeb.AskLive do
 
   defp maybe_rerank(ctx, opts) do
     if Keyword.get(opts, :use_rerank, false), do: Arcana.Agent.rerank(ctx), else: ctx
+  end
+
+  defp maybe_ground(ctx, opts) do
+    if Keyword.get(opts, :use_ground, false), do: Arcana.Agent.ground(ctx), else: ctx
   end
 
   defp build_search_opts(opts, all_collection_names) do
@@ -267,7 +273,8 @@ defmodule ArcanaWeb.AskLive do
        results: all_chunks,
        expanded_query: ctx.expanded_query,
        sub_questions: ctx.sub_questions,
-       selected_collections: ctx.collections
+       selected_collections: ctx.collections,
+       grounding: ctx.grounding
      }}
   end
 
@@ -392,6 +399,12 @@ defmodule ArcanaWeb.AskLive do
                   <span>Reranking</span>
                   <small>LLM-based result reranking</small>
                 </label>
+
+                <label class="arcana-checkbox-label">
+                  <input type="checkbox" name="use_ground" value="true" disabled={@ask_running} />
+                  <span>Grounding</span>
+                  <small>Detect hallucinated vs faithful spans</small>
+                </label>
               </div>
             </div>
           <% end %>
@@ -427,6 +440,58 @@ defmodule ArcanaWeb.AskLive do
                 <% end %>
               </div>
             </div>
+
+            <%= if Map.get(@ask_context, :grounding) do %>
+              <div class="arcana-ask-section arcana-grounding-results">
+                <h4>
+                  Grounding
+                  <span class={"arcana-grounding-score #{if @ask_context.grounding.score >= 0.8, do: "good", else: if(@ask_context.grounding.score >= 0.5, do: "warn", else: "bad")}"}>
+                    <%= Float.round(@ask_context.grounding.score * 100, 1) %>% faithful
+                  </span>
+                </h4>
+
+                <%= if length(@ask_context.grounding.hallucinated_spans) > 0 do %>
+                  <div class="arcana-grounding-spans">
+                    <h5>Hallucinated Spans</h5>
+                    <%= for span <- @ask_context.grounding.hallucinated_spans do %>
+                      <div class="arcana-span hallucinated">
+                        <span class="arcana-span-text"><%= span.text %></span>
+                        <span class="arcana-span-score"><%= Float.round(span.score, 2) %></span>
+                        <%= if Map.get(span, :sources, []) != [] do %>
+                          <div class="arcana-span-sources">
+                            <%= for source <- span.sources do %>
+                              <span class="arcana-source-badge">
+                                chunk <%= inspect(source.chunk_id) %> (<%= Float.round(source.score, 2) %>)
+                              </span>
+                            <% end %>
+                          </div>
+                        <% end %>
+                      </div>
+                    <% end %>
+                  </div>
+                <% end %>
+
+                <%= if length(@ask_context.grounding.faithful_spans) > 0 do %>
+                  <div class="arcana-grounding-spans">
+                    <h5>Faithful Spans (<%= length(@ask_context.grounding.faithful_spans) %>)</h5>
+                    <%= for span <- @ask_context.grounding.faithful_spans do %>
+                      <div class="arcana-span faithful">
+                        <span class="arcana-span-text"><%= span.text %></span>
+                        <%= if Map.get(span, :sources, []) != [] do %>
+                          <div class="arcana-span-sources">
+                            <%= for source <- span.sources do %>
+                              <span class="arcana-source-badge">
+                                chunk <%= inspect(source.chunk_id) %> (<%= Float.round(source.score, 2) %>)
+                              </span>
+                            <% end %>
+                          </div>
+                        <% end %>
+                      </div>
+                    <% end %>
+                  </div>
+                <% end %>
+              </div>
+            <% end %>
 
             <%= if @ask_context.expanded_query do %>
               <div class="arcana-ask-section">

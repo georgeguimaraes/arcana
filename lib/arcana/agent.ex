@@ -1168,4 +1168,86 @@ defmodule Arcana.Agent do
     Please provide an improved answer that addresses the feedback. Ensure your answer is well-grounded in the provided context.
     """
   end
+
+  @doc """
+  Checks if the generated answer is grounded in the retrieved context.
+
+  Uses a token classifier to label each token in the answer as faithful
+  or hallucinated, producing a grounding score and hallucinated spans.
+
+  By default uses `Arcana.Agent.Grounder.Lettuce` (LettuceDetect via ONNX Runtime).
+
+  ## Options
+
+  - `:grounder` - Custom grounder module or function (default: `Arcana.Agent.Grounder.Lettuce`)
+
+  ## Example
+
+      ctx
+      |> Agent.search()
+      |> Agent.answer()
+      |> Agent.ground()
+
+      ctx.grounding.score
+      # => 0.95
+
+      ctx.grounding.hallucinated_spans
+      # => [%{text: "invented in 2010", start: 42, end: 59, score: 0.87}]
+
+  ## Custom Grounder
+
+      # Module implementing Arcana.Agent.Grounder behaviour
+      Agent.ground(ctx, grounder: MyApp.LLMGrounder)
+
+      # Inline function
+      Agent.ground(ctx, grounder: fn answer, chunks, opts ->
+        {:ok, %Arcana.Grounding.Result{score: 1.0, hallucinated_spans: []}}
+      end)
+  """
+  def ground(ctx, opts \\ [])
+
+  def ground(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
+
+  def ground(%Context{answer: nil} = ctx, _opts), do: ctx
+
+  def ground(%Context{} = ctx, opts) do
+    grounder = Keyword.get(opts, :grounder, Arcana.Agent.Grounder.Lettuce)
+
+    start_metadata = %{
+      question: ctx.question,
+      grounder: grounder_name(grounder)
+    }
+
+    :telemetry.span([:arcana, :agent, :ground], start_metadata, fn ->
+      chunks = ctx.context_used || []
+      grounder_opts = Keyword.merge(opts, question: ctx.question)
+
+      grounding =
+        case do_ground(grounder, ctx.answer, chunks, grounder_opts) do
+          {:ok, result} -> result
+          {:error, _} -> nil
+        end
+
+      updated_ctx = %{ctx | grounding: grounding}
+
+      stop_metadata = %{
+        score: grounding && grounding.score,
+        hallucinated_span_count: grounding && length(grounding.hallucinated_spans),
+        faithful_span_count: grounding && length(grounding.faithful_spans)
+      }
+
+      {updated_ctx, stop_metadata}
+    end)
+  end
+
+  defp grounder_name(grounder) when is_atom(grounder), do: grounder
+  defp grounder_name(_grounder), do: :custom_function
+
+  defp do_ground(grounder, answer, chunks, opts) when is_atom(grounder) do
+    grounder.ground(answer, chunks, opts)
+  end
+
+  defp do_ground(grounder, answer, chunks, opts) when is_function(grounder, 3) do
+    grounder.(answer, chunks, opts)
+  end
 end

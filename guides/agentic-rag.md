@@ -19,6 +19,7 @@ ctx =
   |> Agent.reason()      # Multi-hop: search again if needed
   |> Agent.rerank()      # Re-rank results
   |> Agent.answer()      # Generate final answer
+  |> Agent.ground()      # Detect hallucinations
 
 ctx.answer
 ```
@@ -253,6 +254,86 @@ ctx.answer       # => "4"
 ctx.context_used # => []
 ```
 
+### ground/2 - Hallucination Detection
+
+Check if the generated answer is faithful to the retrieved context:
+
+```elixir
+ctx = Agent.ground(ctx)
+
+ctx.grounding.score              # 0.0-1.0 (fraction of faithful tokens)
+ctx.grounding.hallucinated_spans # [%{text: "...", start: 0, end: 10, score: 0.95, sources: [...]}]
+ctx.grounding.faithful_spans     # [%{text: "...", start: 11, end: 30, score: 0.98, sources: [...]}]
+```
+
+Each span includes a `:sources` field with chunk-level attribution: a list of `%{chunk_id: term(), score: float()}` sorted by word overlap score descending. This tells you which context chunks support (or contradict) each part of the answer.
+
+#### Chunk Attribution
+
+Use sources to trace claims back to specific chunks:
+
+```elixir
+# find hallucinated claims and the chunks they relate to
+for span <- ctx.grounding.hallucinated_spans do
+  IO.puts("Hallucinated: #{inspect(span.text)}")
+
+  for source <- span.sources do
+    chunk = Enum.find(ctx.context_used, &(&1.id == source.chunk_id))
+    IO.puts("  chunk #{source.chunk_id} (overlap: #{Float.round(source.score, 2)})")
+  end
+end
+```
+
+Spans with empty sources have zero word overlap with any chunk, so the model fully invented them:
+
+```elixir
+fully_invented =
+  Enum.filter(ctx.grounding.hallucinated_spans, &(&1.sources == []))
+```
+
+Hallucinated spans with high source overlap mean the words match but the facts are wrong (like saying "2010" when the chunk says "2011"):
+
+```elixir
+contradicted =
+  ctx.grounding.hallucinated_spans
+  |> Enum.flat_map(fn span ->
+    span.sources
+    |> Enum.filter(&(&1.score > 0.5))
+    |> Enum.map(&{span.text, &1.chunk_id})
+  end)
+```
+
+You can also see which chunks actually contributed to the answer:
+
+```elixir
+cited_chunk_ids =
+  ctx.grounding.faithful_spans
+  |> Enum.flat_map(& &1.sources)
+  |> Enum.map(& &1.chunk_id)
+  |> Enum.uniq()
+```
+
+The default grounder uses [LettuceDetect](https://huggingface.co/KRLabsOrg/lettucedect-base-modernbert-en-v1), a ModernBERT-based token classifier running via ONNX Runtime. It labels each token in the answer as faithful or hallucinated based on the retrieved context chunks.
+
+Setup requires the `ortex` dependency and a one-time model download:
+
+```bash
+# Add to mix.exs: {:ortex, "~> 0.1"}
+mix arcana.ground.setup
+```
+
+This downloads the pre-exported ONNX files (~600 MB total) from HuggingFace Hub to `priv/models/lettucedect/`. Use `--output-dir` to change the destination or `--force` to re-download.
+
+For custom models, you can also export manually with `python scripts/export_lettuce_onnx.py --output-dir priv/models/lettucedect`.
+
+```elixir
+# config/config.exs
+config :arcana, Arcana.Grounding.Serving,
+  model_path: "priv/models/lettucedect/model.onnx"
+```
+
+Skips automatically if `ctx.error` is set or `ctx.answer` is nil.
+
 ## Custom Prompts
 
 Every LLM-powered step accepts a custom prompt function and optional LLM override:
@@ -324,6 +405,7 @@ Each step emits telemetry events:
 [:arcana, :agent, :search, :start | :stop | :exception]
 [:arcana, :agent, :rerank, :start | :stop | :exception]
 [:arcana, :agent, :answer, :start | :stop | :exception]
+[:arcana, :agent, :ground, :start | :stop | :exception]
 [:arcana, :agent, :self_correct, :start | :stop | :exception]  # Per correction attempt
 ```
 
@@ -372,6 +454,7 @@ ctx =
   |> Agent.search()
   |> Agent.rerank(threshold: 7)
   |> Agent.answer(self_correct: true)
+  |> Agent.ground()
 ```
 
 ### Conditional Steps
@@ -407,6 +490,7 @@ Every pipeline step has a behaviour and can be replaced with a custom implementa
 | `search/2` | `Arcana.Agent.Searcher` | `Searcher.Arcana` | `:searcher` |
 | `rerank/2` | `Arcana.Agent.Reranker` | `Reranker.LLM` | `:reranker` |
 | `answer/2` | `Arcana.Agent.Answerer` | `Answerer.LLM` | `:answerer` |
+| `ground/2` | `Arcana.Agent.Grounder` | `Grounder.Lettuce` | `:grounder` |
 
 ### Custom Rewriter
 
@@ -563,6 +647,29 @@ end
 Agent.answer(ctx, answerer: MyApp.TemplateAnswerer)
 ```
 
+### Custom Grounder
+
+Replace the default LettuceDetect grounder with your own hallucination detection logic:
+
+```elixir
+defmodule MyApp.APIGrounder do
+  @behaviour Arcana.Agent.Grounder
+
+  @impl true
+  def ground(answer, chunks, opts) do
+    score = MyApp.FactChecker.check(answer, chunks)
+
+    {:ok, %Arcana.Grounding.Result{
+      score: score,
+      hallucinated_spans: [],
+      token_labels: []
+    }}
+  end
+end
+
+Agent.ground(ctx, grounder: MyApp.APIGrounder)
+```
+
 ### Inline Functions
 
 For quick customizations, pass a function instead of a module:
@@ -587,6 +694,11 @@ end)
 # Inline answerer
 Agent.answer(ctx, answerer: fn question, chunks, _opts ->
   {:ok, "Found #{length(chunks)} relevant chunks for: #{question}"}
+end)
+
+# Inline grounder
+Agent.ground(ctx, grounder: fn answer, chunks, _opts ->
+  {:ok, %Arcana.Grounding.Result{score: 1.0, hallucinated_spans: [], token_labels: []}}
 end)
 ```
 
@@ -639,4 +751,5 @@ The `Arcana.Agent.Context` struct carries all state:
 | `context_used` | Chunks used for answer |
 | `correction_count` | Number of self-corrections made |
 | `corrections` | List of `{answer, feedback}` tuples |
+| `grounding` | Grounding result (`%Arcana.Grounding.Result{}` or nil) |
 | `error` | Error if any step failed |
