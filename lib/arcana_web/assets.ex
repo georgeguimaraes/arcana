@@ -1278,10 +1278,111 @@ defmodule ArcanaWeb.Assets do
     margin: 0 0 0.75rem 0;
   }
 
-  .arcana-option-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  .arcana-pipeline {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .arcana-pipeline > li {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .arcana-pipeline > li:not(:last-child)::after {
+    content: '';
+    display: block;
+    width: 2px;
+    height: 1.25rem;
+    background: #c4b5fd;
+  }
+
+  .arcana-pipeline > li:has(> .arcana-pipeline-step:not(:has(input:checked)):not(.fixed)):not(:last-child)::after {
+    background: none;
+    border-left: 2px dashed #d1d5db;
+  }
+
+  .arcana-pipeline-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 240px;
+    padding: 0.625rem 1rem;
+    background: #fafafa;
+    border: 2px dashed #d1d5db;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: center;
+  }
+
+  .arcana-pipeline-step:has(input:checked) {
+    background: #ede9fe;
+    border: 2px solid #7c3aed;
+  }
+
+  .arcana-pipeline-step:has(input:checked) .arcana-step-label {
+    color: #6d28d9;
+  }
+
+  .arcana-pipeline-step:not(.fixed):hover {
+    border-color: #a78bfa;
+  }
+
+  .arcana-pipeline-step.fixed {
+    background: #f0fdf4;
+    border: 2px solid #86efac;
+    cursor: default;
+  }
+
+  .arcana-pipeline-step.fixed .arcana-step-label {
+    color: #15803d;
+  }
+
+  .arcana-pipeline-step input[type="checkbox"],
+  .arcana-pipeline-step input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .arcana-step-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #374151;
+  }
+
+  .arcana-pipeline-step small {
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-top: 0.125rem;
+  }
+
+  .arcana-pipeline-fork {
+    display: flex;
+    align-items: center;
     gap: 0.75rem;
+  }
+
+  .arcana-pipeline-fork .arcana-pipeline-step {
+    width: 160px;
+  }
+
+  .arcana-fork-or {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #9ca3af;
+    text-transform: uppercase;
+  }
+
+  .arcana-pipeline-step:has(input:disabled) {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .arcana-checkbox-label {
@@ -1461,6 +1562,130 @@ defmodule ArcanaWeb.Assets do
     border-radius: 9999px;
     font-size: 0.75rem;
     font-weight: 500;
+  }
+
+  /* Grounding Styles */
+
+  .arcana-grounding-score {
+    font-weight: 500;
+    font-size: 0.75rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    margin-left: 0.5rem;
+  }
+
+  .arcana-grounding-score.good { background: #d1fae5; color: #065f46; }
+  .arcana-grounding-score.warn { background: #fef3c7; color: #92400e; }
+  .arcana-grounding-score.bad { background: #fee2e2; color: #991b1b; }
+
+  .arcana-grounding-spans h5 {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #6b7280;
+    margin: 0.75rem 0 0.5rem 0;
+  }
+
+  .arcana-span {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem 0.5rem;
+    border-radius: 0.375rem;
+    margin-bottom: 0.25rem;
+    font-size: 0.8rem;
+  }
+
+  .arcana-span.hallucinated {
+    background: #fef2f2;
+    border-left: 3px solid #ef4444;
+  }
+
+  .arcana-span.faithful {
+    background: #f0fdf4;
+    border-left: 3px solid #22c55e;
+  }
+
+  .arcana-span-text {
+    font-family: ui-monospace, monospace;
+    font-size: 0.8rem;
+  }
+
+  .arcana-span-score {
+    font-size: 0.7rem;
+    color: #9ca3af;
+  }
+
+  .arcana-span-sources {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .arcana-source-badge {
+    font-size: 0.65rem;
+    background: #f3f4f6;
+    color: #6b7280;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+  }
+
+  .arcana-source-badge.clickable {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    list-style: none;
+  }
+
+  .arcana-source-badge.clickable:hover {
+    background: #e5e7eb;
+  }
+
+  .arcana-source-badge.clickable::-webkit-details-marker {
+    display: none;
+  }
+
+  .arcana-source-label {
+    font-weight: 600;
+    color: #4b5563;
+  }
+
+  .arcana-source-overlap {
+    color: #9ca3af;
+  }
+
+  .arcana-source-detail {
+    display: inline;
+  }
+
+  .arcana-source-preview {
+    font-size: 0.7rem;
+    color: #4b5563;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.25rem;
+    padding: 0.5rem;
+    margin-top: 0.375rem;
+    margin-bottom: 0.25rem;
+    line-height: 1.5;
+    width: 100%;
+  }
+
+  /* Answer highlighting */
+  .arcana-hl-hallucinated {
+    background: #fecaca;
+    border-bottom: 2px solid #ef4444;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+
+  .arcana-hl-faithful {
+    background: #bbf7d0;
+    border-bottom: 2px solid #22c55e;
+    border-radius: 2px;
+    padding: 0 1px;
   }
 
   /* Graph Tab Styles */

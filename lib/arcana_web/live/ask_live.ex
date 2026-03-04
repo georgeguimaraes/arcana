@@ -25,7 +25,8 @@ defmodule ArcanaWeb.AskLive do
        stats: nil,
        collections: [],
        graph_context_expanded: true,
-       llm_select: false
+       llm_select: false,
+       pipeline_step: nil
      )}
   end
 
@@ -113,6 +114,21 @@ defmodule ArcanaWeb.AskLive do
     parent = self()
 
     Arcana.TaskSupervisor.start_child(fn ->
+      handler_id = "pipeline-progress-#{inspect(parent)}"
+
+      steps = [:expand, :decompose, :select, :search, :self_correct, :rerank, :answer, :ground]
+      events = Enum.map(steps, &[:arcana, :agent, &1, :start])
+
+      :telemetry.attach_many(
+        handler_id,
+        events,
+        fn [:arcana, :agent, step, :start], _measurements, _metadata, _config ->
+          label = pipeline_step_label(step)
+          if label, do: send(parent, {:pipeline_progress, label})
+        end,
+        nil
+      )
+
       result =
         run_ask(
           mode,
@@ -124,6 +140,7 @@ defmodule ArcanaWeb.AskLive do
           selected_collections
         )
 
+      :telemetry.detach(handler_id)
       send(parent, {:ask_complete, result})
     end)
   end
@@ -143,19 +160,25 @@ defmodule ArcanaWeb.AskLive do
       use_expand: params["use_expand"] == "true",
       use_decompose: params["use_decompose"] == "true",
       use_rerank: params["use_rerank"] == "true",
-      self_correct: params["self_correct"] == "true"
+      use_ground: params["use_ground"] == "true",
+      self_correct: params["self_correct"] == "true",
+      hallucinate_demo: params["answer_mode"] == "hallucinate"
     )
   end
 
   @impl true
+  def handle_info({:pipeline_progress, step}, socket) do
+    {:noreply, assign(socket, pipeline_step: step)}
+  end
+
   def handle_info({:ask_complete, result}, socket) do
     socket =
       case result do
         {:ok, ctx} ->
-          assign(socket, ask_running: false, ask_context: ctx, ask_error: nil)
+          assign(socket, ask_running: false, ask_context: ctx, ask_error: nil, pipeline_step: nil)
 
         {:error, reason} ->
-          assign(socket, ask_running: false, ask_error: inspect(reason))
+          assign(socket, ask_running: false, ask_error: inspect(reason), pipeline_step: nil)
       end
 
     {:noreply, socket}
@@ -205,7 +228,8 @@ defmodule ArcanaWeb.AskLive do
     |> maybe_decompose(opts)
     |> Agent.search(search_opts)
     |> maybe_rerank(opts)
-    |> Agent.answer()
+    |> maybe_answer_with_hallucinations(opts)
+    |> maybe_ground(opts)
     |> format_agentic_result(question)
   rescue
     e -> {:error, Exception.message(e)}
@@ -229,6 +253,34 @@ defmodule ArcanaWeb.AskLive do
 
   defp maybe_rerank(ctx, opts) do
     if Keyword.get(opts, :use_rerank, false), do: Arcana.Agent.rerank(ctx), else: ctx
+  end
+
+  defp maybe_answer_with_hallucinations(ctx, opts) do
+    if Keyword.get(opts, :hallucinate_demo, false) do
+      Arcana.Agent.answer(ctx, prompt: &hallucination_demo_prompt/2)
+    else
+      Arcana.Agent.answer(ctx)
+    end
+  end
+
+  defp hallucination_demo_prompt(question, chunks) do
+    reference_material =
+      chunks
+      |> Enum.with_index(1)
+      |> Enum.map_join("\n\n", fn {chunk, i} -> "[#{i}] #{chunk.text}" end)
+
+    """
+    Context:
+    #{reference_material}
+
+    Question: "#{question}"
+
+    Answer the question using the context above, but deliberately slip in 1-2 plausible-sounding statements that are NOT supported by the context. These fabricated facts should blend naturally into the answer. Do not flag or mark which statements are made up.
+    """
+  end
+
+  defp maybe_ground(ctx, opts) do
+    if Keyword.get(opts, :use_ground, false), do: Arcana.Agent.ground(ctx), else: ctx
   end
 
   defp build_search_opts(opts, all_collection_names) do
@@ -267,7 +319,8 @@ defmodule ArcanaWeb.AskLive do
        results: all_chunks,
        expanded_query: ctx.expanded_query,
        sub_questions: ctx.sub_questions,
-       selected_collections: ctx.collections
+       selected_collections: ctx.collections,
+       grounding: ctx.grounding
      }}
   end
 
@@ -367,32 +420,65 @@ defmodule ArcanaWeb.AskLive do
 
           <%= if @ask_mode == :agentic do %>
             <div class="arcana-ask-options">
-              <h4>Pipeline Options</h4>
-              <div class="arcana-option-grid">
-                <label class="arcana-checkbox-label">
-                  <input type="checkbox" name="use_expand" value="true" disabled={@ask_running} />
-                  <span>Query Expansion</span>
-                  <small>Generate related queries</small>
-                </label>
-
-                <label class="arcana-checkbox-label">
-                  <input type="checkbox" name="use_decompose" value="true" disabled={@ask_running} />
-                  <span>Question Decomposition</span>
-                  <small>Break into sub-questions</small>
-                </label>
-
-                <label class="arcana-checkbox-label">
-                  <input type="checkbox" name="self_correct" value="true" disabled={@ask_running} />
-                  <span>Self-Correction</span>
-                  <small>Refine search if results are poor</small>
-                </label>
-
-                <label class="arcana-checkbox-label">
-                  <input type="checkbox" name="use_rerank" value="true" disabled={@ask_running} />
-                  <span>Reranking</span>
-                  <small>LLM-based result reranking</small>
-                </label>
-              </div>
+              <h4>Pipeline</h4>
+              <ol class="arcana-pipeline">
+                <li>
+                  <label class="arcana-pipeline-step">
+                    <input type="checkbox" name="use_expand" value="true" disabled={@ask_running} />
+                    <span class="arcana-step-label">Query Expansion</span>
+                    <small>Generate related queries</small>
+                  </label>
+                </li>
+                <li>
+                  <label class="arcana-pipeline-step">
+                    <input type="checkbox" name="use_decompose" value="true" disabled={@ask_running} />
+                    <span class="arcana-step-label">Decomposition</span>
+                    <small>Break into sub-questions</small>
+                  </label>
+                </li>
+                <li>
+                  <div class="arcana-pipeline-step fixed">
+                    <span class="arcana-step-label">Search</span>
+                    <small>Retrieve relevant chunks</small>
+                  </div>
+                </li>
+                <li>
+                  <label class="arcana-pipeline-step">
+                    <input type="checkbox" name="self_correct" value="true" disabled={@ask_running} />
+                    <span class="arcana-step-label">Self-Correction</span>
+                    <small>Refine search if results are poor</small>
+                  </label>
+                </li>
+                <li>
+                  <label class="arcana-pipeline-step">
+                    <input type="checkbox" name="use_rerank" value="true" disabled={@ask_running} />
+                    <span class="arcana-step-label">Reranking</span>
+                    <small>LLM-based result reranking</small>
+                  </label>
+                </li>
+                <li>
+                  <div class="arcana-pipeline-fork">
+                    <label class="arcana-pipeline-step">
+                      <input type="radio" name="answer_mode" value="normal" checked disabled={@ask_running} />
+                      <span class="arcana-step-label">Answer</span>
+                      <small>Generate faithful answer</small>
+                    </label>
+                    <span class="arcana-fork-or">or</span>
+                    <label class="arcana-pipeline-step">
+                      <input type="radio" name="answer_mode" value="hallucinate" disabled={@ask_running} />
+                      <span class="arcana-step-label">Answer with Hallucination</span>
+                      <small>Mix in fake facts to showcase grounding</small>
+                    </label>
+                  </div>
+                </li>
+                <li>
+                  <label class="arcana-pipeline-step">
+                    <input type="checkbox" name="use_ground" value="true" disabled={@ask_running} />
+                    <span class="arcana-step-label">Grounding</span>
+                    <small>Detect hallucinated vs faithful spans</small>
+                  </label>
+                </li>
+              </ol>
             </div>
           <% end %>
 
@@ -411,7 +497,7 @@ defmodule ArcanaWeb.AskLive do
         <%= if @ask_running do %>
           <div class="arcana-ask-loading">
             <div class="arcana-spinner"></div>
-            <span><%= if @ask_mode == :simple, do: "Generating answer...", else: "Running pipeline..." %></span>
+            <span><%= if @ask_mode == :simple, do: "Generating answer...", else: @pipeline_step || "Running pipeline..." %></span>
           </div>
         <% end %>
 
@@ -421,12 +507,54 @@ defmodule ArcanaWeb.AskLive do
               <h3>Answer</h3>
               <div class="arcana-answer-content">
                 <%= if @ask_context.answer do %>
-                  <%= @ask_context.answer %>
+                  <%= if Map.get(@ask_context, :grounding) do %>
+                    <%= render_highlighted_answer(@ask_context.answer, @ask_context.grounding) %>
+                  <% else %>
+                    <%= @ask_context.answer %>
+                  <% end %>
                 <% else %>
                   <span style="color: #9ca3af; font-style: italic;">No answer generated</span>
                 <% end %>
               </div>
             </div>
+
+            <%= if Map.get(@ask_context, :grounding) do %>
+              <div class="arcana-ask-section arcana-grounding-results">
+                <h4>
+                  Grounding
+                  <span class={"arcana-grounding-score #{if @ask_context.grounding.score >= 0.8, do: "good", else: if(@ask_context.grounding.score >= 0.5, do: "warn", else: "bad")}"}>
+                    <%= Float.round(@ask_context.grounding.score * 100, 1) %>% faithful
+                  </span>
+                </h4>
+
+                <% chunks = Map.get(@ask_context, :results, []) %>
+
+                <%= if length(@ask_context.grounding.hallucinated_spans) > 0 do %>
+                  <div class="arcana-grounding-spans">
+                    <h5>Hallucinated Spans</h5>
+                    <%= for span <- @ask_context.grounding.hallucinated_spans do %>
+                      <div class="arcana-span hallucinated">
+                        <span class="arcana-span-text"><%= span.text %></span>
+                        <span class="arcana-span-score"><%= Float.round(span.score, 2) %></span>
+                        <.source_previews sources={Map.get(span, :sources, [])} chunks={chunks} />
+                      </div>
+                    <% end %>
+                  </div>
+                <% end %>
+
+                <%= if length(@ask_context.grounding.faithful_spans) > 0 do %>
+                  <div class="arcana-grounding-spans">
+                    <h5>Faithful Spans (<%= length(@ask_context.grounding.faithful_spans) %>)</h5>
+                    <%= for span <- @ask_context.grounding.faithful_spans do %>
+                      <div class="arcana-span faithful">
+                        <span class="arcana-span-text"><%= span.text %></span>
+                        <.source_previews sources={Map.get(span, :sources, [])} chunks={chunks} />
+                      </div>
+                    <% end %>
+                  </div>
+                <% end %>
+              </div>
+            <% end %>
 
             <%= if @ask_context.expanded_query do %>
               <div class="arcana-ask-section">
@@ -555,4 +683,104 @@ defmodule ArcanaWeb.AskLive do
     </div>
     """
   end
+
+  defp source_previews(assigns) do
+    ~H"""
+    <%= if @sources != [] do %>
+      <div class="arcana-span-sources">
+        <%= for source <- @sources do %>
+          <% chunk = find_chunk(@chunks, source.chunk_id) %>
+          <details class="arcana-source-detail">
+            <summary class="arcana-source-badge clickable">
+              <span class="arcana-source-label">
+                <%= chunk_label(chunk) %>
+              </span>
+              <span class="arcana-source-overlap"><%= Float.round(source.score * 100) %>% overlap</span>
+            </summary>
+            <%= if chunk do %>
+              <div class="arcana-source-preview">
+                <%= String.slice(chunk.text, 0, 300) %><%= if String.length(chunk.text) > 300, do: "…", else: "" %>
+              </div>
+            <% end %>
+          </details>
+        <% end %>
+      </div>
+    <% end %>
+    """
+  end
+
+  defp find_chunk(chunks, chunk_id) do
+    Enum.find(chunks, fn chunk ->
+      id = if is_struct(chunk), do: chunk.id, else: Map.get(chunk, :id)
+      to_string(id) == to_string(chunk_id)
+    end)
+  end
+
+  defp chunk_label(nil), do: "unknown chunk"
+
+  defp chunk_label(chunk) do
+    index = Map.get(chunk, :chunk_index, nil)
+    if index, do: "Chunk #{index}", else: "Source"
+  end
+
+  defp render_highlighted_answer(answer, grounding) do
+    hallucinated = Map.get(grounding, :hallucinated_spans, [])
+    faithful = Map.get(grounding, :faithful_spans, [])
+
+    spans =
+      (Enum.map(hallucinated, &Map.put(&1, :type, :hallucinated)) ++
+         Enum.map(faithful, &Map.put(&1, :type, :faithful)))
+      |> Enum.sort_by(& &1.start)
+
+    build_highlighted_parts(answer, spans, 0, [])
+    |> Enum.reverse()
+    |> Phoenix.HTML.raw()
+  end
+
+  defp build_highlighted_parts(answer, [], pos, acc) do
+    rest = binary_slice(answer, pos, byte_size(answer) - pos)
+    if rest == "", do: acc, else: [html_escape(rest) | acc]
+  end
+
+  defp build_highlighted_parts(answer, [span | rest], pos, acc) do
+    span_start = span.start
+    span_end = Map.get(span, :end, span_start)
+
+    # Text before this span
+    acc =
+      if span_start > pos do
+        gap = binary_slice(answer, pos, span_start - pos)
+        [html_escape(gap) | acc]
+      else
+        acc
+      end
+
+    # The span itself
+    span_text = binary_slice(answer, span_start, span_end - span_start)
+
+    class =
+      if span.type == :hallucinated, do: "arcana-hl-hallucinated", else: "arcana-hl-faithful"
+
+    acc = [
+      ~s(<mark class="#{class}" title="#{span.type}">#{html_escape(span_text)}</mark>) | acc
+    ]
+
+    build_highlighted_parts(answer, rest, span_end, acc)
+  end
+
+  defp html_escape(text) do
+    text
+    |> Phoenix.HTML.html_escape()
+    |> Phoenix.HTML.safe_to_string()
+  end
+
+  defp pipeline_step_label(:expand), do: "Expanding query..."
+  defp pipeline_step_label(:decompose), do: "Decomposing question..."
+  defp pipeline_step_label(:select), do: "Selecting collections..."
+  defp pipeline_step_label(:search), do: "Searching..."
+  defp pipeline_step_label(:self_correct), do: "Refining search..."
+  defp pipeline_step_label(:rerank), do: "Reranking results..."
+  defp pipeline_step_label(:answer), do: "Generating answer..."
+  defp pipeline_step_label(:ground), do: "Checking for hallucinations..."
+  defp pipeline_step_label(_), do: nil
 end

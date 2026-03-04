@@ -49,6 +49,9 @@ defmodule Arcana.Agent.Context do
   - `:correction_count` - Number of self-corrections performed (0 if disabled)
   - `:corrections` - List of `{answer, feedback}` tuples showing correction history
 
+  ### Populated by `ground/2`
+  - `:grounding` - `%Arcana.Grounding.Result{}` with score, hallucinated spans, and token labels
+
   ### Error handling
   - `:error` - Error reason if any step fails
   """
@@ -95,6 +98,9 @@ defmodule Arcana.Agent.Context do
     :context_used,
     :correction_count,
     :corrections,
+
+    # Populated by ground/2
+    :grounding,
 
     # Error handling
     :error

@@ -34,6 +34,7 @@ This logs all Arcana operations with timing:
 [info] [Arcana] agent.reason completed in 1.2s (1 iteration)
 [info] [Arcana] agent.rerank completed in 312ms (10/25 kept)
 [info] [Arcana] agent.answer completed in 3.25s
+[info] [Arcana] agent.ground completed in 85ms (score: 0.95, 1 hallucinated span)
 [info] [Arcana] ask completed in 6.12s
 ```
 
@@ -87,6 +88,7 @@ Each step in the Agent pipeline emits its own events:
 | `[:arcana, :agent, :reason, :*]` | `question`, `iterations` |
 | `[:arcana, :agent, :rerank, :*]` | `question`, `chunks_before`, `chunks_after` |
 | `[:arcana, :agent, :answer, :*]` | `question`, `context_chunk_count` |
+| `[:arcana, :agent, :ground, :*]` | `score`, `hallucinated_span_count`, `faithful_span_count` |
 
 ### VectorStore Events
 
@@ -153,6 +155,7 @@ defmodule MyApp.ArcanaMetrics do
       [:arcana, :agent, :rerank, :stop],
       [:arcana, :agent, :reason, :stop],
       [:arcana, :agent, :answer, :stop],
+      [:arcana, :agent, :ground, :stop],
       # VectorStore
       [:arcana, :vector_store, :store, :stop],
       [:arcana, :vector_store, :search, :stop],
@@ -367,6 +370,7 @@ For agentic RAG, each pipeline step is instrumented:
 [info] [Arcana] agent.reason completed in 850ms (1 iteration)
 [info] [Arcana] agent.rerank completed in 890ms (8/25 kept)
 [info] [Arcana] agent.answer completed in 2.1s
+[info] [Arcana] agent.ground completed in 75ms (score: 0.92, 1 hallucinated span)
 ```
 
 Here, reranking takes 890ms - if this is too slow, consider:
