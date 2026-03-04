@@ -52,6 +52,7 @@ defmodule Arcana.Agent.Reranker.ColBERT do
   Consider using `:top_k` rather than `:threshold` for most use cases.
   """
 
+  @compile {:no_warn_undefined, Stephen}
   @behaviour Arcana.Agent.Reranker
 
   @default_threshold 0.0
