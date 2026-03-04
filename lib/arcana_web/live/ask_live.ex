@@ -144,7 +144,8 @@ defmodule ArcanaWeb.AskLive do
       use_decompose: params["use_decompose"] == "true",
       use_rerank: params["use_rerank"] == "true",
       use_ground: params["use_ground"] == "true",
-      self_correct: params["self_correct"] == "true"
+      self_correct: params["self_correct"] == "true",
+      hallucinate_demo: params["hallucinate_demo"] == "true"
     )
   end
 
@@ -206,7 +207,7 @@ defmodule ArcanaWeb.AskLive do
     |> maybe_decompose(opts)
     |> Agent.search(search_opts)
     |> maybe_rerank(opts)
-    |> Agent.answer()
+    |> maybe_answer_with_hallucinations(opts)
     |> maybe_ground(opts)
     |> format_agentic_result(question)
   rescue
@@ -231,6 +232,30 @@ defmodule ArcanaWeb.AskLive do
 
   defp maybe_rerank(ctx, opts) do
     if Keyword.get(opts, :use_rerank, false), do: Arcana.Agent.rerank(ctx), else: ctx
+  end
+
+  defp maybe_answer_with_hallucinations(ctx, opts) do
+    if Keyword.get(opts, :hallucinate_demo, false) do
+      Arcana.Agent.answer(ctx, prompt: &hallucination_demo_prompt/2)
+    else
+      Arcana.Agent.answer(ctx)
+    end
+  end
+
+  defp hallucination_demo_prompt(question, chunks) do
+    reference_material =
+      chunks
+      |> Enum.with_index(1)
+      |> Enum.map_join("\n\n", fn {chunk, i} -> "[#{i}] #{chunk.text}" end)
+
+    """
+    Context:
+    #{reference_material}
+
+    Question: "#{question}"
+
+    Answer the question using the context above, but deliberately slip in 1-2 plausible-sounding statements that are NOT supported by the context. These fabricated facts should blend naturally into the answer. Do not flag or mark which statements are made up.
+    """
   end
 
   defp maybe_ground(ctx, opts) do
@@ -404,6 +429,12 @@ defmodule ArcanaWeb.AskLive do
                   <input type="checkbox" name="use_ground" value="true" disabled={@ask_running} />
                   <span>Grounding</span>
                   <small>Detect hallucinated vs faithful spans</small>
+                </label>
+
+                <label class="arcana-checkbox-label">
+                  <input type="checkbox" name="hallucinate_demo" value="true" disabled={@ask_running} />
+                  <span>Hallucinate Demo</span>
+                  <small>Mix in fake facts to showcase grounding</small>
                 </label>
               </div>
             </div>
