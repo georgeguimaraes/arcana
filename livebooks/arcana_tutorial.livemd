@@ -807,22 +807,21 @@ Attribution:     sources: [chunk_2: 1.0]       sources: [chunk_1: 0.75]
 ### Using Grounding in the Pipeline
 
 ```elixir
-# In a real pipeline with LettuceDetect:
+# In a real pipeline with Hallmark:
 # ctx = Agent.new("When was Elixir created?", repo: repo, llm: llm)
 #   |> Agent.search(collection: "docs")
 #   |> Agent.answer()
 #   |> Agent.ground()
 #
-# ctx.grounding.score              # 0.85 (fraction of faithful tokens)
-# ctx.grounding.hallucinated_spans # spans the model made up
-# ctx.grounding.faithful_spans     # spans backed by context
+# ctx.grounding.score              # 0.85 (weighted average consistency)
+# ctx.grounding.hallucinated_spans # sentences the model flagged
+# ctx.grounding.faithful_spans     # sentences backed by context
 
 IO.puts("""
 Grounding result fields:
-- score: fraction of faithful tokens (0.0 to 1.0)
-- hallucinated_spans: unsupported parts of the answer
-- faithful_spans: parts backed by retrieved context
-- token_labels: raw per-token labels for debugging
+- score: weighted average consistency score (0.0 to 1.0)
+- hallucinated_spans: unsupported sentences in the answer
+- faithful_spans: sentences backed by retrieved context
 """)
 ```
 
@@ -864,7 +863,7 @@ Attribution patterns:
 
 ### Custom Grounder
 
-Replace the default LettuceDetect grounder with your own logic:
+Replace the default Hallmark grounder with your own logic:
 
 ```elixir
 # Module-based
@@ -886,7 +885,7 @@ Replace the default LettuceDetect grounder with your own logic:
 #   {:ok, %Arcana.Grounding.Result{score: 1.0, hallucinated_spans: [], faithful_spans: []}}
 # end)
 
-IO.puts("Grounding is pluggable: use LettuceDetect, a custom module, or an inline function")
+IO.puts("Grounding is pluggable: use Hallmark, a custom module, or an inline function")
 ```
 
 ## Summary

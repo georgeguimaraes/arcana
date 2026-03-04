@@ -313,23 +313,13 @@ cited_chunk_ids =
   |> Enum.uniq()
 ```
 
-The default grounder uses [LettuceDetect](https://huggingface.co/KRLabsOrg/lettucedect-base-modernbert-en-v1), a ModernBERT-based token classifier running via ONNX Runtime. It labels each token in the answer as faithful or hallucinated based on the retrieved context chunks.
+The default grounder uses [Hallmark](https://github.com/georgeguimaraes/hallmark), which runs Vectara's HHEM model natively via Bumblebee. It scores each sentence in the answer against the combined context using NLI (natural language inference).
 
-Setup requires the `ortex` dependency and a one-time model download:
-
-```bash
-# Add to mix.exs: {:ortex, "~> 0.1"}
-mix arcana.ground.setup
-```
-
-This downloads the pre-exported ONNX files (~600 MB total) from HuggingFace Hub to `priv/models/lettucedect/`. Use `--output-dir` to change the destination or `--force` to re-download.
-
-For custom models, you can also export manually with `python scripts/export_lettuce_onnx.py --output-dir priv/models/lettucedect`.
+Setup just requires the `hallmark` dependency. The model (~440 MB) downloads automatically on first use:
 
 ```elixir
-# config/config.exs
-config :arcana, Arcana.Grounding.Serving,
-  model_path: "priv/models/lettucedect/model.onnx"
+# Add to mix.exs
+{:hallmark, "~> 1.0"}
 ```
 
 Skips automatically if `ctx.error` is set or `ctx.answer` is nil.
@@ -490,7 +480,7 @@ Every pipeline step has a behaviour and can be replaced with a custom implementa
 | `search/2` | `Arcana.Agent.Searcher` | `Searcher.Arcana` | `:searcher` |
 | `rerank/2` | `Arcana.Agent.Reranker` | `Reranker.LLM` | `:reranker` |
 | `answer/2` | `Arcana.Agent.Answerer` | `Answerer.LLM` | `:answerer` |
-| `ground/2` | `Arcana.Agent.Grounder` | `Grounder.Lettuce` | `:grounder` |
+| `ground/2` | `Arcana.Agent.Grounder` | `Grounder.Hallmark` | `:grounder` |
 
 ### Custom Rewriter
 
@@ -649,7 +639,7 @@ Agent.answer(ctx, answerer: MyApp.TemplateAnswerer)
 
 ### Custom Grounder
 
-Replace the default LettuceDetect grounder with your own hallucination detection logic:
+Replace the default Hallmark grounder with your own hallucination detection logic:
 
 ```elixir
 defmodule MyApp.APIGrounder do

@@ -7,7 +7,7 @@ defmodule Arcana.Agent.Grounder do
 
   ## Built-in Implementations
 
-  - `Arcana.Agent.Grounder.Lettuce` - Uses LettuceDetect (ModernBERT-based token classifier) via ONNX Runtime (default)
+  - `Arcana.Agent.Grounder.Hallmark` - Uses Hallmark (Vectara HHEM via Bumblebee) for sentence-level NLI scoring (default)
 
   ## Custom Implementations
 

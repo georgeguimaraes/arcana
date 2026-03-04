@@ -8,14 +8,15 @@ defmodule Arcana.Grounding.Result do
 
   ## Fields
 
-  - `:score` - Fraction of faithful tokens (0.0 to 1.0, higher is better)
-  - `:hallucinated_spans` - List of span maps identifying unsupported parts of the answer.
-    Each span has `:text`, `:start`, `:end` (byte offsets), `:score` (hallucination confidence),
-    and `:sources` (list of `%{chunk_id: term(), score: float()}` sorted by overlap score desc).
-  - `:faithful_spans` - List of span maps identifying supported parts of the answer.
-    Same shape as hallucinated spans.
-  - `:token_labels` - Raw per-token labels for debugging. Each entry is a map with
-    `:label` (`:faithful` or `:hallucinated`), `:score`, `:start`, `:end`, and `:text`.
+  - `:score` - Average consistency score across sentences (0.0 to 1.0, higher is better),
+    weighted by sentence length.
+  - `:hallucinated_spans` - List of sentence-level span maps identifying unsupported parts
+    of the answer. Each span has `:text`, `:start`, `:end` (byte offsets), `:score`
+    (hallucination confidence), and `:sources` (list of `%{chunk_id: term(), score: float()}`
+    sorted by overlap score desc).
+  - `:faithful_spans` - List of sentence-level span maps identifying supported parts
+    of the answer. Same shape as hallucinated spans.
+  - `:token_labels` - Unused (kept for backwards compatibility). Always nil.
   """
 
   @type span :: %{

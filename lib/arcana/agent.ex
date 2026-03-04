@@ -1172,14 +1172,14 @@ defmodule Arcana.Agent do
   @doc """
   Checks if the generated answer is grounded in the retrieved context.
 
-  Uses a token classifier to label each token in the answer as faithful
-  or hallucinated, producing a grounding score and hallucinated spans.
+  Uses NLI scoring to check each sentence in the answer against the
+  retrieved context, producing a grounding score and hallucinated spans.
 
-  By default uses `Arcana.Agent.Grounder.Lettuce` (LettuceDetect via ONNX Runtime).
+  By default uses `Arcana.Agent.Grounder.Hallmark` (Vectara HHEM via Bumblebee).
 
   ## Options
 
-  - `:grounder` - Custom grounder module or function (default: `Arcana.Agent.Grounder.Lettuce`)
+  - `:grounder` - Custom grounder module or function (default: `Arcana.Agent.Grounder.Hallmark`)
 
   ## Example
 
@@ -1211,7 +1211,7 @@ defmodule Arcana.Agent do
   def ground(%Context{answer: nil} = ctx, _opts), do: ctx
 
   def ground(%Context{} = ctx, opts) do
-    grounder = Keyword.get(opts, :grounder, Arcana.Agent.Grounder.Lettuce)
+    grounder = Keyword.get(opts, :grounder, Arcana.Agent.Grounder.Hallmark)
 
     start_metadata = %{
       question: ctx.question,

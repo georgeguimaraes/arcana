@@ -1,34 +1,20 @@
 defmodule Arcana.Grounding.InputFormatter do
   @moduledoc """
-  Formats input for the LettuceDetect grounding model.
+  Formats context for grounding analysis.
 
-  LettuceDetect expects a specific prompt format: context passages joined by
-  a separator token, followed by the question. This becomes the first segment
-  in a pair encoding, with the answer as the second segment.
-
-  ## Format
-
-      <passage_1><passage_separator><passage_2>... Question: <question>
-
-  This module only produces the first segment (context + question).
-  The answer is passed separately as the second segment during tokenization.
+  Joins chunk texts into a single premise string for NLI scoring.
   """
 
-  @passage_separator "<passage_separator>"
-
   @doc """
-  Formats context passages and question into the first segment for LettuceDetect.
+  Joins context passages into a single string for use as the NLI premise.
 
   ## Examples
 
       iex> chunks = [%{text: "Elixir is functional."}, %{text: "It runs on BEAM."}]
       iex> Arcana.Grounding.InputFormatter.format("What is Elixir?", chunks)
-      "Elixir is functional.<passage_separator>It runs on BEAM. Question: What is Elixir?"
+      "Elixir is functional.\\nIt runs on BEAM."
   """
-  def format(question, chunks) do
-    context =
-      Enum.map_join(chunks, @passage_separator, & &1.text)
-
-    "#{context} Question: #{question}"
+  def format(_question, chunks) do
+    Enum.map_join(chunks, "\n", & &1.text)
   end
 end
