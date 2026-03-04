@@ -1278,10 +1278,111 @@ defmodule ArcanaWeb.Assets do
     margin: 0 0 0.75rem 0;
   }
 
-  .arcana-option-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  .arcana-pipeline {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .arcana-pipeline > li {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .arcana-pipeline > li:not(:last-child)::after {
+    content: '';
+    display: block;
+    width: 2px;
+    height: 1.25rem;
+    background: #c4b5fd;
+  }
+
+  .arcana-pipeline > li:has(> .arcana-pipeline-step:not(:has(input:checked)):not(.fixed)):not(:last-child)::after {
+    background: none;
+    border-left: 2px dashed #d1d5db;
+  }
+
+  .arcana-pipeline-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 240px;
+    padding: 0.625rem 1rem;
+    background: #fafafa;
+    border: 2px dashed #d1d5db;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: center;
+  }
+
+  .arcana-pipeline-step:has(input:checked) {
+    background: #ede9fe;
+    border: 2px solid #7c3aed;
+  }
+
+  .arcana-pipeline-step:has(input:checked) .arcana-step-label {
+    color: #6d28d9;
+  }
+
+  .arcana-pipeline-step:not(.fixed):hover {
+    border-color: #a78bfa;
+  }
+
+  .arcana-pipeline-step.fixed {
+    background: #f0fdf4;
+    border: 2px solid #86efac;
+    cursor: default;
+  }
+
+  .arcana-pipeline-step.fixed .arcana-step-label {
+    color: #15803d;
+  }
+
+  .arcana-pipeline-step input[type="checkbox"],
+  .arcana-pipeline-step input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .arcana-step-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #374151;
+  }
+
+  .arcana-pipeline-step small {
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-top: 0.125rem;
+  }
+
+  .arcana-pipeline-fork {
+    display: flex;
+    align-items: center;
     gap: 0.75rem;
+  }
+
+  .arcana-pipeline-fork .arcana-pipeline-step {
+    width: 160px;
+  }
+
+  .arcana-fork-or {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #9ca3af;
+    text-transform: uppercase;
+  }
+
+  .arcana-pipeline-step:has(input:disabled) {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .arcana-checkbox-label {

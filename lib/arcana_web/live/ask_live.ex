@@ -25,7 +25,8 @@ defmodule ArcanaWeb.AskLive do
        stats: nil,
        collections: [],
        graph_context_expanded: true,
-       llm_select: false
+       llm_select: false,
+       pipeline_step: nil
      )}
   end
 
@@ -113,6 +114,21 @@ defmodule ArcanaWeb.AskLive do
     parent = self()
 
     Arcana.TaskSupervisor.start_child(fn ->
+      handler_id = "pipeline-progress-#{inspect(parent)}"
+
+      steps = [:expand, :decompose, :select, :search, :self_correct, :rerank, :answer, :ground]
+      events = Enum.map(steps, &[:arcana, :agent, &1, :start])
+
+      :telemetry.attach_many(
+        handler_id,
+        events,
+        fn [:arcana, :agent, step, :start], _measurements, _metadata, _config ->
+          label = pipeline_step_label(step)
+          if label, do: send(parent, {:pipeline_progress, label})
+        end,
+        nil
+      )
+
       result =
         run_ask(
           mode,
@@ -124,6 +140,7 @@ defmodule ArcanaWeb.AskLive do
           selected_collections
         )
 
+      :telemetry.detach(handler_id)
       send(parent, {:ask_complete, result})
     end)
   end
@@ -145,19 +162,23 @@ defmodule ArcanaWeb.AskLive do
       use_rerank: params["use_rerank"] == "true",
       use_ground: params["use_ground"] == "true",
       self_correct: params["self_correct"] == "true",
-      hallucinate_demo: params["hallucinate_demo"] == "true"
+      hallucinate_demo: params["answer_mode"] == "hallucinate"
     )
   end
 
   @impl true
+  def handle_info({:pipeline_progress, step}, socket) do
+    {:noreply, assign(socket, pipeline_step: step)}
+  end
+
   def handle_info({:ask_complete, result}, socket) do
     socket =
       case result do
         {:ok, ctx} ->
-          assign(socket, ask_running: false, ask_context: ctx, ask_error: nil)
+          assign(socket, ask_running: false, ask_context: ctx, ask_error: nil, pipeline_step: nil)
 
         {:error, reason} ->
-          assign(socket, ask_running: false, ask_error: inspect(reason))
+          assign(socket, ask_running: false, ask_error: inspect(reason), pipeline_step: nil)
       end
 
     {:noreply, socket}
@@ -399,44 +420,65 @@ defmodule ArcanaWeb.AskLive do
 
           <%= if @ask_mode == :agentic do %>
             <div class="arcana-ask-options">
-              <h4>Pipeline Options</h4>
-              <div class="arcana-option-grid">
-                <label class="arcana-checkbox-label">
-                  <input type="checkbox" name="use_expand" value="true" disabled={@ask_running} />
-                  <span>Query Expansion</span>
-                  <small>Generate related queries</small>
-                </label>
-
-                <label class="arcana-checkbox-label">
-                  <input type="checkbox" name="use_decompose" value="true" disabled={@ask_running} />
-                  <span>Question Decomposition</span>
-                  <small>Break into sub-questions</small>
-                </label>
-
-                <label class="arcana-checkbox-label">
-                  <input type="checkbox" name="self_correct" value="true" disabled={@ask_running} />
-                  <span>Self-Correction</span>
-                  <small>Refine search if results are poor</small>
-                </label>
-
-                <label class="arcana-checkbox-label">
-                  <input type="checkbox" name="use_rerank" value="true" disabled={@ask_running} />
-                  <span>Reranking</span>
-                  <small>LLM-based result reranking</small>
-                </label>
-
-                <label class="arcana-checkbox-label">
-                  <input type="checkbox" name="use_ground" value="true" disabled={@ask_running} />
-                  <span>Grounding</span>
-                  <small>Detect hallucinated vs faithful spans</small>
-                </label>
-
-                <label class="arcana-checkbox-label">
-                  <input type="checkbox" name="hallucinate_demo" value="true" disabled={@ask_running} />
-                  <span>Hallucinate Demo</span>
-                  <small>Mix in fake facts to showcase grounding</small>
-                </label>
-              </div>
+              <h4>Pipeline</h4>
+              <ol class="arcana-pipeline">
+                <li>
+                  <label class="arcana-pipeline-step">
+                    <input type="checkbox" name="use_expand" value="true" disabled={@ask_running} />
+                    <span class="arcana-step-label">Query Expansion</span>
+                    <small>Generate related queries</small>
+                  </label>
+                </li>
+                <li>
+                  <label class="arcana-pipeline-step">
+                    <input type="checkbox" name="use_decompose" value="true" disabled={@ask_running} />
+                    <span class="arcana-step-label">Decomposition</span>
+                    <small>Break into sub-questions</small>
+                  </label>
+                </li>
+                <li>
+                  <div class="arcana-pipeline-step fixed">
+                    <span class="arcana-step-label">Search</span>
+                    <small>Retrieve relevant chunks</small>
+                  </div>
+                </li>
+                <li>
+                  <label class="arcana-pipeline-step">
+                    <input type="checkbox" name="self_correct" value="true" disabled={@ask_running} />
+                    <span class="arcana-step-label">Self-Correction</span>
+                    <small>Refine search if results are poor</small>
+                  </label>
+                </li>
+                <li>
+                  <label class="arcana-pipeline-step">
+                    <input type="checkbox" name="use_rerank" value="true" disabled={@ask_running} />
+                    <span class="arcana-step-label">Reranking</span>
+                    <small>LLM-based result reranking</small>
+                  </label>
+                </li>
+                <li>
+                  <div class="arcana-pipeline-fork">
+                    <label class="arcana-pipeline-step">
+                      <input type="radio" name="answer_mode" value="normal" checked disabled={@ask_running} />
+                      <span class="arcana-step-label">Answer</span>
+                      <small>Generate faithful answer</small>
+                    </label>
+                    <span class="arcana-fork-or">or</span>
+                    <label class="arcana-pipeline-step">
+                      <input type="radio" name="answer_mode" value="hallucinate" disabled={@ask_running} />
+                      <span class="arcana-step-label">Answer with Hallucination</span>
+                      <small>Mix in fake facts to showcase grounding</small>
+                    </label>
+                  </div>
+                </li>
+                <li>
+                  <label class="arcana-pipeline-step">
+                    <input type="checkbox" name="use_ground" value="true" disabled={@ask_running} />
+                    <span class="arcana-step-label">Grounding</span>
+                    <small>Detect hallucinated vs faithful spans</small>
+                  </label>
+                </li>
+              </ol>
             </div>
           <% end %>
 
@@ -455,7 +497,7 @@ defmodule ArcanaWeb.AskLive do
         <%= if @ask_running do %>
           <div class="arcana-ask-loading">
             <div class="arcana-spinner"></div>
-            <span><%= if @ask_mode == :simple, do: "Generating answer...", else: "Running pipeline..." %></span>
+            <span><%= if @ask_mode == :simple, do: "Generating answer...", else: @pipeline_step || "Running pipeline..." %></span>
           </div>
         <% end %>
 
@@ -731,4 +773,14 @@ defmodule ArcanaWeb.AskLive do
     |> Phoenix.HTML.html_escape()
     |> Phoenix.HTML.safe_to_string()
   end
+
+  defp pipeline_step_label(:expand), do: "Expanding query..."
+  defp pipeline_step_label(:decompose), do: "Decomposing question..."
+  defp pipeline_step_label(:select), do: "Selecting collections..."
+  defp pipeline_step_label(:search), do: "Searching..."
+  defp pipeline_step_label(:self_correct), do: "Refining search..."
+  defp pipeline_step_label(:rerank), do: "Reranking results..."
+  defp pipeline_step_label(:answer), do: "Generating answer..."
+  defp pipeline_step_label(:ground), do: "Checking for hallucinations..."
+  defp pipeline_step_label(_), do: nil
 end
