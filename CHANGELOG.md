@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0](https://github.com/georgeguimaraes/arcana/compare/v1.5.2...v1.6.0) (2026-03-04)
+
+
+### Features
+
+* **ask:** redesign graph toggle as Graph-Assisted search ([98347ef](https://github.com/georgeguimaraes/arcana/commit/98347efd4b3a479cdbb3a4fbf339ca1895cbe828))
+* **grounding:** Hallucination detection via Hallmark NLI ([#49](https://github.com/georgeguimaraes/arcana/issues/49)) ([de1b37f](https://github.com/georgeguimaraes/arcana/commit/de1b37f95fe4f11d6e92d202284e6bafd9b32505))
+
+
+### Miscellaneous
+
+* **deps-dev:** bump credo from 1.7.16 to 1.7.17 ([#51](https://github.com/georgeguimaraes/arcana/issues/51)) ([4ce74a7](https://github.com/georgeguimaraes/arcana/commit/4ce74a734927f23b2d5e02898adf39fef4cc0ea1))
+* **deps:** bump ecto_sql from 3.13.4 to 3.13.5 ([#50](https://github.com/georgeguimaraes/arcana/issues/50)) ([e2a6be7](https://github.com/georgeguimaraes/arcana/commit/e2a6be7834ebc94d59ba4cf28caf7c8aea3b100b))
+* **deps:** bump hallmark from 1.0.1 to 1.1.0 ([4f8b617](https://github.com/georgeguimaraes/arcana/commit/4f8b617631eff4d986a0fb9850f16c89ba7aa63b))
+
+
+### Code Refactoring
+
+* **reranker:** batch LLM reranking into a single call ([f59869d](https://github.com/georgeguimaraes/arcana/commit/f59869d80a2952453d0a9641e77677b0ecd073f0))
+
 ## [1.5.2](https://github.com/georgeguimaraes/arcana/compare/v1.5.1...v1.5.2) (2026-02-27)
 
 
