@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1](https://github.com/georgeguimaraes/arcana/compare/v1.6.0...v1.6.1) (2026-03-06)
+
+
+### Miscellaneous
+
+* **deps:** bump igniter from 0.7.2 to 0.7.3 ([#54](https://github.com/georgeguimaraes/arcana/issues/54)) ([1ac1dd9](https://github.com/georgeguimaraes/arcana/commit/1ac1dd9ef275d41562dcb4e6be7b8d4d29e871a9))
+* **deps:** bump phoenix_live_view from 1.1.25 to 1.1.26 ([#53](https://github.com/georgeguimaraes/arcana/issues/53)) ([41b6724](https://github.com/georgeguimaraes/arcana/commit/41b6724341b0ce060704b31ff5adcf23b843d8ac))
+
 ## [1.6.0](https://github.com/georgeguimaraes/arcana/compare/v1.5.2...v1.6.0) (2026-03-04)
 
 
