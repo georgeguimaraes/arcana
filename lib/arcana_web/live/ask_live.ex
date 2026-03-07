@@ -33,15 +33,16 @@ defmodule ArcanaWeb.AskLive do
   end
 
   @impl true
-  def handle_params(_params, _uri, socket) do
-    {:noreply, load_data(socket)}
+  def handle_params(params, _uri, socket) do
+    mode = parse_dashboard_mode(params["mode"])
+    {:noreply, socket |> assign(mode: mode) |> load_data()}
   end
 
   defp load_data(socket) do
     repo = socket.assigns.repo
 
     socket
-    |> assign(stats: load_stats(repo))
+    |> assign(stats: load_stats(repo, socket.assigns.mode))
     |> assign(collections: load_collections_with_graph_status(repo))
   end
 
@@ -355,7 +356,7 @@ defmodule ArcanaWeb.AskLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:ask}>
+    <.dashboard_layout stats={@stats} current_tab={:ask} mode={@mode}>
       <div class="arcana-ask">
         <h2>Ask</h2>
         <p class="arcana-tab-description">

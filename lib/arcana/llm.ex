@@ -32,6 +32,31 @@ end
 defmodule Arcana.LLM.Helpers do
   @moduledoc false
 
+  @doc """
+  Calls an LLM with full ReqLLM context and options, returning the complete response.
+
+  Unlike `Arcana.LLM.complete/4` (text in, text out), this returns the full
+  `ReqLLM.Response` with tool calls, usage, and finish reason. Supports the
+  same config formats: model strings, `{model, opts}` tuples, and function/2 mocks.
+  """
+  @spec chat(term(), ReqLLM.Context.t(), keyword()) ::
+          {:ok, ReqLLM.Response.t()} | {:error, term()}
+  def chat(fun, context, opts) when is_function(fun, 2) do
+    tools = Keyword.get(opts, :tools, [])
+    fun.(context, tools)
+  end
+
+  def chat({model, llm_opts}, context, opts) when is_binary(model) and is_list(llm_opts) do
+    chat(model, context, Keyword.merge(llm_opts, opts))
+  end
+
+  def chat(model, context, opts) when is_binary(model) do
+    reqllm_opts =
+      Keyword.take(opts, [:api_key, :temperature, :max_tokens, :provider_options, :tools])
+
+    ReqLLM.generate_text(model, context, reqllm_opts)
+  end
+
   def with_telemetry(model, prompt, context, fun) do
     start_metadata = %{
       model: model,
@@ -111,11 +136,9 @@ if Code.ensure_loaded?(ReqLLM) do
             ReqLLM.Context.user(prompt)
           ])
 
-        # Pass through common LLM options plus provider-specific ones
-        # Use :provider_options for provider-specific params like Z.ai's :thinking
         reqllm_opts = Keyword.take(opts, [:api_key, :temperature, :max_tokens, :provider_options])
 
-        case ReqLLM.generate_text(model, llm_context, reqllm_opts) do
+        case Helpers.chat(model, llm_context, reqllm_opts) do
           {:ok, response} -> {:ok, ReqLLM.Response.text(response)}
           {:error, reason} -> {:error, reason}
         end

@@ -68,6 +68,7 @@ defmodule ArcanaWeb.Router do
           live("/graph", ArcanaWeb.GraphLive, :index, route_opts)
           live("/search", ArcanaWeb.SearchLive, :index, route_opts)
           live("/ask", ArcanaWeb.AskLive, :index, route_opts)
+          live("/explore", ArcanaWeb.ExploreLive, :index, route_opts)
           live("/evaluation", ArcanaWeb.EvaluationLive, :index, route_opts)
           live("/maintenance", ArcanaWeb.MaintenanceLive, :index, route_opts)
           live("/info", ArcanaWeb.InfoLive, :index, route_opts)

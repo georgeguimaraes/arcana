@@ -40,6 +40,11 @@ defmodule ArcanaWeb.Assets do
     gap: 0.5rem;
     border-bottom: 2px solid #e5e7eb;
     margin-bottom: 1.5rem;
+    align-items: center;
+  }
+
+  .arcana-tab, .arcana-mode-tab, .arcana-tab-divider {
+    flex-shrink: 0;
   }
 
   .arcana-tab {
@@ -292,6 +297,64 @@ defmodule ArcanaWeb.Assets do
     height: 2rem;
     background: rgba(255, 255, 255, 0.3);
     margin: 0 0.5rem;
+  }
+
+  .arcana-mode-tab {
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #9ca3af;
+    text-decoration: none;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    transition: all 0.15s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .arcana-mode-tab:hover {
+    color: #6d28d9;
+  }
+
+  .arcana-mode-tab.active {
+    color: #7c3aed;
+    border-bottom-color: #7c3aed;
+    background: linear-gradient(to bottom, rgba(124, 58, 237, 0.08), transparent);
+  }
+
+  .arcana-tab-divider {
+    width: 1px;
+    height: 1.5rem;
+    background: #d1d5db;
+    align-self: center;
+    margin: 0 0.5rem;
+  }
+
+  .arcana-tab-spacer {
+    flex: 1 1 0;
+  }
+
+  .arcana-mode-explore .arcana-stats {
+    background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%);
+  }
+
+  .arcana-mode-explore .arcana-mode-tab:hover {
+    color: #0d9488;
+  }
+
+  .arcana-mode-explore .arcana-mode-tab.active {
+    color: #0d9488;
+    border-bottom-color: #0d9488;
+    background: linear-gradient(to bottom, rgba(13, 148, 136, 0.08), transparent);
+  }
+
+  .arcana-mode-explore .arcana-tab:hover {
+    color: #0d9488;
+  }
+
+  .arcana-mode-explore .arcana-tab.active {
+    color: #0d9488;
+    border-bottom-color: #0d9488;
   }
 
   .arcana-pagination {
@@ -2325,6 +2388,287 @@ defmodule ArcanaWeb.Assets do
     color: #7c3aed;
     margin-top: 0.25rem;
     font-style: italic;
+  }
+
+  /* ===== Explore (RLM) ===== */
+
+  .arcana-explore-form {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .arcana-explore-input textarea {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-family: inherit;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+
+  .arcana-explore-input textarea:focus {
+    outline: none;
+    border-color: #0d9488;
+    box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.1);
+  }
+
+  .arcana-explore-config {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin: 0.75rem 0;
+  }
+
+  .arcana-explore-config label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #6b7280;
+  }
+
+  .arcana-explore-config input[type="text"],
+  .arcana-explore-config input[type="number"] {
+    padding: 0.5rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    min-width: 100px;
+  }
+
+  .arcana-explore-config input[type="text"] {
+    min-width: 280px;
+  }
+
+  .arcana-explore-config input:focus {
+    outline: none;
+    border-color: #0d9488;
+    box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.1);
+  }
+
+  .arcana-explore-btn {
+    background: #0d9488 !important;
+    color: white !important;
+  }
+
+  .arcana-explore-btn:hover:not(:disabled) {
+    background: #0f766e !important;
+  }
+
+  /* Trace timeline */
+
+  .arcana-explore-trace {
+    margin-top: 1.5rem;
+  }
+
+  .arcana-explore-trace h3 {
+    margin: 0 0 0.75rem 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #111827;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .arcana-explore-session-info {
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: #6b7280;
+    background: #f3f4f6;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+  }
+
+  .arcana-explore-timeline {
+    display: flex;
+    flex-direction: column;
+    max-height: 600px;
+    overflow-y: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+  }
+
+  .arcana-explore-trace-entry {
+    border-bottom: 1px solid #e5e7eb;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+
+  .arcana-explore-trace-entry:last-child {
+    border-bottom: none;
+  }
+
+  .arcana-explore-trace-entry:hover {
+    background: #faf5ff;
+  }
+
+  .arcana-explore-trace-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 0.75rem;
+  }
+
+  .arcana-explore-step-num {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #9ca3af;
+    min-width: 1.5rem;
+    text-align: center;
+  }
+
+  .arcana-explore-tool-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.25rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    white-space: nowrap;
+  }
+
+  .arcana-explore-tool-badge.grep {
+    background: #dbeafe;
+    color: #1e40af;
+  }
+
+  .arcana-explore-tool-badge.read_section {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .arcana-explore-tool-badge.sub_explore {
+    background: #f3e8ff;
+    color: #6b21a8;
+  }
+
+  .arcana-explore-tool-badge.answer {
+    background: #fef3c7;
+    color: #92400e;
+  }
+
+  .arcana-explore-tool-args {
+    font-size: 0.8125rem;
+    color: #374151;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .arcana-explore-duration {
+    font-size: 0.75rem;
+    color: #6b7280;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    white-space: nowrap;
+  }
+
+  .arcana-explore-toggle {
+    font-size: 0.625rem;
+    color: #9ca3af;
+    min-width: 0.75rem;
+  }
+
+  .arcana-explore-trace-detail {
+    padding: 0 0.75rem 0.75rem 2.75rem;
+    font-size: 0.8125rem;
+  }
+
+  .arcana-explore-trace-detail strong {
+    font-size: 0.75rem;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+  }
+
+  .arcana-explore-trace-detail pre {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.375rem;
+    padding: 0.5rem;
+    font-size: 0.75rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0.25rem 0 0.5rem 0;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .arcana-explore-trace-pending {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 0.75rem;
+    color: #9ca3af;
+    font-size: 0.8125rem;
+  }
+
+  /* Usage stats */
+
+  .arcana-explore-usage {
+    display: flex;
+    gap: 1.5rem;
+    padding: 0.75rem 1rem;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    margin-top: 0.75rem;
+    font-size: 0.8125rem;
+    color: #6b7280;
+  }
+
+  .arcana-explore-usage span {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    font-size: 0.75rem;
+  }
+
+  .arcana-explore-results {
+    margin-top: 1.5rem;
+  }
+
+  /* Full-text badge for document table */
+
+  .arcana-fulltext-badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    background: #f3e8ff;
+    color: #6b21a8;
+    border-radius: 9999px;
+    font-size: 0.6875rem;
+    font-weight: 500;
+  }
+
+  /* Store for exploration toggle */
+
+  .arcana-store-toggle {
+    margin-top: 0.5rem;
+  }
+
+  .arcana-store-toggle label {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.8125rem;
+    color: #374151;
+    cursor: pointer;
+  }
+
+  .arcana-store-toggle small {
+    font-size: 0.75rem;
+    color: #6b7280;
+    display: block;
+    margin-left: 1.25rem;
+  }
+
+  .arcana-store-toggle input {
+    accent-color: #7c3aed;
   }
   """
   @css_hash :crypto.hash(:md5, @css) |> Base.encode16(case: :lower) |> binary_part(0, 8)

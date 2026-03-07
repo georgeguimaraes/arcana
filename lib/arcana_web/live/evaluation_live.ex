@@ -29,15 +29,16 @@ defmodule ArcanaWeb.EvaluationLive do
   end
 
   @impl true
-  def handle_params(_params, _uri, socket) do
-    {:noreply, load_data(socket)}
+  def handle_params(params, _uri, socket) do
+    mode = parse_dashboard_mode(params["mode"])
+    {:noreply, socket |> assign(mode: mode) |> load_data()}
   end
 
   defp load_data(socket) do
     repo = socket.assigns.repo
 
     socket
-    |> assign(stats: load_stats(repo))
+    |> assign(stats: load_stats(repo, socket.assigns.mode))
     |> load_evaluation_data()
   end
 
@@ -193,7 +194,7 @@ defmodule ArcanaWeb.EvaluationLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:evaluation}>
+    <.dashboard_layout stats={@stats} current_tab={:evaluation} mode={@mode}>
       <div class="arcana-evaluation">
         <h2>Evaluation</h2>
         <p class="arcana-tab-description">

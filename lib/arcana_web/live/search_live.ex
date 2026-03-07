@@ -27,15 +27,16 @@ defmodule ArcanaWeb.SearchLive do
   end
 
   @impl true
-  def handle_params(_params, _uri, socket) do
-    {:noreply, load_data(socket)}
+  def handle_params(params, _uri, socket) do
+    mode = parse_dashboard_mode(params["mode"])
+    {:noreply, socket |> assign(mode: mode) |> load_data()}
   end
 
   defp load_data(socket) do
     repo = socket.assigns.repo
 
     socket
-    |> assign(stats: load_stats(repo))
+    |> assign(stats: load_stats(repo, socket.assigns.mode))
     |> assign(collections: load_collections(repo))
     |> assign(source_ids: load_source_ids(repo))
   end
@@ -114,7 +115,7 @@ defmodule ArcanaWeb.SearchLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:search}>
+    <.dashboard_layout stats={@stats} current_tab={:search} mode={@mode}>
       <div class="arcana-search">
         <%= if @viewing_document do %>
           <.search_document_detail viewing={@viewing_document} />

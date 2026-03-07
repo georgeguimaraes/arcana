@@ -21,8 +21,9 @@ defmodule ArcanaWeb.CollectionsLive do
   end
 
   @impl true
-  def handle_params(_params, _uri, socket) do
-    {:noreply, load_data(socket)}
+  def handle_params(params, _uri, socket) do
+    mode = parse_dashboard_mode(params["mode"])
+    {:noreply, socket |> assign(mode: mode) |> load_data()}
   end
 
   defp load_data(socket) do
@@ -30,7 +31,7 @@ defmodule ArcanaWeb.CollectionsLive do
     {collections, has_graph_data} = load_collections_with_stats(repo)
 
     socket
-    |> assign(stats: load_stats(repo))
+    |> assign(stats: load_stats(repo, socket.assigns.mode))
     |> assign(collections: collections)
     |> assign(show_graph_stats: has_graph_data)
   end
@@ -190,7 +191,7 @@ defmodule ArcanaWeb.CollectionsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:collections}>
+    <.dashboard_layout stats={@stats} current_tab={:collections} mode={@mode}>
       <div class="arcana-collections">
         <h2>Collections</h2>
         <p class="arcana-tab-description">

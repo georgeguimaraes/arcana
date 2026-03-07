@@ -23,7 +23,7 @@ defmodule ArcanaWeb.DashboardLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <script>window.location.href = window.location.pathname + "/documents";</script>
+    <script>window.location.href = window.location.pathname + "/documents" + window.location.search;</script>
     """
   end
 end

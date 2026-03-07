@@ -9,48 +9,64 @@ defmodule ArcanaWeb.DashboardComponents do
   """
   attr(:stats, :map, required: true)
   attr(:current_tab, :atom, required: true)
+  attr(:mode, :atom, default: :rag)
   slot(:inner_block, required: true)
 
   def dashboard_layout(assigns) do
+    assigns = assign(assigns, :tabs, tabs_for_mode(assigns.mode))
+
     ~H"""
     <link rel="stylesheet" href={"/arcana/css-#{ArcanaWeb.Assets.current_hash(:css)}"} />
-    <div class="arcana-dashboard">
+    <div class={"arcana-dashboard #{if @mode == :explore, do: "arcana-mode-explore"}"}>
       <div class="arcana-stats">
         <div class="arcana-brand">Arcana</div>
-        <div class="arcana-stat">
-          <div class="arcana-stat-value"><%= @stats.documents %></div>
-          <div class="arcana-stat-label">Documents</div>
-        </div>
-        <div class="arcana-stat">
-          <div class="arcana-stat-value"><%= @stats.chunks %></div>
-          <div class="arcana-stat-label">Chunks</div>
-        </div>
-        <%= if @stats[:entities] do %>
-          <div class="arcana-stat-divider"></div>
+        <%= if @mode == :explore do %>
           <div class="arcana-stat">
-            <div class="arcana-stat-value"><%= @stats.entities %></div>
-            <div class="arcana-stat-label">Entities</div>
+            <div class="arcana-stat-value"><%= @stats[:fulltext_documents] || 0 %></div>
+            <div class="arcana-stat-label">Full-text Docs</div>
           </div>
           <div class="arcana-stat">
-            <div class="arcana-stat-value"><%= @stats.relationships %></div>
-            <div class="arcana-stat-label">Relationships</div>
+            <div class="arcana-stat-value"><%= @stats[:collections] || 0 %></div>
+            <div class="arcana-stat-label">Collections</div>
+          </div>
+        <% else %>
+          <div class="arcana-stat">
+            <div class="arcana-stat-value"><%= @stats[:documents] || 0 %></div>
+            <div class="arcana-stat-label">Documents</div>
           </div>
           <div class="arcana-stat">
-            <div class="arcana-stat-value"><%= @stats.communities %></div>
-            <div class="arcana-stat-label">Communities</div>
+            <div class="arcana-stat-value"><%= @stats[:chunks] || 0 %></div>
+            <div class="arcana-stat-label">Chunks</div>
           </div>
+          <%= if @stats[:entities] do %>
+            <div class="arcana-stat-divider"></div>
+            <div class="arcana-stat">
+              <div class="arcana-stat-value"><%= @stats.entities %></div>
+              <div class="arcana-stat-label">Entities</div>
+            </div>
+            <div class="arcana-stat">
+              <div class="arcana-stat-value"><%= @stats.relationships %></div>
+              <div class="arcana-stat-label">Relationships</div>
+            </div>
+            <div class="arcana-stat">
+              <div class="arcana-stat-value"><%= @stats.communities %></div>
+              <div class="arcana-stat-label">Communities</div>
+            </div>
+          <% end %>
         <% end %>
       </div>
 
       <nav class="arcana-tabs">
-        <.nav_link href="/arcana/documents" active={@current_tab == :documents}>Documents</.nav_link>
-        <.nav_link href="/arcana/collections" active={@current_tab == :collections}>Collections</.nav_link>
-        <.nav_link href="/arcana/graph" active={@current_tab == :graph}>Graph</.nav_link>
-        <.nav_link href="/arcana/search" active={@current_tab == :search}>Search</.nav_link>
-        <.nav_link href="/arcana/ask" active={@current_tab == :ask}>Ask</.nav_link>
-        <.nav_link href="/arcana/evaluation" active={@current_tab == :evaluation}>Evaluation</.nav_link>
-        <.nav_link href="/arcana/maintenance" active={@current_tab == :maintenance}>Maintenance</.nav_link>
-        <.nav_link href="/arcana/info" active={@current_tab == :info}>Info</.nav_link>
+        <a href={tab_href(:documents, :rag)} class={"arcana-mode-tab #{if @mode == :rag, do: "active"}"}>RAG</a>
+        <a href={tab_href(:documents, :explore)} class={"arcana-mode-tab #{if @mode == :explore, do: "active"}"}>Recursive</a>
+        <div class="arcana-tab-divider"></div>
+        <%= for tab <- @tabs do %>
+          <.nav_link href={tab_href(tab, @mode)} active={@current_tab == tab}><%= tab_label(tab) %></.nav_link>
+        <% end %>
+        <div class="arcana-tab-spacer"></div>
+        <%= for tab <- [:maintenance, :info] do %>
+          <.nav_link href={tab_href(tab, @mode)} active={@current_tab == tab}><%= tab_label(tab) %></.nav_link>
+        <% end %>
       </nav>
 
       <div class="arcana-content">
@@ -71,6 +87,24 @@ defmodule ArcanaWeb.DashboardComponents do
     </a>
     """
   end
+
+  defp tabs_for_mode(:explore), do: [:documents, :collections, :explore]
+
+  defp tabs_for_mode(_),
+    do: [:documents, :collections, :graph, :search, :ask, :evaluation]
+
+  defp tab_href(tab, :explore), do: "/arcana/#{tab}?mode=explore"
+  defp tab_href(tab, _mode), do: "/arcana/#{tab}"
+
+  defp tab_label(:documents), do: "Documents"
+  defp tab_label(:collections), do: "Collections"
+  defp tab_label(:graph), do: "Graph"
+  defp tab_label(:search), do: "Search"
+  defp tab_label(:ask), do: "Ask"
+  defp tab_label(:explore), do: "Explore"
+  defp tab_label(:evaluation), do: "Evaluation"
+  defp tab_label(:maintenance), do: "Maintenance"
+  defp tab_label(:info), do: "Info"
 
   # Helper functions shared across dashboard pages
   def parse_int(nil, default), do: default
@@ -148,6 +182,27 @@ defmodule ArcanaWeb.DashboardComponents do
       base_stats
     end
   end
+
+  def load_stats(repo, :explore) do
+    import Ecto.Query
+
+    fulltext_count =
+      repo.one(
+        from(d in Arcana.Document,
+          where: d.chunk_count == 0 and d.status == :completed,
+          select: count(d.id)
+        )
+      ) || 0
+
+    collection_count = repo.aggregate(Arcana.Collection, :count)
+
+    %{fulltext_documents: fulltext_count, collections: collection_count}
+  end
+
+  def load_stats(repo, _mode), do: load_stats(repo)
+
+  def parse_dashboard_mode("explore"), do: :explore
+  def parse_dashboard_mode(_), do: :rag
 
   defp load_graph_stats(repo) do
     import Ecto.Query

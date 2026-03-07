@@ -80,7 +80,13 @@ defmodule Arcana.Telemetry.Logger do
     [:arcana, :graph, :ner, :stop],
     [:arcana, :graph, :relationship_extraction, :stop],
     [:arcana, :graph, :community_detection, :stop],
-    [:arcana, :graph, :community_summary, :stop]
+    [:arcana, :graph, :community_summary, :stop],
+    # Recursive (RLM) operations
+    [:arcana, :recursive, :explore, :stop],
+    [:arcana, :recursive, :session_init],
+    [:arcana, :recursive, :tool_call, :stop],
+    [:arcana, :recursive, :max_steps_reached],
+    [:arcana, :recursive, :parallel_sub_explore]
   ]
 
   @doc """
@@ -119,14 +125,25 @@ defmodule Arcana.Telemetry.Logger do
 
   @doc false
   def handle_event(event, measurements, metadata, config) do
-    duration = format_duration(measurements[:duration])
     event_name = format_event_name(event)
-    details = extract_details(event_name, metadata)
 
     message =
-      if details != "",
-        do: "[Arcana] #{event_name} completed in #{duration} #{details}",
-        else: "[Arcana] #{event_name} completed in #{duration}"
+      case measurements[:duration] do
+        nil ->
+          details = extract_details(event_name, metadata)
+
+          if details != "",
+            do: "[Arcana] #{event_name} #{details}",
+            else: "[Arcana] #{event_name}"
+
+        duration_ns ->
+          duration = format_duration(duration_ns)
+          details = extract_details(event_name, metadata)
+
+          if details != "",
+            do: "[Arcana] #{event_name} completed in #{duration} #{details}",
+            else: "[Arcana] #{event_name} completed in #{duration}"
+      end
 
     Logger.log(config.level, message)
   end
@@ -279,6 +296,54 @@ defmodule Arcana.Telemetry.Logger do
 
   defp extract_details("graph.community_summary", meta) do
     "(#{meta[:summary_length] || "?"} chars)"
+  end
+
+  # Recursive (RLM) operations
+
+  defp extract_details("recursive.explore", meta) do
+    steps = meta[:step_count] || "?"
+    tokens = (meta[:input_tokens] || 0) + (meta[:output_tokens] || 0)
+    "(#{steps} steps, #{tokens} tokens)"
+  end
+
+  defp extract_details("recursive.session_init", meta) do
+    docs = meta[:document_count] || "?"
+    lines = meta[:total_lines] || "?"
+    bytes = meta[:total_bytes] || 0
+
+    size =
+      cond do
+        is_integer(bytes) and bytes >= 1024 -> "#{div(bytes, 1024)}KB"
+        is_integer(bytes) -> "#{bytes}B"
+        true -> "?B"
+      end
+
+    "(#{docs} docs, #{lines} lines, #{size})"
+  end
+
+  defp extract_details("recursive.tool_call", meta) do
+    tool = meta[:tool] || "?"
+    step = meta[:step]
+    preview = meta[:result_preview] || ""
+
+    truncated =
+      if String.length(preview) > 60,
+        do: String.slice(preview, 0, 60) <> "...",
+        else: preview
+
+    step_prefix = if step, do: "step #{step}: ", else: ""
+    "#{step_prefix}#{tool} -> #{truncated}"
+  end
+
+  defp extract_details("recursive.max_steps_reached", meta) do
+    max = meta[:max_steps] || "?"
+    "(limit: #{max})"
+  end
+
+  defp extract_details("recursive.parallel_sub_explore", meta) do
+    count = meta[:count] || "?"
+    duration = meta[:duration_ms] || "?"
+    "(#{count} agents, #{duration}ms)"
   end
 
   defp extract_details(_event, _meta), do: ""

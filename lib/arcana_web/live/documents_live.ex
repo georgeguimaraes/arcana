@@ -32,20 +32,22 @@ defmodule ArcanaWeb.DocumentsLive do
   end
 
   @impl true
-  def handle_params(%{"doc" => doc_id}, _uri, socket) do
-    socket = load_data(socket)
+  def handle_params(%{"doc" => doc_id} = params, _uri, socket) do
+    mode = parse_dashboard_mode(params["mode"])
+    socket = socket |> assign(mode: mode) |> load_data()
     {:noreply, load_document_detail(socket, doc_id)}
   end
 
-  def handle_params(_params, _uri, socket) do
-    {:noreply, load_data(socket)}
+  def handle_params(params, _uri, socket) do
+    mode = parse_dashboard_mode(params["mode"])
+    {:noreply, socket |> assign(mode: mode) |> load_data()}
   end
 
   defp load_data(socket) do
     repo = socket.assigns.repo
 
     socket
-    |> assign(stats: load_stats(repo))
+    |> assign(stats: load_stats(repo, socket.assigns.mode))
     |> assign(collections: load_collections(repo))
     |> load_documents()
   end
@@ -61,6 +63,13 @@ defmodule ArcanaWeb.DocumentsLive do
         order_by: [desc: d.inserted_at],
         preload: [:collection]
       )
+
+    base_query =
+      if socket.assigns[:mode] == :explore do
+        from(d in base_query, where: d.chunk_count == 0 and d.status == :completed)
+      else
+        base_query
+      end
 
     filtered_query =
       if filter_collection do
@@ -133,31 +142,49 @@ defmodule ArcanaWeb.DocumentsLive do
   def handle_event("ingest", params, socket) do
     repo = socket.assigns.repo
     content = params["content"] || ""
-    format = parse_format(params["format"])
     collection = normalize_collection(params["collection"])
-    graph = params["graph"] == "true"
 
-    {:ok, _doc} =
-      Arcana.ingest(content, repo: repo, format: format, collection: collection, graph: graph)
+    if params["store_fulltext"] == "true" do
+      name = blank_to_nil(params["name"])
 
-    {:noreply, load_data(socket)}
+      {:ok, _doc} =
+        Arcana.Recursive.store(content, repo: repo, collection: collection, name: name)
+
+      {:noreply, load_data(socket)}
+    else
+      format = parse_format(params["format"])
+      graph = params["graph"] == "true"
+
+      {:ok, _doc} =
+        Arcana.ingest(content, repo: repo, format: format, collection: collection, graph: graph)
+
+      {:noreply, load_data(socket)}
+    end
   end
 
   def handle_event("upload_files", params, socket) do
     repo = socket.assigns.repo
     collection = normalize_collection(params["collection"])
+    store_fulltext = params["store_fulltext"] == "true"
     graph = params["graph"] == "true"
 
     uploaded_files =
       consume_uploaded_entries(socket, :files, fn %{path: path}, entry ->
         dest = Path.join(System.tmp_dir!(), "arcana_#{entry.uuid}_#{entry.client_name}")
         File.cp!(path, dest)
-        {:ok, dest}
+        {:ok, {dest, entry.client_name}}
       end)
 
     results =
-      Enum.map(uploaded_files, fn path ->
-        result = Arcana.ingest_file(path, repo: repo, collection: collection, graph: graph)
+      Enum.map(uploaded_files, fn {path, name} ->
+        result =
+          if store_fulltext do
+            content = File.read!(path)
+            Arcana.Recursive.store(content, repo: repo, collection: collection, name: name)
+          else
+            Arcana.ingest_file(path, repo: repo, collection: collection, graph: graph)
+          end
+
         File.rm(path)
         result
       end)
@@ -239,7 +266,7 @@ defmodule ArcanaWeb.DocumentsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:documents}>
+    <.dashboard_layout stats={@stats} current_tab={:documents} mode={@mode}>
       <div class="arcana-documents">
         <%= if @viewing_document do %>
           <.document_detail
@@ -248,6 +275,9 @@ defmodule ArcanaWeb.DocumentsLive do
             graph_indexing={@graph_indexing}
           />
         <% else %>
+          <%= if @mode == :explore do %>
+            <.explore_documents_list {assigns} />
+          <% else %>
           <h2>Documents</h2>
           <p class="arcana-tab-description">
             Upload, view, and manage documents in your knowledge base.
@@ -297,6 +327,13 @@ defmodule ArcanaWeb.DocumentsLive do
                       </label>
                     </label>
                   </div>
+                  <div class="arcana-store-toggle">
+                    <label>
+                      <input type="checkbox" name="store_fulltext" value="true" />
+                      Store for Exploration (no chunking)
+                    </label>
+                    <small>Full text storage for LLM-driven exploration</small>
+                  </div>
                 </div>
                 <button type="submit" class="arcana-upload-btn">Upload Files</button>
               <% end %>
@@ -333,6 +370,13 @@ defmodule ArcanaWeb.DocumentsLive do
                     <span>Extract entities and relationships</span>
                   </label>
                 </label>
+              </div>
+              <div class="arcana-store-toggle">
+                <label>
+                  <input type="checkbox" name="store_fulltext" value="true" />
+                  Store for Exploration (no chunking)
+                </label>
+                <small>Full text storage for LLM-driven exploration</small>
               </div>
             </div>
             <button type="submit">Ingest</button>
@@ -385,7 +429,13 @@ defmodule ArcanaWeb.DocumentsLive do
                     <td><%= String.slice(doc.content || "", 0, 100) %>...</td>
                     <td><%= if doc.collection, do: doc.collection.name, else: "-" %></td>
                     <td><%= doc.source_id || "-" %></td>
-                    <td><%= doc.chunk_count %></td>
+                    <td>
+                      <%= if doc.chunk_count == 0 and doc.status == :completed do %>
+                        <span class="arcana-fulltext-badge">full text</span>
+                      <% else %>
+                        <%= doc.chunk_count %>
+                      <% end %>
+                    </td>
                     <td><%= doc.inserted_at %></td>
                     <td class="arcana-actions-cell">
                       <button
@@ -435,9 +485,177 @@ defmodule ArcanaWeb.DocumentsLive do
               </div>
             <% end %>
           <% end %>
+          <% end %>
         <% end %>
       </div>
     </.dashboard_layout>
+    """
+  end
+
+  defp explore_documents_list(assigns) do
+    ~H"""
+    <h2>Documents</h2>
+    <p class="arcana-tab-description">
+      Store full documents for LLM-driven exploration. No chunking or embedding.
+    </p>
+
+    <div class="arcana-upload-section">
+      <form id="upload-form" phx-submit="upload_files" phx-change="validate_upload">
+        <input type="hidden" name="store_fulltext" value="true" />
+        <div class="arcana-dropzone" phx-drop-target={@uploads.files.ref}>
+          <.live_file_input upload={@uploads.files} class="arcana-file-input" />
+          <p>Drag & drop files here or click to browse</p>
+          <p class="arcana-upload-hint">Supported: .txt, .md, .pdf (max 10MB each)</p>
+        </div>
+
+        <%= if @upload_error do %>
+          <p class="arcana-upload-error"><%= @upload_error %></p>
+        <% end %>
+
+        <%= for entry <- @uploads.files.entries do %>
+          <div class="arcana-upload-entry">
+            <span><%= entry.client_name %></span>
+            <progress value={entry.progress} max="100"><%= entry.progress %>%</progress>
+            <button type="button" phx-click="cancel_upload" phx-value-ref={entry.ref}>&times;</button>
+            <%= for err <- upload_errors(@uploads.files, entry) do %>
+              <span class="arcana-upload-error"><%= error_to_string(err) %></span>
+            <% end %>
+          </div>
+        <% end %>
+
+        <%= if length(@uploads.files.entries) > 0 do %>
+          <div class="arcana-ingest-options">
+            <label>
+              Collection
+              <select name="collection">
+                <option value="">default</option>
+                <%= for collection <- @collections do %>
+                  <option value={collection.name}><%= collection.name %></option>
+                <% end %>
+              </select>
+            </label>
+          </div>
+          <button type="submit" class="arcana-upload-btn">Upload Files</button>
+        <% end %>
+      </form>
+    </div>
+
+    <div class="arcana-divider">or paste text directly</div>
+
+    <form id="ingest-form" phx-submit="ingest" class="arcana-ingest-form">
+      <input type="hidden" name="store_fulltext" value="true" />
+      <textarea name="content" placeholder="Paste text to store..." rows="4"></textarea>
+      <div class="arcana-ingest-options">
+        <label>
+          Name (optional)
+          <input type="text" name="name" placeholder="document name" style="width: 200px; padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem;" />
+        </label>
+        <label>
+          Collection
+          <select name="collection">
+            <option value="">default</option>
+            <%= for collection <- @collections do %>
+              <option value={collection.name}><%= collection.name %></option>
+            <% end %>
+          </select>
+        </label>
+      </div>
+      <button type="submit">Store</button>
+    </form>
+
+    <%= if not Enum.empty?(@collections) do %>
+      <div class="arcana-filter-bar">
+        <span class="arcana-filter-label">Filter by collection:</span>
+        <%= for collection <- @collections do %>
+          <button
+            id={"filter-collection-#{collection.name}"}
+            class={"arcana-filter-btn #{if @filter_collection == collection.name, do: "active", else: ""}"}
+            phx-click="filter_by_collection"
+            phx-value-collection={collection.name}
+          >
+            <%= collection.name %>
+          </button>
+        <% end %>
+        <%= if @filter_collection do %>
+          <button
+            id="clear-collection-filter"
+            class="arcana-filter-btn arcana-filter-clear"
+            phx-click="clear_collection_filter"
+          >
+            ✕ Clear
+          </button>
+        <% end %>
+      </div>
+    <% end %>
+
+    <%= if Enum.empty?(@documents) do %>
+      <p class="arcana-empty">No documents yet. Upload files or paste text above.</p>
+    <% else %>
+      <table class="arcana-documents-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Content</th>
+            <th>Collection</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <%= for doc <- @documents do %>
+            <tr>
+              <td><%= doc.file_path || doc.id %></td>
+              <td><%= String.slice(doc.content || "", 0, 120) %>...</td>
+              <td><%= if doc.collection, do: doc.collection.name, else: "-" %></td>
+              <td><%= doc.inserted_at %></td>
+              <td class="arcana-actions-cell">
+                <button
+                  data-view-doc={doc.id}
+                  class="arcana-icon-btn"
+                  phx-click="view_document"
+                  phx-value-id={doc.id}
+                  title="View document"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+                <button
+                  data-delete-doc={doc.id}
+                  class="arcana-delete-btn"
+                  phx-click="delete"
+                  phx-value-id={doc.id}
+                  title="Delete document"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                  </svg>
+                </button>
+              </td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+
+      <%= if @total_pages > 1 do %>
+        <div class="arcana-pagination">
+          <%= for page <- 1..@total_pages do %>
+            <button
+              data-page={page}
+              class={"arcana-page-btn #{if page == @page, do: "active", else: ""}"}
+              phx-click="change_page"
+              phx-value-page={page}
+            >
+              <%= page %>
+            </button>
+          <% end %>
+        </div>
+      <% end %>
+    <% end %>
     """
   end
 

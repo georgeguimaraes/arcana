@@ -57,6 +57,8 @@ defmodule ArcanaWeb.GraphLive do
 
   @impl true
   def handle_params(params, _uri, socket) do
+    mode = parse_dashboard_mode(params["mode"])
+
     subtab =
       case params["tab"] do
         "relationships" -> :relationships
@@ -68,7 +70,7 @@ defmodule ArcanaWeb.GraphLive do
 
     {:noreply,
      socket
-     |> assign(current_subtab: subtab, selected_collection: selected_collection)
+     |> assign(mode: mode, current_subtab: subtab, selected_collection: selected_collection)
      |> load_data()}
   end
 
@@ -76,7 +78,7 @@ defmodule ArcanaWeb.GraphLive do
     repo = socket.assigns.repo
 
     socket
-    |> assign(stats: load_stats(repo))
+    |> assign(stats: load_stats(repo, socket.assigns.mode))
     |> load_collections_with_graph_status()
     |> load_subtab_data()
   end
@@ -532,7 +534,7 @@ defmodule ArcanaWeb.GraphLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:graph}>
+    <.dashboard_layout stats={@stats} current_tab={:graph} mode={@mode}>
       <div class="arcana-graph">
         <h2>Graph</h2>
         <p class="arcana-tab-description">

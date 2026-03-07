@@ -35,8 +35,9 @@ defmodule ArcanaWeb.MaintenanceLive do
   end
 
   @impl true
-  def handle_params(_params, _uri, socket) do
-    {:noreply, load_data(socket)}
+  def handle_params(params, _uri, socket) do
+    mode = parse_dashboard_mode(params["mode"])
+    {:noreply, socket |> assign(mode: mode) |> load_data()}
   end
 
   defp load_data(socket) do
@@ -44,7 +45,7 @@ defmodule ArcanaWeb.MaintenanceLive do
     collections = fetch_collections(repo)
 
     socket
-    |> assign(stats: load_stats(repo))
+    |> assign(stats: load_stats(repo, socket.assigns.mode))
     |> assign(collections: Enum.map(collections, & &1.name))
     |> assign(collections_for_assign: collections)
     |> assign(orphaned_stats: count_orphaned_graph_data(repo))
@@ -329,7 +330,7 @@ defmodule ArcanaWeb.MaintenanceLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:maintenance}>
+    <.dashboard_layout stats={@stats} current_tab={:maintenance} mode={@mode}>
       <div class="arcana-maintenance">
         <h2>Maintenance</h2>
         <p class="arcana-tab-description">
