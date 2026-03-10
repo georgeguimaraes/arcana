@@ -494,7 +494,8 @@ defmodule Arcana.Graph.GraphStore.Ecto do
           name: entity.name,
           type: entity.type,
           description: entity[:description],
-          collection_id: collection_id
+          collection_id: collection_id,
+          metadata: entity[:metadata]
         })
         |> repo.insert!()
 
