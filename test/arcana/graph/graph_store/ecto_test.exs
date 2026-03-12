@@ -94,6 +94,24 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
 
       assert id_map["Alice"] == existing.id
     end
+
+    test "inserts entity with metadata" do
+      collection = create_collection()
+
+      entities = [
+        %{
+          name: "Alice",
+          type: "person",
+          metadata: %{"age" => 30, "city" => "New York"}
+        }
+      ]
+
+      {:ok, id_map} = EctoStore.persist_entities(collection.id, entities, repo: Repo)
+      alice_id = id_map["Alice"]
+
+      alice = Repo.get(Entity, alice_id)
+      assert alice.metadata == %{"age" => 30, "city" => "New York"}
+    end
   end
 
   describe "persist_relationships/3" do
