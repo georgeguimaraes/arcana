@@ -15,7 +15,8 @@ defmodule Arcana.Recursive.Workspace do
   @type document :: %{
           name: String.t(),
           text: String.t(),
-          line_count: non_neg_integer()
+          line_count: non_neg_integer(),
+          id: String.t() | nil
         }
 
   @type t :: %__MODULE__{
@@ -42,8 +43,11 @@ defmodule Arcana.Recursive.Workspace do
 
   def from_content(docs) when is_list(docs) do
     documents =
-      Map.new(docs, fn %{name: name, text: text} ->
-        {name, build_document(name, text)}
+      Map.new(docs, fn doc ->
+        name = doc.name
+        built = build_document(name, doc.text)
+        built = if doc[:id], do: Map.put(built, :id, doc.id), else: built
+        {name, built}
       end)
 
     %__MODULE__{documents: documents}
@@ -140,6 +144,12 @@ defmodule Arcana.Recursive.Workspace do
       |> Map.new()
 
     %__MODULE__{documents: filtered}
+  end
+
+  @doc "Returns a map of document name → document ID for documents that have IDs."
+  @spec doc_ids(t()) :: %{String.t() => String.t()}
+  def doc_ids(%__MODULE__{documents: docs}) do
+    for {name, doc} <- docs, doc[:id], into: %{}, do: {name, doc.id}
   end
 
   @doc "Returns the number of documents in the workspace."

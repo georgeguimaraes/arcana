@@ -2562,6 +2562,15 @@ defmodule ArcanaWeb.Assets do
     white-space: nowrap;
   }
 
+  .arcana-explore-doc-link {
+    color: #2563eb;
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .arcana-explore-doc-link:hover {
+    text-decoration: underline;
+  }
+
   .arcana-explore-duration {
     font-size: 0.75rem;
     color: #6b7280;
@@ -2608,6 +2617,49 @@ defmodule ArcanaWeb.Assets do
     padding: 0.625rem 0.75rem;
     color: #9ca3af;
     font-size: 0.8125rem;
+  }
+
+  /* Depth tree indentation */
+  .arcana-explore-trace-entry.depth-1 { border-left: 3px solid #c084fc; }
+  .arcana-explore-trace-entry.depth-2 { border-left: 3px solid #818cf8; }
+  .arcana-explore-trace-entry.depth-3 { border-left: 3px solid #fb923c; }
+
+  .arcana-explore-depth-badge {
+    font-size: 0.625rem;
+    font-weight: 700;
+    padding: 0.0625rem 0.3rem;
+    border-radius: 0.25rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    white-space: nowrap;
+  }
+
+  .arcana-explore-depth-badge.depth-1 {
+    background: #f3e8ff;
+    color: #7c3aed;
+  }
+
+  .arcana-explore-depth-badge.depth-2 {
+    background: #e0e7ff;
+    color: #4338ca;
+  }
+
+  .arcana-explore-depth-badge.depth-3 {
+    background: #ffedd5;
+    color: #c2410c;
+  }
+
+  .arcana-explore-collapse-toggle {
+    font-size: 0.6875rem;
+    color: #7c3aed;
+    cursor: pointer;
+    white-space: nowrap;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    transition: background-color 0.15s ease;
+  }
+
+  .arcana-explore-collapse-toggle:hover {
+    background: #f3e8ff;
   }
 
   /* Usage stats */

@@ -116,6 +116,7 @@ defmodule Arcana.Recursive do
         document_count: Workspace.document_count(session.workspace),
         total_lines: Workspace.total_lines(session.workspace),
         total_bytes: Workspace.total_bytes(session.workspace),
+        doc_ids: Workspace.doc_ids(session.workspace),
         depth: session.depth
       })
 
@@ -175,7 +176,9 @@ defmodule Arcana.Recursive do
       llm_opts: llm_opts,
       tools: tools,
       workspace: workspace,
-      on_tool_call: opts[:on_tool_call]
+      on_tool_call: opts[:on_tool_call],
+      on_trace_entry: opts[:on_trace_entry],
+      session_id: Keyword.get(opts, :session_id, "root")
     }
   end
 
@@ -203,12 +206,13 @@ defmodule Arcana.Recursive do
         join: c in Arcana.Collection,
         on: d.collection_id == c.id,
         where: c.name in ^collection_names and d.status == :completed,
-        select: %{name: d.file_path, text: d.content, id: d.id}
+        select: %{name: d.file_path, text: d.content, id: d.id, metadata: d.metadata}
       )
       |> repo.all()
       |> Enum.map(fn doc ->
-        name = doc.name || doc.id
-        %{name: name, text: doc.text}
+        title = get_in(doc.metadata || %{}, ["title"])
+        name = doc.name || title || doc.id
+        %{name: name, text: doc.text, id: doc.id}
       end)
 
     Workspace.from_content(documents)
@@ -320,14 +324,13 @@ defmodule Arcana.Recursive do
     ## Strategy
     1. Start with grep to find relevant sections across all documents
     2. Use read_section to examine promising areas in full context
-    3. Grep with different patterns to explore different aspects
-    4. For complex multi-document analysis, use sub_explore to delegate subtasks
-    5. When you have enough evidence, respond with your answer directly (no tool call needed)
+    3. Grep with different patterns to explore different aspects#{if has_sub_explore, do: "\n    4. When analyzing multiple documents, prefer sub_explore to delegate focused analysis of each document to a sub-agent. This is faster and more thorough than reading everything yourself.\n    5. Use sub_explore liberally: one sub-agent per document or per subtopic. You can dispatch multiple sub_explores in a single response and they will run in parallel.", else: ""}
+    #{if has_sub_explore, do: "6", else: "4"}. When you have enough evidence, respond with your answer directly (no tool call needed)
 
     ## Important
     - Documents are NOT in your context window. You must use grep and read_section to access their content.
     - grep is case insensitive and supports regex.
-    - Be specific with read_section ranges to avoid reading entire documents unnecessarily.
+    - Be specific with read_section ranges to avoid reading entire documents unnecessarily.#{if has_sub_explore, do: "\n    - Prefer sub_explore over manual grep+read_section when you need to analyze a document in depth.", else: ""}
     - When ready, just respond with your answer as plain text. Don't over-search.
 
     ## Current Workspace
@@ -376,6 +379,12 @@ defmodule Arcana.Recursive do
   defp execute_sub_explores_parallel(session, sub_explore_calls) do
     start_time = System.monotonic_time(:millisecond)
 
+    # Pre-generate child session IDs so parent trace entries can reference them
+    calls_with_ids =
+      Enum.map(sub_explore_calls, fn call ->
+        {call, generate_session_id()}
+      end)
+
     # Run each sub_explore in a supervised task. We only need the pure
     # result (answer text + usage) since sub_explores don't mutate the
     # parent workspace. Session state (trace, context) is merged back
@@ -383,10 +392,10 @@ defmodule Arcana.Recursive do
     results =
       Arcana.TaskSupervisor
       |> Task.Supervisor.async_stream_nolink(
-        sub_explore_calls,
-        fn %{arguments: args} ->
+        calls_with_ids,
+        fn {%{arguments: args}, child_session_id} ->
           task_start = System.monotonic_time(:millisecond)
-          result = run_sub_explore_task(session, args)
+          result = run_sub_explore_task(session, args, child_session_id)
           task_duration = System.monotonic_time(:millisecond) - task_start
           {result, task_duration}
         end,
@@ -394,7 +403,7 @@ defmodule Arcana.Recursive do
         timeout: :timer.minutes(5),
         ordered: true
       )
-      |> Enum.zip(sub_explore_calls)
+      |> Enum.zip(calls_with_ids)
 
     duration_ms = System.monotonic_time(:millisecond) - start_time
 
@@ -405,7 +414,7 @@ defmodule Arcana.Recursive do
     })
 
     # Merge results back into session sequentially
-    Enum.reduce(results, session, fn {task_result, tool_call}, acc ->
+    Enum.reduce(results, session, fn {task_result, {tool_call, child_session_id}}, acc ->
       %{id: call_id, name: name, arguments: args} = tool_call
 
       {result_text, sub_usage, task_duration_ms} =
@@ -429,13 +438,21 @@ defmodule Arcana.Recursive do
 
       acc = %{acc | usage: updated_usage}
 
+      # Include child_session_id in args so the trace entry links parent → child
+      args_with_child = Map.put(args, "child_session_id", child_session_id)
+
       acc =
         acc
-        |> Session.record_tool_call(name, args, truncate(result_text, 200), task_duration_ms)
+        |> Session.record_tool_call(
+          name,
+          args_with_child,
+          truncate(result_text, 200),
+          task_duration_ms
+        )
         |> Session.increment_step()
 
       if acc.on_tool_call do
-        acc.on_tool_call.(name, args, truncate(result_text, 200))
+        acc.on_tool_call.(name, args_with_child, truncate(result_text, 200))
       end
 
       tool_result_msg = ReqLLM.Context.tool_result(call_id, name, result_text)
@@ -446,7 +463,7 @@ defmodule Arcana.Recursive do
 
   # Pure function that runs a sub_explore and returns the result without
   # mutating any session state. Safe to call from a Task.
-  defp run_sub_explore_task(session, args) do
+  defp run_sub_explore_task(session, args, child_session_id) do
     task = Map.get(args, "task", "")
     documents = Map.get(args, "documents", [])
 
@@ -454,6 +471,7 @@ defmodule Arcana.Recursive do
       {:error, "maximum recursion depth (#{session.max_depth}) reached"}
     else
       sub_workspace = Workspace.subset(session.workspace, documents)
+      sid = child_session_id || generate_session_id()
 
       sub_opts =
         [
@@ -464,7 +482,9 @@ defmodule Arcana.Recursive do
           max_depth: session.max_depth,
           depth: session.depth + 1,
           workspace: sub_workspace,
-          on_tool_call: session.on_tool_call
+          on_tool_call: session.on_tool_call,
+          on_trace_entry: session.on_trace_entry,
+          session_id: sid
         ] ++ session.llm_opts
 
       case explore(task, sub_opts) do
@@ -474,6 +494,10 @@ defmodule Arcana.Recursive do
     end
   end
 
+  defp generate_session_id do
+    Uniq.UUID.uuid7() |> String.slice(0, 8)
+  end
+
   defp execute_tool(session, %{name: name, arguments: args, id: call_id}) do
     start_time = System.monotonic_time(:millisecond)
 
@@ -481,17 +505,17 @@ defmodule Arcana.Recursive do
       [:arcana, :recursive, :tool_call],
       %{tool: name, step: session.step_count, depth: session.depth},
       fn ->
-        {result_text, updated_session} = do_execute_tool(session, name, args)
+        {result_text, updated_session, trace_args} = do_execute_tool(session, name, args)
 
         duration_ms = System.monotonic_time(:millisecond) - start_time
 
         updated_session =
           updated_session
-          |> Session.record_tool_call(name, args, truncate(result_text, 200), duration_ms)
+          |> Session.record_tool_call(name, trace_args, truncate(result_text, 200), duration_ms)
           |> Session.increment_step()
 
         if updated_session.on_tool_call do
-          updated_session.on_tool_call.(name, args, truncate(result_text, 200))
+          updated_session.on_tool_call.(name, trace_args, truncate(result_text, 200))
         end
 
         tool_result_msg = ReqLLM.Context.tool_result(call_id, name, result_text)
@@ -501,7 +525,7 @@ defmodule Arcana.Recursive do
         {final_session,
          %{
            tool: name,
-           args: args,
+           args: trace_args,
            result_preview: truncate(result_text, 200),
            duration_ms: duration_ms,
            step: session.step_count
@@ -515,7 +539,7 @@ defmodule Arcana.Recursive do
 
     case Workspace.grep(session.workspace, pattern) do
       {:ok, []} ->
-        {"No matches found for pattern: #{pattern}", session}
+        {"No matches found for pattern: #{pattern}", session, args}
 
       {:ok, matches} ->
         result_text =
@@ -523,10 +547,10 @@ defmodule Arcana.Recursive do
             "  #{m.document}:#{m.line_number}  #{m.line}"
           end)
 
-        {"Found #{length(matches)} matches:\n#{result_text}", session}
+        {"Found #{length(matches)} matches:\n#{result_text}", session, args}
 
       {:error, reason} ->
-        {"Error: invalid regex pattern '#{pattern}': #{inspect(reason)}", session}
+        {"Error: invalid regex pattern '#{pattern}': #{inspect(reason)}", session, args}
     end
   end
 
@@ -545,42 +569,45 @@ defmodule Arcana.Recursive do
 
     case Workspace.read_section(session.workspace, doc_name, range) do
       {:ok, text} ->
-        {text, session}
+        {text, session, args}
 
       {:error, :not_found} ->
         doc_names = session.workspace.documents |> Map.keys() |> Enum.join(", ")
-        {"Error: document '#{doc_name}' not found. Available: #{doc_names}", session}
+        {"Error: document '#{doc_name}' not found. Available: #{doc_names}", session, args}
     end
   end
 
   defp do_execute_tool(session, "sub_explore", args) do
-    case run_sub_explore_task(session, args) do
+    child_session_id = generate_session_id()
+    args_with_child = Map.put(args, "child_session_id", child_session_id)
+
+    case run_sub_explore_task(session, args, child_session_id) do
       {:ok, answer, sub_usage} ->
         updated_usage = %{
           input_tokens: session.usage.input_tokens + sub_usage.input_tokens,
           output_tokens: session.usage.output_tokens + sub_usage.output_tokens
         }
 
-        {answer, %{session | usage: updated_usage}}
+        {answer, %{session | usage: updated_usage}, args_with_child}
 
       {:error, reason} ->
-        {"Sub-exploration failed: #{inspect(reason)}", session}
+        {"Sub-exploration failed: #{inspect(reason)}", session, args_with_child}
     end
   end
 
   defp do_execute_tool(session, unknown_tool, args) do
     case Enum.find(session.tools, &(&1.name == unknown_tool)) do
       nil ->
-        {"Error: unknown tool '#{unknown_tool}'", session}
+        {"Error: unknown tool '#{unknown_tool}'", session, args}
 
       tool ->
         case ReqLLM.Tool.execute(tool, args) do
           {:ok, result} ->
             result_text = if is_binary(result), do: result, else: JSON.encode!(result)
-            {result_text, session}
+            {result_text, session, args}
 
           {:error, reason} ->
-            {"Error executing #{unknown_tool}: #{inspect(reason)}", session}
+            {"Error executing #{unknown_tool}: #{inspect(reason)}", session, args}
         end
     end
   end

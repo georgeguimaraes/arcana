@@ -29,7 +29,9 @@ defmodule Arcana.Recursive.Session do
     max_depth: 3,
     collections: ["default"],
     llm_opts: [],
-    on_tool_call: nil
+    on_tool_call: nil,
+    on_trace_entry: nil,
+    session_id: "root"
   ]
 
   @type t :: %__MODULE__{
@@ -49,7 +51,9 @@ defmodule Arcana.Recursive.Session do
           max_depth: pos_integer(),
           collections: [String.t()],
           llm_opts: keyword(),
-          on_tool_call: (String.t(), map(), term() -> :ok) | nil
+          on_tool_call: (String.t(), map(), term() -> :ok) | nil,
+          on_trace_entry: (map() -> :ok) | nil,
+          session_id: String.t()
         }
 
   @doc "Adds a tool call entry to the trace."
@@ -61,8 +65,11 @@ defmodule Arcana.Recursive.Session do
       args: args,
       result_preview: result_preview,
       duration_ms: duration_ms,
-      depth: session.depth
+      depth: session.depth,
+      session_id: session.session_id
     }
+
+    if session.on_trace_entry, do: session.on_trace_entry.(entry)
 
     %{session | trace: session.trace ++ [entry]}
   end

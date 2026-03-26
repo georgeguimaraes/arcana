@@ -21,6 +21,8 @@ defmodule ArcanaWeb.ExploreLive do
        max_steps: Arcana.Recursive.Session.default_max_steps(),
        selected_collections: [],
        expanded_trace_steps: MapSet.new(),
+       collapsed_sessions: MapSet.new(),
+       doc_ids: %{},
        stats: nil,
        collections: []
      )}
@@ -67,6 +69,7 @@ defmodule ArcanaWeb.ExploreLive do
             explore_trace: [],
             explore_session_info: nil,
             expanded_trace_steps: MapSet.new(),
+            collapsed_sessions: MapSet.new(),
             max_steps: max_steps,
             selected_collections: selected
           )
@@ -84,7 +87,8 @@ defmodule ArcanaWeb.ExploreLive do
        explore_question: "",
        explore_trace: [],
        explore_session_info: nil,
-       expanded_trace_steps: MapSet.new()
+       expanded_trace_steps: MapSet.new(),
+       collapsed_sessions: MapSet.new()
      )}
   end
 
@@ -103,6 +107,17 @@ defmodule ArcanaWeb.ExploreLive do
         else: MapSet.put(expanded, step)
 
     {:noreply, assign(socket, expanded_trace_steps: expanded)}
+  end
+
+  def handle_event("toggle_session", %{"session-id" => session_id}, socket) do
+    collapsed = socket.assigns.collapsed_sessions
+
+    collapsed =
+      if MapSet.member?(collapsed, session_id),
+        do: MapSet.delete(collapsed, session_id),
+        else: MapSet.put(collapsed, session_id)
+
+    {:noreply, assign(socket, collapsed_sessions: collapsed)}
   end
 
   # --- Task + Progress ---
@@ -134,11 +149,8 @@ defmodule ArcanaWeb.ExploreLive do
           repo: repo,
           collections: collections,
           max_steps: max_steps,
-          on_tool_call: fn name, args, result_preview ->
-            send(
-              parent,
-              {:explore_tool_call, %{tool: name, args: args, result_preview: result_preview}}
-            )
+          on_trace_entry: fn entry ->
+            send(parent, {:explore_trace_entry, entry})
           end
         )
 
@@ -149,20 +161,22 @@ defmodule ArcanaWeb.ExploreLive do
 
   @impl true
   def handle_info({:explore_session_init, metadata}, socket) do
-    {:noreply, assign(socket, explore_session_info: metadata)}
+    doc_ids = metadata[:doc_ids] || %{}
+    {:noreply, assign(socket, explore_session_info: metadata, doc_ids: doc_ids)}
   end
 
-  def handle_info({:explore_tool_call, entry}, socket) do
+  def handle_info({:explore_trace_entry, entry}, socket) do
     trace = socket.assigns.explore_trace ++ [entry]
     {:noreply, assign(socket, explore_trace: trace)}
   end
 
   def handle_info({:explore_complete, {:ok, result}}, socket) do
+    # Keep the streamed trace (has child entries from sub_explores).
+    # Only pull answer, usage, step_count from result.
     {:noreply,
      assign(socket,
        explore_running: false,
-       explore_result: result,
-       explore_trace: result.trace
+       explore_result: result
      )}
   end
 
@@ -268,26 +282,48 @@ defmodule ArcanaWeb.ExploreLive do
               <% end %>
 
               <%= for {entry, idx} <- Enum.with_index(@explore_trace) do %>
-                <div class="arcana-explore-trace-entry" phx-click="toggle_trace_step" phx-value-step={idx}>
-                  <div class="arcana-explore-trace-header">
-                    <span class="arcana-explore-step-num"><%= idx + 1 %></span>
-                    <span class={"arcana-explore-tool-badge #{entry.tool}"}><%= entry.tool %></span>
-                    <span class="arcana-explore-tool-args"><%= format_args(entry.tool, entry.args || entry[:arguments]) %></span>
-                    <%= if entry[:duration_ms] do %>
-                      <span class="arcana-explore-duration"><%= entry.duration_ms %>ms</span>
-                    <% end %>
-                    <span class="arcana-explore-toggle"><%= if MapSet.member?(@expanded_trace_steps, idx), do: "▼", else: "▶" %></span>
-                  </div>
+                <% depth = entry[:depth] || 0 %>
+                <% session_id = entry[:session_id] %>
+                <% is_collapsed_child = session_id && session_id != "root" && MapSet.member?(@collapsed_sessions, session_id) %>
+                <% child_session_id = get_in(entry, [:args, "child_session_id"]) %>
 
-                  <%= if MapSet.member?(@expanded_trace_steps, idx) do %>
-                    <div class="arcana-explore-trace-detail">
-                      <strong>Args</strong>
-                      <pre><%= format_args_full(entry.args || entry[:arguments]) %></pre>
-                      <strong>Result</strong>
-                      <pre><%= entry.result_preview || entry[:result] || "" %></pre>
+                <%= unless is_collapsed_child do %>
+                  <div
+                    class={"arcana-explore-trace-entry #{if depth > 0, do: "depth-#{min(depth, 3)}", else: ""}"}
+                    style={"padding-left: #{depth * 1.5}rem"}
+                  >
+                    <div class="arcana-explore-trace-header" phx-click="toggle_trace_step" phx-value-step={idx}>
+                      <span class="arcana-explore-step-num"><%= idx + 1 %></span>
+                      <%= if depth > 0 do %>
+                        <span class={"arcana-explore-depth-badge depth-#{min(depth, 3)}"}>D<%= depth %></span>
+                      <% end %>
+                      <span class={"arcana-explore-tool-badge #{entry.tool}"}><%= entry.tool %></span>
+                      <span class="arcana-explore-tool-args"><%= Phoenix.HTML.raw(format_args(entry.tool, entry[:args] || entry[:arguments], @doc_ids, @mode)) %></span>
+                      <%= if entry[:duration_ms] do %>
+                        <span class="arcana-explore-duration"><%= entry.duration_ms %>ms</span>
+                      <% end %>
+                      <%= if child_session_id do %>
+                        <span
+                          class="arcana-explore-collapse-toggle"
+                          phx-click="toggle_session"
+                          phx-value-session-id={child_session_id}
+                        >
+                          <%= if MapSet.member?(@collapsed_sessions, child_session_id), do: "▶ show", else: "▼ hide" %>
+                        </span>
+                      <% end %>
+                      <span class="arcana-explore-toggle"><%= if MapSet.member?(@expanded_trace_steps, idx), do: "▼", else: "▶" %></span>
                     </div>
-                  <% end %>
-                </div>
+
+                    <%= if MapSet.member?(@expanded_trace_steps, idx) do %>
+                      <div class="arcana-explore-trace-detail">
+                        <strong>Args</strong>
+                        <pre><%= format_args_full(entry[:args] || entry[:arguments]) %></pre>
+                        <strong>Result</strong>
+                        <pre><%= entry[:result_preview] || entry[:result] || "" %></pre>
+                      </div>
+                    <% end %>
+                  </div>
+                <% end %>
               <% end %>
 
               <%= if @explore_running and @explore_trace != [] do %>
@@ -323,14 +359,15 @@ defmodule ArcanaWeb.ExploreLive do
 
   # --- Helpers ---
 
-  defp format_args("grep", args) when is_map(args) do
-    "pattern: \"#{Map.get(args, "pattern", "")}\""
+  defp format_args("grep", args, _doc_ids, _mode) when is_map(args) do
+    pattern = Map.get(args, "pattern") || Map.get(args, :pattern, "")
+    "pattern: \"#{esc(pattern)}\""
   end
 
-  defp format_args("read_section", args) when is_map(args) do
-    doc = Map.get(args, "document", "?")
-    s = Map.get(args, "start_line")
-    e = Map.get(args, "end_line")
+  defp format_args("read_section", args, doc_ids, mode) when is_map(args) do
+    doc = Map.get(args, "document") || Map.get(args, :document, "?")
+    s = Map.get(args, "start_line") || Map.get(args, :start_line)
+    e = Map.get(args, "end_line") || Map.get(args, :end_line)
 
     range =
       cond do
@@ -339,23 +376,47 @@ defmodule ArcanaWeb.ExploreLive do
         true -> ""
       end
 
-    "#{doc}#{range}"
+    case Map.get(doc_ids, doc) do
+      nil -> "#{esc(doc)}#{range}"
+      doc_id -> doc_link(doc, doc_id, mode) <> range
+    end
   end
 
-  defp format_args("sub_explore", args) when is_map(args) do
-    task = Map.get(args, "task", "")
-    docs = Map.get(args, "documents", [])
+  defp format_args("sub_explore", args, doc_ids, mode) when is_map(args) do
+    task = Map.get(args, "task") || Map.get(args, :task, "")
+    docs = Map.get(args, "documents") || Map.get(args, :documents, [])
     preview = String.slice(task, 0, 40)
     preview = if String.length(task) > 40, do: preview <> "...", else: preview
-    "\"#{preview}\" (#{length(docs)} doc#{if length(docs) == 1, do: "", else: "s"})"
+
+    linked_docs =
+      docs
+      |> Enum.map(fn name ->
+        case Map.get(doc_ids, name) do
+          nil -> esc(name)
+          doc_id -> doc_link(name, doc_id, mode)
+        end
+      end)
+      |> Enum.join(", ")
+
+    "\"#{esc(preview)}\" (#{linked_docs})"
   end
 
-  defp format_args(_tool, _args), do: ""
+  defp format_args(_tool, _args, _doc_ids, _mode), do: ""
+
+  defp doc_link(name, doc_id, mode) do
+    mode_str = if mode, do: "&mode=#{mode}", else: ""
+
+    "<a href=\"/arcana/documents?doc=#{doc_id}#{mode_str}\" class=\"arcana-explore-doc-link\">#{esc(name)}</a>"
+  end
+
+  defp esc(text), do: Phoenix.HTML.html_escape(text) |> Phoenix.HTML.safe_to_string()
 
   defp format_args_full(nil), do: "-"
 
   defp format_args_full(args) when is_map(args) do
-    inspect(args, pretty: true)
+    args
+    |> Map.drop(["child_session_id"])
+    |> inspect(pretty: true)
   end
 
   defp format_args_full(args), do: inspect(args, pretty: true)

@@ -501,6 +501,149 @@ defmodule Arcana.RecursiveTest do
     end
   end
 
+  describe "trace tree (on_trace_entry, session_id, depth)" do
+    test "on_trace_entry callback fires with full entry including session_id and depth" do
+      test_pid = self()
+      call_count = :counters.new(1, [:atomics])
+
+      mock_model = fn _context, _tools ->
+        count = :counters.get(call_count, 1)
+        :counters.add(call_count, 1, 1)
+
+        if count == 0 do
+          {:ok, mock_tool_call_response("grep", %{"pattern" => "revenue"})}
+        else
+          {:ok, mock_text_response("done")}
+        end
+      end
+
+      {:ok, _result} =
+        Recursive.explore("Test trace entry",
+          model: mock_model,
+          content: @content,
+          on_trace_entry: fn entry ->
+            send(test_pid, {:trace_entry, entry})
+          end
+        )
+
+      assert_receive {:trace_entry, entry}
+      assert entry.tool == "grep"
+      assert entry.session_id == "root"
+      assert entry.depth == 0
+      assert is_integer(entry.step)
+      assert is_integer(entry.duration_ms)
+      assert is_binary(entry.result_preview)
+    end
+
+    test "trace entries include session_id" do
+      call_count = :counters.new(1, [:atomics])
+
+      mock_model = fn _context, _tools ->
+        count = :counters.get(call_count, 1)
+        :counters.add(call_count, 1, 1)
+
+        if count == 0 do
+          {:ok, mock_tool_call_response("grep", %{"pattern" => "test"})}
+        else
+          {:ok, mock_text_response("done")}
+        end
+      end
+
+      {:ok, result} =
+        Recursive.explore("Test session_id",
+          model: mock_model,
+          content: @content
+        )
+
+      assert Enum.all?(result.trace, &(&1.session_id == "root"))
+    end
+
+    test "sub_explore trace entries include child_session_id in args" do
+      call_count = :counters.new(1, [:atomics])
+
+      mock_model = fn _context, tools ->
+        count = :counters.get(call_count, 1)
+        :counters.add(call_count, 1, 1)
+
+        has_sub_explore = Enum.any?(tools, &(&1.name == "sub_explore"))
+
+        if count == 0 and has_sub_explore do
+          {:ok,
+           mock_tool_call_response("sub_explore", %{
+             "task" => "Analyze report",
+             "documents" => ["report.txt"]
+           })}
+        else
+          {:ok, mock_text_response("done")}
+        end
+      end
+
+      {:ok, result} =
+        Recursive.explore("Test child session id",
+          model: mock_model,
+          content: @content,
+          max_depth: 2
+        )
+
+      sub_trace = Enum.find(result.trace, &(&1.tool == "sub_explore"))
+      assert sub_trace
+      assert is_binary(sub_trace.args["child_session_id"])
+      assert String.length(sub_trace.args["child_session_id"]) == 8
+    end
+
+    test "on_trace_entry fires for child sub_explore entries" do
+      test_pid = self()
+      call_count = :counters.new(1, [:atomics])
+
+      mock_model = fn _context, tools ->
+        count = :counters.get(call_count, 1)
+        :counters.add(call_count, 1, 1)
+
+        has_sub_explore = Enum.any?(tools, &(&1.name == "sub_explore"))
+
+        if count == 0 and has_sub_explore do
+          {:ok,
+           mock_tool_call_response("sub_explore", %{
+             "task" => "Analyze report",
+             "documents" => ["report.txt"]
+           })}
+        else
+          {:ok, mock_text_response("done")}
+        end
+      end
+
+      {:ok, _result} =
+        Recursive.explore("Test child trace",
+          model: mock_model,
+          content: @content,
+          max_depth: 2,
+          on_trace_entry: fn entry ->
+            send(test_pid, {:trace_entry, entry})
+          end
+        )
+
+      # Should receive at least the parent's sub_explore entry
+      assert_receive {:trace_entry, parent_entry}
+      assert parent_entry.session_id == "root"
+
+      # Depending on child execution, may receive child entries with depth > 0
+      # Collect all entries
+      entries = collect_trace_entries()
+      all_entries = [parent_entry | entries]
+
+      # All entries should have session_id
+      assert Enum.all?(all_entries, &is_binary(&1.session_id))
+    end
+  end
+
+  defp collect_trace_entries(acc \\ []) do
+    receive do
+      {:trace_entry, entry} -> collect_trace_entries([entry | acc])
+    after
+      100 -> Enum.reverse(acc)
+    end
+  end
+
   describe "parallel sub_explore" do
     test "multiple sub_explore calls run in parallel with TaskSupervisor" do
       # Start a TaskSupervisor for this test
