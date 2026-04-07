@@ -92,13 +92,39 @@ Each step in `Arcana.Pipeline` emits its own span under `[:arcana, :pipeline, ..
 
 ### Loop Events
 
-`Arcana.Loop` emits a single span around the whole agent loop run:
+`Arcana.Loop` emits a span around the whole agent loop run plus a
+discrete event after each tool call:
 
 | Event | Metadata |
 |-------|----------|
 | `[:arcana, :loop, :*]` | `question`, `max_iterations`, `tool_count`, `iterations`, `terminated_by` |
+| `[:arcana, :loop, :tool_call]` | `tool`, `args`, `iteration`, `summary`, `returned_chunk_ids` |
+| `[:arcana, :loop, :ground, :*]` | `chunk_count`, `answer_present` |
 
-The `:terminated_by` value tells you how the loop ended: `:answered`, `:gave_up`, `:max_iterations`, or `:error`. For per-iteration telemetry, attach to the `[:arcana, :search, :*]` events that fire from inside the search tool.
+The `:terminated_by` value on the run-level span tells you how the loop
+ended: `:answered`, `:gave_up`, `:max_iterations`, or `:error`.
+
+`[:arcana, :loop, :tool_call]` fires once per tool call as it lands in
+the tool history. The metadata mirrors a single `tool_history` entry
+exactly, so you can use it to render a live trace as the agent works.
+This is what powers the "Agent thinking" panel in the dashboard's Loop
+sub-tab. The measurements include `count: 1` and `history_size: n` so
+you can build counters or histograms over the per-call distribution.
+
+```elixir
+:telemetry.attach(
+  "loop-trace",
+  [:arcana, :loop, :tool_call],
+  fn _event, _measurements, metadata, _config ->
+    IO.puts("[#{metadata.iteration}] #{metadata.tool}: #{inspect(metadata.args)}")
+  end,
+  nil
+)
+```
+
+The search tool's underlying retrieval also emits `[:arcana, :search, :*]`
+events from inside `Arcana.search/2`, so you can correlate per-tool-call
+events with per-search timing if you need finer detail.
 
 ### VectorStore Events
 
@@ -168,6 +194,8 @@ defmodule MyApp.ArcanaMetrics do
       [:arcana, :pipeline, :ground, :stop],
       # Loop
       [:arcana, :loop, :stop],
+      [:arcana, :loop, :tool_call],
+      [:arcana, :loop, :ground, :stop],
       # VectorStore
       [:arcana, :vector_store, :store, :stop],
       [:arcana, :vector_store, :search, :stop],

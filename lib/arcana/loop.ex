@@ -509,7 +509,19 @@ defmodule Arcana.Loop do
     # Append is O(n) but `tool_history` is bounded by `:max_iterations`
     # (default 10), so the cumulative cost is trivial and the natural
     # iteration order matters for downstream display.
-    %{ctx | tool_history: history ++ [entry]}
+    new_history = history ++ [entry]
+
+    # Per-tool-call telemetry so dashboards (or any consumer) can render
+    # a live trace as the loop unfolds rather than waiting for the
+    # whole run to finish. The metadata mirrors the entry shape exactly
+    # so handlers can use it directly.
+    :telemetry.execute(
+      [:arcana, :loop, :tool_call],
+      %{count: 1, history_size: length(new_history)},
+      entry
+    )
+
+    %{ctx | tool_history: new_history}
   end
 
   defp safe_tool_atom(name) when is_binary(name) do
