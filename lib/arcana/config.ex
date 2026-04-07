@@ -320,6 +320,17 @@ defmodule Arcana.Config do
     )
   end
 
+  @doc false
+  def parse_entity_matcher_config(value) do
+    parse_pluggable(value,
+      name: "entity_matcher",
+      shortcuts: %{
+        embedding: Arcana.Graph.EntityMatcher.Embedding,
+        ner: Arcana.Graph.EntityMatcher.NER
+      }
+    )
+  end
+
   # Redaction support
 
   @sensitive_keys [:api_key, :api_secret, :secret_key, :access_key, :token, :password, :secret]

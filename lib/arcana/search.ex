@@ -7,7 +7,6 @@ defmodule Arcana.Search do
   """
 
   alias Arcana.{Collection, Embedder, VectorStore}
-  alias Arcana.Graph.{EntityExtractor, GraphStore}
   alias Arcana.VectorStore.Pgvector
 
   @valid_modes [:semantic, :fulltext, :hybrid]
@@ -208,86 +207,48 @@ defmodule Arcana.Search do
     rrf_pool = graph_config[:rrf_pool_multiplier] || 2
     collection_ids = resolve_collection_ids(collections, repo)
 
-    # Try embedding-based entity search first, fall back to NER
-    matched_entity_ids = find_entities_by_embedding(query, collection_ids, repo, graph_config)
+    {matcher, matcher_opts} = resolve_entity_matcher(opts, graph_config)
+    matcher_opts = matcher_opts |> Keyword.put(:repo, repo) |> Keyword.merge(opts)
 
-    {entity_ids, match_method} =
-      if matched_entity_ids != [] do
-        {matched_entity_ids, :embedding}
-      else
-        find_entities_by_ner(query, collection_ids, repo, opts)
-      end
+    case matcher.match(query, collection_ids, matcher_opts) do
+      {:ok, entity_ids} when entity_ids != [] ->
+        :telemetry.span(
+          [:arcana, :graph, :search],
+          %{query: query, entity_count: length(entity_ids), matcher: matcher},
+          fn ->
+            graph_results = graph_search_by_entity_ids(entity_ids, repo)
+            combined = rrf_combine(vector_results, graph_results, limit * rrf_pool, rrf_k)
+            final_results = Enum.take(combined, limit)
 
-    if entity_ids != [] do
-      :telemetry.span(
-        [:arcana, :graph, :search],
-        %{query: query, entity_count: length(entity_ids), method: match_method},
-        fn ->
-          graph_results = graph_search_by_entity_ids(entity_ids, repo)
-          combined = rrf_combine(vector_results, graph_results, limit * rrf_pool, rrf_k)
-          final_results = Enum.take(combined, limit)
+            caller_result = %{
+              results: final_results,
+              result_count: length(final_results),
+              graph_enhanced: true,
+              entities_found: length(entity_ids)
+            }
 
-          caller_result = %{
-            results: final_results,
-            result_count: length(final_results),
-            graph_enhanced: true,
-            entities_found: length(entity_ids)
-          }
+            telemetry_metadata = %{
+              graph_result_count: length(graph_results),
+              combined_count: length(final_results),
+              matcher: matcher
+            }
 
-          telemetry_metadata = %{
-            graph_result_count: length(graph_results),
-            combined_count: length(final_results),
-            match_method: match_method
-          }
-
-          {{{:ok, final_results}, caller_result}, telemetry_metadata}
-        end
-      )
-    else
-      format_search_results({:ok, vector_results}, limit)
-    end
-  end
-
-  defp find_entities_by_embedding(query, collection_ids, repo, graph_config) do
-    threshold = graph_config[:entity_embedding_threshold] || 0.3
-    embedder = Arcana.Config.embedder()
-
-    case Arcana.Embedder.embed(embedder, query, intent: :query) do
-      {:ok, query_embedding} ->
-        GraphStore.search_by_embedding(query_embedding, collection_ids,
-          repo: repo,
-          limit: 20,
-          threshold: threshold
+            {{{:ok, final_results}, caller_result}, telemetry_metadata}
+          end
         )
-        |> Enum.map(& &1.id)
 
       _ ->
-        []
+        format_search_results({:ok, vector_results}, limit)
     end
   end
 
-  defp find_entities_by_ner(query, collection_ids, repo, opts) do
-    import Ecto.Query
-    alias Arcana.Graph.Entity
-    entity_extractor = Arcana.Graph.resolve_entity_extractor(opts)
+  defp resolve_entity_matcher(opts, graph_config) do
+    value =
+      opts[:entity_matcher] ||
+        graph_config[:entity_matcher] ||
+        Arcana.Graph.EntityMatcher.Embedding
 
-    case EntityExtractor.extract(entity_extractor, query) do
-      {:ok, entities} when entities != [] ->
-        entity_names = Enum.map(entities, & &1.name)
-
-        query =
-          from(e in Entity, where: e.name in ^entity_names, select: e.id)
-
-        query =
-          if collection_ids && collection_ids != [],
-            do: from(e in query, where: e.collection_id in ^collection_ids),
-            else: query
-
-        {repo.all(query), :ner}
-
-      _ ->
-        {[], :none}
-    end
+    Arcana.Config.parse_entity_matcher_config(value)
   end
 
   defp graph_search_by_entity_ids(entity_ids, repo) do

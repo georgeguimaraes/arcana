@@ -48,8 +48,9 @@ defmodule Arcana.Graph do
           summary_max_entities: 50,       # Top N entities by connection count per summary
           summary_max_relationships: 100, # Top N relationships per summary
 
-          # Entity embedding search (GraphRAG-style)
-          entity_embedding_threshold: 0.3, # Min cosine similarity for entity matching
+          # Entity matcher (pluggable)
+          entity_matcher: :embedding,      # :embedding (default), :ner, or custom module
+          entity_embedding_threshold: 0.3, # Threshold for the :embedding matcher
 
           # Structured context in ask pipeline (GraphRAG Local Search)
           context_entity_limit: 10,        # Max entity descriptions in LLM context
