@@ -21,6 +21,15 @@ defmodule Arcana.Embedder.Local do
         # ... other children
       ]
 
+  ## Options
+
+    * `:model` - HuggingFace model ID (default: `BAAI/bge-small-en-v1.5`)
+    * `:batch_size` - Nx.Serving batch size (default: 32). Larger batches give
+      better GPU throughput but increase memory usage.
+    * `:sequence_length` - Max token length per input (default: 512)
+    * `:batch_timeout` - Milliseconds to wait collecting requests into a batch
+      (default: 100). Lower values reduce latency, higher values improve throughput.
+
   """
 
   @behaviour Arcana.Embedder

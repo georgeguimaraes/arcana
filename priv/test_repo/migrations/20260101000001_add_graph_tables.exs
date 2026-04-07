@@ -99,5 +99,10 @@ defmodule Arcana.TestRepo.Migrations.AddGraphTables do
     create(index(:arcana_graph_communities, [:collection_id]))
     create(index(:arcana_graph_communities, [:level]))
     create(index(:arcana_graph_communities, [:dirty]))
+
+    execute("""
+    CREATE INDEX arcana_graph_communities_entity_ids_idx ON arcana_graph_communities
+    USING gin (entity_ids)
+    """)
   end
 end

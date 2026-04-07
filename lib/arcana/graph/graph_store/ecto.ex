@@ -97,6 +97,46 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   end
 
   @impl true
+  def search_by_embedding(query_embedding, collection_ids, opts) do
+    repo = Keyword.fetch!(opts, :repo)
+    limit = Keyword.get(opts, :limit, 10)
+    threshold = Keyword.get(opts, :threshold, 0.3)
+
+    base =
+      from(e in Entity,
+        where: not is_nil(e.embedding),
+        select: %{
+          id: e.id,
+          name: e.name,
+          type: e.type,
+          description: e.description,
+          distance: fragment("? <=> ?", e.embedding, ^query_embedding)
+        }
+      )
+
+    base =
+      if collection_ids && collection_ids != [] do
+        from(e in base, where: e.collection_id in ^collection_ids)
+      else
+        base
+      end
+
+    from(e in subquery(base),
+      where: e.distance < ^(1.0 - threshold),
+      order_by: e.distance,
+      limit: ^limit,
+      select: %{
+        id: e.id,
+        name: e.name,
+        type: e.type,
+        description: e.description,
+        similarity: fragment("1 - ?", e.distance)
+      }
+    )
+    |> repo.all()
+  end
+
+  @impl true
   def find_entities(collection_id, opts) do
     repo = Keyword.fetch!(opts, :repo)
 
@@ -496,10 +536,20 @@ defmodule Arcana.Graph.GraphStore.Ecto do
           name: entity.name,
           type: entity.type,
           description: entity[:description],
+          embedding: entity[:embedding],
           collection_id: collection_id,
           metadata: entity[:metadata]
         })
         |> repo.insert!()
+
+      %{embedding: nil} ->
+        if entity[:embedding] do
+          existing
+          |> Entity.changeset(%{embedding: entity[:embedding]})
+          |> repo.update!()
+        else
+          existing
+        end
 
       entity_record ->
         entity_record

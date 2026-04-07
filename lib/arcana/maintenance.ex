@@ -345,37 +345,123 @@ defmodule Arcana.Maintenance do
   end
 
   @doc """
-  Rebuilds the knowledge graph for documents.
+  Embeds entity descriptions for entities that lack embeddings.
 
-  This clears existing graph data (entities, relationships, mentions) and
-  re-extracts from all chunks using the current graph extractor configuration.
-
-  Use this when:
-  - You've changed the graph extractor configuration
-  - You've enabled relationship extraction after initial ingest
-  - You want to regenerate entity/relationship data
+  Uses the configured embedder to generate vector embeddings from entity
+  descriptions, enabling GraphRAG-style entity similarity search.
 
   ## Options
 
-    * `:collection` - Filter to a specific collection by name (default: all collections)
-    * `:batch_size` - Number of chunks to process per collection batch (default: 50)
-    * `:progress` - Function to call with progress updates `fn current, total -> :ok end`
+    * `:collection` - Only embed entities in this collection
+    * `:batch_size` - Entities per batch (default: 100)
+    * `:progress` - Progress callback `fn current, total -> :ok end`
+    * `:force` - Re-embed all entities, not just those without embeddings (default: false)
+  """
+  def embed_entities(repo, opts \\ []) do
+    import Ecto.Query
+    alias Arcana.Graph.Entity
 
-  ## Examples
+    collection_filter = Keyword.get(opts, :collection)
+    batch_size = Keyword.get(opts, :batch_size, 100)
+    progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
+    force = Keyword.get(opts, :force, false)
+    embedder = Arcana.Config.embedder()
 
-      # Basic usage - all collections
-      Arcana.Maintenance.rebuild_graph(MyApp.Repo)
+    query = from(e in Entity, order_by: e.id, select: [:id, :name, :description, :embedding])
 
-      # Single collection
-      Arcana.Maintenance.rebuild_graph(MyApp.Repo, collection: "test-graphrag-3")
+    query =
+      if collection_filter do
+        collection_id =
+          repo.one(
+            from(c in Arcana.Collection, where: c.name == ^collection_filter, select: c.id)
+          )
 
-      # With progress callback
-      Arcana.Maintenance.rebuild_graph(MyApp.Repo,
-        progress: fn current, total ->
-          IO.puts("Progress: \#{current}/\#{total}")
-        end
-      )
+        if collection_id,
+          do: from(e in query, where: e.collection_id == ^collection_id),
+          else: query
+      else
+        query
+      end
 
+    query = if force, do: query, else: from(e in query, where: is_nil(e.embedding))
+
+    entities = repo.all(query)
+    total = length(entities)
+
+    entities
+    |> Enum.chunk_every(batch_size)
+    |> Enum.with_index(1)
+    |> Enum.reduce(0, fn {batch, _batch_idx}, count ->
+      now = NaiveDateTime.utc_now()
+
+      # Embed concurrently so Nx.Serving can batch the requests
+      embedded =
+        batch
+        |> Task.async_stream(
+          fn entity ->
+            text =
+              case entity.description do
+                nil -> entity.name
+                "" -> entity.name
+                desc -> "#{entity.name}: #{desc}"
+              end
+
+            case Arcana.Embedder.embed(embedder, text, intent: :document) do
+              {:ok, embedding} -> {entity.id, embedding}
+              _ -> nil
+            end
+          end,
+          max_concurrency: 64,
+          timeout: :infinity
+        )
+        |> Enum.flat_map(fn
+          {:ok, {id, embedding}} -> [{id, embedding}]
+          _ -> []
+        end)
+
+      bulk_update_embeddings(embedded, now, repo)
+
+      new_count = count + length(batch)
+      progress_fn.(new_count, total)
+      new_count
+    end)
+
+    {:ok, %{total: total}}
+  end
+
+  defp bulk_update_embeddings([], _now, _repo), do: :ok
+
+  defp bulk_update_embeddings(embedded, now, repo) do
+    ids =
+      Enum.map(embedded, fn {id, _} ->
+        {:ok, bin} = Ecto.UUID.dump(id)
+        bin
+      end)
+
+    vector_strings =
+      Enum.map(embedded, fn {_, vec} ->
+        "[" <> Enum.map_join(vec, ",", &to_string/1) <> "]"
+      end)
+
+    Ecto.Adapters.SQL.query!(
+      repo,
+      """
+      UPDATE arcana_graph_entities AS e
+      SET embedding = data.embedding::vector,
+          updated_at = $3
+      FROM (SELECT unnest($1::uuid[]) AS id, unnest($2::text[]) AS embedding) AS data
+      WHERE e.id = data.id
+      """,
+      [ids, vector_strings, now]
+    )
+
+    :ok
+  end
+
+  @doc """
+  Rebuilds the knowledge graph for documents.
+
+  See module docs for full options.
   """
   def rebuild_graph(repo, opts \\ []) do
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)

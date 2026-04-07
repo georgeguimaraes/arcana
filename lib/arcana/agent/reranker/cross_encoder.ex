@@ -38,48 +38,41 @@ defmodule Arcana.Agent.Reranker.CrossEncoder do
 
   @behaviour Arcana.Agent.Reranker
 
+  use GenServer
+
   @default_model "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker
-    }
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  def start_link(opts \\ []) do
+  @impl GenServer
+  def init(opts) do
     model = Keyword.get(opts, :model, @default_model)
-
-    {:ok, model_info} = Bumblebee.load_model({:hf, model})
-
     sequence_length = Keyword.get(opts, :sequence_length, 512)
 
-    {:ok, tokenizer} =
-      Bumblebee.load_tokenizer({:hf, model})
-      |> then(fn {:ok, t} -> {:ok, Bumblebee.configure(t, length: sequence_length)} end)
+    {:ok, model_info} = Bumblebee.load_model({:hf, model})
+    {:ok, raw_tokenizer} = Bumblebee.load_tokenizer({:hf, model})
+    tokenizer = Bumblebee.configure(raw_tokenizer, length: sequence_length)
 
-    # Store model info for direct inference
-    :persistent_term.put({__MODULE__, :model}, model_info)
-    :persistent_term.put({__MODULE__, :tokenizer}, tokenizer)
-
-    # Use a simple GenServer-free approach: tokenize and predict directly
-    {:ok, spawn_link(fn -> Process.sleep(:infinity) end)}
+    {:ok, %{model: model_info, tokenizer: tokenizer}}
   end
 
   @impl Arcana.Agent.Reranker
   def rerank(_question, [], _opts), do: {:ok, []}
 
   def rerank(question, chunks, opts) do
+    GenServer.call(__MODULE__, {:rerank, question, chunks, opts}, :infinity)
+  end
+
+  @impl GenServer
+  def handle_call({:rerank, question, chunks, opts}, _from, state) do
     threshold = Keyword.get(opts, :threshold, 0.0)
     top_k = Keyword.get(opts, :top_k)
 
-    model_info = :persistent_term.get({__MODULE__, :model})
-    tokenizer = :persistent_term.get({__MODULE__, :tokenizer})
-
     pairs = Enum.map(chunks, fn chunk -> {question, chunk.text} end)
-    inputs = Bumblebee.apply_tokenizer(tokenizer, pairs)
-    %{logits: logits} = Axon.predict(model_info.model, model_info.params, inputs)
+    inputs = Bumblebee.apply_tokenizer(state.tokenizer, pairs)
+    %{logits: logits} = Axon.predict(state.model.model, state.model.params, inputs)
     scores = logits |> Nx.flatten() |> Nx.to_flat_list()
 
     scored =
@@ -93,6 +86,6 @@ defmodule Arcana.Agent.Reranker.CrossEncoder do
         Enum.filter(scored, fn {_chunk, score} -> score >= threshold end)
       end
 
-    {:ok, Enum.map(filtered, fn {chunk, _score} -> chunk end)}
+    {:reply, {:ok, Enum.map(filtered, fn {chunk, _score} -> chunk end)}, state}
   end
 end

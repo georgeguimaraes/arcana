@@ -56,6 +56,15 @@ defmodule Arcana.Graph.GraphStore do
               [map()]
 
   @doc """
+  Searches for entities by embedding similarity.
+
+  Returns entities whose description embeddings are most similar to the
+  query embedding, sorted by similarity descending.
+  """
+  @callback search_by_embedding([float()], [binary()] | nil, opts :: keyword()) ::
+              [map()]
+
+  @doc """
   Finds all entities in a collection.
   """
   @callback find_entities(binary(), opts :: keyword()) :: [map()]
@@ -271,6 +280,30 @@ defmodule Arcana.Graph.GraphStore do
   end
 
   @doc """
+  Searches for entities by embedding similarity using the configured backend.
+  """
+  def search_by_embedding(query_embedding, collection_ids, opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+
+    :telemetry.span(
+      [:arcana, :graph_store, :embedding_search],
+      %{},
+      fn ->
+        results =
+          dispatch(
+            :search_by_embedding,
+            backend,
+            [query_embedding, collection_ids],
+            backend_opts,
+            opts
+          )
+
+        {results, %{backend: backend, result_count: length(results)}}
+      end
+    )
+  end
+
+  @doc """
   Finds entities using the configured backend.
   """
   def find_entities(collection_id, opts \\ []) do
@@ -433,6 +466,17 @@ defmodule Arcana.Graph.GraphStore do
     __MODULE__.Ecto.search(entity_names, collection_ids, opts)
   end
 
+  defp dispatch(
+         :search_by_embedding,
+         :ecto,
+         [query_embedding, collection_ids],
+         backend_opts,
+         opts
+       ) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.search_by_embedding(query_embedding, collection_ids, opts)
+  end
+
   defp dispatch(:find_entities, :ecto, [collection_id], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     __MODULE__.Ecto.find_entities(collection_id, opts)
@@ -530,6 +574,17 @@ defmodule Arcana.Graph.GraphStore do
     __MODULE__.Memory.search(entity_names, collection_ids, opts)
   end
 
+  defp dispatch(
+         :search_by_embedding,
+         :memory,
+         [query_embedding, collection_ids],
+         backend_opts,
+         opts
+       ) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.search_by_embedding(query_embedding, collection_ids, opts)
+  end
+
   defp dispatch(:find_entities, :memory, [collection_id], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     __MODULE__.Memory.find_entities(collection_id, opts)
@@ -625,6 +680,17 @@ defmodule Arcana.Graph.GraphStore do
   defp dispatch(:search, module, [entity_names, collection_ids], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     module.search(entity_names, collection_ids, opts)
+  end
+
+  defp dispatch(
+         :search_by_embedding,
+         module,
+         [query_embedding, collection_ids],
+         backend_opts,
+         opts
+       ) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.search_by_embedding(query_embedding, collection_ids, opts)
   end
 
   defp dispatch(:find_entities, module, [collection_id], backend_opts, opts) do

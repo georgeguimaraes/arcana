@@ -47,11 +47,11 @@ defmodule Arcana.AskTest do
       assert is_binary(answer)
     end
 
-    test "accepts 3-arity prompt function with community summaries", %{llm: llm} do
+    test "accepts 3-arity prompt function with graph context", %{llm: llm} do
       received = :ets.new(:received, [:set, :public])
 
-      custom_prompt = fn _question, _context, communities ->
-        :ets.insert(received, {:communities, communities})
+      custom_prompt = fn _question, _context, graph_context ->
+        :ets.insert(received, {:graph_context, graph_context})
         "System prompt"
       end
 
@@ -63,8 +63,8 @@ defmodule Arcana.AskTest do
           prompt: custom_prompt
         )
 
-      [{:communities, communities}] = :ets.lookup(received, :communities)
-      assert is_list(communities)
+      [{:graph_context, graph_context}] = :ets.lookup(received, :graph_context)
+      assert is_map(graph_context)
       :ets.delete(received)
     end
   end

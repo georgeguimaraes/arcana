@@ -615,6 +615,31 @@ end)
 - [ ] HyDE (Hypothetical Document Embeddings)
 - [x] GraphRAG (knowledge graph + community summaries)
 
+## References
+
+Papers and research that inform Arcana's design:
+
+### Retrieval
+
+- [Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning Methods](https://dl.acm.org/doi/10.1145/1571941.1572114) (Cormack et al., SIGIR 2009) — RRF for combining vector and fulltext search
+- [Lost in the Middle: How Language Models Use Long Contexts](https://arxiv.org/abs/2307.03172) (Liu et al., 2023) — informs context ordering and chunk count
+- [Precise Zero-Shot Dense Retrieval without Relevance Labels (HyDE)](https://arxiv.org/abs/2212.10496) (Gao et al., 2022) — hypothetical document embeddings
+
+### GraphRAG
+
+- [From Local to Global: A Graph RAG Approach to Query-Focused Summarization](https://arxiv.org/abs/2404.16130) (Microsoft, 2024) — community summaries and Local Search
+- [Graph Retrieval-Augmented Generation: A Survey](https://arxiv.org/abs/2408.08921) (2024) — comprehensive survey of Graph RAG approaches
+- [HopRAG: Multi-Hop Reasoning for Knowledge-Aware RAG](https://arxiv.org/abs/2502.12442) (ACL 2025) — LLM-guided graph traversal
+
+### Reranking
+
+- Cross-encoder reranking via Bumblebee — uses [`cross-encoder/ms-marco-MiniLM-L-6-v2`](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2) by default. Cross-encoders consistently improve top-k accuracy by 10-25% over bi-encoder retrieval alone.
+
+### Evaluation
+
+- [RAGAS: Automated Evaluation of Retrieval Augmented Generation](https://arxiv.org/abs/2309.15217) (Shahul et al., 2023) — faithfulness, relevance, and context metrics
+- [LettuceDetect: A Hallucination Detector for RAG](https://arxiv.org/abs/2502.17125) (2025) — token-level grounding for faithfulness checking
+
 ## Development
 
 ```bash

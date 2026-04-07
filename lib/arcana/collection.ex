@@ -67,4 +67,39 @@ defmodule Arcana.Collection do
       {:ok, collection}
     end
   end
+
+  @doc """
+  Resolves a list of collection names to their IDs.
+
+  Returns `nil` for unscoped queries (when collections is `[nil]`),
+  otherwise returns a list of UUIDs (possibly empty).
+  """
+  def resolve_ids([nil], _repo), do: nil
+
+  def resolve_ids(names, repo) when is_list(names) do
+    import Ecto.Query
+
+    names
+    |> Enum.reject(&is_nil/1)
+    |> Enum.flat_map(fn name ->
+      case repo.one(from(c in __MODULE__, where: c.name == ^name, select: c.id)) do
+        nil -> []
+        id -> [id]
+      end
+    end)
+  end
+
+  @doc """
+  Extracts collection names from search/ask opts.
+
+  Looks for `:collections` (list) or `:collection` (single name).
+  Returns `[nil]` if neither is set.
+  """
+  def names_from_opts(opts) do
+    cond do
+      Keyword.has_key?(opts, :collections) -> Keyword.get(opts, :collections)
+      Keyword.has_key?(opts, :collection) -> [Keyword.get(opts, :collection)]
+      true -> [nil]
+    end
+  end
 end

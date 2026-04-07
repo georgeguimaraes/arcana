@@ -46,7 +46,14 @@ defmodule Arcana.Graph do
 
           # Community summarization prompt limits
           summary_max_entities: 50,       # Top N entities by connection count per summary
-          summary_max_relationships: 100  # Top N relationships per summary
+          summary_max_relationships: 100, # Top N relationships per summary
+
+          # Entity embedding search (GraphRAG-style)
+          entity_embedding_threshold: 0.3, # Min cosine similarity for entity matching
+
+          # Structured context in ask pipeline (GraphRAG Local Search)
+          context_entity_limit: 10,        # Max entity descriptions in LLM context
+          context_relationship_limit: 20   # Max relationships in LLM context
         ]
 
   Or enable per-call:
@@ -122,7 +129,10 @@ defmodule Arcana.Graph do
     community_summary_limit: 5,
     community_summary_level: 0,
     summary_max_entities: 50,
-    summary_max_relationships: 100
+    summary_max_relationships: 100,
+    entity_embedding_threshold: 0.3,
+    context_entity_limit: 10,
+    context_relationship_limit: 20
   }
 
   @doc """
@@ -396,6 +406,9 @@ defmodule Arcana.Graph do
     )
     |> Enum.reduce({%{}, 0}, fn {:ok, {index, entities, mentions, relationships}},
                                 {entity_id_map, rel_count} ->
+      # Embed entity descriptions for GraphRAG-style entity search
+      entities = maybe_embed_entities(entities)
+
       # Persist sequentially (fast DB operations)
       {:ok, new_entity_ids} =
         GraphStore.persist_entities(collection_id, entities, repo: repo)
@@ -505,6 +518,29 @@ defmodule Arcana.Graph do
       extractor ->
         extractor
     end
+  end
+
+  defp maybe_embed_entities(entities) do
+    embedder = Arcana.Config.embedder()
+
+    entities
+    |> Enum.map(fn entity ->
+      if entity[:embedding] do
+        entity
+      else
+        text =
+          case entity[:description] do
+            nil -> entity.name
+            "" -> entity.name
+            desc -> "#{entity.name}: #{desc}"
+          end
+
+        case Arcana.Embedder.embed(embedder, text, intent: :document) do
+          {:ok, embedding} -> Map.put(entity, :embedding, embedding)
+          _ -> entity
+        end
+      end
+    end)
   end
 
   defp resolve_extractor(opts, graph_config) do

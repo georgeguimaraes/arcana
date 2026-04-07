@@ -183,94 +183,145 @@ defmodule Arcana.Search do
   defp enhance_with_graph_search({:ok, vector_results}, query, collections, repo, opts) do
     limit = Keyword.get(opts, :limit, 10)
     graph_config = Arcana.Graph.config()
-    entity_extractor = Arcana.Graph.resolve_entity_extractor(opts)
     rrf_k = graph_config[:rrf_k] || 60
     rrf_pool = graph_config[:rrf_pool_multiplier] || 2
+    collection_ids = resolve_collection_ids(collections, repo)
 
-    case EntityExtractor.extract(entity_extractor, query) do
-      {:ok, entities} when entities != [] ->
-        :telemetry.span(
-          [:arcana, :graph, :search],
-          %{query: query, entity_count: length(entities)},
-          fn ->
-            graph_results = graph_search_db(entities, collections, repo)
-            combined = rrf_combine(vector_results, graph_results, limit * rrf_pool, rrf_k)
-            final_results = Enum.take(combined, limit)
+    # Try embedding-based entity search first, fall back to NER
+    matched_entity_ids = find_entities_by_embedding(query, collection_ids, repo, graph_config)
 
-            caller_result = %{
-              results: final_results,
-              result_count: length(final_results),
-              graph_enhanced: true,
-              entities_found: length(entities)
-            }
+    {entity_ids, match_method} =
+      if matched_entity_ids != [] do
+        {matched_entity_ids, :embedding}
+      else
+        find_entities_by_ner(query, collection_ids, repo, opts)
+      end
 
-            telemetry_metadata = %{
-              graph_result_count: length(graph_results),
-              combined_count: length(final_results)
-            }
+    if entity_ids != [] do
+      :telemetry.span(
+        [:arcana, :graph, :search],
+        %{query: query, entity_count: length(entity_ids), method: match_method},
+        fn ->
+          graph_results = graph_search_by_entity_ids(entity_ids, repo)
+          combined = rrf_combine(vector_results, graph_results, limit * rrf_pool, rrf_k)
+          final_results = Enum.take(combined, limit)
 
-            {{{:ok, final_results}, caller_result}, telemetry_metadata}
-          end
-        )
+          caller_result = %{
+            results: final_results,
+            result_count: length(final_results),
+            graph_enhanced: true,
+            entities_found: length(entity_ids)
+          }
 
-      _ ->
-        format_search_results({:ok, vector_results}, limit)
+          telemetry_metadata = %{
+            graph_result_count: length(graph_results),
+            combined_count: length(final_results),
+            match_method: match_method
+          }
+
+          {{{:ok, final_results}, caller_result}, telemetry_metadata}
+        end
+      )
+    else
+      format_search_results({:ok, vector_results}, limit)
     end
   end
 
-  defp graph_search_db(entities, collections, repo) do
+  defp find_entities_by_embedding(query, collection_ids, repo, graph_config) do
+    threshold = graph_config[:entity_embedding_threshold] || 0.3
+    embedder = Arcana.Config.embedder()
+
+    case Arcana.Embedder.embed(embedder, query, intent: :query) do
+      {:ok, query_embedding} ->
+        GraphStore.search_by_embedding(query_embedding, collection_ids,
+          repo: repo,
+          limit: 20,
+          threshold: threshold
+        )
+        |> Enum.map(& &1.id)
+
+      _ ->
+        []
+    end
+  end
+
+  defp find_entities_by_ner(query, collection_ids, repo, opts) do
+    import Ecto.Query
+    alias Arcana.Graph.Entity
+    entity_extractor = Arcana.Graph.resolve_entity_extractor(opts)
+
+    case EntityExtractor.extract(entity_extractor, query) do
+      {:ok, entities} when entities != [] ->
+        entity_names = Enum.map(entities, & &1.name)
+
+        query =
+          from(e in Entity, where: e.name in ^entity_names, select: e.id)
+
+        query =
+          if collection_ids && collection_ids != [],
+            do: from(e in query, where: e.collection_id in ^collection_ids),
+            else: query
+
+        {repo.all(query), :ner}
+
+      _ ->
+        {[], :none}
+    end
+  end
+
+  defp graph_search_by_entity_ids(entity_ids, repo) do
     import Ecto.Query
     alias Arcana.Chunk
+    alias Arcana.Graph.EntityMention
 
-    entity_names = Enum.map(entities, & &1.name)
-    collection_ids = resolve_collection_ids(collections, repo)
+    chunk_ids =
+      repo.all(
+        from(m in EntityMention,
+          where: m.entity_id in ^entity_ids,
+          select: m.chunk_id,
+          distinct: true
+        )
+      )
 
-    graph_results = GraphStore.search(entity_names, collection_ids, repo: repo)
-    chunk_ids = Enum.map(graph_results, & &1.chunk_id)
+    if chunk_ids == [] do
+      []
+    else
+      # Score by mention count
+      scored =
+        repo.all(
+          from(m in EntityMention,
+            where: m.chunk_id in ^chunk_ids and m.entity_id in ^entity_ids,
+            group_by: m.chunk_id,
+            select: %{chunk_id: m.chunk_id, score: count() * 0.1}
+          )
+        )
 
-    # Fetch full chunk data for graph results
-    chunks_by_id =
-      if chunk_ids == [] do
-        %{}
-      else
+      chunk_map =
         repo.all(from(c in Chunk, where: c.id in ^chunk_ids, select: {c.id, c}))
         |> Map.new()
-      end
 
-    # Build results with the same shape as vector search results
-    Enum.flat_map(graph_results, fn result ->
-      case Map.get(chunks_by_id, result.chunk_id) do
-        nil ->
-          []
+      Enum.flat_map(scored, fn %{chunk_id: cid, score: score} ->
+        case Map.get(chunk_map, cid) do
+          nil ->
+            []
 
-        chunk ->
-          [
-            %{
-              id: chunk.id,
-              text: chunk.text,
-              document_id: chunk.document_id,
-              chunk_index: chunk.chunk_index,
-              score: result.score
-            }
-          ]
-      end
-    end)
+          chunk ->
+            [
+              %{
+                id: chunk.id,
+                text: chunk.text,
+                document_id: chunk.document_id,
+                chunk_index: chunk.chunk_index,
+                score: score
+              }
+            ]
+        end
+      end)
+      |> Enum.sort_by(& &1.score, :desc)
+    end
   end
 
-  defp resolve_collection_ids([nil], _repo), do: nil
-
-  defp resolve_collection_ids(collections, repo) do
-    import Ecto.Query
-
-    collections
-    |> Enum.reject(&is_nil/1)
-    |> Enum.flat_map(fn name ->
-      case repo.one(from(c in Collection, where: c.name == ^name, select: c.id)) do
-        nil -> []
-        id -> [id]
-      end
-    end)
-  end
+  defp resolve_collection_ids(collections, repo), do: Collection.resolve_ids(collections, repo)
 
   defp do_search(:semantic, query, params) do
     case Embedder.embed(Arcana.Config.embedder(), query, intent: :query) do

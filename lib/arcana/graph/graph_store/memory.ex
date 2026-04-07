@@ -70,6 +70,9 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl Arcana.Graph.GraphStore
+  def search_by_embedding(_query_embedding, _collection_ids, _opts), do: []
+
+  @impl Arcana.Graph.GraphStore
   def find_entities(collection_id, opts) do
     server = get_server(opts)
     GenServer.call(server, {:find_entities, collection_id})
