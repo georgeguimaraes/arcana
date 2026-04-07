@@ -41,7 +41,7 @@ When `graph: true` is enabled:
 
 ### Agentic Pipeline
 
-For complex questions, the Agent pipeline provides:
+For complex questions, the Pipeline provides:
 - **Retrieval gating** - decides if retrieval is needed or can answer from knowledge
 - **Query expansion** - adds synonyms and related terms
 - **Decomposition** - splits multi-part questions
@@ -305,7 +305,7 @@ end
 
 ### LLM configuration
 
-Configure the LLM for `ask/2` and the Agent pipeline:
+Configure the LLM for `ask/2` and the Pipeline:
 
 ```elixir
 # config/config.exs
@@ -328,7 +328,7 @@ You can also pass `:llm` directly to functions:
 ```elixir
 Arcana.ask("What is Elixir?", repo: MyApp.Repo, llm: "openai:gpt-4o")
 
-Agent.new(question, repo: MyApp.Repo, llm: fn prompt -> ... end)
+Pipeline.new(question, repo: MyApp.Repo, llm: fn prompt -> ... end)
 ```
 
 See the [LLM Integration Guide](guides/llm-integration.md) for detailed examples.
@@ -416,22 +416,22 @@ See the [GraphRAG Guide](guides/graphrag.md) for entity extraction, community de
 
 ### Agentic RAG
 
-For complex questions, use the Agent pipeline with retrieval gating, query expansion, multi-hop reasoning, and re-ranking:
+For complex questions, use the Pipeline with retrieval gating, query expansion, multi-hop reasoning, and re-ranking:
 
 ```elixir
-alias Arcana.Agent
+alias Arcana.Pipeline
 
 llm = fn prompt -> {:ok, "LLM response"} end
 
 ctx =
-  Agent.new("Compare Elixir and Erlang features", repo: MyApp.Repo, llm: llm)
-  |> Agent.gate()                                   # Skip retrieval if not needed
-  |> Agent.select(collections: ["elixir-docs", "erlang-docs"])
-  |> Agent.expand()
-  |> Agent.search()
-  |> Agent.reason()                                 # Search again if results insufficient
-  |> Agent.rerank()
-  |> Agent.answer()
+  Pipeline.new("Compare Elixir and Erlang features", repo: MyApp.Repo, llm: llm)
+  |> Pipeline.gate()                                   # Skip retrieval if not needed
+  |> Pipeline.select(collections: ["elixir-docs", "erlang-docs"])
+  |> Pipeline.expand()
+  |> Pipeline.search()
+  |> Pipeline.reason()                                 # Search again if results insufficient
+  |> Pipeline.rerank()
+  |> Pipeline.answer()
 
 ctx.answer
 # => "Generated answer based on retrieved context..."
@@ -458,22 +458,22 @@ ctx.answer
 ```elixir
 # Simple pipeline - just search and answer
 ctx =
-  Agent.new(question, repo: MyApp.Repo, llm: llm)
-  |> Agent.search(collection: "docs")
-  |> Agent.answer()
+  Pipeline.new(question, repo: MyApp.Repo, llm: llm)
+  |> Pipeline.search(collection: "docs")
+  |> Pipeline.answer()
 
 # Full pipeline with all steps
 ctx =
-  Agent.new(question, repo: MyApp.Repo, llm: llm)
-  |> Agent.gate()                                 # Decide if retrieval needed
-  |> Agent.rewrite()                              # Clean up conversational input
-  |> Agent.select(collections: available_collections)  # Pick relevant collections
-  |> Agent.expand()                               # Add synonyms
-  |> Agent.decompose()                            # Split multi-part questions
-  |> Agent.search()                               # Search each sub-question
-  |> Agent.reason()                               # Multi-hop: search again if needed
-  |> Agent.rerank(threshold: 7)                   # Keep chunks scoring 7+/10
-  |> Agent.answer()                               # Generate answer
+  Pipeline.new(question, repo: MyApp.Repo, llm: llm)
+  |> Pipeline.gate()                                 # Decide if retrieval needed
+  |> Pipeline.rewrite()                              # Clean up conversational input
+  |> Pipeline.select(collections: available_collections)  # Pick relevant collections
+  |> Pipeline.expand()                               # Add synonyms
+  |> Pipeline.decompose()                            # Split multi-part questions
+  |> Pipeline.search()                               # Search each sub-question
+  |> Pipeline.reason()                               # Multi-hop: search again if needed
+  |> Pipeline.rerank(threshold: 7)                   # Keep chunks scoring 7+/10
+  |> Pipeline.answer()                               # Generate answer
 
 # Access results
 ctx.answer           # Final answer
@@ -489,7 +489,7 @@ Every pipeline step can be replaced with a custom module or function:
 ```elixir
 # Custom reranker using a cross-encoder model
 defmodule MyApp.CrossEncoderReranker do
-  @behaviour Arcana.Agent.Reranker
+  @behaviour Arcana.Pipeline.Reranker
 
   @impl true
   def rerank(question, chunks, _opts) do
@@ -505,10 +505,10 @@ defmodule MyApp.CrossEncoderReranker do
   end
 end
 
-ctx |> Agent.rerank(reranker: MyApp.CrossEncoderReranker)
+ctx |> Pipeline.rerank(reranker: MyApp.CrossEncoderReranker)
 
 # Or use an inline function
-ctx |> Agent.rerank(reranker: fn question, chunks, _opts ->
+ctx |> Pipeline.rerank(reranker: fn question, chunks, _opts ->
   {:ok, Enum.filter(chunks, &relevant?(&1, question))}
 end)
 ```
@@ -517,14 +517,14 @@ All steps support custom implementations via behaviours:
 
 | Step | Behaviour | Option |
 |------|-----------|--------|
-| `rewrite/2` | `Arcana.Agent.Rewriter` | `:rewriter` |
-| `select/2` | `Arcana.Agent.Selector` | `:selector` |
-| `expand/2` | `Arcana.Agent.Expander` | `:expander` |
-| `decompose/2` | `Arcana.Agent.Decomposer` | `:decomposer` |
-| `search/2` | `Arcana.Agent.Searcher` | `:searcher` |
-| `rerank/2` | `Arcana.Agent.Reranker` | `:reranker` |
-| `answer/2` | `Arcana.Agent.Answerer` | `:answerer` |
-| `ground/2` | `Arcana.Agent.Grounder` | `:grounder` |
+| `rewrite/2` | `Arcana.Pipeline.Rewriter` | `:rewriter` |
+| `select/2` | `Arcana.Pipeline.Selector` | `:selector` |
+| `expand/2` | `Arcana.Pipeline.Expander` | `:expander` |
+| `decompose/2` | `Arcana.Pipeline.Decomposer` | `:decomposer` |
+| `search/2` | `Arcana.Pipeline.Searcher` | `:searcher` |
+| `rerank/2` | `Arcana.Pipeline.Reranker` | `:reranker` |
+| `answer/2` | `Arcana.Pipeline.Answerer` | `:answerer` |
+| `ground/2` | `Arcana.Pipeline.Grounder` | `:grounder` |
 
 See the [Agentic RAG Guide](guides/agentic-rag.md) for detailed examples.
 
@@ -534,10 +534,10 @@ The `ground/2` step detects hallucinations in the generated answer by scoring ea
 
 ```elixir
 ctx =
-  Agent.new(question, repo: MyApp.Repo, llm: llm)
-  |> Agent.search()
-  |> Agent.answer()
-  |> Agent.ground()
+  Pipeline.new(question, repo: MyApp.Repo, llm: llm)
+  |> Pipeline.search()
+  |> Pipeline.answer()
+  |> Pipeline.ground()
 
 ctx.grounding.score              # 0.0-1.0 (weighted average consistency score)
 ctx.grounding.hallucinated_spans # [%{text: "...", start: 0, end: 42, score: 0.95}]
@@ -553,7 +553,7 @@ Setup just requires the `hallmark` dependency. The model (~440 MB) downloads aut
 You can also use a custom grounder:
 
 ```elixir
-ctx |> Agent.ground(grounder: fn answer, chunks, opts ->
+ctx |> Pipeline.ground(grounder: fn answer, chunks, opts ->
   {:ok, %Arcana.Grounding.Result{score: 1.0, hallucinated_spans: []}}
 end)
 ```
@@ -564,7 +564,7 @@ end)
 ┌──────────────────────────────────────────────────────────────────────┐
 │                           Your Phoenix App                           │
 ├──────────────────────────────────────────────────────────────────────┤
-│                             Arcana.Agent                             │
+│                             Arcana.Pipeline                             │
 │  (rewrite → select → expand → search → rerank → answer → ground)     │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Arcana.ask/2        │  Arcana.search/2       │  Arcana.ingest/2     │
@@ -599,10 +599,10 @@ end)
 - [x] File ingestion (text, markdown, PDF)
 - [x] Telemetry events for observability
 - [x] In-memory vector store (HNSWLib backend)
-- [x] Query expansion (Agent.expand/2)
-- [x] Re-ranking (Agent.rerank/2)
+- [x] Query expansion (Pipeline.expand/2)
+- [x] Re-ranking (Pipeline.rerank/2)
 - [x] Agentic RAG
-  - [x] Agent pipeline with context struct
+  - [x] Pipeline with context struct
   - [x] Self-correcting answers (evaluate + refine)
   - [x] Question decomposition (multi-step)
   - [x] Collection selection
@@ -634,6 +634,15 @@ Papers and research that inform Arcana's design:
 ### Reranking
 
 - Cross-encoder reranking via Bumblebee — uses [`cross-encoder/ms-marco-MiniLM-L-6-v2`](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2) by default. Cross-encoders consistently improve top-k accuracy by 10-25% over bi-encoder retrieval alone.
+
+### Agentic RAG
+
+`Arcana.Pipeline` is a composed pipeline (not a fully autonomous loop). The "agentic" parts live inside specific steps: `gate/2`, `search(self_correct: true)`, `reason/2`, and `answer(self_correct: true)`. This matches the Modular and Corrective patterns in the survey below.
+
+- [Agentic Retrieval-Augmented Generation: A Survey](https://arxiv.org/abs/2501.09136) (Singh et al., 2025) — taxonomy of agentic RAG patterns
+- [Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection](https://arxiv.org/abs/2310.11511) (Asai et al., ICLR 2024) — inspires `gate/2` and `ground/2`
+- [Corrective Retrieval Augmented Generation (CRAG)](https://arxiv.org/abs/2401.15884) (Yan et al., 2024) — inspires `search(self_correct: true)` and `answer(self_correct: true)`
+- [What Is Agentic RAG?](https://weaviate.io/blog/what-is-agentic-rag) (Weaviate, 2024) — vendor-neutral overview
 
 ### Evaluation
 

@@ -12,7 +12,7 @@ defmodule Arcana.EndToEnd.AgentTest do
   # LLM calls can be slow, especially when chaining multiple calls
   @moduletag timeout: :timer.minutes(5)
 
-  alias Arcana.Agent
+  alias Arcana.Pipeline
 
   setup do
     {:ok, _doc1} =
@@ -46,9 +46,9 @@ defmodule Arcana.EndToEnd.AgentTest do
       llm = llm_config(:zai)
 
       ctx =
-        Agent.new("What is Phoenix LiveView?", repo: Arcana.TestRepo, llm: llm)
-        |> Agent.search()
-        |> Agent.answer()
+        Pipeline.new("What is Phoenix LiveView?", repo: Arcana.TestRepo, llm: llm)
+        |> Pipeline.search()
+        |> Pipeline.answer()
 
       assert is_nil(ctx.error)
       assert is_binary(ctx.answer)
@@ -63,10 +63,10 @@ defmodule Arcana.EndToEnd.AgentTest do
       llm = llm_config(:zai)
 
       ctx =
-        Agent.new("real-time web apps", repo: Arcana.TestRepo, llm: llm)
-        |> Agent.expand()
-        |> Agent.search()
-        |> Agent.answer()
+        Pipeline.new("real-time web apps", repo: Arcana.TestRepo, llm: llm)
+        |> Pipeline.expand()
+        |> Pipeline.search()
+        |> Pipeline.answer()
 
       assert is_nil(ctx.error)
       assert is_binary(ctx.expanded_query)
@@ -79,13 +79,13 @@ defmodule Arcana.EndToEnd.AgentTest do
       llm = llm_config(:zai)
 
       ctx =
-        Agent.new("Compare Phoenix MVC and LiveView approaches",
+        Pipeline.new("Compare Phoenix MVC and LiveView approaches",
           repo: Arcana.TestRepo,
           llm: llm
         )
-        |> Agent.decompose()
-        |> Agent.search()
-        |> Agent.answer()
+        |> Pipeline.decompose()
+        |> Pipeline.search()
+        |> Pipeline.answer()
 
       assert is_nil(ctx.error)
       assert [_ | _] = ctx.sub_questions
@@ -97,13 +97,13 @@ defmodule Arcana.EndToEnd.AgentTest do
       llm = llm_config(:zai)
 
       ctx =
-        Agent.new("Hey, can you tell me about that Elixir web thing?",
+        Pipeline.new("Hey, can you tell me about that Elixir web thing?",
           repo: Arcana.TestRepo,
           llm: llm
         )
-        |> Agent.rewrite()
-        |> Agent.search()
-        |> Agent.answer()
+        |> Pipeline.rewrite()
+        |> Pipeline.search()
+        |> Pipeline.answer()
 
       assert is_nil(ctx.error)
       assert is_binary(ctx.rewritten_query)
@@ -119,10 +119,10 @@ defmodule Arcana.EndToEnd.AgentTest do
       llm = llm_config(:zai)
 
       ctx =
-        Agent.new("WebSocket connections", repo: Arcana.TestRepo, llm: llm)
-        |> Agent.search()
-        |> Agent.rerank()
-        |> Agent.answer()
+        Pipeline.new("WebSocket connections", repo: Arcana.TestRepo, llm: llm)
+        |> Pipeline.search()
+        |> Pipeline.rerank()
+        |> Pipeline.answer()
 
       assert is_nil(ctx.error)
       assert is_map(ctx.rerank_scores)
@@ -134,10 +134,10 @@ defmodule Arcana.EndToEnd.AgentTest do
       llm = llm_config(:zai)
 
       ctx =
-        Agent.new("How does LiveView work?", repo: Arcana.TestRepo, llm: llm)
-        |> Agent.select(collections: ["phoenix-docs", "unrelated-collection"])
-        |> Agent.search()
-        |> Agent.answer()
+        Pipeline.new("How does LiveView work?", repo: Arcana.TestRepo, llm: llm)
+        |> Pipeline.select(collections: ["phoenix-docs", "unrelated-collection"])
+        |> Pipeline.search()
+        |> Pipeline.answer()
 
       assert is_nil(ctx.error)
       assert is_list(ctx.collections)
@@ -152,9 +152,9 @@ defmodule Arcana.EndToEnd.AgentTest do
       llm = llm_config(:zai)
 
       ctx =
-        Agent.new("Phoenix MVC pattern", repo: Arcana.TestRepo, llm: llm)
-        |> Agent.search(self_correct: true, max_iterations: 2)
-        |> Agent.answer()
+        Pipeline.new("Phoenix MVC pattern", repo: Arcana.TestRepo, llm: llm)
+        |> Pipeline.search(self_correct: true, max_iterations: 2)
+        |> Pipeline.answer()
 
       assert is_nil(ctx.error)
       refute Enum.empty?(ctx.results)
@@ -169,9 +169,9 @@ defmodule Arcana.EndToEnd.AgentTest do
       llm = llm_config(:zai)
 
       ctx =
-        Agent.new("What is Phoenix?", repo: Arcana.TestRepo, llm: llm)
-        |> Agent.search()
-        |> Agent.answer(self_correct: true, max_corrections: 1)
+        Pipeline.new("What is Phoenix?", repo: Arcana.TestRepo, llm: llm)
+        |> Pipeline.search()
+        |> Pipeline.answer(self_correct: true, max_corrections: 1)
 
       assert is_nil(ctx.error)
       assert is_binary(ctx.answer)
@@ -186,15 +186,15 @@ defmodule Arcana.EndToEnd.AgentTest do
       llm = llm_config(:zai)
 
       ctx =
-        Agent.new("Hey, what's the deal with real-time features in Phoenix?",
+        Pipeline.new("Hey, what's the deal with real-time features in Phoenix?",
           repo: Arcana.TestRepo,
           llm: llm
         )
-        |> Agent.rewrite()
-        |> Agent.expand()
-        |> Agent.search()
-        |> Agent.rerank()
-        |> Agent.answer()
+        |> Pipeline.rewrite()
+        |> Pipeline.expand()
+        |> Pipeline.search()
+        |> Pipeline.rerank()
+        |> Pipeline.answer()
 
       assert is_nil(ctx.error)
       assert is_binary(ctx.rewritten_query)
@@ -207,12 +207,12 @@ defmodule Arcana.EndToEnd.AgentTest do
 
   describe "individual Agent steps" do
     @tag :end_to_end
-    test "Agent.expand/2 expands query with synonyms" do
+    test "Pipeline.expand/2 expands query with synonyms" do
       llm = llm_config(:zai)
 
       ctx =
-        Agent.new("ML models", repo: Arcana.TestRepo, llm: llm)
-        |> Agent.expand()
+        Pipeline.new("ML models", repo: Arcana.TestRepo, llm: llm)
+        |> Pipeline.expand()
 
       assert is_nil(ctx.error)
       assert is_binary(ctx.expanded_query)
@@ -223,16 +223,16 @@ defmodule Arcana.EndToEnd.AgentTest do
     end
 
     @tag :end_to_end
-    test "Agent.decompose/2 breaks complex question into sub-questions" do
+    test "Pipeline.decompose/2 breaks complex question into sub-questions" do
       llm = llm_config(:zai)
 
       ctx =
-        Agent.new(
+        Pipeline.new(
           "What are the differences between Elixir and Erlang, and when should I use each?",
           repo: Arcana.TestRepo,
           llm: llm
         )
-        |> Agent.decompose()
+        |> Pipeline.decompose()
 
       assert is_nil(ctx.error)
       assert is_list(ctx.sub_questions)
@@ -241,16 +241,16 @@ defmodule Arcana.EndToEnd.AgentTest do
     end
 
     @tag :end_to_end
-    test "Agent.rewrite/2 cleans up conversational queries" do
+    test "Pipeline.rewrite/2 cleans up conversational queries" do
       llm = llm_config(:zai)
 
       ctx =
-        Agent.new(
+        Pipeline.new(
           "Hey, so I was wondering if you could help me understand how GenServer works?",
           repo: Arcana.TestRepo,
           llm: llm
         )
-        |> Agent.rewrite()
+        |> Pipeline.rewrite()
 
       assert is_nil(ctx.error)
       assert is_binary(ctx.rewritten_query)
@@ -260,12 +260,12 @@ defmodule Arcana.EndToEnd.AgentTest do
     end
 
     @tag :end_to_end
-    test "Agent.select/2 chooses relevant collections" do
+    test "Pipeline.select/2 chooses relevant collections" do
       llm = llm_config(:zai)
 
       ctx =
-        Agent.new("How do I write unit tests?", repo: Arcana.TestRepo, llm: llm)
-        |> Agent.select(collections: ["testing-docs", "api-reference", "recipes"])
+        Pipeline.new("How do I write unit tests?", repo: Arcana.TestRepo, llm: llm)
+        |> Pipeline.select(collections: ["testing-docs", "api-reference", "recipes"])
 
       assert is_nil(ctx.error)
       assert is_list(ctx.collections)

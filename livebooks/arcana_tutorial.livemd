@@ -317,7 +317,7 @@ end
 ### Simple RAG: Search → Answer
 
 ```elixir
-alias Arcana.Agent
+alias Arcana.Pipeline
 
 # First, we need a repo-like interface for the agent
 # Since we're using memory backend, we'll work directly with VectorStore
@@ -569,7 +569,7 @@ expand_llm = fn prompt ->
 end
 
 # Using with Agent pipeline
-alias Arcana.Agent
+alias Arcana.Pipeline
 
 # First ingest a document about ML
 {:ok, _} = Arcana.ingest(
@@ -648,13 +648,13 @@ IO.puts("Re-ranking filters out irrelevant chunks")
 
 ### Custom Reranker
 
-Implement the `Arcana.Agent.Reranker` behaviour for custom scoring logic:
+Implement the `Arcana.Pipeline.Reranker` behaviour for custom scoring logic:
 
 ```elixir
 defmodule MyKeywordReranker do
-  @behaviour Arcana.Agent.Reranker
+  @behaviour Arcana.Pipeline.Reranker
 
-  @impl Arcana.Agent.Reranker
+  @impl Arcana.Pipeline.Reranker
   def rerank(_question, chunks, opts) do
     threshold = Keyword.get(opts, :threshold, 5)
 
@@ -868,7 +868,7 @@ Replace the default Hallmark grounder with your own logic:
 ```elixir
 # Module-based
 # defmodule MyGrounder do
-#   @behaviour Arcana.Agent.Grounder
+#   @behaviour Arcana.Pipeline.Grounder
 #
 #   @impl true
 #   def ground(answer, chunks, _opts) do

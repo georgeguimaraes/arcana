@@ -338,7 +338,7 @@ See the [LLM Integration](llm-integration.md) guide for production-ready LLM int
 For more control over the RAG process, use the Agent pipeline:
 
 ```elixir
-alias Arcana.Agent
+alias Arcana.Pipeline
 
 llm = fn prompt -> {:ok, "LLM response"} end
 
@@ -430,7 +430,7 @@ For custom re-ranking logic (e.g., cross-encoder models):
 ```elixir
 # Custom reranker module
 defmodule MyApp.CrossEncoderReranker do
-  @behaviour Arcana.Agent.Reranker
+  @behaviour Arcana.Pipeline.Reranker
 
   @impl true
   def rerank(question, chunks, _opts) do

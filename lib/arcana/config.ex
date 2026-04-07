@@ -92,10 +92,10 @@ defmodule Arcana.Config do
   `reranker: false` per-call to disable for a single request.
 
       # Global reranker module
-      config :arcana, reranker: Arcana.Agent.Reranker.CrossEncoder
+      config :arcana, reranker: Arcana.Pipeline.Reranker.CrossEncoder
 
       # With options (e.g. over_fetch multiplier, threshold)
-      config :arcana, reranker: {Arcana.Agent.Reranker.CrossEncoder, over_fetch: 3}
+      config :arcana, reranker: {Arcana.Pipeline.Reranker.CrossEncoder, over_fetch: 3}
 
       # Custom function: fn question, chunks, opts -> {:ok, reranked} end
       config :arcana, reranker: &MyApp.rerank/3

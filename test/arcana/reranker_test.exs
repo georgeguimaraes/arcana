@@ -1,9 +1,9 @@
 defmodule Arcana.RerankerTest do
   use ExUnit.Case, async: true
 
-  alias Arcana.Agent.Reranker.LLM
+  alias Arcana.Pipeline.Reranker.LLM
 
-  describe "Agent.Reranker.LLM.rerank/3" do
+  describe "Pipeline.Reranker.LLM.rerank/3" do
     test "scores and filters chunks by threshold" do
       chunks = [
         %{id: "1", text: "Elixir is a functional language"},

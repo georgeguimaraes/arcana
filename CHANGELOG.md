@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Deprecations and breaking changes
+
+- **Renamed `Arcana.Agent` to `Arcana.Pipeline`.** The previous name was
+  misleading: it described a composed Modular RAG pipeline, not an
+  autonomous agent. The new name matches the literature (Singh et al.,
+  2025) and conventions in LlamaIndex (`QueryPipeline`) and LangChain
+  (`Chains`).
+
+  - **Calls to `Arcana.Agent.*` functions still work** via a deprecated
+    facade that delegates to `Arcana.Pipeline.*`. Compile-time deprecation
+    warnings will appear. The facade will be removed in 3.0.
+  - **Behaviour modules were renamed and are NOT aliased.** If you
+    implement custom modules with `@behaviour Arcana.Agent.Reranker`,
+    update them to `@behaviour Arcana.Pipeline.Reranker`. This is a
+    one-line change. Affected behaviours:
+    - `Arcana.Agent.Searcher` → `Arcana.Pipeline.Searcher`
+    - `Arcana.Agent.Reranker` → `Arcana.Pipeline.Reranker`
+    - `Arcana.Agent.Rewriter` → `Arcana.Pipeline.Rewriter`
+    - `Arcana.Agent.Expander` → `Arcana.Pipeline.Expander`
+    - `Arcana.Agent.Decomposer` → `Arcana.Pipeline.Decomposer`
+    - `Arcana.Agent.Selector` → `Arcana.Pipeline.Selector`
+    - `Arcana.Agent.Answerer` → `Arcana.Pipeline.Answerer`
+    - `Arcana.Agent.Grounder` → `Arcana.Pipeline.Grounder`
+  - The `Arcana.Agent.Context` struct is now `Arcana.Pipeline.Context`.
+    Code that pattern matches on the struct module name needs updating.
+
 ## [1.6.0](https://github.com/georgeguimaraes/arcana/compare/v1.5.2...v1.6.0) (2026-03-04)
 
 

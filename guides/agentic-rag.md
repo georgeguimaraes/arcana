@@ -4,10 +4,10 @@ Build sophisticated RAG workflows with Arcana's composable Agent pipeline.
 
 ## Overview
 
-The `Arcana.Agent` module provides a pipeline-based approach to RAG where a context struct flows through each step:
+The `Arcana.Pipeline` module provides a pipeline-based approach to RAG where a context struct flows through each step:
 
 ```elixir
-alias Arcana.Agent
+alias Arcana.Pipeline
 
 ctx =
   Agent.new("Compare Elixir and Erlang")
@@ -473,14 +473,14 @@ Every pipeline step has a behaviour and can be replaced with a custom implementa
 
 | Step | Behaviour | Default Implementation | Option |
 |------|-----------|----------------------|--------|
-| `rewrite/2` | `Arcana.Agent.Rewriter` | `Rewriter.LLM` | `:rewriter` |
-| `select/2` | `Arcana.Agent.Selector` | `Selector.LLM` | `:selector` |
-| `expand/2` | `Arcana.Agent.Expander` | `Expander.LLM` | `:expander` |
-| `decompose/2` | `Arcana.Agent.Decomposer` | `Decomposer.LLM` | `:decomposer` |
-| `search/2` | `Arcana.Agent.Searcher` | `Searcher.Arcana` | `:searcher` |
-| `rerank/2` | `Arcana.Agent.Reranker` | `Reranker.LLM` | `:reranker` |
-| `answer/2` | `Arcana.Agent.Answerer` | `Answerer.LLM` | `:answerer` |
-| `ground/2` | `Arcana.Agent.Grounder` | `Grounder.Hallmark` | `:grounder` |
+| `rewrite/2` | `Arcana.Pipeline.Rewriter` | `Rewriter.LLM` | `:rewriter` |
+| `select/2` | `Arcana.Pipeline.Selector` | `Selector.LLM` | `:selector` |
+| `expand/2` | `Arcana.Pipeline.Expander` | `Expander.LLM` | `:expander` |
+| `decompose/2` | `Arcana.Pipeline.Decomposer` | `Decomposer.LLM` | `:decomposer` |
+| `search/2` | `Arcana.Pipeline.Searcher` | `Searcher.Arcana` | `:searcher` |
+| `rerank/2` | `Arcana.Pipeline.Reranker` | `Reranker.LLM` | `:reranker` |
+| `answer/2` | `Arcana.Pipeline.Answerer` | `Answerer.LLM` | `:answerer` |
+| `ground/2` | `Arcana.Pipeline.Grounder` | `Grounder.Hallmark` | `:grounder` |
 
 ### Custom Rewriter
 
@@ -488,7 +488,7 @@ Transform queries using your own logic:
 
 ```elixir
 defmodule MyApp.SpellCheckRewriter do
-  @behaviour Arcana.Agent.Rewriter
+  @behaviour Arcana.Pipeline.Rewriter
 
   @impl true
   def rewrite(question, _opts) do
@@ -507,7 +507,7 @@ Expand queries with domain-specific knowledge:
 
 ```elixir
 defmodule MyApp.MedicalExpander do
-  @behaviour Arcana.Agent.Expander
+  @behaviour Arcana.Pipeline.Expander
 
   @impl true
   def expand(question, _opts) do
@@ -525,7 +525,7 @@ Break questions into sub-questions with custom logic:
 
 ```elixir
 defmodule MyApp.SimpleDecomposer do
-  @behaviour Arcana.Agent.Decomposer
+  @behaviour Arcana.Pipeline.Decomposer
 
   @impl true
   def decompose(question, _opts) do
@@ -547,7 +547,7 @@ Replace the default pgvector search with any backend:
 
 ```elixir
 defmodule MyApp.ElasticsearchSearcher do
-  @behaviour Arcana.Agent.Searcher
+  @behaviour Arcana.Pipeline.Searcher
 
   @impl true
   def search(question, collection, opts) do
@@ -586,7 +586,7 @@ Use a cross-encoder or other scoring model:
 
 ```elixir
 defmodule MyApp.CrossEncoderReranker do
-  @behaviour Arcana.Agent.Reranker
+  @behaviour Arcana.Pipeline.Reranker
 
   @impl true
   def rerank(question, chunks, opts) do
@@ -614,7 +614,7 @@ Generate answers with your own approach:
 
 ```elixir
 defmodule MyApp.TemplateAnswerer do
-  @behaviour Arcana.Agent.Answerer
+  @behaviour Arcana.Pipeline.Answerer
 
   @impl true
   def answer(question, chunks, _opts) do
@@ -643,7 +643,7 @@ Replace the default Hallmark grounder with your own hallucination detection logi
 
 ```elixir
 defmodule MyApp.APIGrounder do
-  @behaviour Arcana.Agent.Grounder
+  @behaviour Arcana.Pipeline.Grounder
 
   @impl true
   def ground(answer, chunks, opts) do
@@ -724,7 +724,7 @@ ctx =
 
 ## Context Struct
 
-The `Arcana.Agent.Context` struct carries all state:
+The `Arcana.Pipeline.Context` struct carries all state:
 
 | Field | Description |
 |-------|-------------|

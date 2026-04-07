@@ -9,7 +9,7 @@ Re-ranking is a second-stage retrieval step that scores each chunk based on rele
 ## Using Re-ranking in the Agent Pipeline
 
 ```elixir
-alias Arcana.Agent
+alias Arcana.Pipeline
 
 llm = fn prompt -> {:ok, LangChain.chat(prompt)} end
 
@@ -62,13 +62,13 @@ Agent.rerank(ctx, prompt: custom_prompt)
 
 ### Implementing the Behaviour
 
-Create a custom reranker by implementing `Arcana.Agent.Reranker`:
+Create a custom reranker by implementing `Arcana.Pipeline.Reranker`:
 
 ```elixir
 defmodule MyApp.CrossEncoderReranker do
-  @behaviour Arcana.Agent.Reranker
+  @behaviour Arcana.Pipeline.Reranker
 
-  @impl Arcana.Agent.Reranker
+  @impl Arcana.Pipeline.Reranker
   def rerank(question, chunks, opts) do
     threshold = Keyword.get(opts, :threshold, 0.5)
 
@@ -112,7 +112,7 @@ end)
 
 ## Built-in Rerankers
 
-### Arcana.Agent.Reranker.LLM (Default)
+### Arcana.Pipeline.Reranker.LLM (Default)
 
 Uses your LLM to score each chunk:
 
@@ -121,9 +121,9 @@ Uses your LLM to score each chunk:
 3. Filters chunks below threshold
 4. Sorts by score descending
 
-This is the default when you call `Arcana.Agent.rerank/2`.
+This is the default when you call `Arcana.Pipeline.rerank/2`.
 
-### Arcana.Agent.Reranker.ColBERT
+### Arcana.Pipeline.Reranker.ColBERT
 
 ColBERT-style neural reranking using per-token embeddings and MaxSim scoring. Provides more nuanced relevance scoring than single-vector methods by matching individual query tokens to document tokens.
 
@@ -136,10 +136,10 @@ Add the optional dependency:
 Use it:
 
 ```elixir
-Agent.rerank(ctx, reranker: Arcana.Agent.Reranker.ColBERT)
+Agent.rerank(ctx, reranker: Arcana.Pipeline.Reranker.ColBERT)
 
 # With options
-Agent.rerank(ctx, reranker: {Arcana.Agent.Reranker.ColBERT, top_k: 5})
+Agent.rerank(ctx, reranker: {Arcana.Pipeline.Reranker.ColBERT, top_k: 5})
 ```
 
 **Options:**

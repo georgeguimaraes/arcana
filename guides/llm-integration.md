@@ -174,11 +174,11 @@ For complex questions, use the Agent pipeline:
 llm = fn prompt -> ReqLLM.generate_text!("openai:gpt-4o-mini", prompt) end
 
 ctx =
-  Arcana.Agent.new("Compare Elixir and Erlang features", repo: MyApp.Repo, llm: llm)
-  |> Arcana.Agent.select(collections: ["elixir-docs", "erlang-docs"])
-  |> Arcana.Agent.decompose()
-  |> Arcana.Agent.search(self_correct: true)
-  |> Arcana.Agent.answer()
+  Arcana.Pipeline.new("Compare Elixir and Erlang features", repo: MyApp.Repo, llm: llm)
+  |> Arcana.Pipeline.select(collections: ["elixir-docs", "erlang-docs"])
+  |> Arcana.Pipeline.decompose()
+  |> Arcana.Pipeline.search(self_correct: true)
+  |> Arcana.Pipeline.answer()
 
 ctx.answer
 ```

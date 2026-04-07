@@ -241,16 +241,16 @@ defmodule ArcanaWeb.AskLive do
   end
 
   defp run_agentic_ask(question, repo, llm, all_collections, opts) do
-    alias Arcana.Agent
+    alias Arcana.Pipeline
 
     all_collection_names = Enum.map(all_collections, & &1.name)
     search_opts = build_search_opts(opts, all_collection_names)
 
-    Agent.new(question, repo: repo, llm: llm)
+    Pipeline.new(question, repo: repo, llm: llm)
     |> maybe_select(opts, all_collection_names)
     |> maybe_expand(opts)
     |> maybe_decompose(opts)
-    |> Agent.search(search_opts)
+    |> Pipeline.search(search_opts)
     |> maybe_rerank(opts)
     |> maybe_answer_with_hallucinations(opts)
     |> maybe_ground(opts)
@@ -261,29 +261,29 @@ defmodule ArcanaWeb.AskLive do
 
   defp maybe_select(ctx, opts, all_collection_names) do
     if Keyword.get(opts, :use_llm_select, false) and length(all_collection_names) > 1 do
-      Arcana.Agent.select(ctx, collections: all_collection_names)
+      Arcana.Pipeline.select(ctx, collections: all_collection_names)
     else
       ctx
     end
   end
 
   defp maybe_expand(ctx, opts) do
-    if Keyword.get(opts, :use_expand, false), do: Arcana.Agent.expand(ctx), else: ctx
+    if Keyword.get(opts, :use_expand, false), do: Arcana.Pipeline.expand(ctx), else: ctx
   end
 
   defp maybe_decompose(ctx, opts) do
-    if Keyword.get(opts, :use_decompose, false), do: Arcana.Agent.decompose(ctx), else: ctx
+    if Keyword.get(opts, :use_decompose, false), do: Arcana.Pipeline.decompose(ctx), else: ctx
   end
 
   defp maybe_rerank(ctx, opts) do
-    if Keyword.get(opts, :use_rerank, false), do: Arcana.Agent.rerank(ctx), else: ctx
+    if Keyword.get(opts, :use_rerank, false), do: Arcana.Pipeline.rerank(ctx), else: ctx
   end
 
   defp maybe_answer_with_hallucinations(ctx, opts) do
     if Keyword.get(opts, :hallucinate_demo, false) do
-      Arcana.Agent.answer(ctx, prompt: &hallucination_demo_prompt/2)
+      Arcana.Pipeline.answer(ctx, prompt: &hallucination_demo_prompt/2)
     else
-      Arcana.Agent.answer(ctx)
+      Arcana.Pipeline.answer(ctx)
     end
   end
 
@@ -304,7 +304,7 @@ defmodule ArcanaWeb.AskLive do
   end
 
   defp maybe_ground(ctx, opts) do
-    if Keyword.get(opts, :use_ground, false), do: Arcana.Agent.ground(ctx), else: ctx
+    if Keyword.get(opts, :use_ground, false), do: Arcana.Pipeline.ground(ctx), else: ctx
   end
 
   defp build_search_opts(opts, all_collection_names) do
