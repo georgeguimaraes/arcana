@@ -90,8 +90,8 @@ defmodule Arcana.Graph.CommunitySummarizerTest do
 
       prompt = LLM.build_prompt(entities, relationships)
 
-      assert prompt =~ "KNOWS"
-      assert prompt =~ "Friends"
+      # Lean prompt format: "source --[TYPE]--> target", drops descriptions to save tokens
+      assert prompt =~ "A --[KNOWS]--> B"
     end
   end
 

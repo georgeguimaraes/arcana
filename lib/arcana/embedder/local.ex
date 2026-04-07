@@ -9,12 +9,26 @@ defmodule Arcana.Embedder.Local do
       # Default model
       config :arcana, embedder: :local
 
-      # Custom HuggingFace model
-      config :arcana, embedder: {:local, model: "BAAI/bge-large-en-v1.5"}
+      # Custom HuggingFace model and serving options
+      config :arcana,
+        embedder: {:local,
+          model: "BAAI/bge-large-en-v1.5",
+          batch_size: 64,
+          sequence_length: 512,
+          batch_timeout: 100
+        }
 
   ## Starting the Serving
 
-  Add `Arcana.Embedder.Local.child_spec/1` to your application supervision tree:
+  Add `Arcana.Embedder.Local` to your application supervision tree. It will
+  read its configuration from the global `:arcana, :embedder` config:
+
+      children = [
+        Arcana.Embedder.Local,
+        # ... other children
+      ]
+
+  Or pass options inline (these override the global config):
 
       children = [
         {Arcana.Embedder.Local, model: "BAAI/bge-small-en-v1.5"},
@@ -67,6 +81,7 @@ defmodule Arcana.Embedder.Local do
   Returns the child spec for starting the embedding serving.
   """
   def child_spec(opts) do
+    opts = merge_global_opts(opts)
     model = Keyword.get(opts, :model, @default_model)
     serving_name = serving_name(model)
 
@@ -79,8 +94,12 @@ defmodule Arcana.Embedder.Local do
 
   @doc """
   Starts the Nx.Serving for this embedder.
+
+  Reads options from the global `:arcana, :embedder` config when no opts
+  are passed (or merges when some opts are passed).
   """
-  def start_link(opts) do
+  def start_link(opts \\ []) do
+    opts = merge_global_opts(opts)
     model = Keyword.get(opts, :model, @default_model)
     serving_name = serving_name(model)
 
@@ -105,6 +124,21 @@ defmodule Arcana.Embedder.Local do
 
   defp serving_name(model) do
     Module.concat(__MODULE__, String.to_atom(model))
+  end
+
+  # Merge passed opts with global :arcana, :embedder config when applicable.
+  # Per-call opts take precedence over global config.
+  defp merge_global_opts(opts) do
+    case Application.get_env(:arcana, :embedder) do
+      nil ->
+        opts
+
+      config ->
+        case Arcana.Config.parse_embedder_config(config) do
+          {__MODULE__, global_opts} -> Keyword.merge(global_opts, opts)
+          _other -> opts
+        end
+    end
   end
 
   # Behaviour implementation

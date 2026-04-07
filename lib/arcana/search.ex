@@ -29,13 +29,19 @@ defmodule Arcana.Search do
     * `:vector_store` - Override the configured vector store backend
     * `:semantic_weight` - Weight for semantic scores in hybrid mode (default: 0.5)
     * `:fulltext_weight` - Weight for fulltext scores in hybrid mode (default: 0.5)
-    * `:reranker` - Reranker module or function to re-score results (optional).
-      When set, retrieves `limit * 3` candidates, reranks, and returns the top `limit`.
+    * `:reranker` - Reranker module or function. Defaults to `config :arcana, :reranker`.
+      Pass `false` to disable a globally configured reranker for this call.
+      When set, retrieves `limit * over_fetch` candidates, reranks, returns top `limit`.
+
+  Defaults for `:limit`, `:threshold`, and `:mode` can be set globally:
+
+      config :arcana, search: [limit: 10, threshold: 0.0, mode: :semantic]
 
   """
   def search(query, opts) when is_binary(query) do
-    repo = opts[:repo] || Application.get_env(:arcana, :repo)
-    reranker = Keyword.get(opts, :reranker)
+    opts = Arcana.Config.merge_app_opts(opts, :search)
+    repo = Arcana.Config.get(opts, :repo)
+    reranker = Arcana.Config.reranker(opts)
     limit = Keyword.get(opts, :limit, 10)
     source_id = Keyword.get(opts, :source_id)
     threshold = Keyword.get(opts, :threshold, 0.0)
@@ -64,7 +70,8 @@ defmodule Arcana.Search do
 
     :telemetry.span([:arcana, :search], start_metadata, fn ->
       search_query = maybe_rewrite_query(query, rewriter)
-      retrieval_limit = if reranker, do: limit * 3, else: limit
+      over_fetch = reranker_over_fetch(reranker)
+      retrieval_limit = if reranker, do: limit * over_fetch, else: limit
 
       params = %{
         repo: repo,
@@ -73,7 +80,9 @@ defmodule Arcana.Search do
         threshold: threshold,
         vector_store: vector_store_opt,
         semantic_weight: Keyword.get(opts, :semantic_weight, 0.5),
-        fulltext_weight: Keyword.get(opts, :fulltext_weight, 0.5)
+        fulltext_weight: Keyword.get(opts, :fulltext_weight, 0.5),
+        # Original opts so backends can pick up any extra knobs (e.g. :hnsw_ef_search)
+        opts: opts
       }
 
       retrieval_opts = Keyword.put(opts, :limit, retrieval_limit)
@@ -120,6 +129,9 @@ defmodule Arcana.Search do
 
   # Private functions
 
+  defp reranker_over_fetch(nil), do: 1
+  defp reranker_over_fetch({_module_or_fun, opts}), do: Keyword.get(opts, :over_fetch, 3)
+
   defp maybe_rerank({{:ok, results}, metadata}, nil, _query, _limit, _opts) do
     {{:ok, results}, metadata}
   end
@@ -128,11 +140,20 @@ defmodule Arcana.Search do
     {error, metadata}
   end
 
-  defp maybe_rerank({{:ok, results}, metadata}, reranker, query, limit, opts) do
-    reranker_opts = Keyword.take(opts, [:threshold, :top_k, :llm])
-    reranker_opts = Keyword.put_new(reranker_opts, :top_k, limit)
+  defp maybe_rerank(
+         {{:ok, results}, metadata},
+         {module_or_fun, reranker_opts},
+         query,
+         limit,
+         opts
+       ) do
+    rerank_opts =
+      reranker_opts
+      |> Keyword.merge(Keyword.take(opts, [:threshold, :top_k, :llm]))
+      |> Keyword.put_new(:top_k, limit)
+      |> Keyword.delete(:over_fetch)
 
-    case do_rerank(reranker, query, results, reranker_opts) do
+    case do_rerank(module_or_fun, query, results, rerank_opts) do
       {:ok, reranked} ->
         {{:ok, reranked}, Map.put(metadata, :reranked, true)}
 
@@ -326,15 +347,7 @@ defmodule Arcana.Search do
   defp do_search(:semantic, query, params) do
     case Embedder.embed(Arcana.Config.embedder(), query, intent: :query) do
       {:ok, query_embedding} ->
-        vector_store_opts =
-          [
-            limit: params.limit,
-            threshold: params.threshold,
-            source_id: params.source_id
-          ]
-          |> maybe_add_repo(params.repo)
-          |> maybe_add_vector_store(params.vector_store)
-
+        vector_store_opts = build_vector_store_opts(params, [:limit, :threshold, :source_id])
         results = VectorStore.search(params.collection, query_embedding, vector_store_opts)
 
         {:ok, transform_results(results)}
@@ -345,14 +358,7 @@ defmodule Arcana.Search do
   end
 
   defp do_search(:fulltext, query, params) do
-    vector_store_opts =
-      [
-        limit: params.limit,
-        source_id: params.source_id
-      ]
-      |> maybe_add_repo(params.repo)
-      |> maybe_add_vector_store(params.vector_store)
-
+    vector_store_opts = build_vector_store_opts(params, [:limit, :source_id])
     results = VectorStore.search_text(params.collection, query, vector_store_opts)
 
     {:ok, transform_results(results)}
@@ -373,14 +379,18 @@ defmodule Arcana.Search do
   defp do_hybrid_pgvector(query, params) do
     case Embedder.embed(Arcana.Config.embedder(), query, intent: :query) do
       {:ok, query_embedding} ->
-        opts = [
-          repo: params.repo,
-          limit: params.limit,
-          source_id: params.source_id,
-          threshold: params.threshold,
-          semantic_weight: Map.get(params, :semantic_weight, 0.5),
-          fulltext_weight: Map.get(params, :fulltext_weight, 0.5)
-        ]
+        user_opts = Map.get(params, :opts, [])
+
+        opts =
+          user_opts
+          |> Keyword.merge(
+            repo: params.repo,
+            limit: params.limit,
+            source_id: params.source_id,
+            threshold: params.threshold,
+            semantic_weight: Map.get(params, :semantic_weight, 0.5),
+            fulltext_weight: Map.get(params, :fulltext_weight, 0.5)
+          )
 
         results =
           Pgvector.search_hybrid(
@@ -435,6 +445,25 @@ defmodule Arcana.Search do
         score: result.score
       }
     end)
+  end
+
+  # Build vector_store opts by merging user-provided opts (so backend-specific
+  # tuning flows through) with the search-specific fields from params.
+  defp build_vector_store_opts(params, fields) do
+    user_opts = Map.get(params, :opts, [])
+
+    base =
+      Enum.reduce(fields, [], fn field, acc ->
+        case Map.get(params, field) do
+          nil -> acc
+          value -> Keyword.put(acc, field, value)
+        end
+      end)
+
+    user_opts
+    |> Keyword.merge(base)
+    |> maybe_add_repo(params.repo)
+    |> maybe_add_vector_store(params.vector_store)
   end
 
   defp maybe_add_repo(opts, nil), do: opts

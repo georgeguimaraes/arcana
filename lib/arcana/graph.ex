@@ -482,7 +482,7 @@ defmodule Arcana.Graph do
   """
   def resolve_entity_extractor(opts) do
     graph_config = raw_config()
-    llm = opts[:llm] || Application.get_env(:arcana, :llm)
+    llm = Arcana.Config.get(opts, :llm)
     extractor = Keyword.get(opts, :entity_extractor) || graph_config[:entity_extractor]
     normalize_entity_extractor(extractor, llm)
   end
@@ -501,7 +501,7 @@ defmodule Arcana.Graph do
   defp maybe_inject_llm(opts, llm), do: Keyword.put_new(opts, :llm, llm)
 
   defp resolve_relationship_extractor(opts, graph_config) do
-    llm = opts[:llm] || Application.get_env(:arcana, :llm)
+    llm = Arcana.Config.get(opts, :llm)
 
     case Keyword.get(opts, :relationship_extractor) do
       nil ->
@@ -544,7 +544,7 @@ defmodule Arcana.Graph do
   end
 
   defp resolve_extractor(opts, graph_config) do
-    llm = opts[:llm] || Application.get_env(:arcana, :llm)
+    llm = Arcana.Config.get(opts, :llm)
 
     case Keyword.get(opts, :extractor) do
       nil ->

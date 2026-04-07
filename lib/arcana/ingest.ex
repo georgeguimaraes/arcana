@@ -101,8 +101,7 @@ defmodule Arcana.Ingest do
   # Private functions
 
   defp require_repo!(opts) do
-    opts[:repo] || Application.get_env(:arcana, :repo) ||
-      raise ArgumentError, "repo is required"
+    Arcana.Config.get(opts, :repo) || raise ArgumentError, "repo is required"
   end
 
   defp finalize_ingest(document, chunk_records, collection, repo, opts) do

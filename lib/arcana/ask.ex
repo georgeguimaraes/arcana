@@ -34,7 +34,15 @@ defmodule Arcana.Ask do
     * `:mode` - Search mode: `:semantic` (default), `:fulltext`, or `:hybrid`
     * `:collection` - Filter to a specific collection
     * `:collections` - Filter to multiple collections
-    * `:prompt` - Custom prompt function `fn question, context -> system_prompt_string end`
+    * `:prompt` - Custom prompt function. Supports arity 2 `(question, context)` or
+      arity 3 `(question, context, graph_context)`
+    * `:reranker` - Reranker module/function (passed through to search)
+    * `:rewriter` - Query rewriter (passed through to search)
+    * `:graph` - Enable/disable GraphRAG (default: global config)
+
+  Defaults for `:limit` can be set globally:
+
+      config :arcana, ask: [limit: 5]
 
   ## Examples
 
@@ -55,8 +63,9 @@ defmodule Arcana.Ask do
 
   """
   def ask(question, opts) when is_binary(question) do
-    repo = opts[:repo] || Application.get_env(:arcana, :repo)
-    llm = opts[:llm] || Application.get_env(:arcana, :llm)
+    opts = Arcana.Config.merge_app_opts(opts, :ask)
+    repo = Arcana.Config.get(opts, :repo)
+    llm = Arcana.Config.get(opts, :llm)
 
     if is_nil(llm), do: {:error, :no_llm_configured}, else: do_ask(question, opts, repo, llm)
   end
@@ -65,18 +74,10 @@ defmodule Arcana.Ask do
     start_metadata = %{question: question, repo: repo}
 
     :telemetry.span([:arcana, :ask], start_metadata, fn ->
+      # Forward everything except ask-specific keys so backend tuning flows through
       search_opts =
         opts
-        |> Keyword.take([
-          :repo,
-          :limit,
-          :source_id,
-          :threshold,
-          :mode,
-          :collection,
-          :collections,
-          :graph
-        ])
+        |> Keyword.drop([:llm, :prompt])
         |> Keyword.put_new(:limit, 5)
 
       case Arcana.Search.search(question, search_opts) do
@@ -191,7 +192,7 @@ defmodule Arcana.Ask do
   end
 
   defp maybe_fetch_graph_context(question, opts) do
-    repo = opts[:repo] || Application.get_env(:arcana, :repo)
+    repo = Arcana.Config.get(opts, :repo)
 
     if Arcana.Config.graph_enabled?(opts) and repo do
       fetch_graph_context(question, repo, opts)

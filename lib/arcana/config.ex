@@ -58,6 +58,48 @@ defmodule Arcana.Config do
       config :arcana, pdf_parser: MyApp.PDFParser
       config :arcana, pdf_parser: {MyApp.PDFParser, some_option: "value"}
 
+  ## Search Defaults
+
+  Set defaults for `Arcana.search/2`. Per-call options override these.
+  Any option accepted by `Arcana.Search.search/2` can be set globally.
+
+      config :arcana, search: [
+        limit: 10,
+        threshold: 0.0,
+        mode: :semantic,            # :semantic | :fulltext | :hybrid
+        semantic_weight: 0.5,       # for hybrid mode
+        fulltext_weight: 0.5,       # for hybrid mode
+        rewriter: &MyApp.rewrite/1, # query rewriter function
+        # plus any backend-specific opts (e.g. :hnsw_ef_search for pgvector)
+      ]
+
+  ## Ask Defaults
+
+  Set defaults for `Arcana.ask/2`. Per-call options override these.
+  Any option accepted by `Arcana.Ask.ask/2` can be set globally.
+
+      config :arcana, ask: [
+        limit: 5,
+        mode: :semantic,
+        threshold: 0.0,
+        prompt: &MyApp.custom_prompt/3
+      ]
+
+  ## Reranker Configuration
+
+  Set a global reranker that will be applied automatically by `Arcana.search/2`
+  and `Arcana.ask/2`. Per-call `:reranker` options override this. Pass
+  `reranker: false` per-call to disable for a single request.
+
+      # Global reranker module
+      config :arcana, reranker: Arcana.Agent.Reranker.CrossEncoder
+
+      # With options (e.g. over_fetch multiplier, threshold)
+      config :arcana, reranker: {Arcana.Agent.Reranker.CrossEncoder, over_fetch: 3}
+
+      # Custom function: fn question, chunks, opts -> {:ok, reranked} end
+      config :arcana, reranker: &MyApp.rerank/3
+
   """
 
   @doc """
@@ -147,54 +189,135 @@ defmodule Arcana.Config do
     end
   end
 
-  # Embedder config parsing
+  @doc """
+  Returns the value for `key` from opts, falling back to the global app env.
 
-  defp parse_embedder_config(:local), do: {Arcana.Embedder.Local, []}
-  defp parse_embedder_config({:local, opts}), do: {Arcana.Embedder.Local, opts}
-  defp parse_embedder_config(:openai), do: {Arcana.Embedder.OpenAI, []}
-  defp parse_embedder_config({:openai, opts}), do: {Arcana.Embedder.OpenAI, opts}
+  Used to thread configuration like `:repo` and `:llm` from per-call opts
+  with a fallback to `config :arcana, key: value`.
 
-  defp parse_embedder_config(fun) when is_function(fun, 1),
-    do: {Arcana.Embedder.Custom, [fun: fun]}
+  ## Examples
 
-  defp parse_embedder_config({module, opts}) when is_atom(module) and is_list(opts),
-    do: {module, opts}
+      repo = Arcana.Config.get(opts, :repo)
+      llm = Arcana.Config.get(opts, :llm)
 
-  defp parse_embedder_config(module) when is_atom(module), do: {module, []}
-
-  defp parse_embedder_config(other) do
-    raise ArgumentError, "invalid embedding config: #{inspect(other)}"
+  """
+  def get(opts, key) do
+    opts[key] || Application.get_env(:arcana, key)
   end
 
-  # Chunker config parsing
+  @doc """
+  Merges global keyword-list config under `app_key` with per-call opts.
 
-  defp parse_chunker_config(:default), do: {Arcana.Chunker.Default, []}
-  defp parse_chunker_config({:default, opts}), do: {Arcana.Chunker.Default, opts}
+  Per-call opts override the global config. Used to thread namespace
+  configs like `:search`, `:ask`, and `:graph`.
 
-  defp parse_chunker_config(fun) when is_function(fun, 2),
-    do: {Arcana.Chunker.Custom, [fun: fun]}
+  ## Examples
 
-  defp parse_chunker_config({module, opts}) when is_atom(module) and is_list(opts),
-    do: {module, opts}
+      # Reads `config :arcana, search: [limit: 10]` and merges
+      opts = Arcana.Config.merge_app_opts(opts, :search)
 
-  defp parse_chunker_config(module) when is_atom(module), do: {module, []}
+      # Reads `config :arcana, ask: [limit: 5]` and merges
+      opts = Arcana.Config.merge_app_opts(opts, :ask)
 
-  defp parse_chunker_config(other) do
-    raise ArgumentError, "invalid chunker config: #{inspect(other)}"
+  """
+  def merge_app_opts(opts, app_key) do
+    Application.get_env(:arcana, app_key, [])
+    |> Keyword.merge(opts)
   end
 
-  # PDF parser config parsing
+  @doc """
+  Returns the configured reranker, resolving per-call opts and global config.
 
-  defp parse_pdf_parser_config(:poppler), do: {Arcana.FileParser.PDF.Poppler, []}
-  defp parse_pdf_parser_config({:poppler, opts}), do: {Arcana.FileParser.PDF.Poppler, opts}
+  Returns `nil` if no reranker is set or if explicitly disabled with
+  `reranker: false`. Otherwise returns `{module_or_fun, opts}`.
+  """
+  def reranker(opts \\ []) do
+    case Keyword.fetch(opts, :reranker) do
+      {:ok, value} -> parse_reranker_config(value)
+      :error -> Application.get_env(:arcana, :reranker) |> parse_reranker_config()
+    end
+  end
 
-  defp parse_pdf_parser_config({module, opts}) when is_atom(module) and is_list(opts),
-    do: {module, opts}
+  # Generic pluggable component parser.
+  #
+  # All `parse_*_config` functions delegate to this. Each component has a
+  # spec describing its shortcuts, custom function arity (if any), and
+  # whether nil/false should be allowed (for optional components like
+  # reranker).
+  defp parse_pluggable(value, spec) do
+    shortcuts = spec[:shortcuts] || %{}
+    custom_arity = spec[:custom_arity]
+    custom_module = spec[:custom_module]
+    name = spec[:name] || "component"
+    allow_nil? = spec[:allow_nil?] || false
 
-  defp parse_pdf_parser_config(module) when is_atom(module), do: {module, []}
+    cond do
+      is_nil(value) and allow_nil? ->
+        nil
 
-  defp parse_pdf_parser_config(other) do
-    raise ArgumentError, "invalid pdf_parser config: #{inspect(other)}"
+      value == false and allow_nil? ->
+        nil
+
+      is_atom(value) and Map.has_key?(shortcuts, value) ->
+        {Map.fetch!(shortcuts, value), []}
+
+      is_tuple(value) and tuple_size(value) == 2 and is_atom(elem(value, 0)) and
+        is_list(elem(value, 1)) and Map.has_key?(shortcuts, elem(value, 0)) ->
+        {Map.fetch!(shortcuts, elem(value, 0)), elem(value, 1)}
+
+      custom_arity && is_function(value, custom_arity) ->
+        if custom_module, do: {custom_module, [fun: value]}, else: {value, []}
+
+      is_atom(value) and not is_nil(value) ->
+        {value, []}
+
+      is_tuple(value) and tuple_size(value) == 2 and is_atom(elem(value, 0)) and
+          is_list(elem(value, 1)) ->
+        value
+
+      true ->
+        raise ArgumentError, "invalid #{name} config: #{inspect(value)}"
+    end
+  end
+
+  @doc false
+  def parse_reranker_config(value) do
+    parse_pluggable(value,
+      name: "reranker",
+      custom_arity: 3,
+      allow_nil?: true
+    )
+  end
+
+  @doc false
+  def parse_embedder_config(value) do
+    parse_pluggable(value,
+      name: "embedding",
+      shortcuts: %{
+        local: Arcana.Embedder.Local,
+        openai: Arcana.Embedder.OpenAI
+      },
+      custom_arity: 1,
+      custom_module: Arcana.Embedder.Custom
+    )
+  end
+
+  @doc false
+  def parse_chunker_config(value) do
+    parse_pluggable(value,
+      name: "chunker",
+      shortcuts: %{default: Arcana.Chunker.Default},
+      custom_arity: 2,
+      custom_module: Arcana.Chunker.Custom
+    )
+  end
+
+  @doc false
+  def parse_pdf_parser_config(value) do
+    parse_pluggable(value,
+      name: "pdf_parser",
+      shortcuts: %{poppler: Arcana.FileParser.PDF.Poppler}
+    )
   end
 
   # Redaction support
