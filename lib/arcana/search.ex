@@ -29,10 +29,13 @@ defmodule Arcana.Search do
     * `:vector_store` - Override the configured vector store backend
     * `:semantic_weight` - Weight for semantic scores in hybrid mode (default: 0.5)
     * `:fulltext_weight` - Weight for fulltext scores in hybrid mode (default: 0.5)
+    * `:reranker` - Reranker module or function to re-score results (optional).
+      When set, retrieves `limit * 3` candidates, reranks, and returns the top `limit`.
 
   """
   def search(query, opts) when is_binary(query) do
     repo = opts[:repo] || Application.get_env(:arcana, :repo)
+    reranker = Keyword.get(opts, :reranker)
     limit = Keyword.get(opts, :limit, 10)
     source_id = Keyword.get(opts, :source_id)
     threshold = Keyword.get(opts, :threshold, 0.0)
@@ -61,10 +64,11 @@ defmodule Arcana.Search do
 
     :telemetry.span([:arcana, :search], start_metadata, fn ->
       search_query = maybe_rewrite_query(query, rewriter)
+      retrieval_limit = if reranker, do: limit * 3, else: limit
 
       params = %{
         repo: repo,
-        limit: limit,
+        limit: retrieval_limit,
         source_id: source_id,
         threshold: threshold,
         vector_store: vector_store_opt,
@@ -72,13 +76,24 @@ defmodule Arcana.Search do
         fulltext_weight: Keyword.get(opts, :fulltext_weight, 0.5)
       }
 
+      retrieval_opts = Keyword.put(opts, :limit, retrieval_limit)
+
       collection_results = search_collections(collections, mode, search_query, params)
 
-      if Arcana.Config.graph_enabled?(opts) and repo do
-        enhance_with_graph_search(collection_results, search_query, collections, repo, opts)
-      else
-        format_search_results(collection_results, limit)
-      end
+      search_result =
+        if Arcana.Config.graph_enabled?(opts) and repo do
+          enhance_with_graph_search(
+            collection_results,
+            search_query,
+            collections,
+            repo,
+            retrieval_opts
+          )
+        else
+          format_search_results(collection_results, retrieval_limit)
+        end
+
+      maybe_rerank(search_result, reranker, search_query, limit, opts)
     end)
   end
 
@@ -104,6 +119,35 @@ defmodule Arcana.Search do
   end
 
   # Private functions
+
+  defp maybe_rerank({{:ok, results}, metadata}, nil, _query, _limit, _opts) do
+    {{:ok, results}, metadata}
+  end
+
+  defp maybe_rerank({{:error, _} = error, metadata}, _reranker, _query, _limit, _opts) do
+    {error, metadata}
+  end
+
+  defp maybe_rerank({{:ok, results}, metadata}, reranker, query, limit, opts) do
+    reranker_opts = Keyword.take(opts, [:threshold, :top_k, :llm])
+    reranker_opts = Keyword.put_new(reranker_opts, :top_k, limit)
+
+    case do_rerank(reranker, query, results, reranker_opts) do
+      {:ok, reranked} ->
+        {{:ok, reranked}, Map.put(metadata, :reranked, true)}
+
+      {:error, _} ->
+        {{:ok, Enum.take(results, limit)}, metadata}
+    end
+  end
+
+  defp do_rerank(module, query, chunks, opts) when is_atom(module) do
+    module.rerank(query, chunks, opts)
+  end
+
+  defp do_rerank(fun, query, chunks, opts) when is_function(fun, 3) do
+    fun.(query, chunks, opts)
+  end
 
   defp search_collections(collections, mode, search_query, params) do
     Enum.reduce_while(collections, {:ok, []}, fn collection_name, {:ok, acc} ->

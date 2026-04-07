@@ -220,4 +220,48 @@ defmodule Arcana.SearchTest do
       refute Enum.empty?(results)
     end
   end
+
+  describe "search/2 with :reranker" do
+    setup do
+      {:ok, _} = Arcana.ingest("Elixir runs on the BEAM virtual machine.", repo: Repo)
+      {:ok, _} = Arcana.ingest("The weather is nice today.", repo: Repo)
+      {:ok, _} = Arcana.ingest("Elixir uses pattern matching for control flow.", repo: Repo)
+      :ok
+    end
+
+    test "applies function reranker to results" do
+      # Reranker that reverses the order
+      reranker = fn _question, chunks, opts ->
+        top_k = Keyword.get(opts, :top_k, length(chunks))
+        {:ok, chunks |> Enum.reverse() |> Enum.take(top_k)}
+      end
+
+      {:ok, normal} = Arcana.search("Elixir", repo: Repo, limit: 3)
+      {:ok, reranked} = Arcana.search("Elixir", repo: Repo, limit: 3, reranker: reranker)
+
+      refute normal == reranked
+    end
+
+    test "over-fetches 3x candidates before reranking" do
+      call_count = :counters.new(1, [:atomics])
+
+      reranker = fn _question, chunks, opts ->
+        :counters.add(call_count, 1, 1)
+        top_k = Keyword.get(opts, :top_k, length(chunks))
+        {:ok, Enum.take(chunks, top_k)}
+      end
+
+      {:ok, _} = Arcana.search("Elixir", repo: Repo, limit: 2, reranker: reranker)
+
+      assert :counters.get(call_count, 1) == 1
+    end
+
+    test "falls back to truncated results on reranker error" do
+      reranker = fn _question, _chunks, _opts -> {:error, :boom} end
+
+      {:ok, results} = Arcana.search("Elixir", repo: Repo, limit: 2, reranker: reranker)
+
+      assert length(results) <= 2
+    end
+  end
 end
