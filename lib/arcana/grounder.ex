@@ -8,6 +8,7 @@ defmodule Arcana.Grounder do
   ## Built-in Implementations
 
   - `Arcana.Grounder.Hallmark` - Uses Hallmark (Vectara HHEM via Bumblebee) for sentence-level NLI scoring (default)
+  - `Arcana.Grounder.LLMJudge` - Uses an LLM to decompose the answer into atomic claims and verify each against the chunks (RAGAS-style faithfulness)
 
   ## Custom Implementations
 

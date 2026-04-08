@@ -1214,7 +1214,8 @@ defmodule Arcana.Pipeline do
 
   ## Options
 
-  - `:grounder` - Custom grounder module or function (default: `Arcana.Grounder.Hallmark`)
+  - `:grounder` - Custom grounder module or function (default: `Arcana.Grounder.Hallmark`).
+    Pass `Arcana.Grounder.LLMJudge` for LLM-as-judge faithfulness instead of NLI scoring.
 
   ## Example
 
