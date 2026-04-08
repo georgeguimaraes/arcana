@@ -73,6 +73,138 @@ defmodule Arcana.LoopTest do
     end
   end
 
+  describe "Tools.default/1 with collections" do
+    test "single-collection context: search tool has no :collection param (locked)" do
+      tools = Tools.default(["docs"])
+      search = Enum.find(tools, &(&1.name == "search"))
+      param_names = Enum.map(search.parameter_schema, &elem(&1, 0))
+
+      refute :collection in param_names
+      assert :query in param_names
+      assert :limit in param_names
+    end
+
+    test "unrestricted context ([nil]): search tool has no :collection param" do
+      tools = Tools.default([nil])
+      search = Enum.find(tools, &(&1.name == "search"))
+      param_names = Enum.map(search.parameter_schema, &elem(&1, 0))
+
+      refute :collection in param_names
+    end
+
+    test "multi-collection context: search tool gains :collection param listing choices" do
+      tools = Tools.default(["docs", "wiki", "changelog"])
+      search = Enum.find(tools, &(&1.name == "search"))
+      param_names = Enum.map(search.parameter_schema, &elem(&1, 0))
+
+      assert :collection in param_names
+
+      collection_opts = Keyword.fetch!(search.parameter_schema, :collection)
+      assert collection_opts[:type] == :string
+      refute collection_opts[:required]
+      assert collection_opts[:doc] =~ "docs"
+      assert collection_opts[:doc] =~ "wiki"
+      assert collection_opts[:doc] =~ "changelog"
+
+      assert search.description =~ "Available collections:"
+      assert search.description =~ "docs"
+      assert search.description =~ "wiki"
+    end
+  end
+
+  describe "Tools.execute search collection arg" do
+    test "multi-collection ctx + no collection arg → searches across all" do
+      search_fn = fn _q, opts ->
+        send(self(), {:search_opts, opts})
+        {:ok, [%{id: "c1", text: "hit", score: 0.5}]}
+      end
+
+      ctx = %Context{repo: nil, collections: ["a", "b"]}
+
+      {:continue, _new_ctx, _summary, _meta} =
+        Tools.execute(ctx, "search", %{query: "q"}, search_fn: search_fn)
+
+      assert_received {:search_opts, opts}
+      assert opts[:collections] == ["a", "b"]
+      refute opts[:collection]
+    end
+
+    test "multi-collection ctx + valid collection arg → narrows to that one" do
+      search_fn = fn _q, opts ->
+        send(self(), {:search_opts, opts})
+        {:ok, [%{id: "c1", text: "hit", score: 0.5}]}
+      end
+
+      ctx = %Context{repo: nil, collections: ["a", "b"]}
+
+      {:continue, _new_ctx, _summary, _meta} =
+        Tools.execute(ctx, "search", %{query: "q", collection: "a"}, search_fn: search_fn)
+
+      assert_received {:search_opts, opts}
+      assert opts[:collection] == "a"
+      refute opts[:collections]
+    end
+
+    test "multi-collection ctx + invalid collection arg → error summary, loop continues" do
+      # search_fn should NOT be called
+      search_fn = fn _q, _opts ->
+        flunk("search_fn should not be called with an invalid collection")
+      end
+
+      ctx = %Context{repo: nil, collections: ["a", "b"]}
+
+      {:continue, new_ctx, summary, meta} =
+        Tools.execute(ctx, "search", %{query: "q", collection: "c"}, search_fn: search_fn)
+
+      assert summary =~ "search error"
+      assert summary =~ "not in the allowed list"
+      assert meta.returned_chunk_ids == []
+      assert new_ctx == ctx
+    end
+
+    test "single-locked ctx → collection always uses the lock, arg ignored" do
+      search_fn = fn _q, opts ->
+        send(self(), {:search_opts, opts})
+        {:ok, []}
+      end
+
+      ctx = %Context{repo: nil, collections: ["locked"]}
+
+      # Controller shouldn't even have the param (enforced at schema
+      # level), but if one somehow gets through, execute falls back to
+      # the locked collection regardless.
+      Tools.execute(ctx, "search", %{query: "q", collection: "other"}, search_fn: search_fn)
+
+      assert_received {:search_opts, opts}
+      assert opts[:collection] == "locked"
+    end
+  end
+
+  describe "SystemPrompt.default/1 collections section" do
+    alias Arcana.Loop.SystemPrompt
+
+    test "multi-collection context includes the Collections section" do
+      prompt = SystemPrompt.default(collections: ["docs", "wiki"], max_iterations: 5)
+
+      assert prompt =~ "# Collections"
+      assert prompt =~ "`docs`"
+      assert prompt =~ "`wiki`"
+      assert prompt =~ "`collection` argument"
+    end
+
+    test "single-collection context omits the Collections section" do
+      prompt = SystemPrompt.default(collections: ["docs"], max_iterations: 5)
+
+      refute prompt =~ "# Collections"
+    end
+
+    test "unrestricted context ([nil]) omits the Collections section" do
+      prompt = SystemPrompt.default(collections: [nil], max_iterations: 5)
+
+      refute prompt =~ "# Collections"
+    end
+  end
+
   describe "new/2" do
     test "builds a context with the question" do
       ctx = Loop.new("What is Doctor Who?")

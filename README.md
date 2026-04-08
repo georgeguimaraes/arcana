@@ -89,6 +89,8 @@ ctx.terminated_by        # :answered, :gave_up, :max_iterations, or :error
 ctx.grounding.score      # 0.0-1.0 if you called ground/2
 ```
 
+When the corpus is split into multiple collections, pass them all to `new/2` and the controller picks which one to search per call. Pass a single collection to lock the loop to it; the controller physically can't express anything else (the tool schema won't even include the parameter). See the [Loop guide](guides/loop.md) for the lock vs pick semantics.
+
 Loop also supports the standard router/answerer split: a cheap fast model picks tools each turn, and a stronger model writes the user-facing answer.
 
 ```elixir

@@ -93,8 +93,8 @@ Arcana.Loop.new(question, opts) |> Arcana.Loop.run(opts)
 | Option | Default | Description |
 |---|---|---|
 | `:repo` | `Arcana.Config.get(opts, :repo)` | Ecto repo for retrieval tools |
-| `:collection` | `nil` | Single collection name to scope searches to |
-| `:collections` | `[nil]` | List of collection names (overrides `:collection`) |
+| `:collection` | `nil` | Lock the loop to a single collection. The controller physically cannot search anything else — the tool schema won't even expose a collection parameter. See "Collections: lock vs pick" below. |
+| `:collections` | `[nil]` | Allowed set of collection names the controller may pick from per search call. When 2 or more, the search tool gains an optional `collection` parameter the controller uses to narrow the search. Overrides `:collection`. |
 
 `run/2` options:
 
@@ -122,6 +122,67 @@ config :arcana, loop: [
 ```
 
 Per-call options override globals.
+
+## Collections: lock vs pick
+
+The `:collection` / `:collections` options on `Arcana.Loop.new/2` don't
+just filter searches. They shape the **tool schema** the controller
+sees, which determines what the controller can and can't express.
+
+Three cases, three behaviors:
+
+**Lock to a single collection.** Pass `:collection` or a one-element
+`:collections` list. The `search` tool is built without a `collection`
+parameter, so the controller literally has no way to express a
+different collection. This is the strongest possible guarantee: no
+prompt-engineering workaround, no "ignore previous instructions".
+
+```elixir
+Arcana.Loop.new(question, repo: Repo, collection: "docs")
+# tool schema: search(query, limit)
+# every search runs against "docs", always
+```
+
+**Allow a set; let the controller pick per call.** Pass a
+multi-element `:collections` list. The `search` tool gains an optional
+`collection` parameter whose documentation lists the allowed values.
+The controller picks one per call, or omits it to search across all
+listed collections. The system prompt also gains a "Collections"
+section telling the controller when to narrow vs broaden.
+
+```elixir
+Arcana.Loop.new(question, repo: Repo, collections: ["docs", "wiki", "changelog"])
+# tool schema: search(query, collection, limit)
+# controller decides each call:
+#   search(query: "...", collection: "docs")   -- narrow
+#   search(query: "...")                        -- across all three
+```
+
+If the controller passes an invalid collection (not in the allowed
+list), the search tool returns a friendly error as the tool result
+(`"search error: collection \"x\" is not in the allowed list..."`).
+The loop doesn't crash; the controller sees the error on its next
+turn and can correct.
+
+**Unrestricted.** Pass neither option. The search tool has no
+`collection` parameter. `Arcana.search/2` is called without a
+collection filter, hitting whatever default behavior is configured.
+
+```elixir
+Arcana.Loop.new(question, repo: Repo)
+# tool schema: search(query, limit)
+# searches across whatever the default is
+```
+
+### When to use which
+
+- **Lock** when your Loop is scoped to a single domain and you want to
+  guarantee the controller never leaks into other collections. Common
+  in multi-tenant apps where each tenant has its own collection.
+- **Pick** when your corpus is split into topical collections and the
+  right collection depends on the question. The controller can make
+  that call per turn, which is exactly what you'd want an agent for.
+- **Unrestricted** for the simplest case: one big corpus, no filtering.
 
 ## Termination
 
