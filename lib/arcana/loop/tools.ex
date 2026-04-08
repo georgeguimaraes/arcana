@@ -36,11 +36,24 @@ defmodule Arcana.Loop.Tools do
 
   These are the tools shipped with `Arcana.Loop`. Pass `tools: default/0`
   (or omit `:tools`) to use them. Replace with your own list to customize.
+
+  ## Context-aware search tool
+
+  When called with a list of collection names longer than one, the
+  `search` tool gains an optional `collection` parameter that the
+  controller can use to narrow the search per call. When called with
+  no collections, `[nil]`, or a single-element list, the parameter is
+  omitted and the caller-supplied collection (if any) is always used.
+
+  That way, `Arcana.Loop.new(collection: "docs")` locks the controller
+  to a single collection programmatically (the tool can't even express
+  a different one), while `Arcana.Loop.new(collections: ["a", "b"])`
+  lets the controller pick per call.
   """
-  @spec default() :: [Tool.t()]
-  def default do
+  @spec default(collections :: [String.t() | nil]) :: [Tool.t()]
+  def default(collections \\ [nil]) do
     [
-      search_tool(),
+      search_tool(collections),
       answer_tool(),
       give_up_tool()
     ]
@@ -52,7 +65,53 @@ defmodule Arcana.Loop.Tools do
   # only here to satisfy ReqLLM.Tool.new!'s callback validation.
   def no_op_callback(_args), do: {:ok, nil}
 
-  defp search_tool do
+  # When caller supplies 2+ collections, let the controller pick per call
+  # via a `collection` param. Otherwise the collection is either fixed
+  # (single) or unconstrained (nil), and there's nothing for the tool to
+  # choose.
+  defp search_tool(collections) when is_list(collections) and length(collections) > 1 do
+    choices = Enum.map_join(collections, ", ", &inspect/1)
+
+    Tool.new!(
+      name: "search",
+      description: """
+      Search the knowledge base for chunks relevant to a query. Returns up to
+      a few chunk summaries with stable IDs and similarity scores. Uses graph
+      enhanced retrieval automatically when the collection has a knowledge
+      graph.
+
+      This corpus is split across multiple collections. Use the `collection`
+      argument to narrow the search to one of them when a question is clearly
+      about a single topic. Omit `collection` to search across all of them.
+      Available collections: #{choices}.
+
+      Use this when you need information from the corpus to answer the user's
+      question. Do not use it for general knowledge questions that do not
+      require the corpus, and do not call it twice with the same query.
+      """,
+      parameter_schema: [
+        query: [
+          type: :string,
+          required: true,
+          doc: "The search query. Should be a focused phrase or question, not just keywords."
+        ],
+        collection: [
+          type: :string,
+          doc:
+            "Optional. Restrict the search to a single collection. Must be one of: #{choices}. Omit to search all."
+        ],
+        limit: [
+          type: :pos_integer,
+          default: 5,
+          doc:
+            "Maximum chunks to return. Keep low (3 to 5) unless gathering comprehensive context."
+        ]
+      ],
+      callback: @no_op_callback
+    )
+  end
+
+  defp search_tool(_single_or_none) do
     Tool.new!(
       name: "search",
       description: """
@@ -152,23 +211,30 @@ defmodule Arcana.Loop.Tools do
   def execute(%Context{} = ctx, "search", %{query: query} = args, opts) do
     limit = Map.get(args, :limit, 5)
 
-    search_opts =
-      [repo: ctx.repo, limit: limit]
-      |> maybe_put_collection(ctx.collections)
-      |> Keyword.merge(Keyword.get(opts, :search_opts, []))
+    case resolve_search_collection(ctx.collections, Map.get(args, :collection)) do
+      {:error, message} ->
+        {:continue, ctx, "search error: #{message}", %{returned_chunk_ids: []}}
 
-    search_fn = Keyword.get(opts, :search_fn, &Arcana.search/2)
+      {:ok, collection_opts} ->
+        search_opts =
+          [repo: ctx.repo, limit: limit]
+          |> Keyword.merge(collection_opts)
+          |> Keyword.merge(Keyword.get(opts, :search_opts, []))
 
-    case search_fn.(query, search_opts) do
-      {:ok, chunks} ->
-        chunk_cap = Keyword.get(opts, :chunk_cap, 30)
-        new_ctx = accumulate_chunks(ctx, chunks, chunk_cap)
-        returned_ids = Enum.map(chunks, &chunk_id/1)
+        search_fn = Keyword.get(opts, :search_fn, &Arcana.search/2)
 
-        {:continue, new_ctx, format_search_summary(chunks), %{returned_chunk_ids: returned_ids}}
+        case search_fn.(query, search_opts) do
+          {:ok, chunks} ->
+            chunk_cap = Keyword.get(opts, :chunk_cap, 30)
+            new_ctx = accumulate_chunks(ctx, chunks, chunk_cap)
+            returned_ids = Enum.map(chunks, &chunk_id/1)
 
-      {:error, reason} ->
-        {:continue, ctx, "search error: #{inspect(reason)}", %{returned_chunk_ids: []}}
+            {:continue, new_ctx, format_search_summary(chunks),
+             %{returned_chunk_ids: returned_ids}}
+
+          {:error, reason} ->
+            {:continue, ctx, "search error: #{inspect(reason)}", %{returned_chunk_ids: []}}
+        end
     end
   end
 
@@ -184,9 +250,38 @@ defmodule Arcana.Loop.Tools do
     {:continue, ctx, "Unknown tool: #{name}", %{}}
   end
 
-  defp maybe_put_collection(opts, [nil]), do: opts
-  defp maybe_put_collection(opts, [collection]), do: Keyword.put(opts, :collection, collection)
-  defp maybe_put_collection(opts, collections), do: Keyword.put(opts, :collections, collections)
+  # Resolves which collection(s) a search call should run against.
+  #
+  # The loop context carries an allowed list. The tool call may optionally
+  # pass a `collection` arg. The resolution table:
+  #
+  #   ctx.collections    tool arg    result
+  #   [nil]              nil         unconstrained
+  #   [nil]              "x"         collection: "x" (no restriction to validate against)
+  #   [single]           nil         collection: single
+  #   [single]           _           collection: single (arg ignored, lock wins)
+  #   [a, b]             nil         collections: [a, b]
+  #   [a, b]             "a"         collection: "a"
+  #   [a, b]             "c"         error: not in allowed list
+  defp resolve_search_collection(ctx_collections, tool_arg)
+
+  defp resolve_search_collection([nil], nil), do: {:ok, []}
+  defp resolve_search_collection([nil], name) when is_binary(name), do: {:ok, [collection: name]}
+
+  defp resolve_search_collection([single], _arg) when is_binary(single),
+    do: {:ok, [collection: single]}
+
+  defp resolve_search_collection(list, nil) when is_list(list),
+    do: {:ok, [collections: list]}
+
+  defp resolve_search_collection(list, name) when is_list(list) and is_binary(name) do
+    if name in list do
+      {:ok, [collection: name]}
+    else
+      {:error,
+       "collection #{inspect(name)} is not in the allowed list (#{Enum.map_join(list, ", ", &inspect/1)})"}
+    end
+  end
 
   defp accumulate_chunks(%Context{chunks: existing} = ctx, new_chunks, chunk_cap) do
     merged =

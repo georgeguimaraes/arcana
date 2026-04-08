@@ -145,7 +145,7 @@ defmodule Arcana.Loop do
   def run(%Context{} = ctx, opts \\ []) do
     opts = Arcana.Config.merge_app_opts(opts, :loop)
 
-    tools = Keyword.get(opts, :tools) || Tools.default()
+    tools = Keyword.get(opts, :tools) || Tools.default(ctx.collections)
     max_iterations = Keyword.get(opts, :max_iterations, 10)
     controller_llm = Keyword.get(opts, :controller_llm) || Arcana.Config.get(opts, :llm)
     answer_llm = Keyword.get(opts, :answer_llm)
@@ -158,7 +158,12 @@ defmodule Arcana.Loop do
 
     # Force the resolved max_iterations into opts so the system prompt and
     # the loop see the same number, even when the caller didn't pass it.
-    opts = Keyword.put(opts, :max_iterations, max_iterations)
+    # Also surface the configured collections so the system prompt can
+    # mention them to the controller when there's a real choice to make.
+    opts =
+      opts
+      |> Keyword.put(:max_iterations, max_iterations)
+      |> Keyword.put(:collections, ctx.collections)
 
     system_prompt = resolve_system_prompt(Keyword.get(opts, :system_prompt), opts)
     messages = build_initial_messages(ctx.question, system_prompt)

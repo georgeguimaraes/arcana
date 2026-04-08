@@ -25,6 +25,7 @@ defmodule Arcana.Loop.SystemPrompt do
   @spec default(keyword()) :: String.t()
   def default(opts \\ []) do
     max_iterations = Keyword.get(opts, :max_iterations, 10)
+    collections = Keyword.get(opts, :collections, [nil])
 
     """
     You are a research agent answering questions about a knowledge base.
@@ -34,7 +35,7 @@ defmodule Arcana.Loop.SystemPrompt do
     - `search`: query the knowledge base
     - `answer`: provide the final answer (this ends the conversation)
     - `give_up`: stop trying when the question can't be answered (also ends the conversation)
-
+    #{collections_section(collections)}
     # Workflow
 
     1. **Rewrite vague queries before searching.** If the user's question
@@ -79,5 +80,34 @@ defmodule Arcana.Loop.SystemPrompt do
     Call `answer` with a complete, well-structured response when ready.
     The `text` argument is what the user will see.
     """
+  end
+
+  # Only surface a "Collections" section when there's an actual choice
+  # to make. Single-collection and unrestricted runs are the common case
+  # and shouldn't pay the prompt tax.
+  defp collections_section(collections) do
+    case collections do
+      [nil] ->
+        ""
+
+      [_single] ->
+        ""
+
+      list when is_list(list) and length(list) > 1 ->
+        names = Enum.map_join(list, ", ", &"`#{&1}`")
+
+        """
+
+
+        # Collections
+
+        The corpus is split into several collections: #{names}. The
+        `search` tool accepts an optional `collection` argument that
+        narrows the query to a single collection. Use it when a question
+        is clearly about one specific collection. Omit it to search
+        across all of them when the question is ambiguous or spans
+        multiple topics.
+        """
+    end
   end
 end
