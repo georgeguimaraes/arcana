@@ -7,7 +7,9 @@ defmodule ArcanaWeb.AskLive do
   import Ecto.Query
   import ArcanaWeb.DashboardComponents
 
+  alias Arcana.Document
   alias Arcana.Graph.Entity
+  alias ArcanaWeb.ChunkResultsComponent
 
   # Form param names for the Pipeline tab's optional steps. Tracked in
   # socket assigns so the all/none toggle can update them server-side
@@ -493,6 +495,7 @@ defmodule ArcanaWeb.AskLive do
     socket =
       case result do
         {:ok, ctx} ->
+          ctx = Map.put(ctx, :document_titles, load_document_titles(ctx, socket.assigns.repo))
           assign(socket, ask_running: false, ask_context: ctx, ask_error: nil, pipeline_step: nil)
 
         {:error, reason} ->
@@ -501,6 +504,43 @@ defmodule ArcanaWeb.AskLive do
 
     {:noreply, socket}
   end
+
+  # Batch-loads document titles for every chunk in the result. All three
+  # sub-tabs put chunks under :results, so one helper covers everything.
+  # Falls back to an empty map on any error — the component already
+  # degrades to a shortened UUID when a title is missing.
+  defp load_document_titles(%{results: chunks}, repo)
+       when is_list(chunks) and not is_nil(repo) do
+    ids =
+      chunks
+      |> Enum.map(&Map.get(&1, :document_id))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    case ids do
+      [] ->
+        %{}
+
+      ids ->
+        try do
+          from(d in Document, where: d.id in ^ids, select: {d.id, d.metadata})
+          |> repo.all()
+          |> Map.new(fn {id, metadata} -> {id, extract_title(metadata)} end)
+        rescue
+          _ -> %{}
+        end
+    end
+  end
+
+  defp load_document_titles(_ctx, _repo), do: %{}
+
+  defp extract_title(nil), do: nil
+
+  defp extract_title(metadata) when is_map(metadata) do
+    Map.get(metadata, "title") || Map.get(metadata, :title)
+  end
+
+  defp extract_title(_), do: nil
 
   # Update the most recent :running entry that matches `step`. Walking
   # the reversed list and replacing the first match is correct because
@@ -529,9 +569,9 @@ defmodule ArcanaWeb.AskLive do
       end
 
     chunk_cap =
-      case Integer.parse(params["chunk_cap"] || "30") do
+      case Integer.parse(params["chunk_cap"] || "50") do
         {n, _} when n > 0 -> n
-        _ -> 30
+        _ -> 50
       end
 
     controller_temperature = parse_temperature(params["controller_temperature"])
@@ -539,6 +579,7 @@ defmodule ArcanaWeb.AskLive do
     fallback_temperature = parse_temperature(params["fallback_temperature"])
 
     run_ground? = params["use_ground_loop"] == "true"
+    ground_opts = [grounder: Arcana.Grounder.LLMJudge, judge_model: llm]
 
     new_opts =
       [repo: repo]
@@ -558,11 +599,14 @@ defmodule ArcanaWeb.AskLive do
     runner = loop_runner()
 
     with {:ok, ctx} <- runner.(ctx, run_opts) do
-      ctx = if run_ground?, do: Arcana.Loop.ground(ctx), else: ctx
+      ctx = if run_ground?, do: Arcana.Loop.ground(ctx, ground_opts), else: ctx
       {:ok, format_loop_result(ctx, question)}
     end
   rescue
-    e -> {:error, Exception.message(e)}
+    e ->
+      require Logger
+      Logger.error(Exception.format(:error, e, __STACKTRACE__))
+      {:error, Exception.message(e)}
   end
 
   defp maybe_put(opts, _key, nil), do: opts
@@ -1097,7 +1141,7 @@ defmodule ArcanaWeb.AskLive do
                     type="number"
                     name="chunk_cap"
                     id="chunk_cap"
-                    value="30"
+                    value="50"
                     min="1"
                     max="200"
                     disabled={@ask_running}
@@ -1112,7 +1156,7 @@ defmodule ArcanaWeb.AskLive do
                   />
                   <span class="arcana-loop-toggle-content">
                     <span class="arcana-loop-toggle-label">Run grounding after loop</span>
-                    <small>Score sentences against accumulated chunks. Slower.</small>
+                    <small>LLM-as-judge faithfulness over accumulated chunks.</small>
                   </span>
                 </label>
               </div>
@@ -1349,32 +1393,14 @@ defmodule ArcanaWeb.AskLive do
 
             <% all_results = Map.get(@ask_context, :results) %>
             <%= if all_results && length(all_results) > 0 do %>
-              <% all_chunks = all_results %>
               <div class="arcana-ask-section">
-                <h4>Retrieved Chunks (<%= length(all_chunks) %>)</h4>
-                <div class="arcana-search-results">
-                  <%= for chunk <- all_chunks do %>
-                    <div class="arcana-search-result">
-                      <div class="arcana-result-header">
-                        <div class="arcana-result-score">
-                          <span class="score-value"><%= Float.round(chunk.score, 4) %></span>
-                          <%= if Map.get(chunk, :graph_sources) && length(chunk.graph_sources) > 0 do %>
-                            <span class="arcana-graph-attribution">
-                              via: <%= Enum.join(chunk.graph_sources, ", ") %>
-                            </span>
-                          <% end %>
-                        </div>
-                        <div class="arcana-result-meta">
-                          <code><%= chunk.document_id %></code>
-                          <span class="arcana-chunk-badge">Chunk <%= chunk.chunk_index %></span>
-                        </div>
-                      </div>
-                      <div class="arcana-result-text">
-                        <%= String.slice(chunk.text, 0, 300) %><%= if String.length(chunk.text) > 300, do: "...", else: "" %>
-                      </div>
-                    </div>
-                  <% end %>
-                </div>
+                <h4>Retrieved Chunks (<%= length(all_results) %>)</h4>
+                <ChunkResultsComponent.chunk_results
+                  chunks={all_results}
+                  document_titles={Map.get(@ask_context, :document_titles, %{})}
+                  grounding={Map.get(@ask_context, :grounding)}
+                  id="ask-chunk-results"
+                />
               </div>
             <% end %>
           </div>
@@ -1453,9 +1479,7 @@ defmodule ArcanaWeb.AskLive do
               <span class="arcana-source-overlap"><%= Float.round(source.score * 100) %>% overlap</span>
             </summary>
             <%= if chunk do %>
-              <div class="arcana-source-preview">
-                <%= chunk.text %>
-              </div>
+              <div class="arcana-source-preview"><%= chunk.text %></div>
             <% end %>
           </details>
         <% end %>
@@ -1534,6 +1558,7 @@ defmodule ArcanaWeb.AskLive do
   # The fallback clause handles custom tools with unknown arg shapes.
   defp loop_arg_summary(:search, %{query: q}) when is_binary(q), do: ~s("#{q}")
   defp loop_arg_summary(:answer, %{text: t}) when is_binary(t), do: truncate_arg(t)
+  defp loop_arg_summary(:synthesis, %{text: t}) when is_binary(t), do: truncate_arg(t)
   defp loop_arg_summary(:give_up, %{reason: r}) when is_binary(r), do: truncate_arg(r)
   defp loop_arg_summary(_, _), do: ""
 

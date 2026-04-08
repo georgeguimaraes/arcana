@@ -1155,6 +1155,195 @@ defmodule ArcanaWeb.Assets do
     overflow: visible;
   }
 
+  /* ChunkResultsComponent: grouped chunks with expandable details. */
+  .arcana-chunk-results {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .arcana-chunk-doc {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    overflow: hidden;
+  }
+
+  .arcana-chunk-doc--has-source {
+    border-color: #a7f3d0;
+    box-shadow: 0 0 0 1px #a7f3d0 inset;
+  }
+
+  .arcana-chunk-doc-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.625rem 0.875rem;
+    background: #f9fafb;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .arcana-chunk-doc--has-source .arcana-chunk-doc-header {
+    background: #ecfdf5;
+    border-bottom-color: #a7f3d0;
+  }
+
+  .arcana-chunk-doc-title {
+    margin: 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #111827;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .arcana-chunk-doc-link {
+    color: inherit;
+    text-decoration: none;
+    transition: color 0.15s ease;
+  }
+
+  .arcana-chunk-doc-link:hover {
+    color: #6d28d9;
+    text-decoration: underline;
+  }
+
+  .arcana-chunk-doc-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.75rem;
+    color: #6b7280;
+    flex-shrink: 0;
+  }
+
+  .arcana-chunk-source-dot {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: #10b981;
+  }
+
+  .arcana-chunk-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .arcana-chunk-item {
+    border-top: 1px solid #f3f4f6;
+  }
+
+  .arcana-chunk-item:first-child {
+    border-top: none;
+  }
+
+  .arcana-chunk-item--source {
+    background: #f0fdf4;
+  }
+
+  .arcana-chunk-details {
+    width: 100%;
+  }
+
+  .arcana-chunk-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.5rem 0.875rem;
+    cursor: pointer;
+    list-style: none;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    user-select: none;
+  }
+
+  .arcana-chunk-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .arcana-chunk-summary::before {
+    content: '▸';
+    color: #9ca3af;
+    font-size: 0.6875rem;
+    flex-shrink: 0;
+    transition: transform 0.15s ease;
+    display: inline-block;
+  }
+
+  .arcana-chunk-details[open] > .arcana-chunk-summary::before {
+    transform: rotate(90deg);
+  }
+
+  .arcana-chunk-summary:hover {
+    background: #f9fafb;
+  }
+
+  .arcana-chunk-item--source .arcana-chunk-summary:hover {
+    background: #dcfce7;
+  }
+
+  .arcana-chunk-score {
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: #6d28d9;
+    flex-shrink: 0;
+  }
+
+  .arcana-chunk-index {
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 0.6875rem;
+    color: #9ca3af;
+    flex-shrink: 0;
+  }
+
+  .arcana-chunk-supports {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: #047857;
+    background: #d1fae5;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    flex-shrink: 0;
+  }
+
+  .arcana-chunk-via {
+    font-size: 0.6875rem;
+    color: #7c3aed;
+    background: #ede9fe;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    flex-shrink: 0;
+    max-width: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .arcana-chunk-preview {
+    flex: 1;
+    min-width: 0;
+    color: #4b5563;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .arcana-chunk-full {
+    padding: 0.75rem 1rem 1rem 2.25rem;
+    font-size: 0.8125rem;
+    line-height: 1.55;
+    color: #1f2937;
+    white-space: pre-line;
+    border-top: 1px dashed #e5e7eb;
+  }
+
   /* Collection checkboxes - shared between Search and Ask tabs */
   .arcana-ask-collections {
     margin: 1rem 0;
@@ -1803,7 +1992,10 @@ defmodule ArcanaWeb.Assets do
 
   .arcana-loop-iteration {
     position: relative;
-    padding: 0.625rem 0 0.625rem 2.25rem;
+    padding: 0.375rem 0 0.375rem 2.25rem;
+    min-height: 2.5rem;
+    display: flex;
+    align-items: center;
     animation: arcana-loop-fade-in 0.35s ease-out both;
   }
 
@@ -1823,12 +2015,14 @@ defmodule ArcanaWeb.Assets do
     align-items: center;
     gap: 0.625rem;
     flex-wrap: wrap;
+    min-height: 1.75rem;
   }
 
   .arcana-loop-iter-num {
     position: absolute;
     left: 0;
-    top: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
     width: 1.75rem;
     height: 1.75rem;
     display: inline-flex;
@@ -1867,6 +2061,12 @@ defmodule ArcanaWeb.Assets do
     background: #fef2f2;
   }
 
+  .arcana-tool-synthesis .arcana-loop-iter-num {
+    border-color: #fcd34d;
+    color: #b45309;
+    background: #fffbeb;
+  }
+
   .arcana-loop-tool {
     font-size: 0.8125rem;
     font-weight: 600;
@@ -1891,6 +2091,11 @@ defmodule ArcanaWeb.Assets do
   .arcana-tool-give_up .arcana-loop-tool {
     background: #fee2e2;
     color: #b91c1c;
+  }
+
+  .arcana-tool-synthesis .arcana-loop-tool {
+    background: #fef3c7;
+    color: #b45309;
   }
 
   /* Pipeline step trace: same visual language as the loop trace, but

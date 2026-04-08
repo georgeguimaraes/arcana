@@ -214,13 +214,7 @@ defmodule ArcanaWeb.SearchLive do
                       </button>
                     </div>
                   </div>
-                  <div class={"arcana-result-text #{if @expanded_result_id == result.id, do: "expanded", else: ""}"}>
-                    <%= if @expanded_result_id == result.id do %>
-                      <%= result.text %>
-                    <% else %>
-                      <%= String.slice(result.text, 0, 200) %><%= if String.length(result.text) > 200, do: "...", else: "" %>
-                    <% end %>
-                  </div>
+                  <div class={"arcana-result-text #{if @expanded_result_id == result.id, do: "expanded", else: ""}"}><%= if @expanded_result_id == result.id, do: result.text, else: String.slice(result.text, 0, 200) <> if(String.length(result.text) > 200, do: "...", else: "") %></div>
                 </div>
               <% end %>
             </div>
