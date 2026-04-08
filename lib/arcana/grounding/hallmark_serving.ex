@@ -64,9 +64,18 @@ defmodule Arcana.Grounding.HallmarkServing do
   end
 
   @impl true
-  def handle_continue(:load, %{opts: opts} = state) do
-    compiler = opts[:compiler] || EXLA
-    {:ok, model} = Hallmark.load(compiler: compiler)
+  def handle_continue(:load, %{opts: _opts} = state) do
+    # No compiler arg. Hallmark loads weights via Bumblebee using the
+    # global `Nx.default_backend/0`, and predict_batch runs Axon.predict
+    # using `Nx.Defn.default_options/0`. As long as the host app sets
+    # BOTH to a matching pair (e.g. EMLX.Backend + EMLX), everything
+    # stays on one backend end-to-end and the classifier head matmul
+    # doesn't crash on a cross-backend mix.
+    #
+    # The right place to declare which backend / compiler to use is
+    # the host app's startup code, not on a per-Hallmark-load basis.
+    # See guides/dashboard.md for the recommended setup.
+    {:ok, model} = Hallmark.load()
     {:noreply, %{state | model: model}}
   end
 

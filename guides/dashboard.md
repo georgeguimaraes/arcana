@@ -32,6 +32,28 @@ end
 
 Visit `http://localhost:4000/arcana` to access the dashboard (redirects to Documents page).
 
+### 3. Optional: Markdown rendering for answers
+
+Add `mdex` to your `mix.exs` if you want the **Ask** page to render
+LLM answers as Markdown (paragraphs, bullet lists, bold, inline code,
+etc.) instead of plain text:
+
+```elixir
+{:mdex, "~> 0.12"}
+```
+
+[MDEx](https://github.com/leandrocp/mdex) is a fast CommonMark + GitHub
+Flavored Markdown parser built on the comrak Rust NIF, with built-in
+HTML sanitization via ammonia. Arcana enables sanitization
+unconditionally for the dashboard so any raw HTML the LLM emits
+gets stripped before render. The dep is installed as a precompiled
+NIF via `rustler_precompiled`, so you don't need a Rust toolchain
+on your machine.
+
+Without `mdex`, the Ask page falls back to plain-text rendering
+and the page still works — bullet markers and `**bold**` just
+appear literally instead of being formatted.
+
 ## Options
 
 ```elixir
@@ -62,10 +84,38 @@ arcana_dashboard "/arcana",
 
 ### Ask (`/arcana/ask`)
 
-- **Simple mode** - Basic RAG question answering
-- **Agentic mode** - Full pipeline with query expansion, decomposition, and self-correction
-- **Collection selection** - Choose which collections to search (or let the LLM select)
-- **Pipeline options** - Toggle expand, decompose, rerank, and self-correct steps
+Three sub-tabs that map onto Arcana's three retrieval surfaces. The
+URL preserves your selection (`/arcana/ask/advanced`,
+`/arcana/ask/pipeline`, `/arcana/ask/loop`).
+
+- **Advanced** (`Arcana.ask/2`): one call with sensible defaults.
+  Hybrid search, optional graph fusion, cross-encoder reranking,
+  LLM answer. Use this when you want the library to make the
+  decisions.
+- **Pipeline** (`Arcana.Pipeline`): Modular RAG. Compose the steps
+  yourself via toggles (gate, rewrite, expand, decompose, search,
+  reason, rerank, answer, ground). Each step has its own checkbox.
+- **Loop** (`Arcana.Loop`): Agentic RAG. The controller LLM picks
+  tools each turn and decides when to commit. The settings panel
+  shows which LLMs are configured for each role (controller,
+  answerer, fallback synthesizer).
+
+All three sub-tabs share:
+
+- **Collection selection** - pick which collections to search (or
+  for Pipeline, let the LLM auto-select)
+- **Live tracing** - while a run is in flight, the retrieval steps
+  appear as a vertical timeline as they happen, color-coded by tool
+  type. Pipeline shows steps with running/done states and durations;
+  Loop shows tool calls with arguments and chunk counts. The trace
+  is powered by the `[:arcana, :pipeline, :*, :*]`,
+  `[:arcana, :loop, :tool_call]`, and related telemetry events
+- **Markdown answers** - when `mdex` is in your deps (see Setup
+  step 3), answers are rendered as formatted Markdown with safe HTML
+  sanitization. Without it, answers fall back to plain text
+- **Grounding** - if Hallmark is configured, the dashboard renders
+  hallucinated spans in red and faithful spans in green, with
+  per-chunk attribution on hover
 
 ### Search (`/arcana/search`)
 
