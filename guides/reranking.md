@@ -1,10 +1,10 @@
 # Re-ranking
 
-Improve retrieval quality by re-scoring and filtering search results before answer generation.
+Re-score and filter search results before generating an answer.
 
 ## Overview
 
-Re-ranking is a second-stage retrieval step that scores each chunk based on relevance to the question, filters by a threshold, and re-sorts by score. This improves answer quality by ensuring only the most relevant context reaches the LLM.
+Re-ranking is a second-stage retrieval step that scores each chunk based on relevance to the question, filters by a threshold, and re-sorts by score. The result: only the most relevant context reaches the LLM.
 
 ## Using Re-ranking in the Pipeline
 
@@ -125,7 +125,7 @@ This is the default when you call `Arcana.Pipeline.rerank/2`.
 
 ### Arcana.Reranker.ColBERT
 
-ColBERT-style neural reranking using per-token embeddings and MaxSim scoring. Provides more nuanced relevance scoring than single-vector methods by matching individual query tokens to document tokens.
+ColBERT-style neural reranking using per-token embeddings and MaxSim scoring. Scores relevance by matching individual query and document tokens, which captures more signal than single-vector cosine distance.
 
 Add the optional dependency:
 

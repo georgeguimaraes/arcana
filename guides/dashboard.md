@@ -51,7 +51,7 @@ NIF via `rustler_precompiled`, so you don't need a Rust toolchain
 on your machine.
 
 Without `mdex`, the Ask page falls back to plain-text rendering
-and the page still works — bullet markers and `**bold**` just
+and the page still works, but bullet markers and `**bold**` just
 appear literally instead of being formatted.
 
 ## Options

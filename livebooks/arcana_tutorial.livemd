@@ -273,7 +273,7 @@ Vl.new(width: 400, height: 200, title: "Query-Document Similarity")
 
 ## 6. Pipeline (Modular RAG)
 
-For complex questions, Arcana provides `Arcana.Pipeline` with retrieval gating, multi-hop reasoning, query expansion, and re-ranking. Each step is a behaviour you can replace, and the pipeline is composed at code time (you decide the order).
+For complex questions, use `Arcana.Pipeline` to compose retrieval steps like gating, reasoning, expansion, and reranking. Each step is a behaviour you can replace, and the pipeline is composed at code time (you decide the order).
 
 If you want the LLM to drive the control flow at runtime instead, see `Arcana.Loop` later in this notebook.
 
@@ -485,7 +485,7 @@ Vl.new(width: 500, height: 300, title: "Score Comparison: '#{query}'")
 
 ## 9. Query Rewriting
 
-Query rewriting cleans up conversational input into clear search queries. This is essential when questions come from chatbots or voice interfaces.
+Query rewriting cleans up conversational input into clear search queries. This helps when questions come from chatbots or voice interfaces.
 
 ### How It Works
 
@@ -542,7 +542,7 @@ You can combine both (rewrite runs first):
 
 ## 10. Query Expansion
 
-Query expansion improves search results by adding synonyms and related terms to your search queries. This is useful when users search with abbreviations (e.g., "ML" instead of "machine learning").
+Query expansion adds synonyms and related terms to your query, which helps when users search with abbreviations (e.g., "ML" instead of "machine learning").
 
 ### How It Works
 
@@ -694,7 +694,7 @@ IO.puts("The full pipeline: rewrite → select → expand → search → rerank 
 
 ## 12. GraphRAG with Memory Backend
 
-GraphRAG enhances retrieval by building a knowledge graph from your documents. Previously this required pgvector, but now the memory backend also supports GraphRAG.
+GraphRAG enhances retrieval by building a knowledge graph from your documents. Both pgvector and memory backends support GraphRAG.
 
 ### Start the Memory Graph Store
 
@@ -793,60 +793,49 @@ Use explicit collections when:
 
 ## 13. Grounding & Chunk Attribution
 
-After generating an answer, `ground/2` checks if each part is faithful to the retrieved context. It labels every token as faithful or hallucinated, merges them into spans, and attributes each span back to specific chunks using word overlap.
+After generating an answer, `ground/2` checks if each part is faithful to the retrieved context. Arcana ships two grounders:
 
-### How It Works
+- **Hallmark (NLI)**: runs Vectara's HHEM ModernBERT model locally via Bumblebee. Scores each sentence against the concatenated context. Fast, free, great for Pipeline where the chunk set is small and fixed.
+- **LLMJudge (claim decomposition)**: asks an LLM to decompose the answer into atomic claims and verify each against the chunks. Returns per-claim verdicts and chunk attribution. Better for Loop where many chunks accumulate and NLI context truncation is a problem.
 
-```
-Answer tokens:   "Elixir" "was" "invented" "in" "2010" "by" "José"
-Labels:           faith   faith   halluc   halluc halluc faith faith
-                    ↓                 ↓                    ↓
-Faithful spans:  ["Elixir was", "by José"]    Hallucinated: ["invented in 2010"]
-                    ↓                                ↓
-Attribution:     sources: [chunk_2: 1.0]       sources: [chunk_1: 0.75]
-```
+Both return the same `%Arcana.Grounding.Result{}` struct with `score`, `hallucinated_spans`, and `faithful_spans`.
 
-### Using Grounding in the Pipeline
+### Using Grounding
 
 ```elixir
-# In a real pipeline with Hallmark:
+# Pipeline: uses Hallmark (NLI) by default
 # ctx = Pipeline.new("When was Elixir created?", repo: repo, llm: llm)
 #   |> Pipeline.search(collection: "docs")
 #   |> Pipeline.answer()
 #   |> Pipeline.ground()
+
+# Loop: use LLMJudge for better handling of large chunk sets
+# ctx = Arcana.Loop.ground(ctx,
+#   grounder: Arcana.Grounder.LLMJudge,
+#   judge_model: "anthropic:claude-haiku-4-5"
+# )
 #
-# ctx.grounding.score              # 0.85 (weighted average consistency)
-# ctx.grounding.hallucinated_spans # sentences the model flagged
-# ctx.grounding.faithful_spans     # sentences backed by context
+# ctx.grounding.score              # 0.85 (proportion of supported claims)
+# ctx.grounding.hallucinated_spans # unsupported/contradicted claims
+# ctx.grounding.faithful_spans     # claims backed by context
 
 IO.puts("""
 Grounding result fields:
-- score: weighted average consistency score (0.0 to 1.0)
-- hallucinated_spans: unsupported sentences in the answer
-- faithful_spans: sentences backed by retrieved context
+- score: faithfulness score (0.0 to 1.0)
+- hallucinated_spans: unsupported claims with byte offsets and chunk attribution
+- faithful_spans: supported claims with byte offsets and chunk attribution
 """)
 ```
 
 ### Chunk Attribution
 
-Each span carries a `:sources` list linking it to context chunks by word overlap:
+Each span carries a `:sources` list linking it to the context chunks that support (or contradict) it:
 
 ```elixir
 # Every span has sources: [%{chunk_id: term(), score: float()}]
-# Score = fraction of span words found in that chunk
-
-# Find fully invented claims (no overlap with any chunk)
-# fully_invented =
-#   Enum.filter(ctx.grounding.hallucinated_spans, &(&1.sources == []))
-
-# Find contradictions (high word overlap but still hallucinated)
-# contradicted =
-#   ctx.grounding.hallucinated_spans
-#   |> Enum.flat_map(fn span ->
-#     span.sources
-#     |> Enum.filter(&(&1.score > 0.5))
-#     |> Enum.map(&{span.text, &1.chunk_id})
-#   end)
+#
+# For Hallmark: score is word overlap fraction
+# For LLMJudge: score is 1.0 (the LLM directly identifies supporting chunks)
 
 # See which chunks actually supported the answer
 # cited_chunk_ids =
@@ -857,15 +846,15 @@ Each span carries a `:sources` list linking it to context chunks by word overlap
 
 IO.puts("""
 Attribution patterns:
-- Empty sources on hallucinated span → fully invented
-- High overlap + hallucinated → words match but facts wrong (contradiction)
-- faithful_spans sources → chunks that backed the answer
+- Empty sources on hallucinated span: fully invented
+- Hallucinated with sources: words match but facts wrong (contradiction)
+- faithful_spans sources: chunks that backed the answer
 """)
 ```
 
 ### Custom Grounder
 
-Replace the default Hallmark grounder with your own logic:
+Replace the built-in grounders with your own logic:
 
 ```elixir
 # Module-based
@@ -887,7 +876,7 @@ Replace the default Hallmark grounder with your own logic:
 #   {:ok, %Arcana.Grounding.Result{score: 1.0, hallucinated_spans: [], faithful_spans: []}}
 # end)
 
-IO.puts("Grounding is pluggable: use Hallmark, a custom module, or an inline function")
+IO.puts("Grounding is pluggable: Hallmark, LLMJudge, a custom module, or an inline function")
 ```
 
 ## 14. Loop (Agentic RAG)
@@ -1008,6 +997,35 @@ end)
 
 In a real app you'd pass a ReqLLM model string (e.g. `"openai:gpt-4o-mini"`) as the controller instead of a scripted function. The loop emits a `[:arcana, :loop, :tool_call]` telemetry event after each tool call, which is what drives the live trace in the Arcana dashboard.
 
+### Custom tools
+
+You can extend the Loop with your own tools. Custom tools are invoked via their `:callback` when the controller calls them. The callback is a 1-arity function `(args) -> {:ok, text} | {:error, text}` where text is returned to the controller. Custom tools always continue the loop (only `answer` and `give_up` terminate it).
+
+```elixir
+# Example: add a calculator tool
+calculator = ReqLLM.Tool.new!(
+  name: "calculate",
+  description: "Evaluate an arithmetic expression.",
+  parameter_schema: [
+    expression: [type: :string, required: true, doc: "e.g. '2 + 2'"]
+  ],
+  callback: fn %{expression: expr} ->
+    # In a real app, use a safe expression parser
+    {:ok, "Result: #{expr}"}
+  end
+)
+
+# Append to defaults and pass via :tools
+# {:ok, ctx} = Loop.run(ctx,
+#   tools: Tools.default() ++ [calculator],
+#   controller_llm: "openai:gpt-4o-mini"
+# )
+
+IO.puts("Custom tools extend the default search/answer/give_up toolset")
+```
+
+When the loop hits `max_iterations` and falls back to synthesis, the synthesis step is recorded in `ctx.tool_history` as a `:synthesis` entry so the dashboard trace shows it alongside the controller's regular tool calls.
+
 ## Summary
 
 | Concept | Description |
@@ -1023,9 +1041,10 @@ In a real app you'd pass a ReqLLM model string (e.g. `"openai:gpt-4o-mini"`) as 
 | **Multi-hop Reasoning** | Search again if results are insufficient |
 | **Re-ranking** | Filter chunks by LLM-scored relevance |
 | **Pipeline (Modular RAG)** | Gate → Rewrite → Select → Expand → Search → Reason → Rerank → Answer → Ground. You compose the steps. |
-| **Loop (Agentic RAG)** | LLM picks tools each turn (`search` / `answer` / `give_up`). The model decides the control flow, including when to refine queries and when to issue separate searches for different aspects of a question. |
+| **Loop (Agentic RAG)** | LLM picks tools each turn (`search` / `answer` / `give_up` + custom tools). The model decides the control flow, including when to refine queries and when to issue separate searches for different aspects of a question. |
+| **Custom tools** | Extend Loop's toolset with domain-specific tools (web search, calculator, API calls). Callback-based: the tool's function runs and the result goes back to the controller. |
 | **Controller / answerer split** | In `Arcana.Loop`, pair a cheap controller LLM (picks tools) with a stronger answerer LLM (writes the user-facing answer) via `controller_llm:` and `answer_llm:` |
-| **Grounding** | Detect hallucinated vs faithful spans with chunk attribution. Available on both Pipeline (`Pipeline.ground/2`) and Loop (`Loop.ground/2`), sharing the same `Arcana.Grounder` behaviour. |
+| **Grounding** | Detect hallucinated vs faithful spans with chunk attribution. Two built-in grounders: Hallmark (NLI, fast, local) and LLMJudge (claim decomposition, better for large chunk sets). Available on both Pipeline (`Pipeline.ground/2`) and Loop (`Loop.ground/2`), sharing the same `Arcana.Grounder` behaviour. |
 | **GraphRAG** | Knowledge graph with entity extraction (supports memory and Ecto backends) |
 
 ### Next Steps

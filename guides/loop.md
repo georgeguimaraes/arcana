@@ -13,9 +13,9 @@ Reach for `Arcana.Loop` when **the right sequence of searches isn't knowable upf
 - Questions where the user's phrasing might or might not need rewriting, and you'd rather have the model decide
 - "Find all the X" enumeration questions that benefit from iterative searching across different aspects
 
-If you know the right pipeline ahead of time, use [`Arcana.Pipeline`](pipeline.md) — it's faster, cheaper, more predictable, and easier to debug.
+If you know the right pipeline ahead of time, use [`Arcana.Pipeline`](pipeline.md): it's faster, cheaper, more predictable, and easier to debug.
 
-If you just want a question answered with sensible defaults, use `Arcana.ask/2` — it's a one-call wrapper over the same primitives.
+If you just want a question answered with sensible defaults, use `Arcana.ask/2`: it's a one-call wrapper over the same primitives.
 
 ## Quick start
 
@@ -58,7 +58,7 @@ Loop ships with **three tools**:
 
 `search` is the only tool that touches your Repo. The other two terminate the loop with a result.
 
-Query refinement and decomposition aren't separate tools — the system prompt tells the controller to mentally rewrite vague user questions before searching, and to issue sequential `search` calls with focused queries when a question covers multiple aspects.
+Query refinement and decomposition aren't separate tools: the system prompt tells the controller to mentally rewrite vague user questions before searching, and to issue sequential `search` calls with focused queries when a question covers multiple aspects.
 
 To customize, pass `tools: [...]` to `Loop.run/2` with your own list of `ReqLLM.Tool` structs. Custom tools that mutate loop state need a matching clause in `Tools.execute/4`. See `Arcana.Loop.Tools` for the schemas of the default tools.
 
@@ -93,7 +93,7 @@ Arcana.Loop.new(question, opts) |> Arcana.Loop.run(opts)
 | Option | Default | Description |
 |---|---|---|
 | `:repo` | `Arcana.Config.get(opts, :repo)` | Ecto repo for retrieval tools |
-| `:collection` | `nil` | Lock the loop to a single collection. The controller physically cannot search anything else — the tool schema won't even expose a collection parameter. See "Collections: lock vs pick" below. |
+| `:collection` | `nil` | Lock the loop to a single collection. The controller physically cannot search anything else: the tool schema won't even expose a collection parameter. See "Collections: lock vs pick" below. |
 | `:collections` | `[nil]` | Allowed set of collection names the controller may pick from per search call. When 2 or more, the search tool gains an optional `collection` parameter the controller uses to narrow the search. Overrides `:collection`. |
 
 `run/2` options:
@@ -199,7 +199,7 @@ The loop ends in one of four states, recorded in `ctx.terminated_by`:
 
 In practice, models reliably refuse to call `answer` for enumeration questions even with generous `max_iterations`. They keep hunting for completeness one entity at a time. This is a known agentic RAG failure mode.
 
-Loop's fix is graceful degradation: when `max_iterations` is hit and chunks have been accumulated, do one more LLM call **without tools**. The model is forced to produce text, which it does, using the accumulated chunks as context. The result becomes `ctx.answer`.
+Loop's fix is graceful degradation: when `max_iterations` is hit and chunks have been accumulated, do one more LLM call **without tools**. The model is forced to produce text, which it does, using the accumulated chunks as context. The result becomes `ctx.answer`. The synthesis step is recorded in `ctx.tool_history` as a `:synthesis` entry (with the full answer text in `args.text`) and emits the same `[:arcana, :loop, :tool_call]` telemetry event, so dashboards and live traces show it alongside the controller's tool calls.
 
 ```elixir
 # Default synthesizer: appends an instruction to the running conversation,
@@ -215,7 +215,7 @@ ctx.terminated_by     # :max_iterations
 ctx.answer            # "Based on the available information, several Time Lords..."
 ```
 
-To disable, pass `fallback_synthesis: false`. If you want a different model for the synthesis call than the controller, the simplest way is `:answer_llm` (see [Controller / answerer split](#controller--answerer-split)) — it acts as the default synthesizer when set. If you need full control over the synthesis call (custom prompt, postprocessing, retries), pass `:synthesizer` directly:
+To disable, pass `fallback_synthesis: false`. If you want a different model for the synthesis call than the controller, the simplest way is `:answer_llm` (see [Controller / answerer split](#controller--answerer-split)): it acts as the default synthesizer when set. If you need full control over the synthesis call (custom prompt, postprocessing, retries), pass `:synthesizer` directly:
 
 ```elixir
 Arcana.Loop.run(ctx,
@@ -234,45 +234,45 @@ Arcana.Loop.run(ctx,
 The default prompt (`Arcana.Loop.SystemPrompt.default/1`) follows current best practices from Anthropic and OpenAI:
 
 1. **Structured into named markdown sections** (works across providers; XML tags don't)
-2. **Heavy detail in tool descriptions, not the system prompt** — the prompt sets the role and workflow, the tool descriptions guide selection
+2. **Heavy detail in tool descriptions, not the system prompt**: the prompt sets the role and workflow, the tool descriptions guide selection
 3. **Explicit "when NOT to call" rules** to avoid the GPT-5 / Cursor over-eager-search failure mode
 4. **Tool budget mentioned in the prompt** alongside the hard `max_iterations` cap
-5. **No `Thought:/Action:` prefixes** — native tool calling drives the loop, no ReAct templating needed
+5. **No `Thought:/Action:` prefixes**: native tool calling drives the loop, no ReAct templating needed
 6. **Self-critique on retrieval quality** before answering (Self-RAG / CRAG pattern)
-7. **Soft language**, not aggressive `MUST` / `CRITICAL` — these cause overtrigger in Claude 4.5+
+7. **Soft language**, not aggressive `MUST` / `CRITICAL`: these cause overtrigger in Claude 4.5+
 
 To override, pass `system_prompt: "..."` (a string) or `system_prompt: fn opts -> string end` (so you can read `:max_iterations` from opts to mention the budget). The default prompt is corpus-agnostic; if your corpus has unusual scoring characteristics or domain conventions, it's worth adding them in a custom prompt.
 
 ## Custom tools
 
-Replace the default toolset with your own list of `ReqLLM.Tool` structs to add domain-specific tools (web search, calculator, SQL query, etc.):
+Append your own `ReqLLM.Tool` structs to the defaults. Custom tools are invoked via their `:callback` when the controller calls them. The callback is a 1-arity function `(args) -> {:ok, text} | {:error, text}` where `text` is the string returned to the controller as the tool result. Custom tools always continue the loop (only the built-in `answer` and `give_up` tools terminate it).
 
 ```elixir
-defmodule MyApp.LoopTools do
-  alias ReqLLM.Tool
-
-  def all do
-    Arcana.Loop.Tools.default() ++ [my_calculator_tool()]
+web_search = ReqLLM.Tool.new!(
+  name: "web_search",
+  description: "Search the web for current information not in the knowledge base.",
+  parameter_schema: [
+    query: [type: :string, required: true, doc: "The search query"]
+  ],
+  callback: fn %{query: q} ->
+    case MyApp.WebSearch.run(q) do
+      {:ok, results} -> {:ok, format_results(results)}
+      {:error, reason} -> {:error, "Search failed: #{inspect(reason)}"}
+    end
   end
+)
 
-  defp my_calculator_tool do
-    Tool.new!(
-      name: "calculate",
-      description: "Evaluate an arithmetic expression. Use when the answer requires a numeric computation.",
-      parameter_schema: [
-        expression: [type: :string, required: true, doc: "An arithmetic expression like '2 + 2'"]
-      ],
-      callback: {__MODULE__, :no_op}
-    )
-  end
-
-  def no_op(_), do: {:ok, nil}
-end
+Arcana.Loop.run(ctx,
+  tools: Arcana.Loop.Tools.default() ++ [web_search],
+  controller_llm: llm
+)
 ```
 
-The callback on `ReqLLM.Tool` is a placeholder — Loop executes tools itself via `Arcana.Loop.Tools.execute/4` so it can mutate the loop state. You'll need to add a clause to your own dispatch function (or fork `Tools.execute/4`) to handle the new tool.
+The callback can also be an MFA tuple `{Module, :function}` for named functions. Closures work well when the tool needs access to state like a repo or API key from the outer scope.
 
-If you only need to override the search tool without adding new tools, the simpler path is to pass `:search_fn` — see the test suite for an example.
+The controller sees the custom tool in its tool schema and can call it like any built-in tool. The tool result is sent back as a tool message and recorded in `tool_history` like any other call.
+
+If you only need to override the search tool without adding new tools, the simpler path is to pass `:search_fn`: see the test suite for an example.
 
 ## Controller / answerer split
 
@@ -285,7 +285,7 @@ Arcana.Loop.run(ctx,
 )
 ```
 
-The two are independent. Each can be a ReqLLM model string, a `{model, opts}` tuple, or a function (the function form is mostly for tests). If `:answer_llm` is unset, the controller writes the answer too — current behavior, no change.
+The two are independent. Each can be a ReqLLM model string, a `{model, opts}` tuple, or a function (the function form is mostly for tests). If `:answer_llm` is unset, the controller writes the answer too: current behavior, no change.
 
 ### Where the answerer fires
 
@@ -293,7 +293,7 @@ The answerer takes over the user-facing answer text on **two paths**:
 
 1. **The controller calls the `answer` tool.** Normally this commits the controller's `text` argument as `ctx.answer`. With `:answer_llm` set, the loop instead makes one more LLM call to the answerer with the full conversation (which includes the controller's draft), plus an instruction to "write the final user-facing answer based on the chunks gathered above." Whatever the answerer returns becomes `ctx.answer`. If the answerer errors or returns nothing useful, the controller's draft text is used as a fallback so the user always gets *something*.
 
-2. **The loop hits `max_iterations` and falls through to synthesis.** The default synthesizer uses `:answer_llm` if set, otherwise `:controller_llm`. So if you set `:answer_llm`, the synthesis fallback automatically uses your stronger model too. You can still override the entire synthesis path with `:synthesizer`, and that takes precedence over `:answer_llm` for the synthesis call only — the `answer` tool path still uses `:answer_llm` directly.
+2. **The loop hits `max_iterations` and falls through to synthesis.** The default synthesizer uses `:answer_llm` if set, otherwise `:controller_llm`. So if you set `:answer_llm`, the synthesis fallback automatically uses your stronger model too. You can still override the entire synthesis path with `:synthesizer`, and that takes precedence over `:answer_llm` for the synthesis call only: the `answer` tool path still uses `:answer_llm` directly.
 
 ### Where the answerer does NOT fire
 
@@ -313,7 +313,7 @@ This is the standard pattern in production agent systems (Anthropic's [cost-opti
 
 ### When NOT to split
 
-If you're already running on a frontier model for both, splitting buys you nothing. If your controller never makes it to the `answer` tool (always hits `:max_iterations`), the split only affects the synthesis fallback. If you want full control over how the final answer is produced (custom prompt, custom postprocessing, etc.), use `:synthesizer` instead — it's the lower-level escape hatch.
+If you're already running on a frontier model for both, splitting buys you nothing. If your controller never makes it to the `answer` tool (always hits `:max_iterations`), the split only affects the synthesis fallback. If you want full control over how the final answer is produced (custom prompt, custom postprocessing, etc.), use `:synthesizer` instead: it's the lower-level escape hatch.
 
 ## Telemetry
 
@@ -333,7 +333,7 @@ Stop metadata includes:
 | `:iterations` | How many controller turns actually ran |
 | `:terminated_by` | `:answered` / `:gave_up` / `:max_iterations` / `:error` |
 
-For per-tool-call telemetry, attach to the `Arcana.search/2` events emitted from inside the search tool. Grounding (when you call `Loop.ground/2`) emits its own span under `[:arcana, :loop, :ground, :*]` — see the Grounding section below.
+For per-tool-call telemetry, attach to the `Arcana.search/2` events emitted from inside the search tool. Grounding (when you call `Loop.ground/2`) emits its own span under `[:arcana, :loop, :ground, :*]`: see the Grounding section below.
 
 ## Testing
 
@@ -365,7 +365,7 @@ For multi-turn tests, use a small `Agent` that holds a list of scripted response
 
 ## Grounding
 
-Loop doesn't run grounding automatically — it's expensive (runs an NLI model via Bumblebee) and you may not need it on every call. When you do want faithfulness scoring, pipe the result into `Arcana.Loop.ground/2`:
+Loop doesn't run grounding automatically: it adds latency and you may not need it on every call. When you do want faithfulness scoring, pipe the result into `Arcana.Loop.ground/2`:
 
 ```elixir
 {:ok, ctx} =
@@ -375,15 +375,26 @@ Loop doesn't run grounding automatically — it's expensive (runs an NLI model v
 ctx = Arcana.Loop.ground(ctx)
 
 ctx.grounding.score               # 0.0-1.0 faithfulness
-ctx.grounding.hallucinated_spans  # sentences not supported by accumulated chunks
-ctx.grounding.faithful_spans      # supported sentences with chunk-ID attribution
+ctx.grounding.hallucinated_spans  # claims not supported by accumulated chunks
+ctx.grounding.faithful_spans      # supported claims with chunk-ID attribution
 ```
 
 ### What it actually does
 
-`Loop.ground/2` scores the answer in `ctx.answer` against the accumulated chunks in `ctx.chunks` using the configured grounder. The default grounder is `Arcana.Grounder.Hallmark`, which wraps [Hallmark](https://github.com/georgeguimaraes/hallmark) — a local Bumblebee integration for Vectara's HHEM model. Same grounder the Pipeline uses; the behaviour is context-agnostic.
+`Loop.ground/2` scores the answer in `ctx.answer` against the accumulated chunks in `ctx.chunks` using the configured grounder.
 
-Each sentence in the answer gets scored for faithfulness. Supported sentences go into `faithful_spans` with per-sentence chunk attribution (which chunks support the claim). Unsupported sentences go into `hallucinated_spans` with the same shape. The top-level `score` is a length-weighted average.
+Arcana ships two grounders:
+
+- **`Arcana.Grounder.Hallmark`** (default for Pipeline): runs Vectara's HHEM ModernBERT model locally via Bumblebee. Scores each sentence against the concatenated context via NLI. Fast and free, but its context window can be exceeded when Loop accumulates many chunks (30+), silently truncating the context.
+
+- **`Arcana.Grounder.LLMJudge`** (recommended for Loop): decomposes the answer into atomic claims and asks an LLM to verify each one against the chunks. Returns per-claim verdicts (supported / unsupported / contradicted) and chunk attribution. One LLM call regardless of chunk count, handles paraphrase and synthesis better than NLI.
+
+```elixir
+# Use LLMJudge for Loop grounding (recommended)
+ctx = Arcana.Loop.ground(ctx, grounder: Arcana.Grounder.LLMJudge, judge_model: llm)
+```
+
+Both grounders populate the same `%Arcana.Grounding.Result{}` struct: `score`, `hallucinated_spans`, `faithful_spans`, all with per-claim chunk attribution.
 
 ### Tool-call attribution
 
@@ -406,11 +417,11 @@ faithful_span.sources
 
 This maps each claim in the answer back to the specific agent decision (which search, at which iteration, with which query) that produced its supporting evidence. It's the [Agent GPA](https://arxiv.org/abs/2510.08847) pattern, end-of-loop rather than during trace, scoped to retrieval grounding rather than full tool-calling evaluation.
 
-When a chunk was returned by multiple searches, Loop records the *earliest* iteration — "which search first discovered this chunk." If the grounder returns chunk IDs that aren't in `ctx.tool_history` (shouldn't normally happen, but defensive), `search_iteration` and `search_query` are `nil` on those sources rather than crashing.
+When a chunk was returned by multiple searches, Loop records the *earliest* iteration: "which search first discovered this chunk." If the grounder returns chunk IDs that aren't in `ctx.tool_history` (shouldn't normally happen, but defensive), `search_iteration` and `search_query` are `nil` on those sources rather than crashing.
 
 ### Reference set
 
-Grounding runs against `ctx.chunks`, which is the full set of chunks the search tool accumulated across every iteration, capped at `chunk_cap` (default 30). This is the right reference set for Loop because the controller's conversation history literally contains every one of those chunks as tool result text — the answerer's working context is the accumulated set, not just the final-turn subset.
+Grounding runs against `ctx.chunks`, which is the full set of chunks the search tool accumulated across every iteration, capped at `chunk_cap` (default 30). This is the right reference set for Loop because the controller's conversation history literally contains every one of those chunks as tool result text: the answerer's working context is the accumulated set, not just the final-turn subset.
 
 ### When it's a no-op
 
@@ -420,7 +431,7 @@ Grounding runs against `ctx.chunks`, which is the full set of chunks the search 
 - `ctx.answer` is `nil`
 - `ctx.chunks` is empty (nothing to ground against)
 
-Grounder errors are swallowed too: if the NLI model fails to load or times out, `ctx.grounding` stays `nil` and the rest of the context is untouched. Grounding is a nice-to-have annotation, not a fatal step — if scoring fails, you still get your answer.
+Grounder errors are swallowed too: if the NLI model fails to load or times out, `ctx.grounding` stays `nil` and the rest of the context is untouched. Grounding is a nice-to-have annotation, not a fatal step: if scoring fails, you still get your answer.
 
 ### Custom grounders
 
@@ -436,7 +447,7 @@ Arcana.Loop.ground(ctx, grounder: fn answer, chunks, _opts ->
 end)
 ```
 
-The grounder behaviour is `Arcana.Grounder` — shared with Pipeline since the problem shape is the same. A custom grounder you write for Pipeline works for Loop unchanged.
+The grounder behaviour is `Arcana.Grounder`: shared with Pipeline since the problem shape is the same. A custom grounder you write for Pipeline works for Loop unchanged. `LLMJudge` also accepts `:judge_model`, `:judge_temperature`, and `:judge_max_tokens` options passed through `Loop.ground/2`.
 
 ### Telemetry
 

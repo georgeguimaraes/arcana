@@ -1,6 +1,6 @@
 # LLM Integration
 
-This guide shows how to use Arcana with [Req.LLM](https://hex.pm/packages/req_llm) for production-ready RAG applications.
+How to use Arcana with [Req.LLM](https://hex.pm/packages/req_llm) for RAG applications.
 
 ## Setup
 
@@ -228,8 +228,4 @@ end
 
 ## Tips
 
-1. **Use hybrid search** - Combines semantic understanding with keyword matching
-2. **Set appropriate limits** - More context isn't always better (increases cost and noise)
-3. **Use streaming** for chat interfaces - Better UX for long responses
-4. **Monitor costs** - Attach telemetry handlers to track LLM spending
-5. **Consider caching** - LLM calls are expensive; cache common queries
+Hybrid search combines semantic with keyword matching and is usually the right default. Keep chunk limits reasonable: more context isn't always better (increases cost and noise). For chat interfaces, use streaming. Attach telemetry handlers to track LLM spending, and cache common queries since LLM calls are the most expensive part of the pipeline.

@@ -185,6 +185,7 @@ defmodule Arcana.Loop do
       opts
       |> Keyword.put(:max_iterations, max_iterations)
       |> Keyword.put(:collections, ctx.collections)
+      |> Keyword.put(:tools, tools)
 
     system_prompt = resolve_system_prompt(Keyword.get(opts, :system_prompt), opts)
     messages = build_initial_messages(ctx.question, system_prompt)

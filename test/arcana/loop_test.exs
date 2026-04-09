@@ -501,6 +501,86 @@ defmodule Arcana.LoopTest do
     end
   end
 
+  describe "run/2 custom tools" do
+    test "custom tool callback is invoked and result is returned to the controller" do
+      weather_tool =
+        ReqLLM.Tool.new!(
+          name: "weather",
+          description: "Get the weather.",
+          parameter_schema: [city: [type: :string, required: true]],
+          callback: fn %{city: city} -> {:ok, "#{city}: sunny, 22C"} end
+        )
+
+      tools = Arcana.Loop.Tools.default() ++ [weather_tool]
+
+      controller =
+        scripted_controller([
+          tool_call_response([tool_call("weather", %{"city" => "London"}, "c1")]),
+          tool_call_response([tool_call("answer", %{"text" => "It's sunny in London"}, "c2")])
+        ])
+
+      {:ok, ctx} =
+        Loop.new("What's the weather in London?")
+        |> Loop.run(controller_llm: controller, tools: tools)
+
+      assert ctx.answer == "It's sunny in London"
+      [weather_entry, _answer_entry] = ctx.tool_history
+      assert weather_entry.tool == :weather
+      assert weather_entry.summary == "London: sunny, 22C"
+    end
+
+    test "custom tool returning {:error, text} continues with an error message" do
+      failing_tool =
+        ReqLLM.Tool.new!(
+          name: "api_call",
+          description: "Call an API.",
+          parameter_schema: [endpoint: [type: :string, required: true]],
+          callback: fn _args -> {:error, "connection refused"} end
+        )
+
+      tools = Arcana.Loop.Tools.default() ++ [failing_tool]
+
+      controller =
+        scripted_controller([
+          tool_call_response([tool_call("api_call", %{"endpoint" => "/foo"}, "c1")]),
+          tool_call_response([tool_call("give_up", %{"reason" => "API down"}, "c2")])
+        ])
+
+      {:ok, ctx} =
+        Loop.new("question")
+        |> Loop.run(controller_llm: controller, tools: tools)
+
+      [api_entry, _] = ctx.tool_history
+      assert api_entry.tool == :api_call
+      assert api_entry.summary =~ "Tool error"
+    end
+
+    test "custom tool returning a bare string continues with that text" do
+      echo_tool =
+        ReqLLM.Tool.new!(
+          name: "echo",
+          description: "Echo back.",
+          parameter_schema: [text: [type: :string, required: true]],
+          callback: fn %{text: t} -> t end
+        )
+
+      tools = Arcana.Loop.Tools.default() ++ [echo_tool]
+
+      controller =
+        scripted_controller([
+          tool_call_response([tool_call("echo", %{"text" => "hello"}, "c1")]),
+          tool_call_response([tool_call("answer", %{"text" => "done"}, "c2")])
+        ])
+
+      {:ok, ctx} =
+        Loop.new("q")
+        |> Loop.run(controller_llm: controller, tools: tools)
+
+      [echo_entry, _] = ctx.tool_history
+      assert echo_entry.summary == "hello"
+    end
+  end
+
   describe "run/2 validation" do
     test "raises when no controller_llm is provided" do
       assert_raise ArgumentError, ~r/controller_llm/, fn ->

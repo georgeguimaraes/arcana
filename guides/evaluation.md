@@ -219,11 +219,6 @@ See the [Dashboard Guide](dashboard.md) for setup instructions.
 - **Hit Rate@K** - Good baseline to ensure retrieval is working at all
 - **Faithfulness** - Essential for preventing hallucinations in generated answers
 
-## Best Practices
+## Tips
 
-1. **Diverse test cases** - Cover different topics and question types
-2. **Sufficient sample size** - Aim for 50+ test cases for reliable metrics
-3. **Regular evaluation** - Re-run after changing embeddings, chunking, or search settings
-4. **Track over time** - Compare runs to ensure changes improve quality
-5. **Use collection filtering** - Evaluate specific document collections separately
-6. **Test all search modes** - Compare semantic, fulltext, and hybrid to find what works best
+Aim for 50+ test cases across different topics for reliable metrics. Evaluate specific collections separately rather than lumping everything together, and re-run after changing embeddings, chunking, or search config so you can see the delta.

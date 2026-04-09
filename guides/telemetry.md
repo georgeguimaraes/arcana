@@ -1,6 +1,6 @@
 # Telemetry and Observability
 
-Arcana emits telemetry events for all operations, giving you visibility into performance, errors, and usage patterns. This guide covers setup options from quick debugging to full production monitoring.
+Arcana emits telemetry events for all operations so you can monitor performance and debug errors. This guide covers setup from quick debugging to production monitoring.
 
 ## Quick Start
 
@@ -469,16 +469,6 @@ def handle_exception(event, _measurements, metadata, _config) do
 end
 ```
 
-## Best Practices
+## Tips
 
-1. **Start with the built-in logger** - It's zero-config and helps you understand what's happening
-
-2. **Focus on LLM latency** - This is usually the bottleneck; track it closely
-
-3. **Monitor reranking** - If using `Pipeline.rerank/2`, watch the kept/original ratio
-
-4. **Track by collection** - Tag metrics with collection names to identify slow document sets
-
-5. **Set up alerts** - Alert on LLM failures and unusually slow operations
-
-6. **Log in production** - Keep at least `:info` level logging for Arcana to debug issues
+Start with the built-in logger since it's zero-config and shows what's happening. LLM latency is usually the bottleneck, so track it closely. If using reranking, watch the kept/original ratio to see how aggressively it filters. Tag metrics with collection names to spot slow document sets, and alert on LLM failures and unusually slow operations.

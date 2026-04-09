@@ -1,6 +1,6 @@
 # GraphRAG
 
-Build knowledge graphs from documents for enhanced retrieval with entity extraction, relationship mapping, and community detection.
+Build knowledge graphs from documents for better retrieval using entity extraction, relationships, and community detection.
 
 ## Overview
 
@@ -12,7 +12,7 @@ GraphRAG enhances traditional vector search by building a knowledge graph from y
 
 ## Quick Start
 
-Once installed and configured, GraphRAG integrates seamlessly with the existing API:
+Once installed and configured, GraphRAG works with the existing API:
 
 ```elixir
 # Ingest with graph building - extracts entities and relationships automatically

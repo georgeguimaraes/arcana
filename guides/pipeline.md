@@ -13,7 +13,7 @@ Use `Arcana.Pipeline` when you want **explicit control over the order and behavi
 - You're plugging in custom behaviours (your own searcher, your own reranker)
 - You want grounding (`ground/2`) which isn't run by `Arcana.ask/2`
 
-If you're happy with `Arcana.search` and `Arcana.ask`'s defaults, use those — they're a thin convenience wrapper over the same primitives.
+If you're happy with `Arcana.search` and `Arcana.ask`'s defaults, use those. They're a thin convenience wrapper over the same primitives.
 
 If the right sequence of searches **isn't** knowable upfront (the LLM should decide), use `Arcana.Loop` instead. See [Loop (Agentic RAG)](loop.md).
 

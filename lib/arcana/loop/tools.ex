@@ -21,9 +21,30 @@ defmodule Arcana.Loop.Tools do
   Query rewriting and decomposition aren't separate tools — they happen
   inside the `search` tool's `query` parameter, guided by the system prompt.
 
-  To customize, pass `tools: [...]` to `Loop.run/2` with your own list of
-  `ReqLLM.Tool` structs. Custom tools that mutate loop state need a matching
-  clause in `execute/4`.
+  ## Custom tools
+
+  Pass `tools: [...]` to `Loop.run/2` with your own `ReqLLM.Tool` structs
+  appended to (or replacing) the defaults. Custom tools are invoked via
+  their `:callback` function when the controller calls them.
+
+  The callback is a 1-arity function `(args) -> {:ok, text} | {:error, text}`
+  where `text` is the string returned to the controller as the tool result.
+  Custom tools always continue the loop (they never terminate it). The
+  controller can still call `answer` or `give_up` to end the loop.
+
+      web_search = ReqLLM.Tool.new!(
+        name: "web_search",
+        description: "Search the web for current information.",
+        parameter_schema: [query: [type: :string, required: true]],
+        callback: fn %{query: q} ->
+          case MyApp.WebSearch.run(q) do
+            {:ok, results} -> {:ok, format_results(results)}
+            {:error, reason} -> {:error, inspect(reason)}
+          end
+        end
+      )
+
+      Loop.run(ctx, tools: Tools.default() ++ [web_search], controller_llm: llm)
   """
 
   alias Arcana.Loop.Context
@@ -246,9 +267,38 @@ defmodule Arcana.Loop.Tools do
     {:terminate, ctx, :gave_up, "Could not answer: #{reason}"}
   end
 
-  def execute(%Context{} = ctx, name, _args, _opts) do
-    {:continue, ctx, "Unknown tool: #{name}", %{}}
+  def execute(%Context{} = ctx, name, args, opts) do
+    tools = Keyword.get(opts, :tools, [])
+
+    case find_tool(tools, name) do
+      nil ->
+        {:continue, ctx, "Unknown tool: #{name}", %{}}
+
+      tool ->
+        case invoke_callback(tool.callback, args) do
+          {:ok, text} when is_binary(text) ->
+            {:continue, ctx, text, %{}}
+
+          {:error, text} when is_binary(text) ->
+            {:continue, ctx, "Tool error: #{text}", %{}}
+
+          text when is_binary(text) ->
+            {:continue, ctx, text, %{}}
+
+          other ->
+            {:continue, ctx, "Tool returned unexpected value: #{inspect(other)}", %{}}
+        end
+    end
   end
+
+  defp find_tool(tools, name) do
+    Enum.find(tools, fn tool ->
+      tool.name == name or to_string(tool.name) == name
+    end)
+  end
+
+  defp invoke_callback({mod, fun}, args), do: apply(mod, fun, [args])
+  defp invoke_callback(fun, args) when is_function(fun, 1), do: fun.(args)
 
   # Resolves which collection(s) a search call should run against.
   #

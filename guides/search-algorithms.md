@@ -161,7 +161,7 @@ With separate queries, items ranking moderately in both lists might be missed. F
 - Fulltext search fetches top 20
 - An item ranking #15 in both could be highly relevant overall, but RRF only sees it at position 15
 
-Single-query evaluates **all** chunks, ensuring nothing is missed.
+Single-query evaluates **all** chunks, so nothing is missed.
 
 **Score normalization:**
 - Semantic scores (cosine similarity) naturally range 0-1
