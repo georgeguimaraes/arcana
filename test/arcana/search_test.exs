@@ -43,7 +43,7 @@ defmodule Arcana.SearchTest do
 
     test "fulltext mode finds exact keyword matches" do
       # Search for exact word "Elixir" - fulltext should find it
-      {:ok, results} = Arcana.search("Elixir", repo: Repo, mode: :fulltext)
+      {:ok, results} = Arcana.search("Elixir", repo: Repo, mode: :keyword)
 
       refute Enum.empty?(results)
       # Verify the result contains the exact word
@@ -53,7 +53,7 @@ defmodule Arcana.SearchTest do
     test "fulltext mode uses ts_rank scoring" do
       # Fulltext should return results with rank-based scoring
       {:ok, results} =
-        Arcana.search("functional programming language", repo: Repo, mode: :fulltext)
+        Arcana.search("functional programming language", repo: Repo, mode: :keyword)
 
       refute Enum.empty?(results)
       # ts_rank scores are typically small positive numbers
@@ -80,20 +80,20 @@ defmodule Arcana.SearchTest do
       first = hd(results)
 
       # Single-query hybrid should include both score breakdowns
-      assert Map.has_key?(first, :semantic_score)
-      assert Map.has_key?(first, :fulltext_score)
-      assert is_number(first.semantic_score)
-      assert is_number(first.fulltext_score)
+      assert Map.has_key?(first, :vector_score)
+      assert Map.has_key?(first, :keyword_score)
+      assert is_number(first.vector_score)
+      assert is_number(first.keyword_score)
     end
 
-    test "hybrid mode respects semantic_weight and fulltext_weight options" do
+    test "hybrid mode respects vector_weight and keyword_weight options" do
       # Test with heavily weighted semantic
       {:ok, semantic_heavy} =
         Arcana.search("Elixir",
           repo: Repo,
           mode: :hybrid,
-          semantic_weight: 0.9,
-          fulltext_weight: 0.1
+          vector_weight: 0.9,
+          keyword_weight: 0.1
         )
 
       # Test with heavily weighted fulltext
@@ -101,8 +101,8 @@ defmodule Arcana.SearchTest do
         Arcana.search("Elixir",
           repo: Repo,
           mode: :hybrid,
-          semantic_weight: 0.1,
-          fulltext_weight: 0.9
+          vector_weight: 0.1,
+          keyword_weight: 0.9
         )
 
       refute Enum.empty?(semantic_heavy)

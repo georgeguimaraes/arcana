@@ -15,7 +15,7 @@ defmodule Arcana.Evaluation do
       )
 
       # Run evaluation
-      {:ok, run} = Arcana.Evaluation.run(repo: MyApp.Repo, mode: :semantic)
+      {:ok, run} = Arcana.Evaluation.run(repo: MyApp.Repo, mode: :vector)
 
       # View metrics
       run.metrics
@@ -52,7 +52,8 @@ defmodule Arcana.Evaluation do
   ## Options
 
     * `:repo` - Ecto repo (required)
-    * `:mode` - Search mode :semantic | :fulltext | :hybrid (default: :semantic)
+    * `:mode` - Search mode `:vector | :keyword | :hybrid` (default: `:vector`).
+      `:semantic` and `:fulltext` are deprecated aliases and log a warning.
     * `:source_id` - Limit evaluation to specific source
     * `:evaluate_answers` - When true, also evaluates answer quality (default: false)
     * `:llm` - LLM function (required when evaluate_answers is true)
@@ -65,7 +66,7 @@ defmodule Arcana.Evaluation do
   """
   def run(opts) do
     repo = Keyword.fetch!(opts, :repo)
-    mode = Keyword.get(opts, :mode, :semantic)
+    mode = Arcana.Search.normalize_mode(Keyword.get(opts, :mode, :vector))
     source_id = Keyword.get(opts, :source_id)
     evaluate_answers = Keyword.get(opts, :evaluate_answers, false)
     llm = Keyword.get(opts, :llm)
@@ -100,10 +101,56 @@ defmodule Arcana.Evaluation do
         })
         |> repo.insert()
 
-      # Evaluate each test case
+      total = length(test_cases)
+
+      :telemetry.execute(
+        [:arcana, :evaluation, :start],
+        %{total: total},
+        %{run_id: run.id}
+      )
+
+      # Evaluate each test case, emitting per-case telemetry so dashboards
+      # can render live progress on long runs (Loop + evaluate_answers
+      # against 10+ test cases can take 20 minutes with a chat-tier LLM).
       case_results =
-        Enum.map(test_cases, fn test_case ->
-          evaluate_test_case(test_case, repo, mode, evaluate_answers, llm, retriever)
+        test_cases
+        |> Enum.with_index(1)
+        |> Enum.map(fn {test_case, index} ->
+          :telemetry.execute(
+            [:arcana, :evaluation, :test_case, :start],
+            %{index: index},
+            %{
+              run_id: run.id,
+              index: index,
+              total: total,
+              question: test_case.question
+            }
+          )
+
+          started_at = System.monotonic_time()
+
+          result =
+            evaluate_test_case(test_case, repo, mode, evaluate_answers, llm, retriever)
+
+          duration_ms =
+            System.convert_time_unit(
+              System.monotonic_time() - started_at,
+              :native,
+              :millisecond
+            )
+
+          :telemetry.execute(
+            [:arcana, :evaluation, :test_case, :complete],
+            %{duration_ms: duration_ms, index: index},
+            %{
+              run_id: run.id,
+              index: index,
+              total: total,
+              question: test_case.question
+            }
+          )
+
+          result
         end)
 
       # Aggregate metrics

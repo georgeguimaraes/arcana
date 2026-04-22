@@ -79,7 +79,7 @@ Run an evaluation against all test cases:
 ```elixir
 {:ok, run} = Arcana.Evaluation.run(
   repo: MyApp.Repo,
-  mode: :semantic  # or :fulltext, :hybrid
+  mode: :vector  # or :keyword, :hybrid
 )
 ```
 
@@ -90,7 +90,7 @@ For end-to-end RAG evaluation, you can also evaluate the quality of generated an
 ```elixir
 {:ok, run} = Arcana.Evaluation.run(
   repo: MyApp.Repo,
-  mode: :semantic,
+  mode: :vector,
   evaluate_answers: true,
   llm: Application.get_env(:arcana, :llm)
 )
@@ -146,7 +146,7 @@ run.results
 
 # Configuration used
 run.config
-# => %{mode: :semantic, embedding: %{model: "...", dimensions: 384}}
+# => %{mode: :vector, embedding: %{model: "...", dimensions: 384}}
 ```
 
 ## Comparing Configurations
@@ -155,7 +155,7 @@ Run evaluations with different settings to find the best configuration:
 
 ```elixir
 # Test semantic search
-{:ok, semantic_run} = Arcana.Evaluation.run(repo: MyApp.Repo, mode: :semantic)
+{:ok, semantic_run} = Arcana.Evaluation.run(repo: MyApp.Repo, mode: :vector)
 
 # Test hybrid search
 {:ok, hybrid_run} = Arcana.Evaluation.run(repo: MyApp.Repo, mode: :hybrid)

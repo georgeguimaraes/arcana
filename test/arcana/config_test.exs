@@ -39,19 +39,19 @@ defmodule Arcana.ConfigTest do
       original = Application.get_env(:arcana, :test_namespace)
       on_exit(fn -> Application.put_env(:arcana, :test_namespace, original) end)
 
-      Application.put_env(:arcana, :test_namespace, limit: 10, mode: :semantic)
+      Application.put_env(:arcana, :test_namespace, limit: 10, mode: :vector)
       result = Config.merge_app_opts([], :test_namespace)
-      assert Keyword.equal?(result, limit: 10, mode: :semantic)
+      assert Keyword.equal?(result, limit: 10, mode: :vector)
     end
 
     test "per-call opts override global config" do
       original = Application.get_env(:arcana, :test_namespace)
       on_exit(fn -> Application.put_env(:arcana, :test_namespace, original) end)
 
-      Application.put_env(:arcana, :test_namespace, limit: 10, mode: :semantic)
+      Application.put_env(:arcana, :test_namespace, limit: 10, mode: :vector)
       result = Config.merge_app_opts([limit: 99], :test_namespace)
       assert result[:limit] == 99
-      assert result[:mode] == :semantic
+      assert result[:mode] == :vector
     end
   end
 

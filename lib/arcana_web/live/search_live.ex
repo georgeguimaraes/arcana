@@ -132,10 +132,14 @@ defmodule ArcanaWeb.SearchLive do
                 <label>
                   Mode
                   <select name="mode">
-                    <option value="semantic">Semantic</option>
-                    <option value="fulltext">Full-text</option>
+                    <option value="vector">Vector</option>
+                    <option value="keyword">Keyword</option>
                     <option value="hybrid">Hybrid</option>
                   </select>
+                  <small class="arcana-search-mode-hint">
+                    Vector: embedding similarity. Keyword: exact terms via Postgres full-text.
+                    Hybrid: both fused by Reciprocal Rank Fusion.
+                  </small>
                 </label>
 
                 <label>

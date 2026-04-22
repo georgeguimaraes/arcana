@@ -6,11 +6,11 @@ Arcana supports three search modes across two vector store backends. This guide 
 
 | Mode | Purpose | Memory Backend | PgVector Backend |
 |------|---------|----------------|------------------|
-| `:semantic` | Find similar meaning | HNSWLib cosine similarity | pgvector HNSW index |
-| `:fulltext` | Find keyword matches | TF-IDF-like scoring | PostgreSQL tsvector |
+| `:vector` | Find similar meaning | HNSWLib cosine similarity | pgvector HNSW index |
+| `:keyword` | Find keyword matches | TF-IDF-like scoring | PostgreSQL tsvector |
 | `:hybrid` | Combine both | Two queries + RRF | Single-query with weights |
 
-## Semantic Search
+## Vector Search
 
 Both backends use cosine similarity to find semantically similar content.
 
@@ -44,7 +44,7 @@ LIMIT 10
 
 The `<=>` operator computes cosine distance. The HNSW index makes this efficient even for millions of vectors.
 
-## Fulltext Search
+## Keyword Search
 
 ### Memory Backend: TF-IDF-like Scoring
 
@@ -122,7 +122,7 @@ ORDER BY score DESC
 
 ## Hybrid Search
 
-Hybrid mode combines semantic and fulltext search. The implementation differs by backend:
+Hybrid mode combines vector and keyword search. The implementation differs by backend:
 
 | Backend | Approach | Advantages |
 |---------|----------|------------|
@@ -137,19 +137,19 @@ The pgvector backend uses a single SQL query that combines both scores:
 WITH base_scores AS (
   SELECT
     id, text, embedding,
-    1 - (embedding <=> query_embedding) AS semantic_score,
-    ts_rank(to_tsvector('english', text), query) AS fulltext_score
+    1 - (embedding <=> query_embedding) AS vector_score,
+    ts_rank(to_tsvector('english', text), query) AS keyword_score
   FROM arcana_chunks
 ),
 normalized AS (
   SELECT *,
-    (fulltext_score - MIN(fulltext_score) OVER ()) /
-    NULLIF(MAX(fulltext_score) OVER () - MIN(fulltext_score) OVER (), 0)
-    AS fulltext_normalized
+    (keyword_score - MIN(keyword_score) OVER ()) /
+    NULLIF(MAX(keyword_score) OVER () - MIN(keyword_score) OVER (), 0)
+    AS keyword_normalized
   FROM base_scores
 )
 SELECT *,
-  (semantic_weight * semantic_score + fulltext_weight * fulltext_normalized) AS hybrid_score
+  (vector_weight * vector_score + keyword_weight * keyword_normalized) AS hybrid_score
 FROM normalized
 ORDER BY hybrid_score DESC
 ```
@@ -157,16 +157,16 @@ ORDER BY hybrid_score DESC
 **Why single-query is better:**
 
 With separate queries, items ranking moderately in both lists might be missed. For example:
-- Semantic search fetches top 20
-- Fulltext search fetches top 20
+- Vector search fetches top 20
+- Keyword search fetches top 20
 - An item ranking #15 in both could be highly relevant overall, but RRF only sees it at position 15
 
 Single-query evaluates **all** chunks, so nothing is missed.
 
 **Score normalization:**
-- Semantic scores (cosine similarity) naturally range 0-1
-- Fulltext scores (ts_rank) vary widely based on document content
-- The query normalizes fulltext scores using min-max scaling within the result set
+- Vector scores (cosine similarity) naturally range 0-1
+- Keyword scores (ts_rank) vary widely based on document content
+- The query normalizes keyword scores using min-max scaling within the result set
 
 **Configurable weights:**
 
@@ -174,11 +174,11 @@ Single-query evaluates **all** chunks, so nothing is missed.
 # Equal weight (default)
 {:ok, results} = Arcana.search("query", repo: Repo, mode: :hybrid)
 
-# Favor semantic similarity
-{:ok, results} = Arcana.search("query", repo: Repo, mode: :hybrid, semantic_weight: 0.7, fulltext_weight: 0.3)
+# Favor vector similarity
+{:ok, results} = Arcana.search("query", repo: Repo, mode: :hybrid, vector_weight: 0.7, keyword_weight: 0.3)
 
 # Favor keyword matches
-{:ok, results} = Arcana.search("query", repo: Repo, mode: :hybrid, semantic_weight: 0.3, fulltext_weight: 0.7)
+{:ok, results} = Arcana.search("query", repo: Repo, mode: :hybrid, vector_weight: 0.3, keyword_weight: 0.7)
 ```
 
 Results include individual scores for debugging:
@@ -188,8 +188,8 @@ Results include individual scores for debugging:
   id: "...",
   text: "...",
   score: 0.75,           # Combined hybrid score
-  semantic_score: 0.82,  # Cosine similarity
-  fulltext_score: 0.68   # Raw ts_rank score
+  vector_score: 0.82,  # Cosine similarity
+  keyword_score: 0.68   # Raw ts_rank score
 }
 ```
 
@@ -199,9 +199,9 @@ For the memory backend (and other custom backends), hybrid search uses [Reciproc
 
 **The Problem:**
 
-Semantic and fulltext searches return scores on different scales:
-- Semantic: 0.0 to 1.0 (cosine similarity)
-- Fulltext: Unbounded (ts_rank or term matching)
+Vector and keyword searches return scores on different scales:
+- Vector: 0.0 to 1.0 (cosine similarity)
+- Keyword: Unbounded (ts_rank or term matching)
 
 Naively averaging scores would bias toward one method.
 
@@ -220,21 +220,21 @@ Where `k` is a constant (default 60) that prevents top-ranked items from dominat
 **Algorithm:**
 
 ```elixir
-def rrf_combine(semantic_results, fulltext_results, limit) do
+def rrf_combine(vector_results, keyword_results, limit) do
   # Build rank maps
-  semantic_ranks = build_rank_map(semantic_results)
-  fulltext_ranks = build_rank_map(fulltext_results)
+  vector_ranks = build_rank_map(vector_results)
+  keyword_ranks = build_rank_map(keyword_results)
 
   # Combine all unique IDs
-  all_ids = MapSet.union(Map.keys(semantic_ranks), Map.keys(fulltext_ranks))
+  all_ids = MapSet.union(Map.keys(vector_ranks), Map.keys(keyword_ranks))
 
   # Calculate RRF score for each
   all_ids
   |> Enum.map(fn id ->
-    semantic_rank = Map.get(semantic_ranks, id, 1000)  # Default: low rank
-    fulltext_rank = Map.get(fulltext_ranks, id, 1000)
+    vector_rank = Map.get(vector_ranks, id, 1000)  # Default: low rank
+    keyword_rank = Map.get(keyword_ranks, id, 1000)
 
-    rrf_score = 1/(60 + semantic_rank) + 1/(60 + fulltext_rank)
+    rrf_score = 1/(60 + vector_rank) + 1/(60 + keyword_rank)
     {id, rrf_score}
   end)
   |> Enum.sort_by(&elem(&1, 1), :desc)
@@ -246,7 +246,7 @@ end
 
 Query: `"BEAM virtual machine"`
 
-| Document | Semantic Rank | Fulltext Rank | Semantic RRF | Fulltext RRF | Combined |
+| Document | Vector Rank | Keyword Rank | Vector RRF | Keyword RRF | Combined |
 |----------|---------------|---------------|--------------|--------------|----------|
 | "Erlang runs on the BEAM VM" | 1 | 2 | 0.016 | 0.016 | 0.032 |
 | "The BEAM virtual machine" | - | 1 | 0.001 | 0.016 | 0.017 |
@@ -258,11 +258,11 @@ Documents appearing in **both** result sets get boosted to the top.
 
 | Use Case | Recommended Mode |
 |----------|------------------|
-| Conceptual questions ("How does X work?") | `:semantic` |
-| Exact terms, names, codes | `:fulltext` |
+| Conceptual questions ("How does X work?") | `:vector` |
+| Exact terms, names, codes | `:keyword` |
 | General search, unknown query type | `:hybrid` |
-| API/function lookup | `:fulltext` |
-| Finding related concepts | `:semantic` |
+| API/function lookup | `:keyword` |
+| Finding related concepts | `:vector` |
 
 ## Backend Comparison
 
@@ -270,8 +270,8 @@ Documents appearing in **both** result sets get boosted to the top.
 |--------|--------|----------|
 | Setup | No database needed | Requires PostgreSQL + pgvector |
 | Persistence | Lost on restart | Persisted |
-| Semantic search | HNSWLib (excellent) | pgvector HNSW (excellent) |
-| Fulltext search | Basic term matching | Full linguistic processing |
+| Vector search | HNSWLib (excellent) | pgvector HNSW (excellent) |
+| Keyword search | Basic term matching | Full linguistic processing |
 | Stemming | No | Yes |
 | Stop words | No | Yes |
 | Scale | < 100K vectors | Millions of vectors |

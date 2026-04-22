@@ -794,10 +794,13 @@ defmodule ArcanaWeb.AskLive do
   end
 
   defp maybe_ground(ctx, opts) do
-    # Uses the default Hallmark (HHEM) grounder. Since HallmarkServing
-    # now scores each (sentence, chunk) pair individually and takes max
-    # per sentence, the concat-all-chunks truncation problem that broke
-    # Pipeline grounding on 20+ chunks is gone.
+    # Pipeline grounding uses default Hallmark. HallmarkServing now
+    # takes the top K reranked chunks (default 5), concats them into
+    # one context, and scores each sentence against that. Synthesis
+    # sentences that need evidence from multiple chunks land correctly
+    # because the top-K concat preserves the full combined context.
+    # Falls back to per-chunk max if the concat would exceed HHEM's
+    # input window.
     if Keyword.get(opts, :use_ground, false) do
       Arcana.Pipeline.ground(ctx)
     else

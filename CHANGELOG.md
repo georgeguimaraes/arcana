@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecations and breaking changes
 
+- **Search modes renamed: `:semantic` → `:vector`, `:fulltext` → `:keyword`.**
+  The new names are clearer about what the modes actually do: `:vector`
+  matches by embedding similarity (pgvector cosine distance), `:keyword`
+  matches literal terms (Postgres `tsvector`/`tsquery`), and `:hybrid`
+  runs both and fuses via Reciprocal Rank Fusion. The old names
+  `:semantic` and `:fulltext` are accepted at the public API surface
+  but log a `Logger.warning` on use — they will be removed in a
+  future release.
+
+  **Affected surfaces:**
+
+  - `Arcana.search(query, mode: ...)` — old atoms logged + normalized
+  - `Arcana.ask(question, mode: ...)` — same
+  - `Arcana.Evaluation.run(mode: ...)` — same
+  - `mix arcana.eval.run --mode <mode>` — accepts `vector | keyword | hybrid`,
+    old string values get a warning
+
+  **Also renamed (no backward-compat, warnings only):**
+
+  - Hybrid weight options: `:semantic_weight` → `:vector_weight`,
+    `:fulltext_weight` → `:keyword_weight`. Passing old names logs a
+    warning and falls back to the default 0.5 weight.
+  - Hybrid result metadata keys: `:semantic_score` → `:vector_score`,
+    `:fulltext_score` → `:keyword_score`. Callers destructuring these
+    keys must update their code.
+  - SQL layer aliases in `Arcana.VectorStore.Pgvector.search_hybrid/4`
+    (internal, no public impact).
+
+  **Migration:**
+
+  ```elixir
+  # Before
+  Arcana.search("query", mode: :semantic)
+  Arcana.search("query", mode: :fulltext)
+  Arcana.search("query", mode: :hybrid, semantic_weight: 0.7, fulltext_weight: 0.3)
+
+  # After
+  Arcana.search("query", mode: :vector)
+  Arcana.search("query", mode: :keyword)
+  Arcana.search("query", mode: :hybrid, vector_weight: 0.7, keyword_weight: 0.3)
+  ```
+
+  If you persisted evaluation runs with `config.mode` as the old atoms,
+  the UI will keep rendering them ("Mode: semantic") since config is
+  stored as written at run time. New runs use the canonical names.
+
 - **Renamed `Arcana.Agent` to `Arcana.Pipeline`.** The previous name was
   misleading: it described a composed Modular RAG pipeline, not an
   autonomous agent. The new name matches the literature (Singh et al.,

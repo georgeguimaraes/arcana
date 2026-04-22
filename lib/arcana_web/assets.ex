@@ -691,29 +691,33 @@ defmodule ArcanaWeb.Assets do
   /* Evaluation styles */
   .arcana-eval-nav {
     display: flex;
-    gap: 0.5rem;
+    gap: 1.5rem;
     margin-bottom: 1.5rem;
+    border-bottom: 1px solid #e5e7eb;
   }
 
   .arcana-eval-nav-btn {
-    padding: 0.5rem 1rem;
-    border: 1px solid #d1d5db;
-    background: white;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
+    position: relative;
+    padding: 0.625rem 0;
+    border: none;
+    background: transparent;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: #6b7280;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: color 0.15s ease;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
   }
 
   .arcana-eval-nav-btn:hover {
-    border-color: #7c3aed;
     color: #7c3aed;
   }
 
   .arcana-eval-nav-btn.active {
-    background: #7c3aed;
-    border-color: #7c3aed;
-    color: white;
+    color: #7c3aed;
+    border-bottom-color: #7c3aed;
+    font-weight: 600;
   }
 
   .arcana-eval-message {
@@ -735,53 +739,296 @@ defmodule ArcanaWeb.Assets do
     border: 1px solid #fecaca;
   }
 
-  .arcana-run-form {
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 0.5rem;
-    padding: 1rem;
-    margin-bottom: 1.5rem;
-    display: flex;
-    gap: 1rem;
-    align-items: flex-end;
+  /* Evaluation run form: vertical stack of sections, radio cards for
+     retriever, options row for mode + evaluate_answers toggle, a
+     prominent Run Evaluation button bottom-right. Replaces the old
+     flex-end one-liner that smushed inputs of different heights next
+     to each other. */
+  .arcana-eval-run-intro {
+    margin: 0 0 1.25rem;
+    color: #4b5563;
+    font-size: 0.9375rem;
   }
 
-  .arcana-run-form label {
+  .arcana-eval-run-intro strong {
+    color: #111827;
+    font-weight: 600;
+  }
+
+  .arcana-eval-run-form {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: #6b7280;
+    gap: 1.5rem;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
   }
 
-  .arcana-run-form select {
-    padding: 0.5rem;
+  .arcana-eval-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .arcana-eval-field-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #374151;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0;
+  }
+
+  .arcana-eval-hint {
+    font-size: 0.75rem;
+    color: #6b7280;
+    line-height: 1.4;
+  }
+
+  .arcana-eval-option-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .arcana-eval-option-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    padding: 1rem 1rem 1rem 1rem;
+    background: #fafafa;
+    border: 2px solid #e5e7eb;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .arcana-eval-option-card input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .arcana-eval-option-card:hover {
+    border-color: #c4b5fd;
+    background: #faf5ff;
+  }
+
+  .arcana-eval-option-card:has(input:checked) {
+    border-color: #7c3aed;
+    background: #ede9fe;
+  }
+
+  .arcana-eval-option-card:has(input:checked) .arcana-eval-option-title {
+    color: #6d28d9;
+  }
+
+  .arcana-eval-option-title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: #111827;
+  }
+
+  .arcana-eval-option-desc {
+    font-size: 0.8125rem;
+    color: #6b7280;
+    line-height: 1.4;
+  }
+
+  .arcana-eval-option-desc code {
+    font-size: 0.75rem;
+    padding: 0.0625rem 0.25rem;
+    background: #f3f4f6;
+    border-radius: 0.1875rem;
+    color: #374151;
+  }
+
+  .arcana-eval-options-row {
+    display: grid;
+    grid-template-columns: minmax(0, 240px) minmax(0, 1fr);
+    gap: 1.5rem;
+    align-items: start;
+  }
+
+  .arcana-eval-select {
+    padding: 0.5rem 0.75rem;
     border: 1px solid #d1d5db;
     border-radius: 0.375rem;
     font-size: 0.875rem;
-    min-width: 120px;
+    background: white;
+    color: #111827;
   }
 
-  .arcana-run-form button {
+  .arcana-eval-toggle {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    padding: 0.75rem 1rem;
+    background: #fafafa;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .arcana-eval-toggle input[type="checkbox"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .arcana-eval-toggle-indicator {
+    flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
+    margin-top: 0.125rem;
+    border: 2px solid #9ca3af;
+    border-radius: 0.25rem;
+    background: white;
+    transition: all 0.15s ease;
+    position: relative;
+  }
+
+  .arcana-eval-toggle:has(input:checked) {
+    border-color: #7c3aed;
+    background: #ede9fe;
+  }
+
+  .arcana-eval-toggle:has(input:checked) .arcana-eval-toggle-indicator {
+    border-color: #7c3aed;
+    background: #7c3aed;
+  }
+
+  .arcana-eval-toggle:has(input:checked) .arcana-eval-toggle-indicator::after {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 0px;
+    width: 4px;
+    height: 8px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+
+  .arcana-eval-toggle-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .arcana-eval-toggle-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #111827;
+  }
+
+  .arcana-eval-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    border-top: 1px solid #f3f4f6;
+    padding-top: 1.25rem;
+    margin-top: 0.25rem;
+  }
+
+  .arcana-eval-progress {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    min-width: 0;
+  }
+
+  .arcana-eval-progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8125rem;
+    color: #4b5563;
+  }
+
+  .arcana-eval-progress-elapsed {
+    color: #6b7280;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .arcana-eval-progress-bar {
+    height: 6px;
+    background: #ede9fe;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .arcana-eval-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #8b5cf6, #7c3aed);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+
+  .arcana-eval-progress-current {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+    color: #6d28d9;
+    margin-top: 0.125rem;
+  }
+
+  .arcana-eval-progress-current-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .arcana-eval-progress-spinner {
+    display: inline-block;
+    width: 0.75rem;
+    height: 0.75rem;
+    border: 2px solid #ede9fe;
+    border-top-color: #7c3aed;
+    border-radius: 50%;
+    flex-shrink: 0;
+    animation: arcana-eval-spin 0.8s linear infinite;
+  }
+
+  @keyframes arcana-eval-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .arcana-eval-run-btn {
     background: #7c3aed;
     color: white;
-    padding: 0.625rem 1.25rem;
+    padding: 0.625rem 1.5rem;
     border: none;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 500;
+    border-radius: 0.5rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
     cursor: pointer;
     transition: background-color 0.15s ease;
   }
 
-  .arcana-run-form button:hover {
+  .arcana-eval-run-btn:hover:not(:disabled) {
     background: #6d28d9;
   }
 
-  .arcana-run-form button:disabled {
+  .arcana-eval-run-btn:disabled {
     background: #9ca3af;
     cursor: not-allowed;
+    opacity: 0.7;
+  }
+
+  @media (max-width: 640px) {
+    .arcana-eval-option-grid,
+    .arcana-eval-options-row {
+      grid-template-columns: 1fr;
+    }
   }
 
   .arcana-metrics-grid {
@@ -811,50 +1058,218 @@ defmodule ArcanaWeb.Assets do
     margin-top: 0.25rem;
   }
 
-  .arcana-test-case {
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 0.5rem;
-    padding: 1rem;
-    margin-bottom: 0.75rem;
+  /* Empty state for the test cases view when no test cases exist. */
+  .arcana-eval-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 3rem 1rem;
+    background: #fafafa;
+    border: 1px dashed #d1d5db;
+    border-radius: 0.75rem;
+    text-align: center;
+    color: #6b7280;
   }
 
-  .arcana-test-case-header {
+  .arcana-eval-empty-state h4 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #374151;
+  }
+
+  .arcana-eval-empty-state p {
+    margin: 0;
+    font-size: 0.875rem;
+  }
+
+  .arcana-eval-empty-state code {
+    background: #f3f4f6;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-size: 0.8125rem;
+  }
+
+  .arcana-eval-empty-icon {
+    font-size: 2.5rem;
+    color: #d1d5db;
+    line-height: 1;
+  }
+
+  /* Test case list: compact rows that expand on click to show the
+     reference answer (when present) and the relevant chunks. */
+  .arcana-test-case-list {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 0.5rem;
+    flex-direction: column;
+    gap: 0.375rem;
+    margin-top: 1.5rem;
+  }
+
+  .arcana-test-case {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    transition: border-color 0.15s ease;
+  }
+
+  .arcana-test-case.expanded {
+    border-color: #c4b5fd;
+  }
+
+  .arcana-test-case-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.625rem 0.875rem;
+  }
+
+  .arcana-test-case-row-main {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto auto;
+    align-items: center;
+    gap: 0.75rem;
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+    padding: 0.125rem 0;
+    border-radius: 0.25rem;
+    transition: background-color 0.15s ease;
+  }
+
+  .arcana-test-case-row-main:hover {
+    background: #fafafa;
+  }
+
+  .arcana-test-case.expanded .arcana-test-case-row {
+    background: #faf5ff;
+    border-bottom: 1px solid #ede9fe;
+  }
+
+  .arcana-test-case-chevron {
+    color: #9ca3af;
+    font-size: 0.75rem;
+    width: 0.75rem;
+    text-align: center;
   }
 
   .arcana-test-case-question {
-    font-weight: 500;
+    font-size: 0.875rem;
     color: #111827;
-  }
-
-  .arcana-test-case-meta {
-    display: flex;
-    gap: 1rem;
-    font-size: 0.75rem;
-    color: #6b7280;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
 
   .arcana-test-case-badge {
     display: inline-block;
     padding: 0.125rem 0.5rem;
     border-radius: 9999px;
-    font-size: 0.625rem;
-    font-weight: 500;
+    font-size: 0.6875rem;
+    font-weight: 600;
     text-transform: uppercase;
+    letter-spacing: 0.02em;
   }
 
-  .arcana-test-case-badge.synthetic {
-    background: #ddd6fe;
-    color: #5b21b6;
+  .arcana-test-case-badge--generated {
+    background: #ede9fe;
+    color: #6d28d9;
   }
 
-  .arcana-test-case-badge.manual {
-    background: #bfdbfe;
-    color: #1e40af;
+  .arcana-test-case-badge--synthetic {
+    background: #ede9fe;
+    color: #6d28d9;
+  }
+
+  .arcana-test-case-badge--manual {
+    background: #dbeafe;
+    color: #1d4ed8;
+  }
+
+  .arcana-test-case-chunks {
+    font-size: 0.75rem;
+    color: #6b7280;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .arcana-test-case-time {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    white-space: nowrap;
+    cursor: help;
+  }
+
+  .arcana-test-case-detail {
+    padding: 1rem 1rem 1.25rem 2rem;
+    background: #fafafa;
+  }
+
+  .arcana-test-case-detail-section {
+    margin-top: 0.75rem;
+  }
+
+  .arcana-test-case-detail-section:first-child {
+    margin-top: 0;
+  }
+
+  .arcana-test-case-detail-section h5 {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6d28d9;
+    margin: 0 0 0.375rem;
+  }
+
+  .arcana-test-case-detail-section p {
+    margin: 0;
+    font-size: 0.875rem;
+    color: #374151;
+    line-height: 1.5;
+  }
+
+  .arcana-test-case-chunk-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .arcana-test-case-chunk-list li {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.625rem;
+    align-items: baseline;
+    padding: 0.375rem 0.5rem;
+    background: white;
+    border-radius: 0.25rem;
+    border: 1px solid #f3f4f6;
+  }
+
+  .arcana-test-case-chunk-id {
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 0.75rem;
+    color: #7c3aed;
+    padding: 0.0625rem 0.25rem;
+    background: #faf5ff;
+    border-radius: 0.1875rem;
+  }
+
+  .arcana-test-case-chunk-text {
+    font-size: 0.8125rem;
+    color: #4b5563;
+    line-height: 1.5;
+  }
+
+  .arcana-test-case-empty {
+    font-size: 0.875rem;
+    color: #9ca3af;
+    font-style: italic;
   }
 
   .arcana-actions-cell {

@@ -102,9 +102,9 @@ end
 IO.puts("Stored #{length(docs)} documents in 'languages' collection")
 ```
 
-### Semantic Search
+### Vector Search
 
-Semantic search finds documents with similar **meaning**, not just matching keywords.
+Vector search finds documents with similar **meaning**, not just matching keywords.
 
 ```elixir
 # Search for documents about concurrent programming
@@ -129,9 +129,9 @@ end
 
 Notice how it finds Elixir and Erlang documents even though we searched for "concurrent" and "message passing" - the model understands these concepts are related.
 
-### Fulltext Search
+### Keyword Search
 
-Fulltext search matches exact keywords using TF-IDF-like scoring.
+Keyword search matches exact keywords using TF-IDF-like scoring.
 
 ```elixir
 # Search for exact term "pattern matching"
@@ -142,7 +142,7 @@ results = VectorStore.search_text(
   limit: 3
 )
 
-IO.puts("Fulltext search: 'pattern matching'\n")
+IO.puts("Keyword search: 'pattern matching'\n")
 IO.puts("Results:")
 for result <- results do
   IO.puts("  [#{Float.round(result.score, 3)}] #{result.id}")
@@ -169,27 +169,27 @@ comparison_data =
   for query <- test_queries do
     {:ok, query_embedding} = Arcana.Embedder.embed(Arcana.embedder(), query)
 
-    # Semantic search
+    # Vector search
     semantic = VectorStore.search("languages", query_embedding,
       vector_store: {:memory, pid: memory_pid}, limit: 1)
 
-    # Fulltext search
+    # Keyword search
     fulltext = VectorStore.search_text("languages", query,
       vector_store: {:memory, pid: memory_pid}, limit: 1)
 
     %{
       query: query,
       semantic_match: if(semantic != [], do: hd(semantic).id, else: "none"),
-      semantic_score: if(semantic != [], do: hd(semantic).score, else: 0),
+      vector_score: if(semantic != [], do: hd(semantic).score, else: 0),
       fulltext_match: if(fulltext != [], do: hd(fulltext).id, else: "none"),
-      fulltext_score: if(fulltext != [], do: hd(fulltext).score, else: 0)
+      keyword_score: if(fulltext != [], do: hd(fulltext).score, else: 0)
     }
   end
 
 Kino.DataTable.new(comparison_data)
 ```
 
-**Key insight:** Semantic search understands meaning ("BEAM virtual machine" matches Elixir), while fulltext requires exact terms.
+**Key insight:** Vector search understands meaning ("BEAM virtual machine" matches Elixir), while keyword requires exact terms.
 
 ## 4. Working with Collections
 
@@ -377,7 +377,7 @@ IO.puts("Answer:\n#{answer}")
 
 Hybrid search combines semantic and fulltext results. The approach differs by backend:
 
-- **pgvector backend**: Uses a single SQL query with weighted score combination and min-max normalization. Supports `semantic_weight` and `fulltext_weight` options.
+- **pgvector backend**: Uses a single SQL query with weighted score combination and min-max normalization. Supports `vector_weight` and `keyword_weight` options.
 - **Memory backend**: Uses two separate queries combined with Reciprocal Rank Fusion (RRF).
 
 Since we're using the memory backend in this tutorial, let's implement RRF:
@@ -463,16 +463,16 @@ query = "programming language features"
 all_scores = VectorStore.search("languages", query_embedding,
   vector_store: {:memory, pid: memory_pid}, limit: 10)
 |> Enum.map(fn r ->
-  %{document: r.id, score: r.score, type: "semantic"}
+  %{document: r.id, score: r.score, type: "vector"}
 end)
 
-fulltext_scores = VectorStore.search_text("languages", query,
+keyword_scores = VectorStore.search_text("languages", query,
   vector_store: {:memory, pid: memory_pid}, limit: 10)
 |> Enum.map(fn r ->
-  %{document: r.id, score: r.score, type: "fulltext"}
+  %{document: r.id, score: r.score, type: "keyword"}
 end)
 
-combined = all_scores ++ fulltext_scores
+combined = all_scores ++ keyword_scores
 
 Vl.new(width: 500, height: 300, title: "Score Comparison: '#{query}'")
 |> Vl.data_from_values(combined)
@@ -1031,8 +1031,8 @@ When the loop hits `max_iterations` and falls back to synthesis, the synthesis s
 | Concept | Description |
 |---------|-------------|
 | **Memory Backend** | HNSWLib-based in-memory store, no database needed |
-| **Semantic Search** | Finds similar meaning using embeddings |
-| **Fulltext Search** | Matches exact keywords with TF-IDF scoring |
+| **Vector Search** | Finds similar meaning using embeddings |
+| **Keyword Search** | Matches exact keywords with TF-IDF scoring |
 | **Hybrid Search** | Combines both using Reciprocal Rank Fusion |
 | **Collections** | Organize documents into logical groups |
 | **Retrieval Gating** | Skip retrieval for questions answerable from knowledge |

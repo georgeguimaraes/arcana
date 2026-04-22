@@ -31,7 +31,8 @@ defmodule Arcana.Ask do
     * `:limit` - Maximum number of context chunks to retrieve (default: 5)
     * `:source_id` - Filter context to a specific source
     * `:threshold` - Minimum similarity score for context (default: 0.0)
-    * `:mode` - Search mode: `:semantic` (default), `:fulltext`, or `:hybrid`
+    * `:mode` - Search mode: `:vector` (default), `:keyword`, or `:hybrid`.
+      `:semantic` and `:fulltext` are deprecated aliases and log a warning.
     * `:collection` - Filter to a specific collection
     * `:collections` - Filter to multiple collections
     * `:prompt` - Custom prompt function. Supports arity 2 `(question, context)` or

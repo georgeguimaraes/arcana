@@ -5,6 +5,13 @@ defmodule Arcana.VectorStore.Pgvector do
   This is the default vector store backend, using the existing Arcana
   schema with pgvector extension for similarity search.
 
+  ## Breaking name change
+
+  In v1.7 the hybrid-search opts `:semantic_weight` and `:fulltext_weight`
+  were renamed to `:vector_weight` and `:keyword_weight`. The old names
+  are no longer accepted: callers passing them get a `Logger.warning`
+  and the default 0.5 weight.
+
   ## Configuration
 
       config :arcana, vector_store: :pgvector  # default
@@ -192,14 +199,14 @@ defmodule Arcana.VectorStore.Pgvector do
     * `:repo` - The Ecto repo to use (required)
     * `:limit` - Maximum number of results (default: 10)
     * `:source_id` - Filter results to a specific source
-    * `:semantic_weight` - Weight for semantic score (default: 0.5)
-    * `:fulltext_weight` - Weight for fulltext score (default: 0.5)
+    * `:vector_weight` - Weight for vector score (default: 0.5)
+    * `:keyword_weight` - Weight for keyword score (default: 0.5)
     * `:threshold` - Minimum combined score threshold (default: 0.0)
 
   ## Score Normalization
 
-  Semantic scores (cosine similarity) naturally range from 0-1. Fulltext scores
-  (ts_rank) vary based on document content. This function normalizes fulltext
+  Vector scores (cosine similarity) naturally range from 0-1. Keyword scores
+  (ts_rank) vary based on document content. This function normalizes keyword
   scores using min-max scaling within the result set to ensure fair combination.
 
   """
@@ -207,8 +214,9 @@ defmodule Arcana.VectorStore.Pgvector do
     repo = Keyword.fetch!(opts, :repo)
     limit = Keyword.get(opts, :limit, 10)
     source_id = Keyword.get(opts, :source_id)
-    semantic_weight = Keyword.get(opts, :semantic_weight, 0.5)
-    fulltext_weight = Keyword.get(opts, :fulltext_weight, 0.5)
+    warn_deprecated_weight_opts(opts)
+    vector_weight = Keyword.get(opts, :vector_weight, 0.5)
+    keyword_weight = Keyword.get(opts, :keyword_weight, 0.5)
     threshold = Keyword.get(opts, :threshold, 0.0)
 
     # Get collection_id if collection name is provided, convert to binary for SQL
@@ -233,8 +241,8 @@ defmodule Arcana.VectorStore.Pgvector do
         c.chunk_index,
         c.document_id,
         c.metadata,
-        1 - (c.embedding <=> $1) AS semantic_score,
-        COALESCE(ts_rank(to_tsvector('english', c.text), plainto_tsquery('english', $2)), 0) AS fulltext_score
+        1 - (c.embedding <=> $1) AS vector_score,
+        COALESCE(ts_rank(to_tsvector('english', c.text), plainto_tsquery('english', $2)), 0) AS keyword_score
       FROM arcana_chunks c
       JOIN arcana_documents d ON c.document_id = d.id
       WHERE ($3::uuid IS NULL OR d.collection_id = $3::uuid)
@@ -242,17 +250,17 @@ defmodule Arcana.VectorStore.Pgvector do
     ),
     score_bounds AS (
       SELECT
-        MIN(fulltext_score) AS min_ft,
-        MAX(fulltext_score) AS max_ft
+        MIN(keyword_score) AS min_kw,
+        MAX(keyword_score) AS max_kw
       FROM base_scores
     ),
     normalized AS (
       SELECT
         bs.*,
         CASE
-          WHEN sb.max_ft = sb.min_ft THEN 0
-          ELSE (bs.fulltext_score - sb.min_ft) / (sb.max_ft - sb.min_ft)
-        END AS fulltext_normalized
+          WHEN sb.max_kw = sb.min_kw THEN 0
+          ELSE (bs.keyword_score - sb.min_kw) / (sb.max_kw - sb.min_kw)
+        END AS keyword_normalized
       FROM base_scores bs, score_bounds sb
     )
     SELECT
@@ -261,12 +269,12 @@ defmodule Arcana.VectorStore.Pgvector do
       chunk_index,
       document_id,
       metadata,
-      semantic_score,
-      fulltext_score,
-      fulltext_normalized,
-      ($5::float * semantic_score + $6::float * fulltext_normalized) AS hybrid_score
+      vector_score,
+      keyword_score,
+      keyword_normalized,
+      ($5::float * vector_score + $6::float * keyword_normalized) AS hybrid_score
     FROM normalized
-    WHERE ($5::float * semantic_score + $6::float * fulltext_normalized) > $7::float
+    WHERE ($5::float * vector_score + $6::float * keyword_normalized) > $7::float
     ORDER BY hybrid_score DESC
     LIMIT $8
     """
@@ -280,8 +288,8 @@ defmodule Arcana.VectorStore.Pgvector do
         query_text,
         collection_id,
         source_id,
-        semantic_weight,
-        fulltext_weight,
+        vector_weight,
+        keyword_weight,
         threshold,
         limit
       ])
@@ -294,12 +302,11 @@ defmodule Arcana.VectorStore.Pgvector do
         chunk_index,
         document_id,
         metadata,
-        semantic_score,
-        fulltext_score,
-        _ft_norm,
+        vector_score,
+        keyword_score,
+        _kw_norm,
         hybrid_score
-      ] =
-        row
+      ] = row
 
       %{
         id: id,
@@ -308,8 +315,8 @@ defmodule Arcana.VectorStore.Pgvector do
             text: text,
             chunk_index: chunk_index,
             document_id: document_id,
-            semantic_score: semantic_score,
-            fulltext_score: fulltext_score
+            vector_score: vector_score,
+            keyword_score: keyword_score
           }),
         score: hybrid_score
       }
@@ -381,6 +388,29 @@ defmodule Arcana.VectorStore.Pgvector do
   end
 
   # Private helpers
+
+  defp warn_deprecated_weight_opts(opts) do
+    cond do
+      Keyword.has_key?(opts, :semantic_weight) ->
+        require Logger
+
+        Logger.warning(
+          "[Arcana.VectorStore.Pgvector] :semantic_weight is deprecated and ignored, " <>
+            "use :vector_weight. Passed value was dropped."
+        )
+
+      Keyword.has_key?(opts, :fulltext_weight) ->
+        require Logger
+
+        Logger.warning(
+          "[Arcana.VectorStore.Pgvector] :fulltext_weight is deprecated and ignored, " <>
+            "use :keyword_weight. Passed value was dropped."
+        )
+
+      true ->
+        :ok
+    end
+  end
 
   defp maybe_filter_source_id(query, nil), do: query
 

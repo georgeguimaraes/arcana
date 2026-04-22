@@ -360,7 +360,7 @@ defmodule MyApp.PromEx.ArcanaPlugin do
           measurement: :duration,
           unit: {:native, :millisecond},
           tags: [:mode],
-          tag_values: fn metadata -> %{mode: metadata[:mode] || :semantic} end
+          tag_values: fn metadata -> %{mode: metadata[:mode] || :vector} end
         ),
         distribution(
           [:arcana, :llm, :complete, :duration, :milliseconds],

@@ -121,11 +121,11 @@ defmodule Arcana.EvaluationTest do
     end
 
     test "runs evaluation and computes metrics", %{test_cases: test_cases} do
-      {:ok, run} = Evaluation.run(repo: Repo, mode: :semantic)
+      {:ok, run} = Evaluation.run(repo: Repo, mode: :vector)
 
       assert run.status == :completed
       assert run.test_case_count == 2
-      assert run.config.mode == :semantic
+      assert run.config.mode == :vector
 
       # Check metrics exist
       assert is_float(run.metrics.recall_at_5)
@@ -148,14 +148,14 @@ defmodule Arcana.EvaluationTest do
     end
 
     test "saves full Arcana config in run", %{test_cases: _test_cases} do
-      {:ok, run} = Evaluation.run(repo: Repo, mode: :semantic)
+      {:ok, run} = Evaluation.run(repo: Repo, mode: :vector)
 
       # Should save embedding config (model depends on test config)
       assert is_binary(run.config.embedding.model)
       assert run.config.embedding.dimensions == 384
 
       # Should save search mode
-      assert run.config.mode == :semantic
+      assert run.config.mode == :vector
 
       # Should save vector store backend
       assert run.config.vector_store in [:pgvector, :memory]
@@ -181,7 +181,7 @@ defmodule Arcana.EvaluationTest do
       {:ok, run} =
         Evaluation.run(
           repo: Repo,
-          mode: :semantic,
+          mode: :vector,
           evaluate_answers: true,
           llm: llm
         )
@@ -239,7 +239,7 @@ defmodule Arcana.EvaluationTest do
     end
 
     test "without evaluate_answers does not include answer metrics", %{test_cases: _test_cases} do
-      {:ok, run} = Evaluation.run(repo: Repo, mode: :semantic)
+      {:ok, run} = Evaluation.run(repo: Repo, mode: :vector)
 
       refute Map.has_key?(run.metrics, :faithfulness)
     end

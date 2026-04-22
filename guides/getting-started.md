@@ -287,11 +287,11 @@ false
 ### Searching
 
 ```elixir
-# Semantic search (default)
+# Vector search (default)
 {:ok, results} = Arcana.search("functional programming", repo: MyApp.Repo)
 
-# Full-text search
-{:ok, results} = Arcana.search("Elixir", repo: MyApp.Repo, mode: :fulltext)
+# Keyword search
+{:ok, results} = Arcana.search("Elixir", repo: MyApp.Repo, mode: :keyword)
 
 # Hybrid search (combines semantic + fulltext)
 {:ok, results} = Arcana.search("Elixir patterns", repo: MyApp.Repo, mode: :hybrid)
@@ -300,8 +300,8 @@ false
 {:ok, results} = Arcana.search("Elixir patterns",
   repo: MyApp.Repo,
   mode: :hybrid,
-  semantic_weight: 0.7,  # Weight for semantic similarity
-  fulltext_weight: 0.3   # Weight for keyword matching
+  vector_weight: 0.7,  # Weight for semantic similarity
+  keyword_weight: 0.3   # Weight for keyword matching
 )
 
 # With filters

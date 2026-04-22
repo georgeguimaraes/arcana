@@ -70,7 +70,7 @@ defmodule ArcanaWeb.EvaluationLiveTest do
 
       assert has_element?(view, "select[name='sample_size']")
       html = render(view)
-      assert html =~ "Generate Test Cases"
+      assert html =~ "Generate test cases"
     end
   end
 

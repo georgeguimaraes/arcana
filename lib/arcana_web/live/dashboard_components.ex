@@ -93,10 +93,14 @@ defmodule ArcanaWeb.DashboardComponents do
     end
   end
 
-  def parse_mode("semantic"), do: :semantic
-  def parse_mode("fulltext"), do: :fulltext
+  def parse_mode("vector"), do: :vector
+  def parse_mode("keyword"), do: :keyword
   def parse_mode("hybrid"), do: :hybrid
-  def parse_mode(_), do: :semantic
+  # Deprecated form values: dashboards that bookmarked an old URL or
+  # have a stale form still work, they just get normalized silently.
+  def parse_mode("semantic"), do: :vector
+  def parse_mode("fulltext"), do: :keyword
+  def parse_mode(_), do: :vector
 
   def parse_format("plaintext"), do: :plaintext
   def parse_format("markdown"), do: :markdown

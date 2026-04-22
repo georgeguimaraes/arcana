@@ -335,8 +335,8 @@ defmodule Arcana.VectorStore.PgvectorTest do
       # Results should have combined scores
       first = hd(results)
       assert first.score > 0
-      assert first.metadata[:semantic_score] > 0
-      assert first.metadata[:fulltext_score] >= 0
+      assert first.metadata[:vector_score] > 0
+      assert first.metadata[:keyword_score] >= 0
     end
 
     test "respects weight options" do
@@ -371,8 +371,8 @@ defmodule Arcana.VectorStore.PgvectorTest do
           embedding,
           "test",
           repo: repo,
-          semantic_weight: 0.9,
-          fulltext_weight: 0.1
+          vector_weight: 0.9,
+          keyword_weight: 0.1
         )
 
       fulltext_heavy =
@@ -381,8 +381,8 @@ defmodule Arcana.VectorStore.PgvectorTest do
           embedding,
           "test",
           repo: repo,
-          semantic_weight: 0.1,
-          fulltext_weight: 0.9
+          vector_weight: 0.1,
+          keyword_weight: 0.9
         )
 
       assert length(semantic_heavy) == 1
@@ -394,8 +394,8 @@ defmodule Arcana.VectorStore.PgvectorTest do
       fulltext_result = hd(fulltext_heavy)
 
       # Both should have the individual scores
-      assert semantic_result.metadata[:semantic_score] > 0
-      assert fulltext_result.metadata[:semantic_score] > 0
+      assert semantic_result.metadata[:vector_score] > 0
+      assert fulltext_result.metadata[:vector_score] > 0
     end
 
     test "respects threshold option" do

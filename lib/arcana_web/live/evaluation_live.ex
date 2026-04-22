@@ -19,7 +19,10 @@ defmodule ArcanaWeb.EvaluationLive do
        eval_view: :test_cases,
        eval_running: false,
        eval_generating: false,
+       eval_progress: nil,
+       eval_tick: 0,
        eval_message: nil,
+       expanded_test_case_id: nil,
        stats: nil,
        eval_test_cases: [],
        eval_runs: [],
@@ -78,15 +81,45 @@ defmodule ArcanaWeb.EvaluationLive do
          eval_message: {:error, "No LLM configured. Set :arcana, :llm in your config."}
        )}
     else
-      socket = assign(socket, eval_running: true, eval_message: nil)
+      socket =
+        assign(socket,
+          eval_running: true,
+          eval_message: nil,
+          eval_progress: %{
+            done: 0,
+            total: socket.assigns.eval_test_case_count,
+            started_at: System.monotonic_time(:millisecond)
+          }
+        )
+
       opts = build_run_opts(repo, mode, evaluate_answers, llm, retriever_name)
 
       parent = self()
+      handler_id = "eval-progress-#{inspect(parent)}"
+
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:arcana, :evaluation, :test_case, :start],
+          [:arcana, :evaluation, :test_case, :complete]
+        ],
+        fn event, measurements, metadata, _config ->
+          send(parent, {:eval_progress, event, measurements, metadata})
+        end,
+        nil
+      )
 
       Task.Supervisor.start_child(Arcana.TaskSupervisor, fn ->
         result = Evaluation.run(opts)
+        :telemetry.detach(handler_id)
         send(parent, {:eval_run_complete, result})
       end)
+
+      # Self-tick every second so the elapsed-time counter updates live
+      # while a test case is in flight. LiveView only re-renders on
+      # messages; without a tick the elapsed-time label freezes at
+      # whatever it was when the last telemetry event fired.
+      Process.send_after(self(), :eval_tick, 1000)
 
       {:noreply, socket}
     end
@@ -119,6 +152,12 @@ defmodule ArcanaWeb.EvaluationLive do
     end
   end
 
+  def handle_event("toggle_test_case", %{"id" => id}, socket) do
+    current = socket.assigns.expanded_test_case_id
+    next = if current == id, do: nil, else: id
+    {:noreply, assign(socket, expanded_test_case_id: next)}
+  end
+
   def handle_event("eval_delete_test_case", %{"id" => id}, socket) do
     repo = socket.assigns.repo
 
@@ -138,19 +177,73 @@ defmodule ArcanaWeb.EvaluationLive do
   end
 
   @impl true
+  def handle_info(:eval_tick, socket) do
+    # Keep ticking while the eval task is running. No assign change
+    # beyond the implicit re-render; the template reads the monotonic
+    # clock each render so the elapsed display refreshes on its own.
+    if socket.assigns.eval_running do
+      Process.send_after(self(), :eval_tick, 1000)
+      {:noreply, assign(socket, eval_tick: System.monotonic_time(:millisecond))}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info({:eval_progress, event, _measurements, metadata}, socket) do
+    %{index: index, total: total, question: question} = metadata
+
+    base =
+      socket.assigns.eval_progress ||
+        %{done: 0, total: total, started_at: System.monotonic_time(:millisecond), current: nil}
+
+    progress =
+      case List.last(event) do
+        :start ->
+          # New test case just kicked off; surface it as "now running"
+          # so the user sees motion even while a slow Loop iteration is
+          # in flight (can take several minutes per case).
+          %{base | total: total, current: %{index: index, question: question}}
+
+        :complete ->
+          # Test case finished; bump the done count and clear current
+          # so the bar reflects the new done-out-of-total.
+          %{base | done: index, total: total, current: nil}
+      end
+
+    {:noreply, assign(socket, eval_progress: progress)}
+  end
+
   def handle_info({:eval_run_complete, result}, socket) do
     socket =
       case result do
         {:ok, _run} ->
           socket
-          |> assign(eval_running: false, eval_message: {:success, "Evaluation completed!"})
+          |> assign(
+            eval_running: false,
+            eval_progress: nil,
+            eval_message: {:success, "Evaluation completed!"}
+          )
           |> load_evaluation_data()
           |> assign(eval_view: :history)
 
         {:error, :no_test_cases} ->
           assign(socket,
             eval_running: false,
+            eval_progress: nil,
             eval_message: {:error, "No test cases. Generate some first."}
+          )
+
+        other ->
+          # Fallback: the eval task raised or returned an unexpected
+          # result. Clear the running flag so the UI doesn't get stuck
+          # on "Running..." forever.
+          require Logger
+          Logger.error("[EvaluationLive] unexpected eval result: #{inspect(other)}")
+
+          assign(socket,
+            eval_running: false,
+            eval_progress: nil,
+            eval_message: {:error, "Evaluation failed: #{inspect(other)}"}
           )
       end
 
@@ -240,6 +333,47 @@ defmodule ArcanaWeb.EvaluationLive do
   # phx-value-view payload) falls back to the default landing.
   defp parse_eval_view(_), do: :test_cases
 
+  defp progress_pct(%{done: done, total: total}) when total > 0,
+    do: Float.round(done / total * 100, 1)
+
+  defp progress_pct(_), do: 0.0
+
+  defp format_elapsed(ms) when ms < 1000, do: "#{ms}ms"
+
+  defp format_elapsed(ms) when ms < 60_000,
+    do: "#{Float.round(ms / 1000, 1)}s"
+
+  defp format_elapsed(ms) do
+    total_s = div(ms, 1000)
+    "#{div(total_s, 60)}m #{rem(total_s, 60)}s"
+  end
+
+  # Humanized "2 hours ago"-style relative time for timestamps in lists.
+  # Falls back to the absolute string for anything older than a week so
+  # months/years don't get ambiguous.
+  defp relative_time(nil), do: ""
+
+  defp relative_time(%NaiveDateTime{} = dt) do
+    now = NaiveDateTime.utc_now()
+    diff_s = NaiveDateTime.diff(now, dt, :second)
+
+    cond do
+      diff_s < 0 -> "just now"
+      diff_s < 60 -> "just now"
+      diff_s < 3600 -> "#{div(diff_s, 60)}m ago"
+      diff_s < 86_400 -> "#{div(diff_s, 3600)}h ago"
+      diff_s < 604_800 -> "#{div(diff_s, 86_400)}d ago"
+      true -> NaiveDateTime.to_date(dt) |> Date.to_string()
+    end
+  end
+
+  defp relative_time(other), do: to_string(other)
+
+  defp absolute_time(%NaiveDateTime{} = dt),
+    do: NaiveDateTime.to_string(dt)
+
+  defp absolute_time(other), do: to_string(other)
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -282,9 +416,18 @@ defmodule ArcanaWeb.EvaluationLive do
 
         <%= case @eval_view do %>
           <% :test_cases -> %>
-            <.eval_test_cases_view test_cases={@eval_test_cases} generating={@eval_generating} collections={@collections} />
+            <.eval_test_cases_view
+              test_cases={@eval_test_cases}
+              generating={@eval_generating}
+              collections={@collections}
+              expanded_id={@expanded_test_case_id}
+            />
           <% :run -> %>
-            <.eval_run_view running={@eval_running} test_case_count={@eval_test_case_count} />
+            <.eval_run_view
+              running={@eval_running}
+              progress={@eval_progress}
+              test_case_count={@eval_test_case_count}
+            />
           <% :history -> %>
             <.eval_history_view runs={@eval_runs} />
         <% end %>
@@ -296,67 +439,117 @@ defmodule ArcanaWeb.EvaluationLive do
   defp eval_test_cases_view(assigns) do
     ~H"""
     <div class="arcana-eval-test-cases">
-      <form phx-submit="eval_generate" class="arcana-run-form" style="margin-bottom: 1.5rem;">
-        <label>
-          Collection
-          <select name="collection">
-            <option value="">All collections</option>
-            <%= for col <- @collections do %>
-              <option value={col.name}><%= col.name %></option>
-            <% end %>
-          </select>
-        </label>
+      <form phx-submit="eval_generate" class="arcana-eval-run-form">
+        <div class="arcana-eval-options-row">
+          <div class="arcana-eval-field">
+            <label class="arcana-eval-field-label" for="eval-collection">Collection</label>
+            <select name="collection" id="eval-collection" class="arcana-eval-select">
+              <option value="">All collections</option>
+              <%= for col <- @collections do %>
+                <option value={col.name}><%= col.name %></option>
+              <% end %>
+            </select>
+            <small class="arcana-eval-hint">Leave blank to sample from every collection.</small>
+          </div>
 
-        <label>
-          Sample Size
-          <select name="sample_size">
-            <option value="5">5</option>
-            <option value="10" selected>10</option>
-            <option value="25">25</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-          </select>
-        </label>
+          <div class="arcana-eval-field">
+            <label class="arcana-eval-field-label" for="eval-sample-size">Sample size</label>
+            <select name="sample_size" id="eval-sample-size" class="arcana-eval-select">
+              <option value="5">5</option>
+              <option value="10" selected>10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+            <small class="arcana-eval-hint">
+              Random chunks sampled and paired with LLM-generated questions.
+            </small>
+          </div>
+        </div>
 
-        <button type="submit" disabled={@generating}>
-          <%= if @generating, do: "Generating...", else: "Generate Test Cases" %>
-        </button>
-
-        <span style="font-size: 0.75rem; color: #6b7280; align-self: center;">
-          Samples random chunks and uses the configured LLM to generate questions
-        </span>
+        <div class="arcana-eval-actions">
+          <button type="submit" class="arcana-eval-run-btn" disabled={@generating}>
+            <%= if @generating, do: "Generating...", else: "Generate test cases" %>
+          </button>
+        </div>
       </form>
 
       <%= if Enum.empty?(@test_cases) do %>
-        <p class="arcana-empty">
-          No test cases yet. Click "Generate Test Cases" above or use the API.
-        </p>
+        <div class="arcana-eval-empty-state">
+          <div class="arcana-eval-empty-icon">○</div>
+          <h4>No test cases yet</h4>
+          <p>
+            Generate some with the form above, or seed from Mix with
+            <code>mix adept.eval.seed</code>.
+          </p>
+        </div>
       <% else %>
-        <%= for tc <- @test_cases do %>
-          <div class="arcana-test-case">
-            <div class="arcana-test-case-header">
-              <span class="arcana-test-case-question"><%= tc.question %></span>
-              <button
-                class="arcana-delete-btn"
-                phx-click="eval_delete_test_case"
-                phx-value-id={tc.id}
-                title="Delete test case"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="3 6 5 6 21 6"></polyline>
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                  <line x1="10" y1="11" x2="10" y2="17"></line>
-                  <line x1="14" y1="11" x2="14" y2="17"></line>
-                </svg>
-              </button>
+        <div class="arcana-test-case-list">
+          <%= for tc <- @test_cases do %>
+            <% expanded? = @expanded_id == tc.id %>
+            <div class={"arcana-test-case #{if expanded?, do: "expanded", else: ""}"}>
+              <div class="arcana-test-case-row">
+                <div
+                  class="arcana-test-case-row-main"
+                  phx-click="toggle_test_case"
+                  phx-value-id={tc.id}
+                >
+                  <span class="arcana-test-case-chevron" aria-hidden="true">
+                    <%= if expanded?, do: "▾", else: "▸" %>
+                  </span>
+                  <span class="arcana-test-case-question"><%= tc.question %></span>
+                  <span class={"arcana-test-case-badge arcana-test-case-badge--#{tc.source}"}>
+                    <%= tc.source %>
+                  </span>
+                  <span class="arcana-test-case-chunks">
+                    <%= length(tc.relevant_chunks) %> chunk<%= if length(tc.relevant_chunks) == 1, do: "", else: "s" %>
+                  </span>
+                  <span class="arcana-test-case-time" title={absolute_time(tc.inserted_at)}>
+                    <%= relative_time(tc.inserted_at) %>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  class="arcana-delete-btn"
+                  phx-click="eval_delete_test_case"
+                  phx-value-id={tc.id}
+                  title="Delete test case"
+                >
+                  ×
+                </button>
+              </div>
+              <%= if expanded? do %>
+                <div class="arcana-test-case-detail">
+                  <%= if tc.reference_answer do %>
+                    <div class="arcana-test-case-detail-section">
+                      <h5>Reference answer</h5>
+                      <p><%= tc.reference_answer %></p>
+                    </div>
+                  <% end %>
+                  <div class="arcana-test-case-detail-section">
+                    <h5>Expected chunks (<%= length(tc.relevant_chunks) %>)</h5>
+                    <%= if Enum.empty?(tc.relevant_chunks) do %>
+                      <p class="arcana-test-case-empty">No chunks linked.</p>
+                    <% else %>
+                      <ul class="arcana-test-case-chunk-list">
+                        <%= for chunk <- tc.relevant_chunks do %>
+                          <li>
+                            <code class="arcana-test-case-chunk-id">
+                              <%= String.slice(to_string(chunk.id), 0, 8) %>
+                            </code>
+                            <span class="arcana-test-case-chunk-text">
+                              <%= String.slice(chunk.text || "", 0, 200) %><%= if String.length(chunk.text || "") > 200, do: "..." %>
+                            </span>
+                          </li>
+                        <% end %>
+                      </ul>
+                    <% end %>
+                  </div>
+                </div>
+              <% end %>
             </div>
-            <div class="arcana-test-case-meta">
-              <span class={"arcana-test-case-badge #{tc.source}"}><%= tc.source %></span>
-              <span><%= length(tc.relevant_chunks) %> relevant chunk(s)</span>
-              <span><%= tc.inserted_at %></span>
-            </div>
-          </div>
-        <% end %>
+          <% end %>
+        </div>
       <% end %>
     </div>
     """
@@ -365,51 +558,86 @@ defmodule ArcanaWeb.EvaluationLive do
   defp eval_run_view(assigns) do
     ~H"""
     <div class="arcana-eval-run">
-      <p style="margin-bottom: 1rem; color: #6b7280;">
-        Run evaluation against your <%= @test_case_count %> test case(s) to measure retrieval quality.
+      <p class="arcana-eval-run-intro">
+        Run evaluation against your <strong><%= @test_case_count %></strong> test case{if @test_case_count == 1, do: "", else: "s"} to measure retrieval quality.
       </p>
 
-      <form phx-submit="eval_run" class="arcana-run-form">
-        <fieldset class="arcana-eval-retriever">
-          <legend>Retriever</legend>
-          <label class="arcana-checkbox-label">
-            <input type="radio" name="retriever" value="pipeline" checked />
-            <span>Pipeline</span>
-            <small>Modular RAG via <code>Arcana.search/2</code>. Fast, deterministic.</small>
-          </label>
-          <label class="arcana-checkbox-label">
-            <input type="radio" name="retriever" value="loop" />
-            <span>Loop</span>
-            <small>
-              Agentic RAG via <code>Arcana.Loop</code>. LLM picks tools each turn.
-              Much slower, needs LLM configured.
+      <form phx-submit="eval_run" class="arcana-eval-run-form">
+        <div class="arcana-eval-field">
+          <h4 class="arcana-eval-field-label">Retriever</h4>
+          <div class="arcana-eval-option-grid">
+            <label class="arcana-eval-option-card">
+              <input type="radio" name="retriever" value="pipeline" checked />
+              <div class="arcana-eval-option-title">Pipeline</div>
+              <div class="arcana-eval-option-desc">
+                Modular RAG via <code>Arcana.search/2</code>. Fast, deterministic.
+              </div>
+            </label>
+            <label class="arcana-eval-option-card">
+              <input type="radio" name="retriever" value="loop" />
+              <div class="arcana-eval-option-title">Loop</div>
+              <div class="arcana-eval-option-desc">
+                Agentic RAG via <code>Arcana.Loop</code>. LLM picks tools each turn. Much slower, needs LLM.
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="arcana-eval-options-row">
+          <div class="arcana-eval-field">
+            <label class="arcana-eval-field-label" for="eval-mode">Search mode</label>
+            <select name="mode" id="eval-mode" class="arcana-eval-select">
+              <option value="vector">Vector</option>
+              <option value="keyword">Keyword</option>
+              <option value="hybrid">Hybrid</option>
+            </select>
+            <small class="arcana-eval-hint">
+              Vector: embedding similarity. Keyword: exact terms. Hybrid: both fused by RRF.
+              Pipeline only; Loop always uses vector.
             </small>
+          </div>
+
+          <label class="arcana-eval-toggle">
+            <input type="checkbox" name="evaluate_answers" value="true" />
+            <span class="arcana-eval-toggle-indicator" aria-hidden="true"></span>
+            <div class="arcana-eval-toggle-content">
+              <span class="arcana-eval-toggle-title">Evaluate answers</span>
+              <small class="arcana-eval-hint">
+                Requires LLM. Scores faithfulness and correctness against reference_answer.
+              </small>
+            </div>
           </label>
-        </fieldset>
+        </div>
 
-        <label>
-          Search Mode
-          <select name="mode">
-            <option value="semantic">Semantic</option>
-            <option value="fulltext">Full-text</option>
-            <option value="hybrid">Hybrid</option>
-          </select>
-          <small style="display: block; color: #6b7280;">
-            Only used by the Pipeline retriever. Loop always uses semantic.
-          </small>
-        </label>
-
-        <label style="display: flex; align-items: center; gap: 0.5rem;">
-          <input type="checkbox" name="evaluate_answers" value="true" />
-          Evaluate Answers
-          <span style="font-size: 0.75rem; color: #6b7280;">
-            (requires LLM. Scores faithfulness, plus correctness against reference_answer when present.)
-          </span>
-        </label>
-
-        <button type="submit" disabled={@running or @test_case_count == 0}>
-          <%= if @running, do: "Running...", else: "Run Evaluation" %>
-        </button>
+        <div class="arcana-eval-actions">
+          <%= if @running and @progress do %>
+            <div class="arcana-eval-progress">
+              <div class="arcana-eval-progress-label">
+                <span><%= @progress.done %> / <%= @progress.total %> test cases</span>
+                <span class="arcana-eval-progress-elapsed">
+                  <%= format_elapsed(System.monotonic_time(:millisecond) - @progress.started_at) %>
+                </span>
+              </div>
+              <div class="arcana-eval-progress-bar">
+                <div
+                  class="arcana-eval-progress-fill"
+                  style={"width: #{progress_pct(@progress)}%"}
+                ></div>
+              </div>
+              <%= if current = @progress[:current] do %>
+                <div class="arcana-eval-progress-current">
+                  <span class="arcana-eval-progress-spinner" aria-hidden="true"></span>
+                  <span class="arcana-eval-progress-current-label">
+                    Running case <%= current.index %>: <%= current.question %>
+                  </span>
+                </div>
+              <% end %>
+            </div>
+          <% end %>
+          <button type="submit" class="arcana-eval-run-btn" disabled={@running or @test_case_count == 0}>
+            <%= if @running, do: "Running...", else: "Run Evaluation" %>
+          </button>
+        </div>
       </form>
 
       <%= if @test_case_count == 0 do %>
@@ -449,7 +677,7 @@ defmodule ArcanaWeb.EvaluationLive do
             </div>
             <div class="arcana-run-body">
               <div class="arcana-run-config">
-                Mode: <strong><%= run.config["mode"] || run.config[:mode] || "semantic" %></strong>
+                Mode: <strong><%= run.config["mode"] || run.config[:mode] || "vector" %></strong>
               </div>
               <%= if run.status == :completed and run.metrics do %>
                 <div class="arcana-metrics-grid">

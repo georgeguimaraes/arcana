@@ -66,9 +66,9 @@ defmodule Arcana.Config do
       config :arcana, search: [
         limit: 10,
         threshold: 0.0,
-        mode: :semantic,            # :semantic | :fulltext | :hybrid
-        semantic_weight: 0.5,       # for hybrid mode
-        fulltext_weight: 0.5,       # for hybrid mode
+        mode: :vector,              # :vector | :keyword | :hybrid
+        vector_weight: 0.5,         # for hybrid mode
+        keyword_weight: 0.5,        # for hybrid mode
         rewriter: &MyApp.rewrite/1, # query rewriter function
         # plus any backend-specific opts (e.g. :hnsw_ef_search for pgvector)
       ]

@@ -121,7 +121,7 @@ All three sub-tabs share:
 
 - **Test queries** - Try searches against your documents
 - **View results** - See retrieved chunks with similarity scores and expandable details
-- **Compare modes** - Test semantic, full-text, and hybrid search
+- **Compare modes** - Test vector, keyword, and hybrid search
 - **Filter by collection** - Search within specific collections
 
 ### Collections (`/arcana/collections`)

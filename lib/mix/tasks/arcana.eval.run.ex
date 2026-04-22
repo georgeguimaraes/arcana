@@ -51,11 +51,27 @@ defmodule Mix.Tasks.Arcana.Eval.Run do
     repo = Application.get_env(:arcana, :repo) || raise "Missing :arcana, :repo config"
 
     mode =
-      case Keyword.get(opts, :mode, "semantic") do
-        "semantic" -> :semantic
-        "fulltext" -> :fulltext
-        "hybrid" -> :hybrid
-        other -> raise "Invalid mode: #{other}"
+      case Keyword.get(opts, :mode, "vector") do
+        "vector" ->
+          :vector
+
+        "keyword" ->
+          :keyword
+
+        "hybrid" ->
+          :hybrid
+
+        # Deprecated aliases, warn and forward to canonical names.
+        "semantic" ->
+          IO.warn(~s{mode "semantic" is deprecated, use "vector"})
+          :vector
+
+        "fulltext" ->
+          IO.warn(~s{mode "fulltext" is deprecated, use "keyword"})
+          :keyword
+
+        other ->
+          raise "Invalid mode: #{other}. Valid: vector, keyword, hybrid"
       end
 
     maybe_generate(repo, opts)

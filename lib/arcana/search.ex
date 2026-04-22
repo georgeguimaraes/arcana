@@ -2,14 +2,49 @@ defmodule Arcana.Search do
   @moduledoc """
   Search functionality for Arcana.
 
-  Provides semantic, fulltext, and hybrid search modes with optional
+  Provides vector, keyword, and hybrid search modes with optional
   GraphRAG enhancement using Reciprocal Rank Fusion (RRF).
+
+  ## Mode names
+
+  Canonical mode atoms are `:vector`, `:keyword`, and `:hybrid`. The
+  old names `:semantic` and `:fulltext` are still accepted as aliases
+  for `:vector` and `:keyword` respectively, with a deprecation warning
+  logged on use. The old names will be removed in a future release.
   """
+
+  require Logger
 
   alias Arcana.{Collection, Embedder, VectorStore}
   alias Arcana.VectorStore.Pgvector
 
-  @valid_modes [:semantic, :fulltext, :hybrid]
+  @valid_modes [:vector, :keyword, :hybrid]
+
+  @deprecated_mode_aliases %{
+    semantic: :vector,
+    fulltext: :keyword
+  }
+
+  @doc """
+  Normalizes a search mode atom. Accepts the canonical `:vector`,
+  `:keyword`, `:hybrid` or the deprecated aliases `:semantic` and
+  `:fulltext` (with a one-line warning). Unknown values pass through
+  unchanged so the caller's validation surfaces them with context.
+  """
+  def normalize_mode(mode) when mode in [:vector, :keyword, :hybrid], do: mode
+
+  def normalize_mode(mode) when is_map_key(@deprecated_mode_aliases, mode) do
+    canonical = @deprecated_mode_aliases[mode]
+
+    Logger.warning(
+      "[Arcana.Search] mode: #{inspect(mode)} is deprecated, use #{inspect(canonical)}. " <>
+        "The old alias will be removed in a future release."
+    )
+
+    canonical
+  end
+
+  def normalize_mode(other), do: other
 
   @doc """
   Searches for chunks similar to the query.
@@ -23,18 +58,19 @@ defmodule Arcana.Search do
     * `:limit` - Maximum number of results (default: 10)
     * `:source_id` - Filter results to a specific source
     * `:threshold` - Minimum similarity score (default: 0.0)
-    * `:mode` - Search mode: `:semantic` (default), `:fulltext`, or `:hybrid`
+    * `:mode` - Search mode: `:vector` (default), `:keyword`, or `:hybrid`.
+      `:semantic` and `:fulltext` are deprecated aliases.
     * `:collection` - Filter results to a specific collection by name
     * `:vector_store` - Override the configured vector store backend
-    * `:semantic_weight` - Weight for semantic scores in hybrid mode (default: 0.5)
-    * `:fulltext_weight` - Weight for fulltext scores in hybrid mode (default: 0.5)
+    * `:vector_weight` - Weight for vector scores in hybrid mode (default: 0.5)
+    * `:keyword_weight` - Weight for keyword scores in hybrid mode (default: 0.5)
     * `:reranker` - Reranker module or function. Defaults to `config :arcana, :reranker`.
       Pass `false` to disable a globally configured reranker for this call.
       When set, retrieves `limit * over_fetch` candidates, reranks, returns top `limit`.
 
   Defaults for `:limit`, `:threshold`, and `:mode` can be set globally:
 
-      config :arcana, search: [limit: 10, threshold: 0.0, mode: :semantic]
+      config :arcana, search: [limit: 10, threshold: 0.0, mode: :vector]
 
   """
   def search(query, opts) when is_binary(query) do
@@ -44,7 +80,7 @@ defmodule Arcana.Search do
     limit = Keyword.get(opts, :limit, 10)
     source_id = Keyword.get(opts, :source_id)
     threshold = Keyword.get(opts, :threshold, 0.0)
-    mode = Keyword.get(opts, :mode, :semantic)
+    mode = normalize_mode(Keyword.get(opts, :mode, :vector))
     rewriter = Keyword.get(opts, :rewriter)
     vector_store_opt = Keyword.get(opts, :vector_store)
 
@@ -72,14 +108,16 @@ defmodule Arcana.Search do
       over_fetch = reranker_over_fetch(reranker)
       retrieval_limit = if reranker, do: limit * over_fetch, else: limit
 
+      warn_deprecated_weight_opts(opts)
+
       params = %{
         repo: repo,
         limit: retrieval_limit,
         source_id: source_id,
         threshold: threshold,
         vector_store: vector_store_opt,
-        semantic_weight: Keyword.get(opts, :semantic_weight, 0.5),
-        fulltext_weight: Keyword.get(opts, :fulltext_weight, 0.5),
+        vector_weight: Keyword.get(opts, :vector_weight, 0.5),
+        keyword_weight: Keyword.get(opts, :keyword_weight, 0.5),
         # Original opts so backends can pick up any extra knobs (e.g. :hnsw_ef_search)
         opts: opts
       }
@@ -305,7 +343,7 @@ defmodule Arcana.Search do
 
   defp resolve_collection_ids(collections, repo), do: Collection.resolve_ids(collections, repo)
 
-  defp do_search(:semantic, query, params) do
+  defp do_search(:vector, query, params) do
     case Embedder.embed(Arcana.Config.embedder(), query, intent: :query) do
       {:ok, query_embedding} ->
         vector_store_opts = build_vector_store_opts(params, [:limit, :threshold, :source_id])
@@ -318,7 +356,7 @@ defmodule Arcana.Search do
     end
   end
 
-  defp do_search(:fulltext, query, params) do
+  defp do_search(:keyword, query, params) do
     vector_store_opts = build_vector_store_opts(params, [:limit, :source_id])
     results = VectorStore.search_text(params.collection, query, vector_store_opts)
 
@@ -349,8 +387,8 @@ defmodule Arcana.Search do
             limit: params.limit,
             source_id: params.source_id,
             threshold: params.threshold,
-            semantic_weight: Map.get(params, :semantic_weight, 0.5),
-            fulltext_weight: Map.get(params, :fulltext_weight, 0.5)
+            vector_weight: Map.get(params, :vector_weight, 0.5),
+            keyword_weight: Map.get(params, :keyword_weight, 0.5)
           )
 
         results =
@@ -371,8 +409,8 @@ defmodule Arcana.Search do
              document_id: Ecto.UUID.cast!(metadata[:document_id]),
              chunk_index: metadata[:chunk_index],
              score: result.score,
-             semantic_score: metadata[:semantic_score],
-             fulltext_score: metadata[:fulltext_score]
+             vector_score: metadata[:vector_score],
+             keyword_score: metadata[:keyword_score]
            }
          end)}
 
@@ -385,12 +423,12 @@ defmodule Arcana.Search do
     graph_config = Arcana.Graph.config()
     pool = graph_config[:rrf_pool_multiplier] || 2
     rrf_k = graph_config[:rrf_k] || 60
-    semantic_params = %{params | limit: params.limit * pool}
-    fulltext_params = %{params | limit: params.limit * pool}
+    vector_params = %{params | limit: params.limit * pool}
+    keyword_params = %{params | limit: params.limit * pool}
 
-    with {:ok, semantic_results} <- do_search(:semantic, query, semantic_params),
-         {:ok, fulltext_results} <- do_search(:fulltext, query, fulltext_params) do
-      {:ok, rrf_combine(semantic_results, fulltext_results, params.limit, rrf_k)}
+    with {:ok, vector_results} <- do_search(:vector, query, vector_params),
+         {:ok, keyword_results} <- do_search(:keyword, query, keyword_params) do
+      {:ok, rrf_combine(vector_results, keyword_results, params.limit, rrf_k)}
     end
   end
 
@@ -464,5 +502,19 @@ defmodule Arcana.Search do
     end)
     |> Enum.sort_by(& &1.score, :desc)
     |> Enum.take(limit)
+  end
+
+  defp warn_deprecated_weight_opts(opts) do
+    if Keyword.has_key?(opts, :semantic_weight) do
+      Logger.warning(
+        "[Arcana.Search] :semantic_weight is deprecated and ignored, use :vector_weight."
+      )
+    end
+
+    if Keyword.has_key?(opts, :fulltext_weight) do
+      Logger.warning(
+        "[Arcana.Search] :fulltext_weight is deprecated and ignored, use :keyword_weight."
+      )
+    end
   end
 end
