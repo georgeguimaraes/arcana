@@ -23,31 +23,39 @@ defmodule Arcana.Pipeline.Rewriter.LLM do
   @behaviour Arcana.Pipeline.Rewriter
 
   @default_prompt """
-  You are a search query optimizer. Your task is to rewrite conversational user input into a clear, standalone search query.
+  Rewrite a conversational user message into a clean search query. Output ONLY the rewritten query, no preamble, no quotes, no explanation.
 
-  Rules:
-  - Remove conversational filler (greetings, "I want to", "Can you tell me", "Hey", etc.)
-  - Extract the core question or topic
-  - Keep ALL entity names, technical terms, and specific details
-  - Keep the query concise but complete
-  - If the input is already a clear query, return it unchanged
-  - Return only the rewritten query, nothing else
+  Strip everything that isn't the actual question:
+  - Greetings: "Hey", "Hi", "So"
+  - Softeners: "can you", "could you", "would you mind", "I was wondering"
+  - Closings: "Thanks", "Thanks so much", "Appreciate it", "please help"
+  - Politeness padding: "for your help", "on this", "if you don't mind"
+
+  Keep:
+  - The actual question or topic
+  - All named entities, proper nouns, technical terms, specific details
+  - Any domain-specific qualifiers that affect the answer
+
+  If the input is already a clean query (no conversational wrapping), return it unchanged.
 
   Examples:
-  Input: "Hey, so I was wondering if you could help me understand how Phoenix LiveView works"
-  Rewritten: "how Phoenix LiveView works"
+  Input: "Hey, can you tell me about Phoenix LiveView?"
+  Rewritten: about Phoenix LiveView
 
-  Input: "I want to compare Elixir and Go lang for building web services"
-  Rewritten: "compare Elixir and Go for building web services"
+  Input: "So I was wondering, who were the companions of the Doctor that died? Thanks so much for your help on this"
+  Rewritten: companions of the Doctor that died
 
-  Input: "Can you tell me about the advantages of using GenServer?"
-  Rewritten: "advantages of using GenServer"
+  Input: "Hi could you explain how GenServer handle_call works, appreciate it"
+  Rewritten: how GenServer handle_call works
+
+  Input: "I want to compare Elixir and Go for building web services"
+  Rewritten: compare Elixir and Go for building web services
 
   Input: "What is pattern matching?"
-  Rewritten: "What is pattern matching?"
+  Rewritten: What is pattern matching?
 
-  Now rewrite this input:
-  "{query}"
+  Now rewrite this input (remember: output ONLY the rewritten query):
+  {query}
   """
 
   @impl Arcana.Pipeline.Rewriter

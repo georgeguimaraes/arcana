@@ -124,8 +124,21 @@ defmodule Arcana.Grounding.HallmarkServing do
   # each, so even 32 pairs can push past 14GB GPU buffer on Apple
   # Silicon. 8 is conservative but reliable; the NLI forward pass per
   # sub-batch is still vectorized across its pairs, so throughput stays
-  # reasonable (for 120 pairs that's 15 forward passes, each ~150ms).
+  # reasonable.
   @max_pairs_per_call 8
+
+  # Char budget for the concatenated context. Hallmark's default
+  # tokenizer max_length is 2048 tokens ~ 6K chars for English. The
+  # sentence hypothesis plus special tokens eat into that budget, so
+  # 5000 chars of context (~1250 tokens) leaves comfortable headroom.
+  # Bumping max_length higher blows up Metal GPU allocation due to
+  # quadratic attention memory, so we live with 2048 and fit as many
+  # chunks as we can.
+  @concat_char_budget 5_000
+
+  # Ceiling on top-K even when chunks are tiny. Prevents one-char
+  # chunks from producing a 100-chunk concat with only marginal signal.
+  @max_top_k 10
 
   defp do_inference(state, _question, chunks, answer, opts) do
     %{model: model} = state
@@ -134,36 +147,7 @@ defmodule Arcana.Grounding.HallmarkServing do
     sentences = split_sentences(answer)
     chunk_texts = Enum.map(chunks, &chunk_text/1)
 
-    scored_sentences =
-      case chunk_texts do
-        [] ->
-          # No chunks to score against: every sentence is unsupported.
-          Enum.map(sentences, &{&1, 0.0})
-
-        _ ->
-          # Full (sentence, chunk) grid as NLI pairs, chunked into
-          # sub-batches that fit in one forward pass.
-          pairs =
-            for {sentence_text, _, _} <- sentences,
-                chunk_text <- chunk_texts do
-              {chunk_text, sentence_text}
-            end
-
-          flat_scores = batched_score(model, pairs)
-
-          # Reassemble: the flat list is sentences × chunks, in that
-          # order. Group by chunk count and take max per sentence.
-          chunks_per_sentence = length(chunk_texts)
-
-          sentence_score_groups =
-            Enum.chunk_every(flat_scores, chunks_per_sentence)
-
-          sentences
-          |> Enum.zip(sentence_score_groups)
-          |> Enum.map(fn {sentence, scores} ->
-            {sentence, Enum.max(scores, fn -> 0.0 end)}
-          end)
-      end
+    scored_sentences = score_sentences(model, sentences, chunk_texts)
 
     hallucinated_spans =
       scored_sentences
@@ -205,6 +189,74 @@ defmodule Arcana.Grounding.HallmarkServing do
   defp chunk_text(%{text: text}) when is_binary(text), do: text
   defp chunk_text(%{"text" => text}) when is_binary(text), do: text
   defp chunk_text(_), do: ""
+
+  # Budget-aware top-K concat. Walks the chunks in rerank order, adds
+  # each one to the concat while there's room under @concat_char_budget,
+  # and stops either when budget is hit or @max_top_k chunks are in.
+  # Every sentence is then scored against that single concatenated
+  # context. If even one chunk overflows the budget on its own, falls
+  # back to per-chunk max since no concat is viable.
+  defp score_sentences(_model, sentences, []),
+    do: Enum.map(sentences, &{&1, 0.0})
+
+  defp score_sentences(model, sentences, chunk_texts) do
+    selected = select_chunks_for_concat(chunk_texts)
+
+    case selected do
+      [] ->
+        # A single chunk is already over budget: fall back to per-chunk
+        # max so each chunk is scored in isolation (each fits on its own).
+        score_per_chunk_max(model, sentences, chunk_texts)
+
+      _ ->
+        context = Enum.join(selected, "\n\n")
+        pairs = Enum.map(sentences, fn {text, _, _} -> {context, text} end)
+        scores = batched_score(model, pairs)
+        Enum.zip(sentences, scores)
+    end
+  end
+
+  defp select_chunks_for_concat(chunk_texts) do
+    chunk_texts
+    |> Enum.take(@max_top_k)
+    |> Enum.reduce_while({[], 0}, fn text, {acc, size} ->
+      new_size = size + byte_size(text) + 2
+
+      cond do
+        acc == [] and byte_size(text) > @concat_char_budget ->
+          {:halt, {[], 0}}
+
+        new_size > @concat_char_budget ->
+          {:halt, {acc, size}}
+
+        true ->
+          {:cont, {[text | acc], new_size}}
+      end
+    end)
+    |> elem(0)
+    |> Enum.reverse()
+  end
+
+  # Per-chunk max: full (sentence × chunk) grid, take max per sentence.
+  # Used as fallback when the top-K concat would blow past the NLI
+  # input window.
+  defp score_per_chunk_max(model, sentences, chunk_texts) do
+    pairs =
+      for {sentence_text, _, _} <- sentences,
+          chunk_text <- chunk_texts do
+        {chunk_text, sentence_text}
+      end
+
+    flat_scores = batched_score(model, pairs)
+    chunks_per_sentence = length(chunk_texts)
+    sentence_score_groups = Enum.chunk_every(flat_scores, chunks_per_sentence)
+
+    sentences
+    |> Enum.zip(sentence_score_groups)
+    |> Enum.map(fn {sentence, scores} ->
+      {sentence, Enum.max(scores, fn -> 0.0 end)}
+    end)
+  end
 
   defp batched_score(model, pairs) do
     pairs
