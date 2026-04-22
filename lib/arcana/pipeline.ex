@@ -166,15 +166,23 @@ defmodule Arcana.Pipeline do
 
   defp default_gate_prompt(question) do
     """
-    Determine if this question requires searching a knowledge base, or if it can be answered from general knowledge.
+    You decide whether a question needs the knowledge base or can be answered from the model's own general knowledge. Bias toward "no retrieval" when the question is clearly general knowledge: if the model would answer it the same way with or without a knowledge base, there is no point searching.
 
     Question: #{question}
 
-    Respond with JSON only:
-    {"needs_retrieval": true/false, "reasoning": "brief explanation"}
+    Respond with JSON only, no prose around it:
+    {"needs_retrieval": true | false, "reasoning": "one short sentence"}
 
-    - Set needs_retrieval to false for: basic facts, math, general knowledge, definitions
-    - Set needs_retrieval to true for: domain-specific questions, current events, specific documents
+    Set needs_retrieval to false for:
+    - arithmetic and math ("what is 2+2", "is 17 prime")
+    - dictionary-style definitions of common terms
+    - well-known facts any model already knows (capital of France, year WW2 ended)
+    - greetings, small talk, meta questions about the assistant itself
+
+    Set needs_retrieval to true for:
+    - anything about a specific corpus, product, codebase, or private dataset
+    - named entities that sound domain-specific or recent
+    - questions whose answer would differ depending on which documents are available
     """
   end
 
@@ -898,8 +906,6 @@ defmodule Arcana.Pipeline do
 
   def rerank(%Context{} = ctx, opts) do
     reranker = Keyword.get(opts, :reranker, Arcana.Reranker.LLM)
-    threshold = Keyword.get(opts, :threshold, 7)
-    prompt_fn = Keyword.get(opts, :prompt)
 
     start_metadata = %{
       question: ctx.question,
@@ -911,8 +917,15 @@ defmodule Arcana.Pipeline do
         ctx.results
         |> Enum.flat_map(& &1.chunks)
 
-      llm = Keyword.get(opts, :llm, ctx.llm)
-      reranker_opts = [llm: llm, threshold: threshold, prompt: prompt_fn]
+      # Pass everything except :reranker through to the reranker module.
+      # Each reranker (LLM, CrossEncoder, ColBERT) has its own opt surface
+      # — threshold, top_k, prompt, model, etc. — and the pipeline layer
+      # shouldn't be gatekeeping which ones get forwarded. Defaults to
+      # ctx.llm so the LLM reranker gets its LLM automatically.
+      reranker_opts =
+        opts
+        |> Keyword.delete(:reranker)
+        |> Keyword.put_new(:llm, ctx.llm)
 
       {reranked_chunks, scores} =
         case do_rerank(reranker, ctx.question, all_chunks_before, reranker_opts) do
