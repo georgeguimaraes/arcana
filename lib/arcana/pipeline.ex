@@ -158,7 +158,7 @@ defmodule Arcana.Pipeline do
         default_gate_prompt(question)
       end
 
-    case llm.(prompt) do
+    case Arcana.LLM.complete(llm, prompt, [], []) do
       {:ok, response} -> parse_gate_response(response)
       {:error, _} -> {false, nil}
     end
@@ -228,6 +228,8 @@ defmodule Arcana.Pipeline do
   def rewrite(ctx, opts \\ [])
 
   def rewrite(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
+
+  def rewrite(%Context{skip_retrieval: true} = ctx, _opts), do: ctx
 
   def rewrite(%Context{} = ctx, opts) do
     rewriter = Keyword.get(opts, :rewriter, Arcana.Pipeline.Rewriter.LLM)
@@ -416,6 +418,8 @@ defmodule Arcana.Pipeline do
 
   def expand(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
 
+  def expand(%Context{skip_retrieval: true} = ctx, _opts), do: ctx
+
   def expand(%Context{} = ctx, opts) do
     query = effective_query(ctx)
     expander = Keyword.get(opts, :expander, Arcana.Pipeline.Expander.LLM)
@@ -488,6 +492,8 @@ defmodule Arcana.Pipeline do
   def decompose(ctx, opts \\ [])
 
   def decompose(%Context{error: error} = ctx, _opts) when not is_nil(error), do: ctx
+
+  def decompose(%Context{skip_retrieval: true} = ctx, _opts), do: ctx
 
   def decompose(%Context{} = ctx, opts) do
     query = effective_query(ctx)
@@ -1103,7 +1109,7 @@ defmodule Arcana.Pipeline do
     %{llm: llm, chunks: chunks} = opts
     correction_prompt = build_correction_prompt(ctx.question, chunks, ctx.answer, feedback)
 
-    case llm.(correction_prompt) do
+    case Arcana.LLM.complete(llm, correction_prompt, [], []) do
       {:ok, new_answer} ->
         new_history = [{ctx.answer, feedback} | history]
         new_ctx = %{ctx | answer: new_answer}
