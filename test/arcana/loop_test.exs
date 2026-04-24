@@ -511,7 +511,7 @@ defmodule Arcana.LoopTest do
           callback: fn %{city: city} -> {:ok, "#{city}: sunny, 22C"} end
         )
 
-      tools = Arcana.Loop.Tools.default() ++ [weather_tool]
+      tools = Tools.default() ++ [weather_tool]
 
       controller =
         scripted_controller([
@@ -538,7 +538,7 @@ defmodule Arcana.LoopTest do
           callback: fn _args -> {:error, "connection refused"} end
         )
 
-      tools = Arcana.Loop.Tools.default() ++ [failing_tool]
+      tools = Tools.default() ++ [failing_tool]
 
       controller =
         scripted_controller([
@@ -564,7 +564,7 @@ defmodule Arcana.LoopTest do
           callback: fn %{text: t} -> t end
         )
 
-      tools = Arcana.Loop.Tools.default() ++ [echo_tool]
+      tools = Tools.default() ++ [echo_tool]
 
       controller =
         scripted_controller([
