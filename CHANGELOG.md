@@ -5,9 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [2.0.0](https://github.com/georgeguimaraes/arcana/compare/v1.6.0...v2.0.0) (2026-04-24)
 
-### Deprecations and breaking changes
+
+### ⚠ BREAKING CHANGES
 
 - **Search modes renamed: `:semantic` → `:vector`, `:fulltext` → `:keyword`.**
   The new names are clearer about what the modes actually do: `:vector`
@@ -111,6 +112,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   custom telemetry handlers attached to `[:arcana, :agent, :*]`, update
   them to `[:arcana, :pipeline, :*]`. The metadata keys are unchanged.
 
+- **Dashboard Ask page URL shape changed.** The Ask page moved from
+  `/arcana/ask` (with a client-side mode toggle) to `/arcana/ask/<sub_tab>`.
+  Existing bookmarks to `/arcana/ask` still land on the Advanced sub-tab
+  by default, so they keep working.
+
 ### Added
 
 - **`Arcana.Loop`** — Agentic RAG via an LLM-driven tool loop. Where
@@ -121,15 +127,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   final answer from accumulated chunks when the loop runs out of budget
   without an explicit `answer` call. Emits a single span at
   `[:arcana, :loop, :*]`. See the [Loop guide](guides/loop.md).
-
-## [2.0.0](https://github.com/georgeguimaraes/arcana/compare/v1.6.0...v2.0.0) (2026-04-24)
-
-
-### ⚠ BREAKING CHANGES
-
-* **breaking:** rename search modes to :vector/:keyword, evaluation UX overhaul
-* **dashboard:** the Ask page URL shape changed from /arcana/ask (with a client-side mode toggle) to /arcana/ask/<sub_tab>. The old URL still lands on the Advanced sub-tab by default, so existing bookmarks keep working.
-* module names changed. Custom behaviour implementers need to update their @behaviour declarations from Arcana.Agent.* to Arcana.Pipeline.*. Code that used Arcana.Agent.* still works via the deprecated facade.
 
 ### Features
 
