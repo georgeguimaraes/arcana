@@ -122,6 +122,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without an explicit `answer` call. Emits a single span at
   `[:arcana, :loop, :*]`. See the [Loop guide](guides/loop.md).
 
+## [2.0.0](https://github.com/georgeguimaraes/arcana/compare/v1.6.0...v2.0.0) (2026-04-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **breaking:** rename search modes to :vector/:keyword, evaluation UX overhaul
+* **dashboard:** the Ask page URL shape changed from /arcana/ask (with a client-side mode toggle) to /arcana/ask/<sub_tab>. The old URL still lands on the Advanced sub-tab by default, so existing bookmarks keep working.
+* module names changed. Custom behaviour implementers need to update their @behaviour declarations from Arcana.Agent.* to Arcana.Pipeline.*. Code that used Arcana.Agent.* still works via the deprecated facade.
+
+### Features
+
+* **breaking:** rename search modes to :vector/:keyword, evaluation UX overhaul ([f1c59da](https://github.com/georgeguimaraes/arcana/commit/f1c59da477f4ef54e917e3fdb0694a1430f089bf))
+* **config:** global config defaults and unified opts merging ([11880e1](https://github.com/georgeguimaraes/arcana/commit/11880e192aa9beffb9545a8e816ab05869e36fc7))
+* **dashboard:** ChunkResults component, Loop grounding via LLMJudge ([b3dba78](https://github.com/georgeguimaraes/arcana/commit/b3dba7818c8ae2b89c9998954155d2b9635127f3))
+* **dashboard:** compact Loop settings and simpler collection opts ([daa4cd8](https://github.com/georgeguimaraes/arcana/commit/daa4cd8f4c9c591741f5b5472b1a2a1cccfb5ec8))
+* **dashboard:** markdown answers, live trace polish, role-aware temps ([7836d37](https://github.com/georgeguimaraes/arcana/commit/7836d37d01b81e22c097bb0323abb5b5a916f45b))
+* **dashboard:** Pipeline UX overhaul ([eb999a0](https://github.com/georgeguimaraes/arcana/commit/eb999a0f5d568acd22a253bda63250918f1022cd))
+* **dashboard:** rerank top_k, expanded Pipeline internals card ([87dac70](https://github.com/georgeguimaraes/arcana/commit/87dac70a168b53ae57fd1a8427ee6f6b468449fb))
+* **dashboard:** sub-tab polish and live tracing for Ask ([958f7ce](https://github.com/georgeguimaraes/arcana/commit/958f7ce746a9ecf258031c169a536528f9c472ec))
+* **dashboard:** thousand separators and tabular-nums on stats ([501a2f8](https://github.com/georgeguimaraes/arcana/commit/501a2f8652e3fb0827b11d4a2c3db05c48d200fc))
+* **dashboard:** windowed pagination with prev/next and ellipsis ([aa3eba5](https://github.com/georgeguimaraes/arcana/commit/aa3eba5b2fd7158cafdec570bd5924e397413e43))
+* **evaluation:** pluggable retriever and answer correctness scoring ([972375e](https://github.com/georgeguimaraes/arcana/commit/972375eb04267d2a2470accd579038ffd9f4e468))
+* **graph:** community summary improvements and config extraction ([3967270](https://github.com/georgeguimaraes/arcana/commit/396727002627247c6e5805ba2b30f08e4bda6e73))
+* **graph:** GraphRAG Local Search alignment ([27ed3f4](https://github.com/georgeguimaraes/arcana/commit/27ed3f44bdaf55b7ddee5bf062e6cbc0acd28311))
+* **graph:** pluggable entity matcher for graph-enhanced search ([2b56205](https://github.com/georgeguimaraes/arcana/commit/2b562053c3c93aac2f6220b269b894eaeae0143a))
+* **grounder:** LLMJudge with atomic claim decomposition ([d8f0525](https://github.com/georgeguimaraes/arcana/commit/d8f0525e9a8761419e188bcbd82a484451fa02e0))
+* **loop:** Arcana.Loop (agentic RAG) with grounding and tool-call attribution ([b36c9b9](https://github.com/georgeguimaraes/arcana/commit/b36c9b958377e8b9111a8f6a8a22d27218cee24e))
+* **loop:** custom tool callbacks, humanize guides ([5c525a4](https://github.com/georgeguimaraes/arcana/commit/5c525a4e98049ee430d666972b3746371f46f0e2))
+* **loop:** per-call collection selection via dynamic search tool ([afc9724](https://github.com/georgeguimaraes/arcana/commit/afc9724aea2ac7638f307336954a6c99c685c339))
+* **loop:** per-tool-call telemetry for live tracing ([aca51c2](https://github.com/georgeguimaraes/arcana/commit/aca51c2c22f32aa3658ce446864f47859a99e47c))
+* **loop:** record synthesis fallback in tool_history ([980efb7](https://github.com/georgeguimaraes/arcana/commit/980efb77ab5837aa4c193e8db98e78e4481b0274))
+* **loop:** role-specific temperatures and customizable answer prompts ([e3c2558](https://github.com/georgeguimaraes/arcana/commit/e3c25589b7af15059bd403e756f1a24a8195d061))
+* **search:** local cross-encoder reranker via Bumblebee ([387e910](https://github.com/georgeguimaraes/arcana/commit/387e91081f51b1bdf87407290c37e9bde6791cb9))
+
+
+### Bug Fixes
+
+* **answer_metrics:** strip markdown code fences from LLM judge ([972375e](https://github.com/georgeguimaraes/arcana/commit/972375eb04267d2a2470accd579038ffd9f4e468))
+* **graph:** pass entity metadata to Entity.changeset when upserting it ([#57](https://github.com/georgeguimaraes/arcana/issues/57)) ([3786969](https://github.com/georgeguimaraes/arcana/commit/3786969e19ca5a6f0ac18fe78298a7e13000cc38))
+* **grounding:** drop hardcoded EXLA, defer to global Nx.Defn defaults ([cf46ec7](https://github.com/georgeguimaraes/arcana/commit/cf46ec739bc131d2471493079e1af9f3c312e7cf))
+* **grounding:** per-chunk multi-pass NLI scoring, attach pipeline.ground telemetry ([29bd21f](https://github.com/georgeguimaraes/arcana/commit/29bd21f5029bc8317eec0068928359516c68e9f4))
+* **grounding:** top-K budget-aware concat with per-chunk-max fallback, sharpen rewriter prompt ([ba705e2](https://github.com/georgeguimaraes/arcana/commit/ba705e2fbf30d39a121924987266e0b47daa2c3c))
+* **pipeline:** gate + self-correct use Arcana.LLM protocol, skip_retrieval honored by prep steps ([b4bf007](https://github.com/georgeguimaraes/arcana/commit/b4bf00759e9b884167c39709710aef59afc57399))
+* **pipeline:** rerank forwards all opts to reranker module ([2a3214a](https://github.com/georgeguimaraes/arcana/commit/2a3214a1cc6abc7cd61e631518d235c288846bc2))
+
+
+### Miscellaneous
+
+* **deps-dev:** bump credo from 1.7.17 to 1.7.18 ([#69](https://github.com/georgeguimaraes/arcana/issues/69)) ([18ada82](https://github.com/georgeguimaraes/arcana/commit/18ada82547e3022ab87c5788df63205672ac098c))
+* **deps-dev:** bump floki from 0.38.0 to 0.38.1 ([#62](https://github.com/georgeguimaraes/arcana/issues/62)) ([f386462](https://github.com/georgeguimaraes/arcana/commit/f386462513f7dc67162144689f6cd91ac6c22582))
+* **deps:** bump googleapis/release-please-action from 4 to 5 ([#71](https://github.com/georgeguimaraes/arcana/issues/71)) ([c5e51bb](https://github.com/georgeguimaraes/arcana/commit/c5e51bbfcc4f3cfa3bee979afb4dbf9fbfb1c4b1))
+* **deps:** bump igniter from 0.7.2 to 0.7.3 ([#54](https://github.com/georgeguimaraes/arcana/issues/54)) ([1ac1dd9](https://github.com/georgeguimaraes/arcana/commit/1ac1dd9ef275d41562dcb4e6be7b8d4d29e871a9))
+* **deps:** bump igniter from 0.7.3 to 0.7.6 ([#61](https://github.com/georgeguimaraes/arcana/issues/61)) ([d467e43](https://github.com/georgeguimaraes/arcana/commit/d467e43e5020885101698db0719270f50c080c73))
+* **deps:** bump mdex from 0.12.1 to 0.12.2 ([#72](https://github.com/georgeguimaraes/arcana/issues/72)) ([19c797e](https://github.com/georgeguimaraes/arcana/commit/19c797e863e3acbfea0367f6e533bf181d8a31bd))
+* **deps:** bump phoenix_live_view from 1.1.25 to 1.1.26 ([#53](https://github.com/georgeguimaraes/arcana/issues/53)) ([41b6724](https://github.com/georgeguimaraes/arcana/commit/41b6724341b0ce060704b31ff5adcf23b843d8ac))
+* **deps:** bump phoenix_live_view from 1.1.26 to 1.1.27 ([#59](https://github.com/georgeguimaraes/arcana/issues/59)) ([29a3665](https://github.com/georgeguimaraes/arcana/commit/29a3665d0054447783694010dd1bd3cbe1dd6e8f))
+* **deps:** bump req_llm from 1.6.0 to 1.7.1 ([#60](https://github.com/georgeguimaraes/arcana/issues/60)) ([2acdfe5](https://github.com/georgeguimaraes/arcana/commit/2acdfe5744c0411ddfb87738dd615eb2c254af6e))
+* **deps:** bump req_llm from 1.7.1 to 1.8.0 ([#63](https://github.com/georgeguimaraes/arcana/issues/63)) ([d5a4197](https://github.com/georgeguimaraes/arcana/commit/d5a41978b20cfa157eac8ee1487d3e56bf94a2dd))
+* **deps:** bump req_llm from 1.9.0 to 1.10.0 ([#70](https://github.com/georgeguimaraes/arcana/issues/70)) ([fe2c0da](https://github.com/georgeguimaraes/arcana/commit/fe2c0da03205cf5ba20c286dbed1158c9cd418a3))
+* **deps:** update lockfile to latest compatible versions ([b1ae28b](https://github.com/georgeguimaraes/arcana/commit/b1ae28b6c55dbad355a32e04901ddee04e8b4066))
+* fix credo --strict findings to unblock CI ([bb9d1b6](https://github.com/georgeguimaraes/arcana/commit/bb9d1b6e7f68b7de8137e7a6ac88fefc563e5214))
+* **test:** use Tools alias to satisfy credo AliasUsage ([80ff3d3](https://github.com/georgeguimaraes/arcana/commit/80ff3d30f7e1e58130d82f0a56c215f5a50e35cc))
+
+
+### Documentation
+
+* **livebook:** add Loop section with multi-collection examples ([6aa4db2](https://github.com/georgeguimaraes/arcana/commit/6aa4db2c5e7e41ed0a8c294f04b1c59323747705))
+* **readme:** align architecture diagram to uniform 83-char width ([d812dc5](https://github.com/georgeguimaraes/arcana/commit/d812dc5da3913a8f63851ccecac9b13dcf7c98d6))
+
+
+### Code Refactoring
+
+* **dashboard:** Ask sub-tabs, Evaluation retriever, Info sections ([16a06e6](https://github.com/georgeguimaraes/arcana/commit/16a06e622b73ce34538a41e5ccbe5d27c6c73b35))
+* rename Arcana.Agent to Arcana.Pipeline ([6a0265c](https://github.com/georgeguimaraes/arcana/commit/6a0265c17da36cb53505fee9089237518953d406))
+
 ## [1.6.0](https://github.com/georgeguimaraes/arcana/compare/v1.5.2...v1.6.0) (2026-03-04)
 
 
