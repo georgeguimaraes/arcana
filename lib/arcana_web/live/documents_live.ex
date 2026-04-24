@@ -422,16 +422,37 @@ defmodule ArcanaWeb.DocumentsLive do
 
             <%= if @total_pages > 1 do %>
               <div class="arcana-pagination">
-                <%= for page <- 1..@total_pages do %>
-                  <button
-                    data-page={page}
-                    class={"arcana-page-btn #{if page == @page, do: "active", else: ""}"}
-                    phx-click="change_page"
-                    phx-value-page={page}
-                  >
-                    <%= page %>
-                  </button>
+                <button
+                  class="arcana-page-btn"
+                  phx-click="change_page"
+                  phx-value-page={@page - 1}
+                  disabled={@page <= 1}
+                >
+                  &lsaquo; Prev
+                </button>
+                <%= for entry <- page_window(@page, @total_pages) do %>
+                  <%= case entry do %>
+                    <% :ellipsis -> %>
+                      <span class="arcana-page-ellipsis">&hellip;</span>
+                    <% page -> %>
+                      <button
+                        data-page={page}
+                        class={"arcana-page-btn #{if page == @page, do: "active", else: ""}"}
+                        phx-click="change_page"
+                        phx-value-page={page}
+                      >
+                        <%= format_number(page) %>
+                      </button>
+                  <% end %>
                 <% end %>
+                <button
+                  class="arcana-page-btn"
+                  phx-click="change_page"
+                  phx-value-page={@page + 1}
+                  disabled={@page >= @total_pages}
+                >
+                  Next &rsaquo;
+                </button>
               </div>
             <% end %>
           <% end %>
@@ -502,4 +523,22 @@ defmodule ArcanaWeb.DocumentsLive do
     </div>
     """
   end
+
+  defp page_window(current, total, window \\ 2) do
+    around =
+      max(2, current - window)..min(total - 1, current + window)
+      |> Enum.to_list()
+
+    [1 | around]
+    |> then(fn pages -> if total > 1, do: pages ++ [total], else: pages end)
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> insert_ellipsis()
+  end
+
+  defp insert_ellipsis([a, b | rest]) when b - a > 1,
+    do: [a, :ellipsis | insert_ellipsis([b | rest])]
+
+  defp insert_ellipsis([a | rest]), do: [a | insert_ellipsis(rest)]
+  defp insert_ellipsis([]), do: []
 end

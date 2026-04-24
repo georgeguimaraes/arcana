@@ -322,8 +322,10 @@ defmodule ArcanaWeb.Assets do
 
   .arcana-pagination {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.375rem;
     justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
     margin-top: 1rem;
     padding-top: 1rem;
     border-top: 1px solid #e5e7eb;
@@ -331,15 +333,17 @@ defmodule ArcanaWeb.Assets do
 
   .arcana-page-btn {
     padding: 0.5rem 0.75rem;
+    min-width: 2.5rem;
     border: 1px solid #d1d5db;
     background: white;
     border-radius: 0.375rem;
     font-size: 0.875rem;
+    font-variant-numeric: tabular-nums;
     cursor: pointer;
     transition: all 0.15s ease;
   }
 
-  .arcana-page-btn:hover {
+  .arcana-page-btn:hover:not(:disabled) {
     border-color: #7c3aed;
     color: #7c3aed;
   }
@@ -348,6 +352,18 @@ defmodule ArcanaWeb.Assets do
     background: #7c3aed;
     border-color: #7c3aed;
     color: white;
+  }
+
+  .arcana-page-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .arcana-page-ellipsis {
+    padding: 0.5rem 0.25rem;
+    color: #9ca3af;
+    font-size: 0.875rem;
+    user-select: none;
   }
 
   .arcana-view-btn {
