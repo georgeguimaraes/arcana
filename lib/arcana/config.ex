@@ -102,20 +102,25 @@ defmodule Arcana.Config do
 
   """
 
-  alias Arcana.Config.Overrides
+  @reader_key {__MODULE__, :env_reader}
 
   @doc """
   Returns the value for `key` from the `:arcana` app env.
 
-  All runtime configuration reads in Arcana go through this function. In
-  tests, `Arcana.Config.Overrides` can shadow any key per-process (including
-  with `nil`), which keeps async tests from having to mutate global state.
+  All runtime configuration reads in Arcana go through this function. Test
+  suites can install a custom reader with `install_env_reader/1` to shadow
+  keys per-process instead of mutating global state.
   """
   def get_env(key, default \\ nil) do
-    case Overrides.fetch(key) do
-      {:ok, value} -> value
-      :error -> Application.get_env(:arcana, key, default)
+    case :persistent_term.get(@reader_key, nil) do
+      nil -> Application.get_env(:arcana, key, default)
+      reader -> reader.(key, default)
     end
+  end
+
+  @doc false
+  def install_env_reader(reader) when is_function(reader, 2) do
+    :persistent_term.put(@reader_key, reader)
   end
 
   @doc """
