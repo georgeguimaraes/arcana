@@ -1,5 +1,5 @@
 defmodule Arcana.Reranker.CrossEncoderTest do
-  use Arcana.DataCase, async: false
+  use Arcana.DataCase, async: true
 
   @moduletag :serving
 

@@ -15,6 +15,8 @@ defmodule Arcana.Graph.EntityMatcher.Embedding do
     * `:threshold` - minimum cosine similarity (default: 0.3)
     * `:limit` - maximum entities returned (default: 20)
     * `:repo` - Ecto repo (required)
+    * `:embedder` - embedder to use for the query, in any form accepted by
+      `config :arcana, embedder:` (defaults to the global config)
 
   Requires entity embeddings to be populated. Run `mix arcana.graph.embed_entities`
   on existing graphs.
@@ -33,7 +35,7 @@ defmodule Arcana.Graph.EntityMatcher.Embedding do
     threshold = Keyword.get(opts, :threshold, @default_threshold)
     limit = Keyword.get(opts, :limit, @default_limit)
 
-    embedder = Arcana.Config.embedder()
+    embedder = Arcana.Config.resolve_embedder(opts)
 
     case Arcana.Embedder.embed(embedder, query, intent: :query) do
       {:ok, query_embedding} ->

@@ -99,8 +99,8 @@ defmodule Arcana.Pipeline do
   def new(question, opts \\ []) when is_binary(question) do
     %Context{
       question: question,
-      repo: opts[:repo] || Application.get_env(:arcana, :repo),
-      llm: opts[:llm] || Application.get_env(:arcana, :llm),
+      repo: opts[:repo] || Arcana.Config.get_env(:repo),
+      llm: opts[:llm] || Arcana.Config.get_env(:llm),
       limit: Keyword.get(opts, :limit, 5),
       threshold: Keyword.get(opts, :threshold, 0.5)
     }

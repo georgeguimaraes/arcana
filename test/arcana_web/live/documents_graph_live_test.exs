@@ -1,11 +1,8 @@
 defmodule ArcanaWeb.DocumentsGraphLiveTest do
   @moduledoc """
   Tests for graph indexing features in DocumentsLive.
-
-  These tests modify global Application config (:arcana, :graph) so they
-  must run with async: false to avoid races with other tests.
   """
-  use ArcanaWeb.ConnCase, async: false
+  use ArcanaWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
 
@@ -13,13 +10,10 @@ defmodule ArcanaWeb.DocumentsGraphLiveTest do
     setup do
       # Arcana.TaskSupervisor is started globally in test/test_helper.exs.
 
-      # Enable graph for these tests
-      original = Application.get_env(:arcana, :graph, [])
-      Application.put_env(:arcana, :graph, Keyword.put(original, :enabled, true))
-
-      on_exit(fn ->
-        Application.put_env(:arcana, :graph, original)
-      end)
+      # Enable graph for these tests, composing on the global base so the
+      # fake entity_extractor from config/test.exs survives.
+      base = Application.get_env(:arcana, :graph, [])
+      put_arcana_env(:graph, Keyword.put(base, :enabled, true))
 
       :ok
     end
@@ -33,7 +27,7 @@ defmodule ArcanaWeb.DocumentsGraphLiveTest do
     end
 
     test "hides Build Graph button when graph is disabled", %{conn: conn} do
-      Application.put_env(:arcana, :graph, enabled: false)
+      put_arcana_env(:graph, enabled: false)
 
       {:ok, doc} = Arcana.ingest("Content no graph", repo: Repo, collection: "test-no-graph")
 

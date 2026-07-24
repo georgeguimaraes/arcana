@@ -112,7 +112,7 @@ defmodule Arcana.VectorStore do
 
   """
   def backend do
-    Application.get_env(:arcana, :vector_store, :pgvector)
+    Arcana.Config.get_env(:vector_store, :pgvector)
   end
 
   @doc """

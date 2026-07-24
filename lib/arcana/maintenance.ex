@@ -635,7 +635,7 @@ defmodule Arcana.Maintenance do
   """
   def graph_info do
     config = Arcana.Graph.config()
-    graph_opts = Application.get_env(:arcana, :graph, [])
+    graph_opts = Arcana.Config.get_env(:graph, [])
 
     {extractor_type, extractor_name} =
       cond do
@@ -861,7 +861,7 @@ defmodule Arcana.Maintenance do
     # Get LLM function from opts or config
     llm =
       Keyword.get_lazy(opts, :llm, fn ->
-        case Application.get_env(:arcana, :llm) do
+        case Arcana.Config.get_env(:llm) do
           {provider, llm_opts} -> build_llm_fn(provider, llm_opts)
           nil -> nil
           provider when is_binary(provider) -> build_llm_fn(provider, [])

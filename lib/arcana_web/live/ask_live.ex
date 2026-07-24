@@ -135,7 +135,7 @@ defmodule ArcanaWeb.AskLive do
   def handle_event("ask_submit", params, socket) do
     question = params["question"] || ""
 
-    case {Application.get_env(:arcana, :llm), question} do
+    case {Arcana.Config.get_env(:llm), question} do
       {nil, _} ->
         {:noreply,
          assign(socket,
@@ -278,8 +278,8 @@ defmodule ArcanaWeb.AskLive do
   #   answer_llm     = config :arcana, :loop, :answer_llm (nil → uses controller text)
   #   fallback       = answer_llm || controller_llm
   defp loop_llm_roles do
-    loop_opts = Application.get_env(:arcana, :loop, [])
-    base_llm = Application.get_env(:arcana, :llm)
+    loop_opts = Arcana.Config.get_env(:loop, [])
+    base_llm = Arcana.Config.get_env(:llm)
 
     controller = Keyword.get(loop_opts, :controller_llm) || base_llm
     answer = Keyword.get(loop_opts, :answer_llm)
@@ -644,7 +644,7 @@ defmodule ArcanaWeb.AskLive do
 
   # Hook for tests to stub out Loop execution. Defaults to the real Loop.run/2.
   defp loop_runner do
-    Application.get_env(:arcana, :loop_runner) || (&Arcana.Loop.run/2)
+    Arcana.Config.get_env(:loop_runner) || (&Arcana.Loop.run/2)
   end
 
   # Arcana.Loop.new/2 (and Arcana.search, Arcana.ask, Arcana.Pipeline.new)

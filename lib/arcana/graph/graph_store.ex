@@ -200,7 +200,7 @@ defmodule Arcana.Graph.GraphStore do
   Returns the configured graph store backend.
   """
   def backend do
-    Application.get_env(:arcana, :graph_store, :ecto)
+    Arcana.Config.get_env(:graph_store, :ecto)
   end
 
   @doc """

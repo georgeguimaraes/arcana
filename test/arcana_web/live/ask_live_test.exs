@@ -1,9 +1,5 @@
 defmodule ArcanaWeb.AskLiveTest do
-  # async: false because the Loop handler test below mutates the global
-  # :arcana, :llm env via Application.put_env. When run in parallel with
-  # ArcanaTest.ask/2 ("returns error when no LLM configured"), the other
-  # test sees the leaked value and fails.
-  use ArcanaWeb.ConnCase, async: false
+  use ArcanaWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
 
@@ -320,15 +316,10 @@ defmodule ArcanaWeb.AskLiveTest do
       # Defends ask_loading_label/2 :loop branch. Loop doesn't emit pipeline
       # telemetry, so the old `@pipeline_step || "Running pipeline..."`
       # branch wrongly showed "Running pipeline..." during a Loop run.
-      Application.put_env(:arcana, :llm, "zai:test-stub")
-
-      on_exit(fn ->
-        Application.delete_env(:arcana, :llm)
-        Application.delete_env(:arcana, :loop_runner)
-      end)
+      put_arcana_env(:llm, "zai:test-stub")
 
       # Stub a slow runner so the spinner is visible when we render.
-      Application.put_env(:arcana, :loop_runner, fn _ctx, _opts ->
+      put_arcana_env(:loop_runner, fn _ctx, _opts ->
         Process.sleep(200)
 
         {:ok,
@@ -433,14 +424,9 @@ defmodule ArcanaWeb.AskLiveTest do
       # and assert the rendered result section is gone — without the
       # reset, the previous Loop result would still render under the
       # Advanced form and confuse the user.
-      Application.put_env(:arcana, :llm, "zai:test-stub")
+      put_arcana_env(:llm, "zai:test-stub")
 
-      on_exit(fn ->
-        Application.delete_env(:arcana, :llm)
-        Application.delete_env(:arcana, :loop_runner)
-      end)
-
-      Application.put_env(:arcana, :loop_runner, fn _ctx, _opts ->
+      put_arcana_env(:loop_runner, fn _ctx, _opts ->
         {:ok,
          %Arcana.Loop.Context{
            question: "stub",
@@ -473,18 +459,13 @@ defmodule ArcanaWeb.AskLiveTest do
       # The handle_event for submit checks that :arcana, :llm is configured
       # before running anything. Set a placeholder so the handler proceeds;
       # the stubbed loop_runner ignores the opts so the value doesn't matter.
-      Application.put_env(:arcana, :llm, "zai:test-stub")
+      put_arcana_env(:llm, "zai:test-stub")
 
-      on_exit(fn ->
-        Application.delete_env(:arcana, :llm)
-        Application.delete_env(:arcana, :loop_runner)
-      end)
-
-      # Stub the loop_runner via Application env so we don't need a real LLM.
-      # The stub returns a canned Loop.Context shaped result. This is the
-      # smallest seam we can introduce to make the handler testable without
-      # spinning up a real controller.
-      Application.put_env(:arcana, :loop_runner, fn _ctx, _opts ->
+      # Stub the loop_runner so we don't need a real LLM. The stub returns a
+      # canned Loop.Context shaped result. This is the smallest seam we can
+      # introduce to make the handler testable without spinning up a real
+      # controller.
+      put_arcana_env(:loop_runner, fn _ctx, _opts ->
         {:ok,
          %Arcana.Loop.Context{
            question: "stubbed",

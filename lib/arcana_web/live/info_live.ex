@@ -31,23 +31,23 @@ defmodule ArcanaWeb.InfoLive do
 
   defp get_config_info do
     %{
-      repo: Application.get_env(:arcana, :repo),
-      llm: format_llm_config(Application.get_env(:arcana, :llm)),
-      embedding: format_embedding_config(Application.get_env(:arcana, :embedder, :local)),
-      chunker: format_chunker_config(Application.get_env(:arcana, :chunker, :default)),
-      reranker: format_reranker_config(Application.get_env(:arcana, :reranker)),
+      repo: Arcana.Config.get_env(:repo),
+      llm: format_llm_config(Arcana.Config.get_env(:llm)),
+      embedding: format_embedding_config(Arcana.Config.get_env(:embedder, :local)),
+      chunker: format_chunker_config(Arcana.Config.get_env(:chunker, :default)),
+      reranker: format_reranker_config(Arcana.Config.get_env(:reranker)),
       grounder: format_grounder_config(),
-      loop: format_loop_config(Application.get_env(:arcana, :loop, [])),
+      loop: format_loop_config(Arcana.Config.get_env(:loop, [])),
       vector_store: format_vector_store_config(),
       graph: format_graph_config(),
       raw: %{
-        embedder: Arcana.Config.redact(Application.get_env(:arcana, :embedder, :local)),
-        llm: Arcana.Config.redact(Application.get_env(:arcana, :llm)),
-        reranker: Arcana.Config.redact(Application.get_env(:arcana, :reranker)),
-        chunker: Arcana.Config.redact(Application.get_env(:arcana, :chunker, :default)),
-        loop: Arcana.Config.redact(Application.get_env(:arcana, :loop, [])),
-        graph: Arcana.Config.redact(Application.get_env(:arcana, :graph, [])),
-        vector_store: Application.get_env(:arcana, :vector_store, :pgvector)
+        embedder: Arcana.Config.redact(Arcana.Config.get_env(:embedder, :local)),
+        llm: Arcana.Config.redact(Arcana.Config.get_env(:llm)),
+        reranker: Arcana.Config.redact(Arcana.Config.get_env(:reranker)),
+        chunker: Arcana.Config.redact(Arcana.Config.get_env(:chunker, :default)),
+        loop: Arcana.Config.redact(Arcana.Config.get_env(:loop, [])),
+        graph: Arcana.Config.redact(Arcana.Config.get_env(:graph, [])),
+        vector_store: Arcana.Config.get_env(:vector_store, :pgvector)
       }
     }
   end
@@ -176,7 +176,7 @@ defmodule ArcanaWeb.InfoLive do
   defp format_chunker_config(_other), do: %{type: :unknown}
 
   defp format_vector_store_config do
-    store = Application.get_env(:arcana, :vector_store, :pgvector)
+    store = Arcana.Config.get_env(:vector_store, :pgvector)
 
     case store do
       :pgvector -> %{type: :pgvector, description: "PostgreSQL with pgvector extension"}
@@ -188,7 +188,7 @@ defmodule ArcanaWeb.InfoLive do
 
   defp format_graph_config do
     config = Arcana.Graph.config()
-    graph_opts = Application.get_env(:arcana, :graph, [])
+    graph_opts = Arcana.Config.get_env(:graph, [])
 
     extractor =
       cond do
@@ -232,7 +232,7 @@ defmodule ArcanaWeb.InfoLive do
       enabled: config.enabled,
       community_levels: config.community_levels,
       resolution: config.resolution,
-      store: Application.get_env(:arcana, :graph_store, :ecto),
+      store: Arcana.Config.get_env(:graph_store, :ecto),
       extractor: extractor,
       entity_extractor: entity_extractor,
       relationship_extractor: relationship_extractor,

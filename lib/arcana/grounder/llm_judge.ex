@@ -106,7 +106,7 @@ defmodule Arcana.Grounder.LLMJudge do
 
     model =
       Keyword.get(opts, :judge_model) ||
-        Application.get_env(:arcana, :judge_model, @default_model)
+        Arcana.Config.get_env(:judge_model, @default_model)
 
     temperature = Keyword.get(opts, :judge_temperature, 0.0)
     max_tokens = Keyword.get(opts, :judge_max_tokens, 2048)

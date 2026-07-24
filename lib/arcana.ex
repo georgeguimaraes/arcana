@@ -103,7 +103,7 @@ defmodule Arcana do
   """
   def delete(document_id, opts) do
     repo =
-      opts[:repo] || Application.get_env(:arcana, :repo) ||
+      opts[:repo] || Arcana.Config.get_env(:repo) ||
         raise ArgumentError, "repo is required"
 
     case repo.get(Document, document_id) do

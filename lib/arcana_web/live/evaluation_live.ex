@@ -72,7 +72,7 @@ defmodule ArcanaWeb.EvaluationLive do
     evaluate_answers = params["evaluate_answers"] == "true"
 
     # Check if LLM is configured when evaluate_answers or Loop is requested
-    llm = Application.get_env(:arcana, :llm)
+    llm = Arcana.Config.get_env(:llm)
     needs_llm? = evaluate_answers or retriever_name == "loop"
 
     if needs_llm? and is_nil(llm) do
@@ -130,7 +130,7 @@ defmodule ArcanaWeb.EvaluationLive do
     sample_size = parse_int(params["sample_size"], 10)
     collection = blank_to_nil(params["collection"])
 
-    case Application.get_env(:arcana, :llm) do
+    case Arcana.Config.get_env(:llm) do
       nil ->
         {:noreply,
          assign(socket,
@@ -315,7 +315,7 @@ defmodule ArcanaWeb.EvaluationLive do
   # Testability seam — same pattern used in ask_live.ex so tests can
   # stub Loop execution without spinning up a real controller.
   defp loop_runner do
-    Application.get_env(:arcana, :loop_runner) || (&Arcana.Loop.run/2)
+    Arcana.Config.get_env(:loop_runner) || (&Arcana.Loop.run/2)
   end
 
   defp build_generate_opts(repo, llm, sample_size, nil) do

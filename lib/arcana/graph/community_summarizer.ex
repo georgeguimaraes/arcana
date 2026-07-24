@@ -97,7 +97,7 @@ defmodule Arcana.Graph.CommunitySummarizer do
 
   defp get_summarizer(opts) do
     Keyword.get_lazy(opts, :community_summarizer, fn ->
-      get_in(Application.get_env(:arcana, :graph, []), [:community_summarizer])
+      get_in(Arcana.Config.get_env(:graph, []), [:community_summarizer])
     end)
   end
 

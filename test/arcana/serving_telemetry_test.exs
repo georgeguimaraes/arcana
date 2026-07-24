@@ -1,6 +1,6 @@
 defmodule Arcana.ServingTelemetryTest do
   # Requires real Nx.Serving - run with: mix test --include serving
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Arcana.Embeddings.Serving
 
@@ -30,16 +30,25 @@ defmodule Arcana.ServingTelemetryTest do
       nil
     )
 
-    _embedding = Serving.embed("test text")
+    on_exit(fn -> :telemetry.detach(ref) end)
 
-    assert_receive {:telemetry, [:arcana, :embed, :start], start_measurements, start_metadata}
+    # Concurrent tests also emit [:arcana, :embed] events (the test-env fake
+    # embedder produces the same 384 dimensions), so pin the start event by
+    # our unique text and the stop event by the shared span context.
+    text = "serving telemetry text #{System.unique_integer([:positive])}"
+    _embedding = Serving.embed(text)
+
+    assert_receive {:telemetry, [:arcana, :embed, :start], start_measurements,
+                    %{text: ^text} = start_metadata}
+
     assert is_integer(start_measurements.system_time)
-    assert start_metadata.text == "test text"
 
-    assert_receive {:telemetry, [:arcana, :embed, :stop], stop_measurements, stop_metadata}
+    span_context = start_metadata.telemetry_span_context
+
+    assert_receive {:telemetry, [:arcana, :embed, :stop], stop_measurements,
+                    %{telemetry_span_context: ^span_context} = stop_metadata}
+
     assert is_integer(stop_measurements.duration)
     assert stop_metadata.dimensions == 384
-
-    :telemetry.detach(ref)
   end
 end

@@ -105,6 +105,6 @@ defmodule ArcanaWeb.Router do
 
   @doc false
   def __session__(_conn, repo) do
-    %{"repo" => repo || Application.get_env(:arcana, :repo)}
+    %{"repo" => repo || Arcana.Config.get_env(:repo)}
   end
 end

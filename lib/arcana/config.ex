@@ -102,19 +102,45 @@ defmodule Arcana.Config do
 
   """
 
+  alias Arcana.Config.Overrides
+
+  @doc """
+  Returns the value for `key` from the `:arcana` app env.
+
+  All runtime configuration reads in Arcana go through this function. In
+  tests, `Arcana.Config.Overrides` can shadow any key per-process (including
+  with `nil`), which keeps async tests from having to mutate global state.
+  """
+  def get_env(key, default \\ nil) do
+    case Overrides.fetch(key) do
+      {:ok, value} -> value
+      :error -> Application.get_env(:arcana, key, default)
+    end
+  end
+
   @doc """
   Returns the configured embedder as a `{module, opts}` tuple.
   """
   def embedder do
-    Application.get_env(:arcana, :embedder, :local)
+    get_env(:embedder, :local)
     |> parse_embedder_config()
+  end
+
+  @doc """
+  Resolves embedder from options, falling back to global config.
+  """
+  def resolve_embedder(opts) do
+    case Keyword.fetch(opts, :embedder) do
+      {:ok, config} -> parse_embedder_config(config)
+      :error -> embedder()
+    end
   end
 
   @doc """
   Returns the configured chunker as a `{module, opts}` tuple.
   """
   def chunker do
-    Application.get_env(:arcana, :chunker, :default)
+    get_env(:chunker, :default)
     |> parse_chunker_config()
   end
 
@@ -132,7 +158,7 @@ defmodule Arcana.Config do
   Returns the configured PDF parser as a `{module, opts}` tuple.
   """
   def pdf_parser do
-    Application.get_env(:arcana, :pdf_parser, :poppler)
+    get_env(:pdf_parser, :poppler)
     |> parse_pdf_parser_config()
   end
 
@@ -161,8 +187,8 @@ defmodule Arcana.Config do
         model: model,
         dimensions: Arcana.Embedder.dimensions(embedder())
       },
-      vector_store: Application.get_env(:arcana, :vector_store, :pgvector),
-      reranker: Application.get_env(:arcana, :reranker, Arcana.Reranker.LLM),
+      vector_store: get_env(:vector_store, :pgvector),
+      reranker: get_env(:reranker, Arcana.Reranker.LLM),
       graph: Arcana.Graph.config()
     }
   end
@@ -202,7 +228,7 @@ defmodule Arcana.Config do
 
   """
   def get(opts, key) do
-    opts[key] || Application.get_env(:arcana, key)
+    opts[key] || get_env(key)
   end
 
   @doc """
@@ -221,7 +247,7 @@ defmodule Arcana.Config do
 
   """
   def merge_app_opts(opts, app_key) do
-    Application.get_env(:arcana, app_key, [])
+    get_env(app_key, [])
     |> Keyword.merge(opts)
   end
 
@@ -234,7 +260,7 @@ defmodule Arcana.Config do
   def reranker(opts \\ []) do
     case Keyword.fetch(opts, :reranker) do
       {:ok, value} -> parse_reranker_config(value)
-      :error -> Application.get_env(:arcana, :reranker) |> parse_reranker_config()
+      :error -> get_env(:reranker) |> parse_reranker_config()
     end
   end
 
