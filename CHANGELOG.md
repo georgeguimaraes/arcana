@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1](https://github.com/georgeguimaraes/arcana/compare/v2.0.0...v2.0.1) (2026-07-24)
+
+
+### Miscellaneous
+
+* **deps-dev:** bump ex_doc from 0.40.1 to 0.40.3 ([#78](https://github.com/georgeguimaraes/arcana/issues/78)) ([14d3578](https://github.com/georgeguimaraes/arcana/commit/14d3578e1b3c67ba4941581a14bbaddc810ab3d6))
+* **deps:** bump actions/cache from 5 to 6 ([#80](https://github.com/georgeguimaraes/arcana/issues/80)) ([1fdcd42](https://github.com/georgeguimaraes/arcana/commit/1fdcd425e8fad55988f6fbc272aac1a42bb6ccf1))
+* **deps:** bump actions/checkout from 6 to 7 ([#79](https://github.com/georgeguimaraes/arcana/issues/79)) ([c1ada78](https://github.com/georgeguimaraes/arcana/commit/c1ada783c36246db3ad33adcd97291b681e5884a))
+* **deps:** bump igniter from 0.7.9 to 0.8.0 ([#77](https://github.com/georgeguimaraes/arcana/issues/77)) ([f97fcd9](https://github.com/georgeguimaraes/arcana/commit/f97fcd9d7573a3181d689ca28226328babf483bc))
+* **deps:** bump phoenix_live_view from 1.1.28 to 1.2.7 ([#75](https://github.com/georgeguimaraes/arcana/issues/75)) ([dbdc817](https://github.com/georgeguimaraes/arcana/commit/dbdc8170bc7ab3d1b415b0e6dce8fae2992532bd))
+* **deps:** bump postgrex from 0.22.0 to 0.22.3 ([#76](https://github.com/georgeguimaraes/arcana/issues/76)) ([bb55c13](https://github.com/georgeguimaraes/arcana/commit/bb55c135948dc925424b844a547983c6281e5faf))
+* **deps:** bump req_llm from 1.10.0 to 1.17.1 ([#74](https://github.com/georgeguimaraes/arcana/issues/74)) ([dcd0921](https://github.com/georgeguimaraes/arcana/commit/dcd0921b5cfc2dd9e6a0272fd6084a3acdcaa317))
+
+
+### Documentation
+
+* **changelog:** merge hand-written 2.0.0 prose into release-please section ([c1cf916](https://github.com/georgeguimaraes/arcana/commit/c1cf9167857bdfe523aed53cd947b49df290e650))
+
 ## [2.0.0](https://github.com/georgeguimaraes/arcana/compare/v1.6.0...v2.0.0) (2026-04-24)
 
 
