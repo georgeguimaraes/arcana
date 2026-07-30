@@ -129,7 +129,7 @@ defmodule Arcana.Embedder.Local do
   # Merge passed opts with global :arcana, :embedder config when applicable.
   # Per-call opts take precedence over global config.
   defp merge_global_opts(opts) do
-    case Application.get_env(:arcana, :embedder) do
+    case Arcana.Config.get_env(:embedder) do
       nil ->
         opts
 

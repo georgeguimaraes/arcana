@@ -88,7 +88,7 @@ defmodule Arcana.IngestWithCollectionTest do
 
   defp create_temp_file(content, extension) do
     dir = System.tmp_dir!()
-    filename = "arcana_test_#{:rand.uniform(100_000)}#{extension}"
+    filename = "arcana_test_#{System.unique_integer([:positive])}#{extension}"
     path = Path.join(dir, filename)
     File.write!(path, content)
     on_exit(fn -> File.rm(path) end)

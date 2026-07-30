@@ -10,6 +10,7 @@ defmodule Arcana.DataCase do
       import Ecto
       import Ecto.Query
       import Arcana.DataCase
+      import Arcana.ConfigCase
     end
   end
 

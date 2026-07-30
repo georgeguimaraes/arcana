@@ -88,7 +88,7 @@ defmodule Arcana.Pipeline.ReasonTest do
       llm = fn prompt ->
         if prompt =~ "sufficient" do
           {:ok,
-           ~s({"sufficient": false, "missing": "more info", "follow_up_query": "query #{:rand.uniform(1000)}"})}
+           ~s({"sufficient": false, "missing": "more info", "follow_up_query": "query #{System.unique_integer([:positive])}"})}
         else
           {:ok, "response"}
         end

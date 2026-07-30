@@ -152,7 +152,7 @@ defmodule Arcana.Graph do
 
   # Returns raw config including non-serializable values (for internal use)
   defp raw_config do
-    app_config = Application.get_env(:arcana, :graph, [])
+    app_config = Arcana.Config.get_env(:graph, [])
 
     @default_config
     |> Map.merge(Map.new(app_config))

@@ -4,7 +4,7 @@ defmodule Arcana.Reranker.ColBERTTest do
 
   Run with: mix test --include colbert
   """
-  use Arcana.DataCase, async: false
+  use Arcana.DataCase, async: true
 
   alias Arcana.Reranker.ColBERT
 

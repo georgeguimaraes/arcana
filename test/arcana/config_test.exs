@@ -1,6 +1,10 @@
 defmodule Arcana.ConfigTest do
-  # async: false because some tests touch Application env
-  use ExUnit.Case, async: false
+  # The remaining Application.put_env calls below use fake keys
+  # (:test_key, :test_namespace) that nothing else reads, so they are
+  # safe under async; real keys go through put_arcana_env.
+  use ExUnit.Case, async: true
+
+  import Arcana.ConfigCase
 
   alias Arcana.Config
 
@@ -27,6 +31,35 @@ defmodule Arcana.ConfigTest do
 
     test "returns nil when neither opts nor env have the key" do
       assert Config.get([], :nonexistent_key_xyz) == nil
+    end
+  end
+
+  describe "get_env/2" do
+    test "falls back to app env when no override is set" do
+      assert Config.get_env(:nonexistent_key_xyz, :fallback) == :fallback
+    end
+
+    test "process override shadows app env" do
+      put_arcana_env(:test_key, :from_override)
+
+      assert Config.get_env(:test_key, :fallback) == :from_override
+    end
+
+    test "nil override shadows a configured value" do
+      Application.put_env(:arcana, :test_key_nil_shadow, :configured)
+      on_exit(fn -> Application.delete_env(:arcana, :test_key_nil_shadow) end)
+
+      put_arcana_env(:test_key_nil_shadow, nil)
+
+      assert Config.get_env(:test_key_nil_shadow, :fallback) == nil
+    end
+
+    test "override is visible from tasks spawned by the test" do
+      put_arcana_env(:test_key, :from_override)
+
+      value = Task.await(Task.async(fn -> Config.get_env(:test_key) end))
+
+      assert value == :from_override
     end
   end
 
@@ -57,33 +90,25 @@ defmodule Arcana.ConfigTest do
 
   describe "reranker/1" do
     test "returns nil when no reranker is configured anywhere" do
-      original = Application.get_env(:arcana, :reranker)
-      on_exit(fn -> Application.put_env(:arcana, :reranker, original) end)
-      Application.delete_env(:arcana, :reranker)
+      put_arcana_env(:reranker, nil)
 
       assert Config.reranker([]) == nil
     end
 
     test "returns nil when explicitly disabled per-call" do
-      original = Application.get_env(:arcana, :reranker)
-      on_exit(fn -> Application.put_env(:arcana, :reranker, original) end)
-      Application.put_env(:arcana, :reranker, SomeModule)
+      put_arcana_env(:reranker, SomeModule)
 
       assert Config.reranker(reranker: false) == nil
     end
 
     test "uses per-call reranker over global" do
-      original = Application.get_env(:arcana, :reranker)
-      on_exit(fn -> Application.put_env(:arcana, :reranker, original) end)
-      Application.put_env(:arcana, :reranker, GlobalReranker)
+      put_arcana_env(:reranker, GlobalReranker)
 
       assert Config.reranker(reranker: PerCallReranker) == {PerCallReranker, []}
     end
 
     test "falls back to global reranker when not in opts" do
-      original = Application.get_env(:arcana, :reranker)
-      on_exit(fn -> Application.put_env(:arcana, :reranker, original) end)
-      Application.put_env(:arcana, :reranker, GlobalReranker)
+      put_arcana_env(:reranker, GlobalReranker)
 
       assert Config.reranker([]) == {GlobalReranker, []}
     end

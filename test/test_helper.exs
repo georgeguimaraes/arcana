@@ -6,6 +6,10 @@ Ecto.Adapters.SQL.query!(Arcana.TestRepo, "VACUUM ANALYZE", [])
 
 Ecto.Adapters.SQL.Sandbox.mode(Arcana.TestRepo, :manual)
 
+# Allow async tests to shadow :arcana config per-process instead of
+# mutating global Application env (see Arcana.ConfigCase.put_arcana_env/2).
+Arcana.ConfigCase.enable()
+
 # Start the task supervisor used by LiveViews for async operations
 # (evaluation, Ask page submissions, maintenance tasks). Without this,
 # LiveView tests that trigger background tasks fail with "no process"

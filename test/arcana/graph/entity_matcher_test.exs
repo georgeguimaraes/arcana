@@ -47,15 +47,14 @@ defmodule Arcana.Graph.EntityMatcherTest do
       entity = create_entity_with_embedding(collection, "Doctor", vec)
 
       # Inject our own embedder that returns this exact vector
-      with_embedder(fn _text -> {:ok, vec} end, fn ->
-        assert {:ok, [id]} =
-                 Embedding.match("the Doctor", [collection.id],
-                   repo: Repo,
-                   threshold: 0.5
-                 )
+      assert {:ok, [id]} =
+               Embedding.match("the Doctor", [collection.id],
+                 repo: Repo,
+                 threshold: 0.5,
+                 embedder: fn _text -> {:ok, vec} end
+               )
 
-        assert id == entity.id
-      end)
+      assert id == entity.id
     end
 
     test "respects :limit option" do
@@ -68,16 +67,15 @@ defmodule Arcana.Graph.EntityMatcherTest do
         create_entity_with_embedding(collection, "Entity-#{n}", vec)
       end
 
-      with_embedder(fn _text -> {:ok, vec} end, fn ->
-        assert {:ok, ids} =
-                 Embedding.match("query", [collection.id],
-                   repo: Repo,
-                   threshold: 0.0,
-                   limit: 2
-                 )
+      assert {:ok, ids} =
+               Embedding.match("query", [collection.id],
+                 repo: Repo,
+                 threshold: 0.0,
+                 limit: 2,
+                 embedder: fn _text -> {:ok, vec} end
+               )
 
-        assert length(ids) == 2
-      end)
+      assert length(ids) == 2
     end
   end
 
@@ -209,22 +207,5 @@ defmodule Arcana.Graph.EntityMatcherTest do
     raw = for _ <- 1..dims, do: :rand.uniform() - 0.5
     norm = :math.sqrt(Enum.reduce(raw, 0.0, fn x, acc -> acc + x * x end))
     Enum.map(raw, &(&1 / norm))
-  end
-
-  # Temporarily swap the embedder for the duration of `fun` so the test
-  # doesn't depend on Bumblebee being loaded.
-  defp with_embedder(fun_embed, test_fun) do
-    original = Application.get_env(:arcana, :embedder)
-    Application.put_env(:arcana, :embedder, fun_embed)
-
-    try do
-      test_fun.()
-    after
-      if original do
-        Application.put_env(:arcana, :embedder, original)
-      else
-        Application.delete_env(:arcana, :embedder)
-      end
-    end
   end
 end

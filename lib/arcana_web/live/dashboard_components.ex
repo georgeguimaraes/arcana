@@ -204,7 +204,7 @@ defmodule ArcanaWeb.DashboardComponents do
   end
 
   def get_repo_from_session(session) do
-    session["repo"] || Application.get_env(:arcana, :repo) ||
+    session["repo"] || Arcana.Config.get_env(:repo) ||
       raise "Missing :arcana, :repo config"
   end
 end
