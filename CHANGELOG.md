@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2](https://github.com/georgeguimaraes/arcana/compare/v2.0.1...v2.0.2) (2026-07-31)
+
+
+### Bug Fixes
+
+* **test:** Eliminate async config races, make every test file async: true ([#81](https://github.com/georgeguimaraes/arcana/issues/81)) ([0358b1e](https://github.com/georgeguimaraes/arcana/commit/0358b1ec1821e6d513a83859bba758e8c8d4ed33))
+
+
+### Miscellaneous
+
+* **deps-dev:** bump credo from 1.7.18 to 1.7.19 ([#86](https://github.com/georgeguimaraes/arcana/issues/86)) ([66d9dfa](https://github.com/georgeguimaraes/arcana/commit/66d9dfa768303a34333607a843056155aecaf932))
+* **deps-dev:** bump floki from 0.38.1 to 0.38.4 ([#83](https://github.com/georgeguimaraes/arcana/issues/83)) ([07bca09](https://github.com/georgeguimaraes/arcana/commit/07bca0952e780f3c4dae1979f186c56212768438))
+* **deps-dev:** bump lazy_html from 0.1.11 to 0.1.12 ([#82](https://github.com/georgeguimaraes/arcana/issues/82)) ([73954e0](https://github.com/georgeguimaraes/arcana/commit/73954e0df261565e4decdd2f9b0754acda994f3f))
+* **deps:** bump igniter from 0.8.0 to 0.8.3 ([#85](https://github.com/georgeguimaraes/arcana/issues/85)) ([3786296](https://github.com/georgeguimaraes/arcana/commit/3786296e55ed55bf5b545865ef767a5c8a16c107))
+* **deps:** bump pgvector from 0.3.1 to 0.4.0 ([#84](https://github.com/georgeguimaraes/arcana/issues/84)) ([e0589ad](https://github.com/georgeguimaraes/arcana/commit/e0589ad97317a4bdd4a21982d0c10b97d23b7a5c))
+
 ## [2.0.1](https://github.com/georgeguimaraes/arcana/compare/v2.0.0...v2.0.1) (2026-07-24)
 
 
