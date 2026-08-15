@@ -56,8 +56,17 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
     run
   end
 
-  defp latest_run do
-    Repo.one!(from(r in Evaluation.Run, order_by: [desc: r.inserted_at, desc: r.id], limit: 1))
+  defp run_ids do
+    Repo.all(from(r in Evaluation.Run, select: r.id))
+  end
+
+  # A "newest row" lookup would happily return a run this test never made:
+  # `inserted_at` has second granularity, so its `id` tiebreak is a random
+  # UUID, and the shared test database can still hold committed leftovers
+  # from a crashed run. Diffing against the ids seen before the submit
+  # pins the assertion to the run the test actually created.
+  defp run_created_since(ids_before) do
+    Repo.one!(from(r in Evaluation.Run, where: r.id not in ^ids_before))
   end
 
   # The ask flow answers asynchronously, so poll the render instead of
@@ -679,10 +688,12 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
 
       {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/evaluation")
 
+      ids_before = run_ids()
+
       render_submit(view, "eval_run", %{"mode" => "vector", "retriever" => "pipeline"})
       render_until(view, "Evaluation completed!")
 
-      run = latest_run()
+      run = run_created_since(ids_before)
 
       retrieved =
         run.results

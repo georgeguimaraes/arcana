@@ -4,6 +4,29 @@ defmodule Arcana.Pipeline.ReasonTest do
   alias Arcana.Pipeline
   alias Arcana.Pipeline.Context
 
+  # Asks for one follow-up search, then accepts. Anything that isn't the
+  # sufficiency prompt gets a throwaway answer.
+  defp insufficient_then_sufficient_llm do
+    call_count = :counters.new(1, [:atomics])
+
+    fn prompt ->
+      count = :counters.get(call_count, 1)
+      :counters.add(call_count, 1, 1)
+
+      cond do
+        count == 0 and prompt =~ "sufficient" ->
+          {:ok,
+           ~s({"sufficient": false, "missing": "concurrency model", "follow_up_query": "Elixir concurrency actors"})}
+
+        prompt =~ "sufficient" ->
+          {:ok, ~s({"sufficient": true, "reasoning": "Now has concurrency info"})}
+
+        true ->
+          {:ok, "response"}
+      end
+    end
+  end
+
   describe "reason/2" do
     test "accepts results when LLM says sufficient" do
       llm = fn prompt ->
@@ -232,6 +255,51 @@ defmodule Arcana.Pipeline.ReasonTest do
       ctx = Pipeline.reason(ctx)
 
       assert MapSet.member?(ctx.queries_tried, "my question")
+    end
+
+    # A caller that scopes retrieval by handing search/2 a tenant searcher
+    # would silently get the default (unscoped) searcher back for the
+    # follow-up searches if reason/2 didn't inherit it, which hands the
+    # caller chunks from outside the tenant.
+    test "inherits the searcher from search/2 without repeating the option" do
+      test_pid = self()
+
+      searcher = fn question, _collection, _opts ->
+        send(test_pid, {:searched, question})
+        {:ok, [%{id: "1", text: "scoped chunk", score: 0.9}]}
+      end
+
+      ctx =
+        "How does Elixir handle concurrency?"
+        |> Pipeline.new(repo: Arcana.TestRepo, llm: insufficient_then_sufficient_llm())
+        |> Pipeline.search(searcher: searcher, collection: "inherit-searcher-test")
+        |> Pipeline.reason()
+
+      assert ctx.reason_iterations == 1
+      assert_received {:searched, "How does Elixir handle concurrency?"}
+      assert_received {:searched, "Elixir concurrency actors"}
+    end
+
+    test "an explicit searcher on reason/2 beats the inherited one" do
+      test_pid = self()
+
+      search_searcher = fn _question, _collection, _opts ->
+        {:ok, [%{id: "1", text: "from search", score: 0.9}]}
+      end
+
+      reason_searcher = fn question, _collection, _opts ->
+        send(test_pid, {:reason_searched, question})
+        {:ok, [%{id: "2", text: "from reason", score: 0.9}]}
+      end
+
+      ctx =
+        "How does Elixir handle concurrency?"
+        |> Pipeline.new(repo: Arcana.TestRepo, llm: insufficient_then_sufficient_llm())
+        |> Pipeline.search(searcher: search_searcher, collection: "explicit-searcher-test")
+        |> Pipeline.reason(searcher: reason_searcher)
+
+      assert ctx.reason_iterations == 1
+      assert_received {:reason_searched, "Elixir concurrency actors"}
     end
 
     test "skips reasoning when skip_retrieval is true" do

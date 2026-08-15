@@ -35,6 +35,9 @@ defmodule Arcana.Pipeline.Context do
 
   ### Populated by `search/2`
   - `:results` - List of `%{question: _, collection: _, chunks: _}` maps
+  - `:searcher` - The searcher used, so later steps that retrieve (like
+    `reason/2`) stay on the caller's searcher instead of silently falling
+    back to the default one
 
   ### Populated by `reason/2`
   - `:queries_tried` - MapSet of queries already searched (prevents loops)
@@ -85,6 +88,7 @@ defmodule Arcana.Pipeline.Context do
 
     # Populated by search/2
     :results,
+    :searcher,
 
     # Populated by reason/2
     :queries_tried,

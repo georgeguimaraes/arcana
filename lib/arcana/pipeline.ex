@@ -639,7 +639,7 @@ defmodule Arcana.Pipeline do
           %{question: question, collection: collection, chunks: chunks}
         end
 
-      updated_ctx = %{ctx | results: results}
+      updated_ctx = %{ctx | results: results, searcher: searcher}
       total_chunks = results |> Enum.flat_map(& &1.chunks) |> length()
 
       stop_metadata = %{
@@ -683,6 +683,10 @@ defmodule Arcana.Pipeline do
   - `:max_iterations` - Maximum additional searches (default: 2)
   - `:prompt` - Custom prompt function `fn question, chunks -> prompt_string end`
   - `:llm` - Override the LLM function for this step
+  - `:searcher` - Searcher for the follow-up searches. Defaults to the one
+    `search/2` used, so a scoped searcher keeps applying without repeating
+    the option. Falls back to `Arcana.Searcher.Arcana` when `search/2` never
+    ran.
 
   ## Example
 
@@ -707,8 +711,10 @@ defmodule Arcana.Pipeline do
       max_iterations = Keyword.get(opts, :max_iterations, 2)
       custom_prompt_fn = Keyword.get(opts, :prompt)
       # Follow-up searches go through the same searcher as search/2, so a
-      # caller that scoped retrieval there can't be widened here.
-      searcher = Keyword.get(opts, :searcher, Arcana.Searcher.Arcana)
+      # caller that scoped retrieval there can't be widened here. search/2
+      # records its searcher on the context, so the inheritance holds even
+      # when reason/2 is called without repeating the option.
+      searcher = Keyword.get(opts, :searcher) || ctx.searcher || Arcana.Searcher.Arcana
 
       # Initialize queries_tried if not set
       queries_tried = ctx.queries_tried || MapSet.new([ctx.question])
