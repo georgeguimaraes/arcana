@@ -147,8 +147,27 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     def error_to_string(:not_accepted), do: "File type not supported"
     def error_to_string(err), do: "Error: #{inspect(err)}"
 
+    # Collection scoping helpers. `allowed` is :all (unrestricted, the
+    # default) or a list of collection names resolved by the router's
+    # :collections MFA. An empty list is a valid restriction meaning
+    # "no collections at all".
+    def allowed_collection?(:all, _name), do: true
+    def allowed_collection?(allowed, name) when is_list(allowed), do: name in allowed
+
+    @doc """
+    Filters a list of collection maps (anything with a `:name` key) down to
+    the allowed set. `:all` passes everything through untouched.
+    """
+    def filter_allowed_collections(collections, :all), do: collections
+
+    def filter_allowed_collections(collections, allowed) when is_list(allowed) do
+      Enum.filter(collections, &(&1.name in allowed))
+    end
+
     # Shared data loading functions
-    def load_stats(repo) do
+    def load_stats(repo, allowed \\ :all)
+
+    def load_stats(repo, :all) do
       import Ecto.Query
 
       doc_count = repo.aggregate(Arcana.Document, :count)
@@ -158,14 +177,46 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
       # Add graph stats if GraphRAG is available
       if Arcana.Graph.enabled?() do
-        graph_stats = load_graph_stats(repo)
+        graph_stats = load_graph_stats(repo, :all)
         Map.merge(base_stats, graph_stats)
       else
         base_stats
       end
     end
 
-    defp load_graph_stats(repo) do
+    def load_stats(repo, allowed) when is_list(allowed) do
+      import Ecto.Query
+
+      doc_count =
+        repo.one(
+          from(d in Arcana.Document,
+            join: c in assoc(d, :collection),
+            where: c.name in ^allowed,
+            select: count(d.id)
+          )
+        ) || 0
+
+      chunk_count =
+        repo.one(
+          from(ch in Arcana.Chunk,
+            join: d in Arcana.Document,
+            on: ch.document_id == d.id,
+            join: c in assoc(d, :collection),
+            where: c.name in ^allowed,
+            select: count(ch.id)
+          )
+        ) || 0
+
+      base_stats = %{documents: doc_count, chunks: chunk_count}
+
+      if Arcana.Graph.enabled?() do
+        Map.merge(base_stats, load_graph_stats(repo, allowed))
+      else
+        base_stats
+      end
+    end
+
+    defp load_graph_stats(repo, :all) do
       import Ecto.Query
 
       entity_count = repo.one(from(e in Arcana.Graph.Entity, select: count(e.id))) || 0
@@ -181,10 +232,48 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       _ -> %{}
     end
 
-    def load_collections(repo) do
+    defp load_graph_stats(repo, allowed) when is_list(allowed) do
       import Ecto.Query
 
-      repo.all(
+      collection_ids = from(c in Arcana.Collection, where: c.name in ^allowed, select: c.id)
+
+      entity_count =
+        repo.one(
+          from(e in Arcana.Graph.Entity,
+            where: e.collection_id in subquery(collection_ids),
+            select: count(e.id)
+          )
+        ) || 0
+
+      # Relationships carry no collection_id; scope through the source entity
+      relationship_count =
+        repo.one(
+          from(r in Arcana.Graph.Relationship,
+            join: e in Arcana.Graph.Entity,
+            on: r.source_id == e.id,
+            where: e.collection_id in subquery(collection_ids),
+            select: count(r.id)
+          )
+        ) || 0
+
+      community_count =
+        repo.one(
+          from(c in Arcana.Graph.Community,
+            where: c.collection_id in subquery(collection_ids),
+            select: count(c.id)
+          )
+        ) || 0
+
+      %{entities: entity_count, relationships: relationship_count, communities: community_count}
+    rescue
+      # Tables might not exist if GraphRAG not installed
+      _ -> %{}
+    end
+
+    def load_collections(repo, allowed \\ :all) do
+      import Ecto.Query
+
+      query =
         from(c in Arcana.Collection,
           left_join: d in Arcana.Document,
           on: d.collection_id == c.id,
@@ -197,19 +286,36 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
             document_count: count(d.id)
           }
         )
-      )
+
+      query =
+        case allowed do
+          :all -> query
+          names when is_list(names) -> where(query, [c], c.name in ^names)
+        end
+
+      repo.all(query)
     end
 
-    def load_source_ids(repo) do
+    def load_source_ids(repo, allowed \\ :all) do
       import Ecto.Query
 
-      repo.all(
+      query =
         from(d in Arcana.Document,
           where: not is_nil(d.source_id),
           distinct: d.source_id,
           select: d.source_id
         )
-      )
+
+      query =
+        case allowed do
+          :all ->
+            query
+
+          names when is_list(names) ->
+            from(d in query, join: c in assoc(d, :collection), where: c.name in ^names)
+        end
+
+      repo.all(query)
     end
 
     def get_repo_from_session(session) do
