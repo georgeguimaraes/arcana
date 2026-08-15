@@ -1,29 +1,35 @@
-defmodule ArcanaWeb.DashboardLive do
-  @moduledoc """
-  Redirects to the Documents page.
+# The dashboard is optional: this module only compiles when Phoenix
+# LiveView is available (see the optional deps in mix.exs). Only
+# ArcanaWeb.TaskSupervisor is phoenix-free and stays available.
 
-  This module previously contained the monolithic dashboard with tab switching.
-  It has been replaced by separate LiveView pages for each tab:
+if Code.ensure_loaded?(Phoenix.LiveView) do
+  defmodule ArcanaWeb.DashboardLive do
+    @moduledoc """
+    Redirects to the Documents page.
 
-  - `/documents` - ArcanaWeb.DocumentsLive
-  - `/collections` - ArcanaWeb.CollectionsLive
-  - `/search` - ArcanaWeb.SearchLive
-  - `/ask` - ArcanaWeb.AskLive
-  - `/evaluation` - ArcanaWeb.EvaluationLive
-  - `/maintenance` - ArcanaWeb.MaintenanceLive
-  - `/info` - ArcanaWeb.InfoLive
-  """
-  use Phoenix.LiveView
+    This module previously contained the monolithic dashboard with tab switching.
+    It has been replaced by separate LiveView pages for each tab:
 
-  @impl true
-  def mount(_params, _session, socket) do
-    {:ok, socket, layout: false}
-  end
-
-  @impl true
-  def render(assigns) do
-    ~H"""
-    <script>window.location.href = window.location.pathname + "/documents";</script>
+    - `/documents` - ArcanaWeb.DocumentsLive
+    - `/collections` - ArcanaWeb.CollectionsLive
+    - `/search` - ArcanaWeb.SearchLive
+    - `/ask` - ArcanaWeb.AskLive
+    - `/evaluation` - ArcanaWeb.EvaluationLive
+    - `/maintenance` - ArcanaWeb.MaintenanceLive
+    - `/info` - ArcanaWeb.InfoLive
     """
+    use Phoenix.LiveView
+
+    @impl true
+    def mount(_params, _session, socket) do
+      {:ok, socket, layout: false}
+    end
+
+    @impl true
+    def render(assigns) do
+      ~H"""
+      <script>window.location.href = window.location.pathname + "/documents";</script>
+      """
+    end
   end
 end
