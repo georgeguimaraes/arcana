@@ -116,7 +116,7 @@ defmodule Arcana.Reranker.LLM do
         end)
         |> Enum.filter(fn {_chunk, score} -> is_number(score) and score >= threshold end)
         |> Enum.sort_by(fn {_chunk, score} -> score end, :desc)
-        |> Enum.map(fn {chunk, _score} -> chunk end)
+        |> Enum.map(fn {chunk, score} -> Map.put(chunk, :rerank_score, score) end)
 
       _ ->
         Enum.map(passages, fn {_idx, chunk} -> chunk end)

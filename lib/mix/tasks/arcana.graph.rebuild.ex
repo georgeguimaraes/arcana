@@ -87,20 +87,23 @@ defmodule Mix.Tasks.Arcana.Graph.Rebuild do
 
     rebuild_opts = if resume, do: Keyword.put(rebuild_opts, :resume, true), else: rebuild_opts
 
-    {:ok,
-     %{
-       collections: collections,
-       entities: entities,
-       relationships: relationships,
-       skipped: skipped
-     }} =
-      Arcana.Maintenance.rebuild_graph(repo, rebuild_opts)
+    case Arcana.Maintenance.rebuild_graph(repo, rebuild_opts) do
+      {:ok,
+       %{
+         collections: collections,
+         entities: entities,
+         relationships: relationships,
+         skipped: skipped
+       }} ->
+        skip_msg = if skipped > 0, do: " (skipped #{skipped} already processed)", else: ""
 
-    skip_msg = if skipped > 0, do: " (skipped #{skipped} already processed)", else: ""
+        Mix.shell().info(
+          "\nDone! Processed #{collections} collection(s): #{entities} entities, #{relationships} relationships#{skip_msg}."
+        )
 
-    Mix.shell().info(
-      "\nDone! Processed #{collections} collection(s): #{entities} entities, #{relationships} relationships#{skip_msg}."
-    )
+      {:error, {:unknown_collection, name}} ->
+        Mix.raise("Collection #{inspect(name)} does not exist")
+    end
   end
 
   defp format_info(%{enabled: enabled, extractor_name: name, community_levels: levels}) do

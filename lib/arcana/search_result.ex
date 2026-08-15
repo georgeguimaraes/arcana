@@ -67,19 +67,29 @@ defmodule Arcana.SearchResult do
 
     %__MODULE__{
       id: id,
-      text: metadata[:text] || "",
-      document_id: metadata[:document_id],
-      chunk_index: metadata[:chunk_index],
+      text: known(metadata, :text) || "",
+      document_id: known(metadata, :document_id),
+      chunk_index: known(metadata, :chunk_index),
       score: score,
-      vector_score: metadata[:vector_score],
-      keyword_score: metadata[:keyword_score],
+      vector_score: known(metadata, :vector_score),
+      keyword_score: known(metadata, :keyword_score),
       metadata: user_metadata(metadata)
     }
+  end
+
+  # Backend metadata may carry well-known keys as atoms (Ecto select
+  # merge) or strings (JSONB round-trips, custom backends): accept both.
+  defp known(metadata, key) do
+    case Map.fetch(metadata, key) do
+      {:ok, value} -> value
+      :error -> Map.get(metadata, Atom.to_string(key))
+    end
   end
 
   defp user_metadata(metadata) do
     metadata
     |> Map.drop(@known_keys)
+    |> Map.drop(Enum.map(@known_keys, &Atom.to_string/1))
     |> Map.new(fn {k, v} -> {to_string(k), v} end)
   end
 
@@ -88,7 +98,8 @@ defmodule Arcana.SearchResult do
   def fetch(%__MODULE__{}, _key), do: :error
 
   @impl Access
-  def get_and_update(%__MODULE__{} = result, key, fun) when is_map_key(result, key) do
+  def get_and_update(%__MODULE__{} = result, key, fun)
+      when is_map_key(result, key) and key != :__struct__ do
     current = Map.get(result, key)
 
     case fun.(current) do
@@ -106,7 +117,7 @@ defmodule Arcana.SearchResult do
   @impl Access
   def pop(%__MODULE__{} = result, :metadata), do: {result.metadata, %{result | metadata: %{}}}
 
-  def pop(%__MODULE__{} = result, key) when is_map_key(result, key) do
+  def pop(%__MODULE__{} = result, key) when is_map_key(result, key) and key != :__struct__ do
     {Map.get(result, key), Map.replace!(result, key, nil)}
   end
 

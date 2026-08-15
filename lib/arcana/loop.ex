@@ -178,17 +178,9 @@ defmodule Arcana.Loop do
     end
 
     # A {module, function} LLM (valid for ask/pipeline via Arcana.LLM) can't
-    # drive the tool loop: the controller needs ReqLLM tool calling.
-    case controller_llm do
-      {mod, fun} when is_atom(mod) and is_atom(fun) ->
-        raise ArgumentError,
-              "Arcana.Loop's controller can't use a {module, function} LLM " <>
-                "(#{inspect(controller_llm)}): the loop needs a ReqLLM model spec " <>
-                "for tool calling. Pass controller_llm: \"provider:model\" instead."
-
-      _ ->
-        :ok
-    end
+    # drive the loop: both roles go through ReqLLM message structures.
+    reject_mfa_llm!(controller_llm, ":controller_llm")
+    reject_mfa_llm!(answer_llm, ":answer_llm")
 
     # Force the resolved max_iterations into opts so the system prompt and
     # the loop see the same number, even when the caller didn't pass it.
@@ -384,6 +376,19 @@ defmodule Arcana.Loop do
   # `(messages, opts) -> {:ok, text} | {:error, reason}`. The default
   # appends a "synthesize now" instruction and calls the controller LLM
   # without tools so it has to produce text.
+  defp reject_mfa_llm!(llm, option) do
+    case llm do
+      {mod, fun} when is_atom(mod) and is_atom(fun) ->
+        raise ArgumentError,
+              "Arcana.Loop's #{option} can't use a {module, function} LLM " <>
+                "(#{inspect(llm)}): the loop needs a ReqLLM model spec. " <>
+                "Pass #{option} as \"provider:model\" instead."
+
+      _ ->
+        :ok
+    end
+  end
+
   defp maybe_synthesize_fallback(%Context{} = ctx, controller_llm, answer_llm, opts) do
     cond do
       ctx.terminated_by != :max_iterations ->

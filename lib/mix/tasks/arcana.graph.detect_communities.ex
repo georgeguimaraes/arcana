@@ -131,12 +131,15 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
     detect_opts =
       if collection, do: Keyword.put(detect_opts, :collection, collection), else: detect_opts
 
-    {:ok, %{collections: collections, communities: communities}} =
-      Arcana.Maintenance.detect_communities(repo, detect_opts)
+    case Arcana.Maintenance.detect_communities(repo, detect_opts) do
+      {:ok, %{collections: collections, communities: communities}} ->
+        Mix.shell().info(
+          "\nDone! Processed #{collections} collection(s): #{communities} communities."
+        )
 
-    Mix.shell().info(
-      "\nDone! Processed #{collections} collection(s): #{communities} communities."
-    )
+      {:error, {:unknown_collection, name}} ->
+        Mix.raise("Collection #{inspect(name)} does not exist")
+    end
   end
 
   defp format_info(%{enabled: enabled, extractor_name: name, community_levels: levels}) do

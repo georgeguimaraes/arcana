@@ -119,12 +119,15 @@ defmodule Mix.Tasks.Arcana.Graph.SummarizeCommunities do
         do: Keyword.put(summarize_opts, :collection, collection),
         else: summarize_opts
 
-    {:ok, %{communities: communities, summaries: summaries}} =
-      Arcana.Maintenance.summarize_communities(repo, summarize_opts)
+    case Arcana.Maintenance.summarize_communities(repo, summarize_opts) do
+      {:ok, %{communities: communities, summaries: summaries}} ->
+        Mix.shell().info(
+          "\nDone! Processed #{communities} communities, generated #{summaries} summaries."
+        )
 
-    Mix.shell().info(
-      "\nDone! Processed #{communities} communities, generated #{summaries} summaries."
-    )
+      {:error, {:unknown_collection, name}} ->
+        Mix.raise("Collection #{inspect(name)} does not exist")
+    end
   end
 
   defp format_info(%{enabled: enabled, extractor_name: name, community_levels: levels}) do

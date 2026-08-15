@@ -33,11 +33,13 @@ defmodule Arcana.Reranker do
   @doc """
   Re-ranks chunks based on relevance to the question.
 
-  Chunks are `Arcana.SearchResult` structs. Returns chunks filtered by
+  Chunks from `Arcana.search/2` are `Arcana.SearchResult` structs, but
+  custom `Arcana.Searcher` implementations may supply plain maps, so
+  rerankers should not assume the struct. Returns chunks filtered by
   threshold and sorted by score (highest first). Rerankers that compute
-  an explicit score should store it in the `:rerank_score` field (as
-  `Arcana.Reranker.ColBERT` does); rerankers that only reorder or filter
-  can return the chunks unchanged.
+  an explicit score store it under `:rerank_score` (the built-in LLM and
+  ColBERT rerankers do); rerankers that only reorder or filter can
+  return the chunks unchanged.
 
   ## Options
 
@@ -47,7 +49,7 @@ defmodule Arcana.Reranker do
   """
   @callback rerank(
               question :: String.t(),
-              chunks :: [Arcana.SearchResult.t()],
+              chunks :: [Arcana.SearchResult.t() | map()],
               opts :: keyword()
-            ) :: {:ok, [Arcana.SearchResult.t()]} | {:error, term()}
+            ) :: {:ok, [Arcana.SearchResult.t() | map()]} | {:error, term()}
 end

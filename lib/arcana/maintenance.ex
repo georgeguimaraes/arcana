@@ -864,30 +864,32 @@ defmodule Arcana.Maintenance do
     force = Keyword.get(opts, :force, false)
     concurrency = Keyword.get(opts, :concurrency, 1)
 
-    # Normalize the LLM to a 3-arity function through the Arcana.LLM
-    # protocol, so every supported config shape (model string,
-    # {model, opts}, {module, function}, anonymous function) works here.
-    llm =
-      case Keyword.get_lazy(opts, :llm, fn -> Arcana.Config.get_env(:llm) end) do
-        nil ->
-          nil
-
-        llm ->
-          fn prompt, context, call_opts ->
-            Arcana.LLM.complete(llm, prompt, context, call_opts)
-          end
-      end
-
-    unless llm do
-      raise "No LLM configured. Set config :arcana, :llm or pass :llm option"
-    end
-
     strict? = Arcana.Config.strict_collections?(opts)
 
+    # Validate the collection filter before requiring an LLM, so strict
+    # callers get {:error, {:unknown_collection, name}} consistently.
     with {:ok, collections} <- fetch_collections(repo, collection_filter, strict?) do
       if collections == [] do
         {:ok, %{communities: 0, summaries: 0}}
       else
+        # Normalize the LLM to a 3-arity function through the Arcana.LLM
+        # protocol, so every supported config shape (model string,
+        # {model, opts}, {module, function}, anonymous function) works here.
+        llm =
+          case Keyword.get_lazy(opts, :llm, fn -> Arcana.Config.get_env(:llm) end) do
+            nil ->
+              nil
+
+            llm ->
+              fn prompt, context, call_opts ->
+                Arcana.LLM.complete(llm, prompt, context, call_opts)
+              end
+          end
+
+        unless llm do
+          raise "No LLM configured. Set config :arcana, :llm or pass :llm option"
+        end
+
         total_collections = length(collections)
 
         results =

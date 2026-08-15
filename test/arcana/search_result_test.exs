@@ -31,6 +31,19 @@ defmodule Arcana.SearchResultTest do
       assert result.metadata == %{"team" => "zoology", "custom" => 1}
     end
 
+    test "accepts well-known keys as strings (JSONB round-trips, custom backends)" do
+      result =
+        SearchResult.from_store_result(%{
+          id: "chunk-3",
+          score: 0.5,
+          metadata: %{"text" => "string keyed", "document_id" => "doc-9", "team" => "zoology"}
+        })
+
+      assert result.text == "string keyed"
+      assert result.document_id == "doc-9"
+      assert result.metadata == %{"team" => "zoology"}
+    end
+
     test "tolerates nil metadata and missing keys" do
       result = SearchResult.from_store_result(%{id: "chunk-2", score: 0.1, metadata: nil})
 
@@ -68,6 +81,10 @@ defmodule Arcana.SearchResultTest do
 
       assert_raise ArgumentError, ~r/only supports Access updates/, fn ->
         Access.pop(result, "text")
+      end
+
+      assert_raise ArgumentError, ~r/only supports Access updates/, fn ->
+        Access.get_and_update(result, :__struct__, fn v -> {v, SomethingElse} end)
       end
     end
 

@@ -177,7 +177,7 @@ defmodule Arcana.Search do
           enhance_with_graph_search(
             collection_results,
             search_query,
-            collections,
+            {collections, id_by_name},
             repo,
             retrieval_opts
           )
@@ -291,12 +291,22 @@ defmodule Arcana.Search do
     {{:error, reason}, %{error: reason}}
   end
 
-  defp enhance_with_graph_search({:ok, vector_results}, query, collections, repo, opts) do
+  defp enhance_with_graph_search(
+         {:ok, vector_results},
+         query,
+         {collections, id_by_name},
+         repo,
+         opts
+       ) do
     limit = Keyword.get(opts, :limit, 10)
     graph_config = Arcana.Graph.config()
     rrf_k = graph_config[:rrf_k] || 60
     rrf_pool = graph_config[:rrf_pool_multiplier] || 2
-    collection_ids = resolve_collection_ids(collections, repo)
+
+    # Reuse the ids validated up front under strict mode instead of
+    # re-resolving names (which could pick up a recreated collection).
+    collection_ids =
+      if id_by_name, do: Map.values(id_by_name), else: resolve_collection_ids(collections, repo)
 
     {matcher, matcher_opts} = resolve_entity_matcher(opts, graph_config)
     matcher_opts = matcher_opts |> Keyword.put(:repo, repo) |> Keyword.merge(opts)
