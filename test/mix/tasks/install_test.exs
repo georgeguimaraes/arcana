@@ -128,7 +128,8 @@ defmodule Mix.Tasks.Arcana.InstallTest do
     end
     """
 
-    test_project(files: %{"lib/test/broken.ex" => broken})
+    test_project()
+    |> add_file_after_setup("lib/test/broken.ex", broken)
     |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
     |> assert_creates("lib/test/postgrex_types.ex")
     |> assert_has_notice(&(&1 =~ "could not parse these files"))
@@ -144,10 +145,23 @@ defmodule Mix.Tasks.Arcana.InstallTest do
     """
 
     igniter =
-      test_project(files: %{"lib/test/unrelated.ex" => broken})
+      test_project()
+      |> add_file_after_setup("lib/test/unrelated.ex", broken)
       |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
 
     assert_creates(igniter, "lib/test/postgrex_types.ex")
     refute Enum.any?(igniter.notices, &(&1 =~ "could not parse these files"))
+  end
+
+  # Files passed to `test_project(files: ...)` are pulled into the rewrite by
+  # its own `include_glob("**/*.*")`, which parses each one eagerly - so a
+  # deliberately unparsable fixture blows up before the installer ever runs.
+  # That glob is matched against absolute paths, and it silently matches
+  # nothing when the checkout lives under a dot-directory (git worktrees under
+  # `.claude/`, for one), which is why doing it the other way looks fine
+  # locally and fails on CI. Adding the file afterwards keeps the fixture out
+  # of that glob so the installer is the only thing that ever reads it.
+  defp add_file_after_setup(igniter, path, content) do
+    Igniter.assign(igniter, :test_files, Map.put(igniter.assigns.test_files, path, content))
   end
 end
