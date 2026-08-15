@@ -77,12 +77,14 @@ defmodule Arcana.FileParser.PDF do
   metadata (see `Arcana.FileParser`) have it dropped here, so this
   function's contract is unchanged. Use `Arcana.FileParser.parse/3` or
   `Arcana.Parser.parse_file/2` to receive it.
-  """
-  def parse({module, opts}, path_or_binary, call_opts \\ []) when is_atom(module) do
-    merged_opts = Keyword.merge(opts, call_opts)
 
-    case module.parse(path_or_binary, merged_opts) do
-      {:ok, text} -> {:ok, text}
+  Dispatch itself goes through `Arcana.FileParser.parse/3`, so a PDF
+  parser reporting itself unavailable (`available?/0`) is not invoked
+  and a parser returning something malformed comes back as an error
+  tuple rather than a `CaseClauseError` from inside the library.
+  """
+  def parse({module, _opts} = parser, path_or_binary, call_opts \\ []) when is_atom(module) do
+    case Arcana.FileParser.parse(parser, path_or_binary, call_opts) do
       {:ok, text, _meta} -> {:ok, text}
       {:error, reason} -> {:error, reason}
     end

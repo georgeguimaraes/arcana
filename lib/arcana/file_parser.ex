@@ -45,6 +45,12 @@ defmodule Arcana.FileParser do
         def available?, do: true
       end
 
+  The gate lives in `parse/3`, so every dispatch path gets it: this
+  module, `Arcana.FileParser.PDF.parse/3`, and everything routed through
+  `Arcana.Parser`. The one exception to the error shape is the built-in
+  `Arcana.FileParser.PDF.Poppler`, which reports `:poppler_not_available`
+  for backwards compatibility — see `unavailable_reason/1`.
+
   ## Positional metadata
 
   `parse/2` may return `{:ok, text, meta}` instead of `{:ok, text}`.
@@ -81,8 +87,21 @@ defmodule Arcana.FileParser do
 
   Parsers predating positional metadata return `{:ok, text}`; those come
   back here as `{:ok, text, %{}}` so callers only handle one shape.
+
+  A parser reporting itself unavailable (`available?/0`) is never
+  invoked: this returns `{:error, unavailable_reason(parser)}` instead.
+  The check lives here rather than in a caller so that every route into
+  a parser carries the same guarantee.
   """
-  def parse({module, parser_opts}, input, call_opts \\ []) do
+  def parse({_module, _parser_opts} = parser, input, call_opts \\ []) do
+    if available?(parser) do
+      invoke(parser, input, call_opts)
+    else
+      {:error, unavailable_reason(parser)}
+    end
+  end
+
+  defp invoke({module, parser_opts}, input, call_opts) do
     opts = Keyword.merge(parser_opts, call_opts)
 
     case module.parse(input, opts) do
@@ -133,4 +152,18 @@ defmodule Arcana.FileParser do
       true -> true
     end
   end
+
+  @doc """
+  The error reported for a parser that can't run.
+
+  `{:parser_unavailable, module}` for every parser but the built-in
+  Poppler one, which has reported `:poppler_not_available` since before
+  this gate existed and whose callers match on it.
+
+  Callers that decide between several failure reasons (`Arcana.Parser`
+  weighing this against `:binary_unsupported`, say) need the reason
+  without invoking the parser, which is why this is public.
+  """
+  def unavailable_reason({Arcana.FileParser.PDF.Poppler, _opts}), do: :poppler_not_available
+  def unavailable_reason({module, _opts}), do: {:parser_unavailable, module}
 end

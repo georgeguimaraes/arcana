@@ -129,6 +129,10 @@ defmodule Arcana.Parser do
   The resolved parser must accept binary input (`supports_binary?/0`),
   otherwise returns `{:error, {:binary_unsupported, module}}`. Natively
   handled text formats always work.
+
+  When a parser is both unavailable (`available?/0`) and path-only,
+  unavailability wins: this returns `{:error, {:parser_unavailable,
+  module}}`, the same reason the path-based flow gives.
   """
   def parse_binary(binary, filename, opts \\ []) when is_binary(binary) do
     extension = Path.extname(filename)
@@ -138,10 +142,19 @@ defmodule Arcana.Parser do
         {:ok, binary, %{}}
 
       {:ok, {module, _} = parser} ->
-        if FileParser.supports_binary?(parser) do
-          validate_and_parse(binary, :binary, extension, parser, opts)
-        else
-          {:error, {:binary_unsupported, module}}
+        cond do
+          FileParser.supports_binary?(parser) ->
+            validate_and_parse(binary, :binary, extension, parser, opts)
+
+          # A parser that can't run won't handle a file path either, so
+          # reporting :binary_unsupported would send the caller off to a
+          # retry that fails just the same. Unavailability wins, keeping
+          # this flow's reason identical to the path-based one.
+          not FileParser.available?(parser) ->
+            {:error, FileParser.unavailable_reason(parser)}
+
+          true ->
+            {:error, {:binary_unsupported, module}}
         end
 
       {:error, reason} ->
@@ -225,7 +238,7 @@ defmodule Arcana.Parser do
       case pdf_content(input, kind) do
         {:ok, content} ->
           if String.starts_with?(content, "%PDF") do
-            invoke(parser, input, opts)
+            FileParser.parse(parser, input, opts)
           else
             {:error, :invalid_pdf}
           end
@@ -234,27 +247,9 @@ defmodule Arcana.Parser do
           error
       end
     else
-      invoke(parser, input, opts)
-    end
-  end
-
-  # A parser that reports itself unavailable (`available?/0`) doesn't get
-  # called. Poppler self-guards, so this used to be harmless for the
-  # built-in route, but a third-party parser written to the documented
-  # contract was invoked anyway.
-  defp invoke(parser, input, opts) do
-    if FileParser.available?(parser) do
       FileParser.parse(parser, input, opts)
-    else
-      {:error, unavailable_reason(parser)}
     end
   end
-
-  # Poppler has reported :poppler_not_available since before this gate
-  # existed and callers match on it; keep that exact shape for the
-  # built-in and give everyone else the generic error.
-  defp unavailable_reason({Arcana.FileParser.PDF.Poppler, _opts}), do: :poppler_not_available
-  defp unavailable_reason({module, _opts}), do: {:parser_unavailable, module}
 
   defp pdf_content(binary, :binary), do: {:ok, binary}
 

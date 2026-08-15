@@ -81,6 +81,8 @@ end
 defmodule Arcana.FileParserRegistryTest do
   use Arcana.DataCase, async: true
 
+  alias Arcana.FileParser
+  alias Arcana.FileParser.PDF
   alias Arcana.Parser
 
   defp temp_file(content, extension) do
@@ -327,6 +329,41 @@ defmodule Arcana.FileParserRegistryTest do
 
       assert {:error, {:parser_unavailable, MustNotRunParser}} =
                Arcana.ingest_binary("x", filename: "report.docx", repo: Repo)
+    end
+
+    test "the public parser wrapper gates too, not just Arcana.Parser" do
+      # FileParser.parse/3 is public API; callers reaching for it directly
+      # got the parser invoked anyway, so the documented guarantee held
+      # only for the Arcana.Parser route.
+      assert {:error, {:parser_unavailable, MustNotRunParser}} =
+               FileParser.parse({MustNotRunParser, []}, "raw bytes")
+    end
+
+    test "the PDF wrapper routes through the same gate" do
+      assert {:error, {:parser_unavailable, MustNotRunParser}} =
+               PDF.parse({MustNotRunParser, []}, "/tmp/whatever.pdf")
+    end
+
+    test "the built-in Poppler parser keeps reporting :poppler_not_available" do
+      # Callers have matched on this bare atom since before the gate
+      # existed. Every other parser gets the generic tuple.
+      assert FileParser.unavailable_reason({PDF.Poppler, []}) == :poppler_not_available
+
+      assert FileParser.unavailable_reason({MustNotRunParser, []}) ==
+               {:parser_unavailable, MustNotRunParser}
+    end
+
+    test "an unavailable path-only parser reports unavailability, not binary_unsupported" do
+      # Both conditions hold here: the supports_binary? short-circuit used
+      # to answer first, so a caller matching {:parser_unavailable, _}
+      # missed it on the binary path while catching it on the path one.
+      put_arcana_env(:file_parsers, %{".docx" => UnavailableParser})
+
+      assert {:error, {:parser_unavailable, UnavailableParser}} =
+               Parser.parse_binary("raw", "report.docx")
+
+      path = temp_file("x", ".docx")
+      assert {:error, {:parser_unavailable, UnavailableParser}} = Parser.parse(path)
     end
   end
 
