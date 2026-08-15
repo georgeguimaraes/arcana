@@ -240,6 +240,15 @@ defmodule Arcana.Config do
   end
 
   @doc """
+  Returns the repo from opts or the global config, raising when neither
+  is set.
+  """
+  def require_repo!(opts) do
+    opts[:repo] || get_env(:repo) ||
+      raise ArgumentError, "repo is required"
+  end
+
+  @doc """
   Returns the value for `key` from opts, falling back to the global app env.
 
   Used to thread configuration like `:repo` and `:llm` from per-call opts

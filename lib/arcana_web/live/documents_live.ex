@@ -51,37 +51,19 @@ defmodule ArcanaWeb.DocumentsLive do
   end
 
   defp load_documents(socket) do
-    repo = socket.assigns.repo
     page = socket.assigns.page
     per_page = socket.assigns.per_page
-    filter_collection = socket.assigns.filter_collection
 
-    base_query =
-      from(d in Document,
-        order_by: [desc: d.inserted_at],
-        preload: [:collection]
-      )
+    filters = [
+      repo: socket.assigns.repo,
+      collection: socket.assigns.filter_collection
+    ]
 
-    filtered_query =
-      if filter_collection do
-        from(d in base_query,
-          join: c in assoc(d, :collection),
-          where: c.name == ^filter_collection
-        )
-      else
-        base_query
-      end
-
-    total_count = repo.aggregate(filtered_query, :count)
+    {:ok, total_count} = Arcana.count_documents(filters)
     total_pages = max(1, ceil(total_count / per_page))
 
-    documents =
-      repo.all(
-        from(d in filtered_query,
-          offset: ^((page - 1) * per_page),
-          limit: ^per_page
-        )
-      )
+    {:ok, documents} =
+      Arcana.list_documents(filters ++ [limit: per_page, offset: (page - 1) * per_page])
 
     assign(socket,
       documents: documents,

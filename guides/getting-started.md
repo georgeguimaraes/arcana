@@ -284,6 +284,29 @@ false
 > **Note:** PDF support requires a PDF parser. The default uses Poppler's `pdftotext`.
 > See [PDF Parsing Configuration](#pdf-parsing-configuration) for installation and custom parsers.
 
+### Listing and Reading Documents
+
+Build admin surfaces or assert on ingestion outcomes without touching
+Arcana's schemas directly:
+
+```elixir
+# List a collection's documents (newest first, collection preloaded)
+{:ok, docs} = Arcana.list_documents(repo: MyApp.Repo, collection: "products")
+
+# Filter by status or source, paginate
+{:ok, failed} = Arcana.list_documents(repo: MyApp.Repo, status: :failed)
+{:ok, page2} = Arcana.list_documents(repo: MyApp.Repo, limit: 20, offset: 20)
+{:ok, total} = Arcana.count_documents(repo: MyApp.Repo, collection: "products")
+
+# Read one, delete one
+{:ok, document} = Arcana.get_document(id, repo: MyApp.Repo)
+:ok = Arcana.delete(id, repo: MyApp.Repo)
+```
+
+`Arcana.Document` is the stable public shape: `id`, `status`, `chunk_count`,
+`metadata`, `source_id`, `content_type`, timestamps, and the preloaded
+`collection`.
+
 ### Searching
 
 ```elixir

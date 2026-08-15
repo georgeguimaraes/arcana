@@ -94,6 +94,22 @@ defmodule Arcana do
   # === Document Management ===
 
   @doc """
+  Lists documents, newest first. See `Arcana.Documents.list_documents/1`.
+  """
+  defdelegate list_documents(opts), to: Arcana.Documents
+
+  @doc """
+  Counts documents matching the `list_documents/1` filters.
+  See `Arcana.Documents.count_documents/1`.
+  """
+  defdelegate count_documents(opts), to: Arcana.Documents
+
+  @doc """
+  Fetches a document by id. See `Arcana.Documents.get_document/2`.
+  """
+  defdelegate get_document(id, opts), to: Arcana.Documents
+
+  @doc """
   Deletes a document and all its chunks.
 
   ## Options
@@ -102,9 +118,7 @@ defmodule Arcana do
 
   """
   def delete(document_id, opts) do
-    repo =
-      opts[:repo] || Arcana.Config.get_env(:repo) ||
-        raise ArgumentError, "repo is required"
+    repo = Arcana.Config.require_repo!(opts)
 
     case repo.get(Document, document_id) do
       nil -> {:error, :not_found}
