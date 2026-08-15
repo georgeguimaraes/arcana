@@ -372,7 +372,7 @@ defmodule Arcana.Ingest do
     Enum.map(chunks, fn chunk ->
       metadata = Map.get(chunk, :metadata) || %{}
 
-      case {metadata["start_byte"], metadata["end_byte"]} do
+      case {chunk_offset(chunk, metadata, :start_byte), chunk_offset(chunk, metadata, :end_byte)} do
         {start_byte, end_byte} when is_integer(start_byte) and is_integer(end_byte) ->
           last_byte = max(end_byte - 1, start_byte)
 
@@ -390,6 +390,23 @@ defmodule Arcana.Ingest do
   end
 
   defp attach_pages(chunks, _pages), do: chunks
+
+  # Keys are only stringified at insert time (see `chunk_metadata/1`), so
+  # this runs against whatever shape the chunker used. `Arcana.Chunker`
+  # accepts offsets under `:metadata` or as top-level extras, with atom or
+  # string keys; reading just one shape drops pages silently for every
+  # chunker but the built-in one. Precedence mirrors chunk_metadata/1:
+  # a declared :metadata entry wins over a top-level extra.
+  defp chunk_offset(chunk, metadata, key) do
+    fetch_either(metadata, key) || fetch_either(chunk, key)
+  end
+
+  defp fetch_either(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, to_string(key))
+    end
+  end
 
   # Pages that trimming emptied out have start == end and can't contain
   # anything, so they never match; a byte past the last page's end (the

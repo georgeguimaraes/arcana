@@ -268,6 +268,52 @@ defmodule Arcana.IngestBinaryTest do
       assert chunks |> Enum.map(& &1.metadata["page_start"]) |> Enum.uniq() |> length() > 1
     end
 
+    test "a custom chunker's atom-keyed offsets still get pages" do
+      [_page_one, page_two, _page_three] = PagedFixtureParser.pages()
+
+      put_arcana_env(:chunker, fn text, _opts ->
+        [
+          %{
+            text: binary_part(text, page_two.start, page_two.end - page_two.start),
+            chunk_index: 0,
+            token_count: 5,
+            metadata: %{start_byte: page_two.start, end_byte: page_two.end}
+          }
+        ]
+      end)
+
+      assert {:ok, document} =
+               Arcana.ingest_binary("ignored", filename: "doc.paged", repo: Repo)
+
+      assert [chunk] = chunks_of(document)
+      assert chunk.metadata["start_byte"] == page_two.start
+      assert chunk.metadata["page_start"] == 2
+      assert chunk.metadata["page_end"] == 2
+    end
+
+    test "offsets handed back as top-level extras still get pages" do
+      [_page_one, _page_two, page_three] = PagedFixtureParser.pages()
+
+      put_arcana_env(:chunker, fn text, _opts ->
+        [
+          %{
+            text: binary_part(text, page_three.start, page_three.end - page_three.start),
+            chunk_index: 0,
+            token_count: 5,
+            start_byte: page_three.start,
+            end_byte: page_three.end
+          }
+        ]
+      end)
+
+      assert {:ok, document} =
+               Arcana.ingest_binary("ignored", filename: "doc.paged", repo: Repo)
+
+      assert [chunk] = chunks_of(document)
+      assert chunk.metadata["page_start"] == 3
+      assert chunk.metadata["page_end"] == 3
+    end
+
     test "parsers without page metadata leave chunks page-free" do
       assert {:ok, document} =
                Arcana.ingest_binary("plain text with no pages at all",
