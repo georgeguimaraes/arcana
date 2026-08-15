@@ -727,7 +727,7 @@ defmodule Arcana.Loop do
     args_json =
       cond do
         is_binary(args) -> args
-        is_map(args) -> Jason.encode!(args)
+        is_map(args) -> JSON.encode!(args)
         true -> "{}"
       end
 

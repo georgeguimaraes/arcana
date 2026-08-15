@@ -40,7 +40,7 @@ defmodule Arcana.Reranker.CrossEncoder do
 
   use GenServer
 
-  @compile {:no_warn_undefined, Bumblebee}
+  @compile {:no_warn_undefined, [Bumblebee, Axon]}
 
   @default_model "cross-encoder/ms-marco-MiniLM-L-6-v2"
 

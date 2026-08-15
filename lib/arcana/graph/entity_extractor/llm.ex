@@ -149,7 +149,7 @@ defmodule Arcana.Graph.EntityExtractor.LLM do
       |> String.replace(~r/\n?```$/, "")
       |> String.trim()
 
-    case Jason.decode(cleaned) do
+    case JSON.decode(cleaned) do
       {:ok, entities} when is_list(entities) ->
         validated =
           entities

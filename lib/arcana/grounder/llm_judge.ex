@@ -94,13 +94,15 @@ defmodule Arcana.Grounder.LLMJudge do
     end
   end
 
+  @compile {:no_warn_undefined, [ReqLLM, ReqLLM.Context, ReqLLM.Response]}
+
   defp call_req_llm(question, answer, chunks, opts) do
     unless Code.ensure_loaded?(ReqLLM) do
       raise """
       Arcana.Grounder.LLMJudge requires ReqLLM.
 
       Add to mix.exs:
-        {:req_llm, "~> 1.6"}
+        {:req_llm, "~> 1.2"}
       """
     end
 
@@ -148,7 +150,7 @@ defmodule Arcana.Grounder.LLMJudge do
         {:error, :invalid_judge_response}
 
       json ->
-        case Jason.decode(json) do
+        case JSON.decode(json) do
           {:ok, map} when is_map(map) -> {:ok, normalize_top_level(map)}
           _ -> {:error, :invalid_judge_response}
         end
