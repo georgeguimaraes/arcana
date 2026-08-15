@@ -79,5 +79,21 @@ defmodule Arcana.DocumentsTest do
     test "returns not_found for a missing id" do
       assert {:error, :not_found} = Arcana.get_document(Ecto.UUID.generate(), repo: Repo)
     end
+
+    test "returns not_found for a malformed id instead of raising" do
+      assert {:error, :not_found} = Arcana.get_document("not-a-uuid", repo: Repo)
+    end
+  end
+
+  describe "list_documents/1 argument validation" do
+    test "rejects negative or non-integer limit/offset" do
+      assert_raise ArgumentError, ~r/must be a non-negative integer/, fn ->
+        Arcana.list_documents(repo: Repo, limit: -1)
+      end
+
+      assert_raise ArgumentError, ~r/must be a non-negative integer/, fn ->
+        Arcana.list_documents(repo: Repo, offset: "20")
+      end
+    end
   end
 end

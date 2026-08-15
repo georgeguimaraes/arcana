@@ -38,8 +38,8 @@ defmodule Arcana.Documents do
   """
   def list_documents(opts) do
     repo = require_repo!(opts)
-    limit = Keyword.get(opts, :limit, 50)
-    offset = Keyword.get(opts, :offset, 0)
+    limit = validate_non_neg_integer!(opts, :limit, 50)
+    offset = validate_non_neg_integer!(opts, :offset, 0)
 
     documents =
       opts
@@ -85,9 +85,13 @@ defmodule Arcana.Documents do
   def get_document(id, opts) do
     repo = require_repo!(opts)
 
-    case repo.one(from(d in Document, where: d.id == ^id, preload: [:collection])) do
-      nil -> {:error, :not_found}
-      document -> {:ok, document}
+    with {:ok, uuid} <- Ecto.UUID.cast(id),
+         %Document{} = document <-
+           repo.one(from(d in Document, where: d.id == ^uuid, preload: [:collection])) do
+      {:ok, document}
+    else
+      # Malformed ids can't match anything, same outcome as a missing row
+      _ -> {:error, :not_found}
     end
   end
 
@@ -114,4 +118,15 @@ defmodule Arcana.Documents do
   defp filter_source_id(query, source_id), do: from(d in query, where: d.source_id == ^source_id)
 
   defp require_repo!(opts), do: Arcana.Config.require_repo!(opts)
+
+  defp validate_non_neg_integer!(opts, key, default) do
+    case Keyword.get(opts, key, default) do
+      value when is_integer(value) and value >= 0 ->
+        value
+
+      other ->
+        raise ArgumentError,
+              "#{inspect(key)} must be a non-negative integer, got: #{inspect(other)}"
+    end
+  end
 end
