@@ -327,6 +327,34 @@ defmodule Arcana.IngestBinaryTest do
       assert chunk.metadata["page_end"] == 3
     end
 
+    test "a declared nil offset wins over a top-level extra, matching what gets stored" do
+      [_page_one, _page_two, page_three] = PagedFixtureParser.pages()
+
+      put_arcana_env(:chunker, fn text, _opts ->
+        [
+          %{
+            text: text,
+            chunk_index: 0,
+            token_count: 5,
+            start_byte: page_three.start,
+            end_byte: page_three.end,
+            metadata: %{start_byte: nil, end_byte: nil}
+          }
+        ]
+      end)
+
+      assert {:ok, document} =
+               Arcana.ingest_binary("ignored", filename: "doc.paged", repo: Repo)
+
+      assert [chunk] = chunks_of(document)
+
+      # the declared entry is what reaches storage, so deriving pages from
+      # the shadowed top-level extra would cite an offset nobody can see
+      assert chunk.metadata["start_byte"] == nil
+      refute Map.has_key?(chunk.metadata, "page_start")
+      refute Map.has_key?(chunk.metadata, "page_end")
+    end
+
     test "parsers without page metadata leave chunks page-free" do
       assert {:ok, document} =
                Arcana.ingest_binary("plain text with no pages at all",

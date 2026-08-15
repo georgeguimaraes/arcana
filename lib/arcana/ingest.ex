@@ -379,16 +379,28 @@ defmodule Arcana.Ingest do
   # this runs against whatever shape the chunker used. `Arcana.Chunker`
   # accepts offsets under `:metadata` or as top-level extras, with atom or
   # string keys; reading just one shape drops pages silently for every
-  # chunker but the built-in one. Precedence mirrors metadata_for/1:
-  # a declared :metadata entry wins over a top-level extra.
+  # chunker but the built-in one. Precedence mirrors metadata_for/1
+  # exactly: a declared :metadata entry wins over a top-level extra
+  # because it is *present*, not because it is truthy. Falling through on
+  # a nil or false value would read an offset that never reaches storage.
   defp chunk_offset(chunk, metadata, key) do
-    fetch_either(metadata, key) || fetch_either(chunk, key)
+    case fetch_either(metadata, key) do
+      {:ok, value} -> value
+      :error -> fetch_or_nil(chunk, key)
+    end
+  end
+
+  defp fetch_or_nil(map, key) do
+    case fetch_either(map, key) do
+      {:ok, value} -> value
+      :error -> nil
+    end
   end
 
   defp fetch_either(map, key) do
     case Map.fetch(map, key) do
-      {:ok, value} -> value
-      :error -> Map.get(map, to_string(key))
+      {:ok, value} -> {:ok, value}
+      :error -> Map.fetch(map, to_string(key))
     end
   end
 
