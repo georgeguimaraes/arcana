@@ -250,6 +250,31 @@ defmodule Arcana.ConfigTest do
       assert stderr =~ "config :arcana, repo: Arcana.TestRepo"
     end
 
+    test "raises when :repo is explicitly false instead of scanning per-repo entries" do
+      put_arcana_env(:repo, false)
+
+      error = assert_raise ArgumentError, fn -> Config.repo!() end
+
+      assert error.message =~ "no Ecto repo configured"
+      assert error.message =~ "`repo: false` disables repo resolution"
+    end
+
+    test "raises for an explicit false in a passed env" do
+      env = [{:repo, false}, {FakeRepoOne, [priv: "priv/one"]}]
+
+      error = assert_raise ArgumentError, fn -> Config.repo!(env) end
+
+      assert error.message =~ "no Ecto repo configured"
+    end
+
+    test "treats a nil :repo in a passed env as absent" do
+      env = [{:repo, nil}, {FakeRepoOne, [priv: "priv/one"]}]
+
+      {repo, _stderr} = ExUnit.CaptureIO.with_io(:stderr, fn -> Config.repo!(env) end)
+
+      assert repo == FakeRepoOne
+    end
+
     test ":repo key wins over per-repo entries" do
       env = [{:repo, Arcana.TestRepo}, {FakeRepoOne, [priv: "priv/one"]}]
       assert Config.repo!(env) == Arcana.TestRepo
