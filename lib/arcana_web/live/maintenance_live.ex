@@ -31,6 +31,11 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
          detect_communities_running: false,
          detect_communities_progress: nil,
          detect_communities_collection: nil,
+         summarize_communities_running: false,
+         summarize_communities_progress: nil,
+         summarize_communities_collection: nil,
+         llm_configured?: not is_nil(Arcana.Config.get_env(:llm)),
+         unsummarized_communities: 0,
          collections: [],
          collections_for_assign: [],
          orphaned_stats: %{entities: 0, relationships: 0},
@@ -53,6 +58,20 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       |> assign(collections: Enum.map(collections, & &1.name))
       |> assign(collections_for_assign: collections)
       |> assign(orphaned_stats: count_orphaned_graph_data(repo))
+      |> assign(unsummarized_communities: count_unsummarized_communities(repo))
+    end
+
+    # Communities the summarizer would pick up: without a summary they're
+    # invisible to `ask(graph: true)`, dirty ones carry a stale summary.
+    defp count_unsummarized_communities(repo) do
+      repo.one(
+        from(c in Arcana.Graph.Community,
+          where: is_nil(c.summary) or c.summary == "" or c.dirty,
+          select: count(c.id)
+        )
+      ) || 0
+    rescue
+      _ -> 0
     end
 
     defp fetch_collections(repo) do
@@ -140,9 +159,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         )
 
       ArcanaWeb.TaskSupervisor.start_child(fn ->
-        progress_fn = fn current, total ->
-          send(parent, {:rebuild_graph_progress, current, total})
-        end
+        progress_fn = progress_sender(parent, :rebuild_graph_progress)
 
         opts = [progress: progress_fn]
         opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
@@ -174,9 +191,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         )
 
       ArcanaWeb.TaskSupervisor.start_child(fn ->
-        progress_fn = fn current, total ->
-          send(parent, {:detect_communities_progress, current, total})
-        end
+        progress_fn = progress_sender(parent, :detect_communities_progress)
 
         opts = [progress: progress_fn]
         opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
@@ -185,6 +200,24 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       end)
 
       {:noreply, socket}
+    end
+
+    def handle_event(
+          "select_summarize_communities_collection",
+          %{"collection" => collection},
+          socket
+        ) do
+      collection = if collection == "", do: nil, else: collection
+      {:noreply, assign(socket, summarize_communities_collection: collection)}
+    end
+
+    def handle_event("summarize_communities", _params, socket) do
+      if socket.assigns.llm_configured? do
+        {:noreply, start_summarize_communities(socket)}
+      else
+        {:noreply,
+         put_flash(socket, :error, "No LLM configured. Set :arcana, :llm in your config.")}
+      end
     end
 
     def handle_event("select_assign_collection", %{"collection" => collection}, socket) do
@@ -230,6 +263,47 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         )
 
       {:noreply, socket}
+    end
+
+    defp start_summarize_communities(socket) do
+      repo = socket.assigns.repo
+      collection = socket.assigns.summarize_communities_collection
+      parent = self()
+
+      ArcanaWeb.TaskSupervisor.start_child(fn ->
+        progress_fn = progress_sender(parent, :summarize_communities_progress)
+
+        opts = [progress: progress_fn]
+        opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
+
+        result =
+          try do
+            Arcana.Maintenance.summarize_communities(repo, opts)
+          rescue
+            error -> {:error, Exception.message(error)}
+          end
+
+        send(parent, {:summarize_communities_complete, result})
+      end)
+
+      assign(socket,
+        summarize_communities_running: true,
+        summarize_communities_progress: %{current: 0, total: 0}
+      )
+    end
+
+    # Maintenance progress callbacks are called both with numeric
+    # `current, total` and with `stage, payload` pairs (`:collection_start`
+    # and friends). Only the numeric form drives the progress bar; the
+    # stage form is ignored so the callers fall back to numeric progress.
+    defp progress_sender(parent, tag) do
+      fn
+        current, total when is_integer(current) and is_integer(total) ->
+          send(parent, {tag, current, total})
+
+        _stage, _payload ->
+          :ok
+      end
     end
 
     defp assign_orphaned_to_collection(repo, collection_id) do
@@ -333,6 +407,29 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
             socket
             |> assign(detect_communities_running: false, detect_communities_progress: nil)
             |> put_flash(:error, "Community detection failed: #{inspect(reason)}")
+        end
+
+      {:noreply, socket}
+    end
+
+    def handle_info({:summarize_communities_progress, current, total}, socket) do
+      {:noreply,
+       assign(socket, summarize_communities_progress: %{current: current, total: total})}
+    end
+
+    def handle_info({:summarize_communities_complete, result}, socket) do
+      socket =
+        case result do
+          {:ok, %{summaries: summaries}} ->
+            socket
+            |> assign(summarize_communities_running: false, summarize_communities_progress: nil)
+            |> load_data()
+            |> put_flash(:info, "Summarized #{summaries} communities successfully!")
+
+          {:error, reason} ->
+            socket
+            |> assign(summarize_communities_running: false, summarize_communities_progress: nil)
+            |> put_flash(:error, "Community summarization failed: #{inspect(reason)}")
         end
 
       {:noreply, socket}
@@ -527,6 +624,80 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
                 >
                   Detect Communities
                 </button>
+              </div>
+            <% end %>
+          </div>
+
+          <div class="arcana-maintenance-section">
+            <h3>Summarize Communities</h3>
+            <p style="color: #6b7280; margin-bottom: 1rem; font-size: 0.875rem;">
+              Generate LLM summaries for detected communities.
+              Detection alone isn't enough: communities without a summary are skipped
+              when answering with <code>graph: true</code>.
+            </p>
+
+            <%= if @unsummarized_communities > 0 do %>
+              <p class="arcana-summarize-hint" style="color: #b45309; margin-bottom: 1rem; font-size: 0.875rem;">
+                <%= @unsummarized_communities %> communities need summarizing.
+              </p>
+            <% end %>
+
+            <%= if @llm_configured? do %>
+              <%= if @summarize_communities_running do %>
+                <div class="arcana-progress">
+                  <div class="arcana-progress-text">
+                    Summarizing communities... <%= @summarize_communities_progress.current %>/<%= @summarize_communities_progress.total %> collections
+                  </div>
+                  <%= if @summarize_communities_progress.total > 0 do %>
+                    <progress
+                      value={@summarize_communities_progress.current}
+                      max={@summarize_communities_progress.total}
+                      style="width: 100%; height: 1rem;"
+                    >
+                      <%= round(
+                        @summarize_communities_progress.current /
+                          @summarize_communities_progress.total * 100
+                      ) %>%
+                    </progress>
+                  <% end %>
+                </div>
+              <% else %>
+                <div style="display: flex; gap: 0.75rem; align-items: stretch;">
+                  <select
+                    phx-change="select_summarize_communities_collection"
+                    name="collection"
+                    style="padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem; background: white; min-width: 160px;"
+                  >
+                    <option value="">All Collections</option>
+                    <%= for collection <- @collections do %>
+                      <option
+                        value={collection}
+                        selected={@summarize_communities_collection == collection}
+                      >
+                        <%= collection %>
+                      </option>
+                    <% end %>
+                  </select>
+                  <button
+                    phx-click="summarize_communities"
+                    style="background: #6366f1; color: white; padding: 0.5rem 1rem; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: pointer; white-space: nowrap;"
+                  >
+                    Summarize Communities
+                  </button>
+                </div>
+              <% end %>
+            <% else %>
+              <div style="display: flex; gap: 0.75rem; align-items: center;">
+                <button
+                  disabled
+                  class="arcana-summarize-btn"
+                  style="background: #9ca3af; color: white; padding: 0.5rem 1rem; border: none; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500; cursor: not-allowed; white-space: nowrap; opacity: 0.5;"
+                >
+                  Summarize Communities
+                </button>
+                <span style="color: #6b7280; font-size: 0.875rem;">
+                  No LLM configured. Set :arcana, :llm in your config.
+                </span>
               </div>
             <% end %>
           </div>
