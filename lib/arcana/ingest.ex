@@ -104,9 +104,7 @@ defmodule Arcana.Ingest do
 
   # Private functions
 
-  defp require_repo!(opts) do
-    Arcana.Config.get(opts, :repo) || raise ArgumentError, "repo is required"
-  end
+  defp require_repo!(opts), do: Arcana.Config.require_repo!(opts)
 
   defp finalize_ingest(document, chunk_records, collection, repo, opts) do
     maybe_build_graph(chunk_records, collection, repo, opts)
