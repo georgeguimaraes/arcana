@@ -36,6 +36,7 @@ defmodule Arcana.MixProject do
         "README.md",
         "guides/getting-started.md",
         "guides/llm-integration.md",
+        "guides/oban-ingestion.md",
         "guides/pipeline.md",
         "guides/loop.md",
         "guides/graphrag.md",
