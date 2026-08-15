@@ -14,7 +14,7 @@ defmodule Arcana.Chunk do
 
   schema "arcana_chunks" do
     field(:text, :string)
-    field(:embedding, Pgvector.Ecto.Vector)
+    field(:embedding, Arcana.Ecto.Vector)
     field(:chunk_index, :integer, default: 0)
     field(:token_count, :integer)
     field(:metadata, :map, default: %{})
