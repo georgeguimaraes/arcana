@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2](https://github.com/georgeguimaraes/arcana/compare/v2.0.1...v2.0.2) (2026-08-15)
+
+
+### Bug Fixes
+
+* **test:** Eliminate async config races, make every test file async: true ([#81](https://github.com/georgeguimaraes/arcana/issues/81)) ([0358b1e](https://github.com/georgeguimaraes/arcana/commit/0358b1ec1821e6d513a83859bba758e8c8d4ed33))
+
+
+### Miscellaneous
+
+* **deps-dev:** bump credo from 1.7.18 to 1.7.19 ([#86](https://github.com/georgeguimaraes/arcana/issues/86)) ([66d9dfa](https://github.com/georgeguimaraes/arcana/commit/66d9dfa768303a34333607a843056155aecaf932))
+* **deps-dev:** bump floki from 0.38.1 to 0.38.4 ([#83](https://github.com/georgeguimaraes/arcana/issues/83)) ([07bca09](https://github.com/georgeguimaraes/arcana/commit/07bca0952e780f3c4dae1979f186c56212768438))
+* **deps-dev:** bump lazy_html from 0.1.11 to 0.1.12 ([#82](https://github.com/georgeguimaraes/arcana/issues/82)) ([73954e0](https://github.com/georgeguimaraes/arcana/commit/73954e0df261565e4decdd2f9b0754acda994f3f))
+* **deps:** bump igniter from 0.8.0 to 0.8.3 ([#85](https://github.com/georgeguimaraes/arcana/issues/85)) ([3786296](https://github.com/georgeguimaraes/arcana/commit/3786296e55ed55bf5b545865ef767a5c8a16c107))
+* **deps:** bump mdex from 0.12.2 to 0.13.5 ([#89](https://github.com/georgeguimaraes/arcana/issues/89)) ([c33e069](https://github.com/georgeguimaraes/arcana/commit/c33e06990f83948e3a5ef9ddbf51b5555d976b17))
+* **deps:** bump pgvector from 0.3.1 to 0.4.0 ([#84](https://github.com/georgeguimaraes/arcana/issues/84)) ([e0589ad](https://github.com/georgeguimaraes/arcana/commit/e0589ad97317a4bdd4a21982d0c10b97d23b7a5c))
+* **deps:** bump phoenix_live_view from 1.2.7 to 1.2.8 ([#88](https://github.com/georgeguimaraes/arcana/issues/88)) ([b0db40b](https://github.com/georgeguimaraes/arcana/commit/b0db40b34345c13917ef1368693acb97bc7a4a54))
+* **deps:** bump postgrex from 0.22.3 to 0.22.4 ([#93](https://github.com/georgeguimaraes/arcana/issues/93)) ([475e38a](https://github.com/georgeguimaraes/arcana/commit/475e38ac9499382cacaad3e76f495cf22d8d57fc))
+* **deps:** bump req_llm from 1.17.1 to 1.19.0 ([#92](https://github.com/georgeguimaraes/arcana/issues/92)) ([baee901](https://github.com/georgeguimaraes/arcana/commit/baee901ac324dfb1071f65dd3de6cf52a20b9011))
+* Fix type warning and prune stale lock entries ([#116](https://github.com/georgeguimaraes/arcana/issues/116)) ([4aa345a](https://github.com/georgeguimaraes/arcana/commit/4aa345aa35b3e999cfa6fb79c74eb678246be149))
+* Fix type warning in graph_live and prune stale lock entries ([4aa345a](https://github.com/georgeguimaraes/arcana/commit/4aa345aa35b3e999cfa6fb79c74eb678246be149))
+
 ## [2.0.1](https://github.com/georgeguimaraes/arcana/compare/v2.0.0...v2.0.1) (2026-07-24)
 
 
