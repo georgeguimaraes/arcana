@@ -3,6 +3,57 @@ defmodule Arcana.GraphIntegrationTest do
 
   alias Arcana.Graph.{Entity, EntityMention, Relationship}
 
+  defp create_collection(name) do
+    %Arcana.Collection{}
+    |> Arcana.Collection.changeset(%{name: name})
+    |> Repo.insert!()
+  end
+
+  defp create_document(collection, attrs \\ %{}) do
+    %Arcana.Document{}
+    |> Arcana.Document.changeset(
+      Map.merge(
+        %{
+          title: "test-doc",
+          source: "test",
+          content: "Test document content",
+          collection_id: collection.id,
+          status: :completed
+        },
+        attrs
+      )
+    )
+    |> Repo.insert!()
+  end
+
+  defp create_chunk(document, text) do
+    %Arcana.Chunk{}
+    |> Arcana.Chunk.changeset(%{
+      text: text,
+      document_id: document.id,
+      embedding: Enum.map(1..384, fn _ -> :rand.uniform() end)
+    })
+    |> Repo.insert!()
+  end
+
+  defp create_entity(collection, name, type \\ "person") do
+    %Entity{}
+    |> Entity.changeset(%{name: name, type: type, collection_id: collection.id})
+    |> Repo.insert!()
+  end
+
+  defp create_mention(entity, chunk) do
+    %EntityMention{}
+    |> EntityMention.changeset(%{entity_id: entity.id, chunk_id: chunk.id})
+    |> Repo.insert!()
+  end
+
+  defp create_relationship(source, target, type \\ "knows") do
+    %Relationship{}
+    |> Relationship.changeset(%{source_id: source.id, target_id: target.id, type: type})
+    |> Repo.insert!()
+  end
+
   describe "graph_enabled?/1" do
     test "returns false when no option and config disabled" do
       refute Arcana.graph_enabled?([])
@@ -255,6 +306,129 @@ defmodule Arcana.GraphIntegrationTest do
         )
 
       assert length(results) == 1
+    end
+  end
+
+  describe "search/2 with graph_depth" do
+    # Entities: Alice -- Bob -- Carol (chained relationships) in "depth-test",
+    # plus Dave in "depth-other" linked to Alice across collections. Each
+    # entity is mentioned by exactly one chunk. The query matches only Alice
+    # (fixed NER matcher) and threshold: 0.99 suppresses vector results, so
+    # everything retrieved comes from the graph side.
+    setup do
+      collection = create_collection("depth-test")
+      other_collection = create_collection("depth-other")
+
+      document = create_document(collection, %{source_id: "scoped-source"})
+      other_document = create_document(other_collection)
+
+      chunk_a = create_chunk(document, "Chunk about Alice")
+      chunk_b = create_chunk(document, "Chunk about Bob")
+      chunk_c = create_chunk(document, "Chunk about Carol")
+      chunk_d = create_chunk(other_document, "Chunk about Dave")
+
+      alice = create_entity(collection, "Alice")
+      bob = create_entity(collection, "Bob")
+      carol = create_entity(collection, "Carol")
+      dave = create_entity(other_collection, "Dave")
+
+      create_mention(alice, chunk_a)
+      create_mention(bob, chunk_b)
+      create_mention(carol, chunk_c)
+      create_mention(dave, chunk_d)
+
+      create_relationship(alice, bob)
+      create_relationship(bob, carol)
+      create_relationship(alice, dave)
+
+      opts = [
+        repo: Repo,
+        graph: true,
+        collection: "depth-test",
+        threshold: 0.99,
+        entity_matcher: :ner,
+        entity_extractor: fn _query, _opts ->
+          {:ok, [%{name: "Alice", type: "person"}]}
+        end
+      ]
+
+      %{
+        opts: opts,
+        collection: collection,
+        bob: bob,
+        chunk_a: chunk_a,
+        chunk_b: chunk_b,
+        chunk_c: chunk_c,
+        chunk_d: chunk_d
+      }
+    end
+
+    test "default depth 0 returns only direct-mention chunks", ctx do
+      {:ok, results} = Arcana.search("Alice", ctx.opts)
+
+      ids = Enum.map(results, & &1.id)
+      assert ids == [ctx.chunk_a.id]
+    end
+
+    test "graph_depth: 0 returns exactly the default results", ctx do
+      {:ok, default_results} = Arcana.search("Alice", ctx.opts)
+      {:ok, depth_zero_results} = Arcana.search("Alice", Keyword.put(ctx.opts, :graph_depth, 0))
+
+      assert depth_zero_results == default_results
+    end
+
+    test "graph results honor :source_id at every hop", %{opts: opts} = ctx do
+      # Bob (a hop-1 neighbor of Alice) is also mentioned by a chunk in a
+      # different source; a source-scoped search must not surface it
+      other_source_doc = create_document(ctx.collection, %{source_id: "other-source"})
+      foreign_chunk = create_chunk(other_source_doc, "Bob in another source")
+      create_mention(ctx.bob, foreign_chunk)
+
+      scoped_opts =
+        opts
+        |> Keyword.put(:graph_depth, 1)
+        |> Keyword.put(:source_id, "scoped-source")
+
+      {:ok, results} = Arcana.search("Alice", scoped_opts)
+      ids = Enum.map(results, & &1.id)
+
+      assert ctx.chunk_a.id in ids
+      refute foreign_chunk.id in ids
+    end
+
+    test "graph_depth: 1 pulls in neighbor chunks ranked below direct matches", ctx do
+      {:ok, results} = Arcana.search("Alice", Keyword.put(ctx.opts, :graph_depth, 1))
+
+      assert [first, second] = results
+      assert first.id == ctx.chunk_a.id
+      assert second.id == ctx.chunk_b.id
+      assert first.score > second.score
+      refute ctx.chunk_c.id in Enum.map(results, & &1.id)
+    end
+
+    test "graph_depth: 2 reaches two-hop neighbors", ctx do
+      {:ok, results} = Arcana.search("Alice", Keyword.put(ctx.opts, :graph_depth, 2))
+
+      assert Enum.map(results, & &1.id) == [ctx.chunk_a.id, ctx.chunk_b.id, ctx.chunk_c.id]
+    end
+
+    test "expansion respects collection scoping", ctx do
+      {:ok, results} = Arcana.search("Alice", Keyword.put(ctx.opts, :graph_depth, 2))
+
+      ids = Enum.map(results, & &1.id)
+      # in-collection neighbors came in, the cross-collection one did not
+      assert ctx.chunk_b.id in ids
+      refute ctx.chunk_d.id in ids
+    end
+
+    test "global query_depth config applies and per-call graph_depth wins", ctx do
+      put_arcana_env(:graph, query_depth: 1)
+
+      {:ok, global_results} = Arcana.search("Alice", ctx.opts)
+      assert Enum.map(global_results, & &1.id) == [ctx.chunk_a.id, ctx.chunk_b.id]
+
+      {:ok, override_results} = Arcana.search("Alice", Keyword.put(ctx.opts, :graph_depth, 0))
+      assert Enum.map(override_results, & &1.id) == [ctx.chunk_a.id]
     end
   end
 

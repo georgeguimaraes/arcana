@@ -29,7 +29,10 @@ defmodule Arcana.Ask do
     * `:repo` - The Ecto repo to use (required)
     * `:llm` - Any type implementing the `Arcana.LLM` protocol (required)
     * `:limit` - Maximum number of context chunks to retrieve (default: 5)
-    * `:source_id` - Filter context to a specific source
+    * `:source_id` - Filter context to a specific source. Chunks, matched
+      entities, and relationships are scoped to it; community summaries
+      are collection-level artifacts and may describe entities beyond the
+      source. Use collections (see `:strict_collections`) for isolation.
     * `:threshold` - Minimum similarity score for context (default: 0.0)
     * `:mode` - Search mode: `:vector` (default), `:keyword`, or `:hybrid`.
       `:semantic` and `:fulltext` are deprecated aliases and log a warning.
@@ -40,6 +43,12 @@ defmodule Arcana.Ask do
     * `:reranker` - Reranker module/function (passed through to search)
     * `:rewriter` - Query rewriter (passed through to search)
     * `:graph` - Enable/disable GraphRAG (default: global config)
+    * `:graph_depth` - When GraphRAG is enabled, how many relationship hops
+      to expand matched entities (default: 0). Affects both retrieval (chunks
+      mentioning neighbor entities are pulled in, down-weighted per hop) and
+      the prompt's relationship context, which then includes edges from
+      matched entities to their expanded neighbors. The global default is
+      `config :arcana, graph: [query_depth: n]`.
 
   Defaults for `:limit` can be set globally:
 
@@ -204,7 +213,7 @@ defmodule Arcana.Ask do
 
   defp fetch_graph_context(question, repo, opts) do
     import Ecto.Query
-    alias Arcana.Graph.{Community, Entity, GraphStore, Relationship}
+    alias Arcana.Graph.{Community, GraphStore}
 
     graph_config = Arcana.Graph.config()
     entity_limit = graph_config[:context_entity_limit] || 10
@@ -229,23 +238,29 @@ defmodule Arcana.Ask do
           []
       end
 
+    # :source_id scopes the graph context too, not just the chunks:
+    # matched entities (and, through them, relationships and which
+    # communities are considered) are limited to the source. Community
+    # SUMMARY TEXT is not: a community is a collection-level cluster, so
+    # its summary can describe entities from other sources in the same
+    # collection. Collections, not sources, are the isolation boundary.
+    source_id = Keyword.get(opts, :source_id)
+    matched_entities = scope_entities_by_source(matched_entities, source_id, repo)
+
     if matched_entities == [] do
       %{}
     else
       entity_ids = Enum.map(matched_entities, & &1.id)
+      graph_depth = Arcana.Graph.query_depth(opts)
 
-      relationships =
-        repo.all(
-          from(r in Relationship,
-            join: src in Entity,
-            on: r.source_id == src.id,
-            join: tgt in Entity,
-            on: r.target_id == tgt.id,
-            where: r.source_id in ^entity_ids and r.target_id in ^entity_ids,
-            select: %{source: src.name, target: tgt.name, type: r.type},
-            limit: ^rel_limit
-          )
-        )
+      expanded_ids =
+        entity_ids
+        |> Arcana.Graph.expand_entity_ids(graph_depth, collection_ids, repo: repo)
+        |> Map.values()
+        |> List.flatten()
+        |> entity_ids_in_source(source_id, repo)
+
+      relationships = fetch_relationships(expanded_ids, entity_ids, graph_depth, rel_limit, repo)
 
       community_summaries =
         repo.all(
@@ -265,6 +280,81 @@ defmodule Arcana.Ask do
         community_summaries: community_summaries
       }
     end
+  end
+
+  # With no traversal the context keeps its original shape: only edges whose
+  # source AND target both matched the query. With graph_depth > 0 the edge
+  # closure runs over the expanded entity set, ordered so edges touching a
+  # directly matched entity win the limit over neighbor-to-neighbor edges.
+  defp fetch_relationships(expanded_ids, _matched_ids, 0, rel_limit, repo) do
+    import Ecto.Query
+    alias Arcana.Graph.{Entity, Relationship}
+
+    repo.all(
+      from(r in Relationship,
+        join: src in Entity,
+        on: r.source_id == src.id,
+        join: tgt in Entity,
+        on: r.target_id == tgt.id,
+        where: r.source_id in ^expanded_ids and r.target_id in ^expanded_ids,
+        select: %{source: src.name, target: tgt.name, type: r.type},
+        limit: ^rel_limit
+      )
+    )
+  end
+
+  defp fetch_relationships(expanded_ids, matched_ids, _depth, rel_limit, repo) do
+    import Ecto.Query
+    alias Arcana.Graph.{Entity, Relationship}
+
+    repo.all(
+      from(r in Relationship,
+        join: src in Entity,
+        on: r.source_id == src.id,
+        join: tgt in Entity,
+        on: r.target_id == tgt.id,
+        where: r.source_id in ^expanded_ids and r.target_id in ^expanded_ids,
+        order_by: [desc: r.source_id in ^matched_ids or r.target_id in ^matched_ids],
+        select: %{source: src.name, target: tgt.name, type: r.type},
+        limit: ^rel_limit
+      )
+    )
+  end
+
+  defp scope_entities_by_source(entities, nil, _repo), do: entities
+  defp scope_entities_by_source([], _source_id, _repo), do: []
+
+  defp scope_entities_by_source(entities, source_id, repo) do
+    in_source =
+      entities
+      |> Enum.map(& &1.id)
+      |> entity_ids_in_source(source_id, repo)
+      |> MapSet.new()
+
+    Enum.filter(entities, &MapSet.member?(in_source, &1.id))
+  end
+
+  # An entity belongs to a source when at least one of its mentions sits
+  # on a chunk of a document with that source_id.
+  defp entity_ids_in_source(ids, nil, _repo), do: ids
+  defp entity_ids_in_source([], _source_id, _repo), do: []
+
+  defp entity_ids_in_source(ids, source_id, repo) do
+    import Ecto.Query
+    alias Arcana.{Chunk, Document}
+    alias Arcana.Graph.EntityMention
+
+    repo.all(
+      from(m in EntityMention,
+        join: c in Chunk,
+        on: c.id == m.chunk_id,
+        join: d in Document,
+        on: d.id == c.document_id,
+        where: m.entity_id in ^ids and d.source_id == ^source_id,
+        select: m.entity_id,
+        distinct: true
+      )
+    )
   end
 
   defp entity_ids_to_binary(entity_ids) do
