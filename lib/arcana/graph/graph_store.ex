@@ -131,9 +131,10 @@ defmodule Arcana.Graph.GraphStore do
 
   The `:ecto` backend serializes both sides through `with_write_lock/3`
   (a transaction-scoped Postgres advisory lock keyed on the collection).
-  The `:memory` backend serializes through its GenServer, which is
-  coarser but never interleaves a sweep with a persist call. Custom
-  backends get the guarantee only if they implement `with_write_lock/3`.
+  The `:memory` backend serializes individual calls through its GenServer
+  but leaves the window between the entity and mention calls open, which
+  is fine for a test backend. Custom backends get the full guarantee only
+  if they implement `with_write_lock/3`.
   """
   @callback sweep_orphans(binary(), opts :: keyword()) ::
               :ok | {:error, term()}

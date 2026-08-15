@@ -281,6 +281,17 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
 
       refute advisory_lock_free?(collection.id)
     end
+
+    test "build_and_persist/4 takes the same lock while persisting a chunk" do
+      collection = create_collection("build-locked")
+      chunk = collection |> create_document() |> create_chunk()
+      extractor = fn _text, _opts -> {:ok, [%{name: "Locky", type: "concept"}]} end
+
+      {:ok, _} =
+        Arcana.Graph.build_and_persist([chunk], collection, Repo, entity_extractor: extractor)
+
+      refute advisory_lock_free?(collection.id)
+    end
   end
 
   # Asks a connection outside the sandbox whether the graph write lock for
