@@ -20,12 +20,34 @@ defmodule Arcana.Ingest do
     * `:chunk_overlap` - Overlap between chunks (default: 200)
     * `:collection` - Collection name (string) or map with name and description (default: "default")
     * `:graph` - Enable GraphRAG extraction (default: from config)
+    * `:replace` - When true, atomically replaces any prior document with the
+      same `(collection, source_id)` once the new ingest completes. Requires
+      `:source_id`. See "Replacing documents" below.
 
+  ## Replacing documents
+
+  With `replace: true`, `source_id` becomes a stable document identity:
+  re-ingesting the same identity supersedes earlier documents instead of
+  accumulating next to them. The new document is ingested first and
+  predecessors (including `:failed`/`:processing` leftovers from crashed
+  attempts) are deleted only after it completes, so the old chunks stay
+  searchable until the replacement lands and their rows cascade away with
+  the document.
+
+  The swap runs in a transaction under a per-identity advisory lock, so
+  callers don't need their own mutex for correctness. If two ingests for the
+  same identity run concurrently, the first to complete wins and the other
+  returns `{:error, :replaced_by_concurrent_ingest}` (or may fail while
+  storing chunks whose document was already replaced).
   """
   def ingest(text, opts) when is_binary(text) do
     repo = require_repo!(opts)
     source_id = Keyword.get(opts, :source_id)
     metadata = Keyword.get(opts, :metadata, %{})
+
+    if Keyword.get(opts, :replace, false) and (is_nil(source_id) or source_id == "") do
+      raise ArgumentError, "replace: true requires a :source_id document identity"
+    end
 
     {collection_name, collection_description} =
       parse_collection_opt(Keyword.get(opts, :collection, "default"))
@@ -109,12 +131,62 @@ defmodule Arcana.Ingest do
   defp finalize_ingest(document, chunk_records, collection, repo, opts) do
     maybe_build_graph(chunk_records, collection, repo, opts)
 
-    {:ok, document} =
-      document
-      |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
-      |> repo.update()
+    if Keyword.get(opts, :replace, false) do
+      finalize_replace(document, chunk_records, repo)
+    else
+      {:ok, document} =
+        document
+        |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
+        |> repo.update()
 
-    {{:ok, document}, %{document: document, chunk_count: length(chunk_records)}}
+      {{:ok, document}, %{document: document, chunk_count: length(chunk_records)}}
+    end
+  end
+
+  # The replace swap: delete every other document with the same
+  # (collection_id, source_id) — completed predecessors and crashed-attempt
+  # leftovers alike (chunks cascade via FK) — then mark the new document
+  # completed. Runs under a per-identity transaction-scoped advisory lock so
+  # concurrent replaces serialize HERE, at the fast DB-only step, never
+  # around chunking/embedding. A run whose document was already deleted by a
+  # faster concurrent replace loses cleanly.
+  defp finalize_replace(document, chunk_records, repo) do
+    result =
+      repo.transaction(fn ->
+        repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+          "arcana:replace:#{document.collection_id}:#{document.source_id}"
+        ])
+
+        if repo.get(Document, document.id) do
+          import Ecto.Query, only: [from: 2]
+
+          repo.delete_all(
+            from(d in Document,
+              where:
+                d.collection_id == ^document.collection_id and
+                  d.source_id == ^document.source_id and
+                  d.id != ^document.id
+            )
+          )
+
+          {:ok, document} =
+            document
+            |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
+            |> repo.update()
+
+          document
+        else
+          repo.rollback(:replaced_by_concurrent_ingest)
+        end
+      end)
+
+    case result do
+      {:ok, document} ->
+        {{:ok, document}, %{document: document, chunk_count: length(chunk_records)}}
+
+      {:error, :replaced_by_concurrent_ingest} ->
+        {{:error, :replaced_by_concurrent_ingest}, %{error: :replaced_by_concurrent_ingest}}
+    end
   end
 
   defp maybe_build_graph(chunk_records, collection, repo, opts) do
