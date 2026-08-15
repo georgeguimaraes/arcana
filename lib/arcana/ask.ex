@@ -90,7 +90,7 @@ defmodule Arcana.Ask do
 
   defp ask_with_context(question, context, opts, llm) do
     graph_context = maybe_fetch_graph_context(question, opts)
-    prompt_fn = Keyword.get(opts, :prompt, &default_ask_prompt/2)
+    prompt_fn = Keyword.get(opts, :prompt, &default_ask_prompt/3)
 
     llm_opts = [
       system_prompt:
@@ -114,9 +114,6 @@ defmodule Arcana.Ask do
 
     {result, stop_metadata}
   end
-
-  defp default_ask_prompt(question, context),
-    do: default_ask_prompt(question, context, %{})
 
   defp default_ask_prompt(_question, context, graph_context) when is_map(graph_context) do
     context_text =

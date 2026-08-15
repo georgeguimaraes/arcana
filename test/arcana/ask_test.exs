@@ -84,9 +84,17 @@ defmodule Arcana.AskTest do
       collection = Repo.one!(from(c in Arcana.Collection, where: c.name == "ask-test"))
       chunk = Repo.one!(from(c in Arcana.Chunk, where: c.document_id == ^doc.id, limit: 1))
 
+      {:ok, embedding} =
+        Arcana.Embedder.embed(Arcana.Config.embedder(), "Daleks", intent: :document)
+
       entity =
         %Entity{}
-        |> Entity.changeset(%{name: "Daleks", type: "species", collection_id: collection.id})
+        |> Entity.changeset(%{
+          name: "Daleks",
+          type: "species",
+          collection_id: collection.id,
+          embedding: embedding
+        })
         |> Repo.insert!()
 
       %EntityMention{}
@@ -106,11 +114,11 @@ defmodule Arcana.AskTest do
       %{entity: entity, collection: collection}
     end
 
-    test "injects community summaries into prompt when graph enabled", %{llm: _llm} do
+    test "injects community summaries into the default prompt when graph enabled" do
       received = :ets.new(:received, [:set, :public])
 
-      capturing_llm = fn prompt, _context, _opts ->
-        :ets.insert(received, {:prompt, prompt})
+      capturing_llm = fn _prompt, _context, opts ->
+        :ets.insert(received, {:system_prompt, opts[:system_prompt]})
         {:ok, "answer"}
       end
 
@@ -122,8 +130,11 @@ defmodule Arcana.AskTest do
           graph: true
         )
 
-      [{:prompt, _prompt}] = :ets.lookup(received, :prompt)
+      [{:system_prompt, system_prompt}] = :ets.lookup(received, :system_prompt)
       :ets.delete(received)
+
+      assert system_prompt =~ "Background knowledge:"
+      assert system_prompt =~ "greatest enemies"
     end
   end
 
