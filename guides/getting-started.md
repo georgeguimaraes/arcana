@@ -18,7 +18,7 @@ This adds the dependency, creates migrations, configures your repo, and sets up 
 ```elixir
 def deps do
   [
-    {:arcana, "~> 1.0"}
+    {:arcana, "~> 2.0"}
   ]
 end
 ```
@@ -32,6 +32,24 @@ mix ecto.migrate
 ## Embedding Configuration
 
 Arcana uses local embeddings by default via Bumblebee. No API keys needed.
+
+`bumblebee` is an optional dependency, so add it (plus a backend) when
+using the default local embedder:
+
+```elixir
+def deps do
+  [
+    {:arcana, "~> 2.0"},
+    {:bumblebee, "~> 0.6"},
+    {:exla, "~> 0.10"}
+  ]
+end
+```
+
+Apps that bring their own embedder (the `Arcana.Embedder` behaviour) can
+skip both and avoid compiling the Bumblebee/tokenizers toolchain. The same
+goes for `req_llm`: it's optional and only needed when using model strings
+(like `"openai:gpt-4o-mini"`) as the LLM or `Arcana.Loop`.
 
 ```elixir
 # config/config.exs

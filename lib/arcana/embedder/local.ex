@@ -48,6 +48,8 @@ defmodule Arcana.Embedder.Local do
 
   @behaviour Arcana.Embedder
 
+  @compile {:no_warn_undefined, [Bumblebee, Bumblebee.Text.TextEmbedding]}
+
   alias Bumblebee.Text.TextEmbedding
 
   @default_model "BAAI/bge-small-en-v1.5"
@@ -99,6 +101,7 @@ defmodule Arcana.Embedder.Local do
   are passed (or merges when some opts are passed).
   """
   def start_link(opts \\ []) do
+    ensure_bumblebee!()
     opts = merge_global_opts(opts)
     model = Keyword.get(opts, :model, @default_model)
     serving_name = serving_name(model)
@@ -145,6 +148,7 @@ defmodule Arcana.Embedder.Local do
 
   @impl Arcana.Embedder
   def embed(text, opts) do
+    ensure_bumblebee!()
     model = Keyword.get(opts, :model, @default_model)
     intent = Keyword.get(opts, :intent)
     serving_name = serving_name(model)
@@ -207,6 +211,24 @@ defmodule Arcana.Embedder.Local do
     case embed("test", opts) do
       {:ok, embedding} -> length(embedding)
       _ -> raise "Could not detect dimensions for local model"
+    end
+  end
+
+  defp ensure_bumblebee! do
+    unless Code.ensure_loaded?(Bumblebee) do
+      raise """
+      Bumblebee is required for Arcana.Embedder.Local (the default embedder)
+      but not available.
+
+      Add it and a backend to your dependencies:
+
+          {:bumblebee, "~> 0.6"},
+          {:exla, "~> 0.10"}
+
+      Or configure a different embedder:
+
+          config :arcana, embedder: {MyApp.Embedder, []}
+      """
     end
   end
 end

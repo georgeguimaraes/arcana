@@ -50,6 +50,8 @@ defmodule Arcana.Loop.Tools do
   alias Arcana.Loop.Context
   alias ReqLLM.Tool
 
+  @compile {:no_warn_undefined, ReqLLM.Tool}
+
   @no_op_callback {__MODULE__, :no_op_callback}
 
   @doc """

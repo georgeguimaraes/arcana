@@ -11,8 +11,8 @@ defprotocol Arcana.LLM do
   - Anonymous functions (for testing)
 
   Prefer the `{module, function}` form for `config :arcana, :llm` — unlike
-  a captured function, it serializes into a release's `sys.config`, so it
-  doesn't have to be wired in `runtime.exs`.
+  a captured function, it serializes into a release's `sys.config`, and it
+  works without req_llm.
 
   ## Examples
 
@@ -129,6 +129,23 @@ if Code.ensure_loaded?(ReqLLM) do
           {:error, reason} -> {:error, reason}
         end
       end)
+    end
+  end
+else
+  defimpl Arcana.LLM, for: BitString do
+    def complete(model, _prompt, _context, _opts) do
+      raise """
+      req_llm is required to use model strings like #{inspect(model)} as
+      the LLM but not available.
+
+      Add it to your dependencies:
+
+          {:req_llm, "~> 1.2"}
+
+      Or configure a custom LLM function instead:
+
+          config :arcana, llm: {MyApp.LLM, :complete}
+      """
     end
   end
 end

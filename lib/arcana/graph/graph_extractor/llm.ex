@@ -139,7 +139,7 @@ defmodule Arcana.Graph.GraphExtractor.LLM do
       |> String.replace(~r/\n?```$/, "")
       |> String.trim()
 
-    case Jason.decode(cleaned) do
+    case JSON.decode(cleaned) do
       {:ok, %{"entities" => entities, "relationships" => relationships}}
       when is_list(entities) and is_list(relationships) ->
         normalized_entities = Enum.map(entities, &normalize_entity/1)

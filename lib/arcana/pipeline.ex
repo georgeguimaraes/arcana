@@ -187,7 +187,7 @@ defmodule Arcana.Pipeline do
   end
 
   defp parse_gate_response(response) do
-    case Jason.decode(response) do
+    case JSON.decode(response) do
       {:ok, %{"needs_retrieval" => needs_retrieval, "reasoning" => reasoning}} ->
         {not needs_retrieval, reasoning}
 
@@ -795,7 +795,7 @@ defmodule Arcana.Pipeline do
   end
 
   defp parse_sufficiency_response(response) do
-    case Jason.decode(response) do
+    case JSON.decode(response) do
       {:ok, %{"sufficient" => true, "reasoning" => reasoning}} ->
         {:sufficient, reasoning}
 
@@ -1181,7 +1181,7 @@ defmodule Arcana.Pipeline do
   end
 
   defp parse_evaluation_response(response) do
-    case Jason.decode(response) do
+    case JSON.decode(response) do
       {:ok, %{"grounded" => true}} ->
         {:ok, :grounded}
 

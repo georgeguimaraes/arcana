@@ -105,7 +105,7 @@ defmodule Arcana.Graph.RelationshipExtractor.LLM do
       |> String.replace(~r/\n?```$/, "")
       |> String.trim()
 
-    case Jason.decode(cleaned) do
+    case JSON.decode(cleaned) do
       {:ok, relationships} when is_list(relationships) ->
         validated =
           relationships
