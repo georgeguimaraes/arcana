@@ -11,13 +11,22 @@ defmodule Mix.Tasks.Arcana.Gen.EmbeddingMigration do
   2. Show the detected dimensions
   3. Generate a migration to update the vector column
 
+  The `down` migration restores the dimensions the column had *before*
+  this migration. Those are read from the database when it is reachable;
+  otherwise pass `--previous-dimensions`. Without either, the generated
+  `down` raises instead of silently truncating the column.
+
   ## Options
 
     * `--dimensions` - Override auto-detected dimensions
+    * `--previous-dimensions` - Dimensions the `down` migration restores,
+      when they can't be read from the database
 
   """
 
   use Mix.Task
+
+  alias Arcana.MixHelpers
 
   @shortdoc "Generates a migration for embedding dimension changes"
 
@@ -25,45 +34,89 @@ defmodule Mix.Tasks.Arcana.Gen.EmbeddingMigration do
   def run(args) do
     {opts, _, _} =
       OptionParser.parse(args,
-        strict: [dimensions: :integer]
+        strict: [dimensions: :integer, previous_dimensions: :integer]
       )
 
     # Start the app to access config
     Mix.Task.run("app.config")
 
+    repo = MixHelpers.repo!()
+    previous = resolve_previous_dimensions(repo, Keyword.get(opts, :previous_dimensions))
+
     dimensions =
       case Keyword.get(opts, :dimensions) do
         nil ->
-          case detect_dimensions() do
-            {:ok, dims} ->
-              Mix.shell().info("Detected embedding dimensions: #{dims}")
-              dims
-
-            {:error, reason} ->
-              Mix.raise("Could not detect dimensions: #{inspect(reason)}")
-          end
+          dims = MixHelpers.detect_dimensions!()
+          Mix.shell().info("Detected embedding dimensions: #{dims}")
+          dims
 
         dims ->
+          dims = MixHelpers.validate_dimensions!(dims)
           Mix.shell().info("Using specified dimensions: #{dims}")
           dims
       end
 
-    generate_migration(dimensions)
+    generate_migration(repo, dimensions, previous)
   end
 
-  defp detect_dimensions do
-    embedder = Arcana.embedder()
-    {:ok, Arcana.Embedder.dimensions(embedder)}
+  defp resolve_previous_dimensions(repo, nil) do
+    case current_column_dimensions(repo) do
+      nil ->
+        Mix.shell().info(
+          "Could not read the current arcana_chunks.embedding size; the generated " <>
+            "down migration will raise. Pass --previous-dimensions to make it reversible."
+        )
+
+        nil
+
+      dims ->
+        Mix.shell().info("Current column dimensions (used for rollback): #{dims}")
+        dims
+    end
+  end
+
+  defp resolve_previous_dimensions(_repo, given),
+    do: MixHelpers.validate_dimensions!(given, "--previous-dimensions")
+
+  # pgvector stores the declared dimension straight in atttypmod, so
+  # vector(384) reads back as 384.
+  @current_dimensions_query """
+  SELECT a.atttypmod
+  FROM pg_attribute a
+  JOIN pg_class c ON c.oid = a.attrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = current_schema()
+    AND c.relname = 'arcana_chunks'
+    AND a.attname = 'embedding'
+    AND NOT a.attisdropped
+  """
+
+  # Best effort: boots just the repo (not the host supervision tree, which
+  # may load embedding models) to read the column's current size.
+  defp current_column_dimensions(repo) do
+    {:ok, _} = Application.ensure_all_started(:ecto_sql)
+    {:ok, pid} = repo.start_link(pool_size: 1, log: false)
+
+    try do
+      case repo.query!(@current_dimensions_query) do
+        %{rows: [[dims]]} when is_integer(dims) and dims > 0 -> dims
+        _ -> nil
+      end
+    after
+      Process.unlink(pid)
+      Supervisor.stop(pid)
+    end
   rescue
-    e -> {:error, e}
+    _ -> nil
+  catch
+    :exit, _ -> nil
   end
 
-  defp generate_migration(dimensions) do
+  defp generate_migration(repo, dimensions, previous) do
     timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
     filename = "#{timestamp}_update_embedding_dimensions.exs"
 
     # Find the priv/repo/migrations directory
-    repo = Arcana.Config.repo!()
     repo_config = Application.get_env(:arcana, repo) || []
     priv_dir = Keyword.get(repo_config, :priv, "priv/repo")
     migrations_dir = Path.join(priv_dir, "migrations")
@@ -73,7 +126,7 @@ defmodule Mix.Tasks.Arcana.Gen.EmbeddingMigration do
 
     path = Path.join(migrations_dir, filename)
 
-    content = migration_content(dimensions)
+    content = migration_content(dimensions, previous)
 
     File.write!(path, content)
 
@@ -98,7 +151,7 @@ defmodule Mix.Tasks.Arcana.Gen.EmbeddingMigration do
   end
 
   @doc false
-  def migration_content(dimensions) do
+  def migration_content(dimensions, previous_dimensions \\ nil) do
     """
     defmodule Arcana.Repo.Migrations.UpdateEmbeddingDimensions do
       use Ecto.Migration
@@ -124,22 +177,50 @@ defmodule Mix.Tasks.Arcana.Gen.EmbeddingMigration do
         \"\"\"
       end
 
+    #{down_body(previous_dimensions)}
+    end
+    """
+  end
+
+  defp down_body(nil) do
+    """
       def down do
-        # Note: Down migration requires knowing the previous dimensions
-        # This is a best-effort reversal - you may need to adjust the size
+        # Arcana could not determine the dimensions this column had before
+        # the migration above, and guessing would truncate every embedding.
+        # Fill in the previous size below, then delete this raise.
+        raise "Set the previous vector size in this down migration before rolling back"
+
+        # execute "DROP INDEX IF EXISTS arcana_chunks_embedding_idx"
+        # execute "DROP INDEX IF EXISTS arcana_chunks_embedding_index"
+        #
+        # alter table(:arcana_chunks) do
+        #   modify :embedding, :vector, size: PREVIOUS_DIMENSIONS
+        # end
+        #
+        # execute \"\"\"
+        # CREATE INDEX arcana_chunks_embedding_idx ON arcana_chunks
+        # USING hnsw (embedding vector_cosine_ops)
+        # \"\"\"
+      end\
+    """
+  end
+
+  defp down_body(previous) do
+    """
+      def down do
         execute "DROP INDEX IF EXISTS arcana_chunks_embedding_idx"
         execute "DROP INDEX IF EXISTS arcana_chunks_embedding_index"
 
+        # Restores the size the column had before this migration ran.
         alter table(:arcana_chunks) do
-          modify :embedding, :vector, size: 384
+          modify :embedding, :vector, size: #{previous}
         end
 
         execute \"\"\"
         CREATE INDEX arcana_chunks_embedding_idx ON arcana_chunks
         USING hnsw (embedding vector_cosine_ops)
         \"\"\"
-      end
-    end
+      end\
     """
   end
 end

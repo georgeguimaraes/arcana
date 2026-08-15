@@ -29,5 +29,26 @@ defmodule Mix.Tasks.Arcana.Gen.EmbeddingMigrationTest do
 
   test "generated migration is valid Elixir" do
     assert {:ok, _ast} = Code.string_to_quoted(EmbeddingMigration.migration_content(512))
+    assert {:ok, _ast} = Code.string_to_quoted(EmbeddingMigration.migration_content(512, 1024))
+  end
+
+  test "down restores the previous dimensions, not a hardcoded 384" do
+    content = EmbeddingMigration.migration_content(1024, 768)
+
+    [up, down] = String.split(content, "def down do")
+
+    assert up =~ "modify :embedding, :vector, size: 1024"
+    assert down =~ "modify :embedding, :vector, size: 768"
+    refute down =~ "size: 384"
+  end
+
+  test "down raises instead of truncating when the previous dimensions are unknown" do
+    content = EmbeddingMigration.migration_content(1024)
+
+    [_up, down] = String.split(content, "def down do")
+
+    assert down =~ "raise \"Set the previous vector size"
+    # The old template silently rewrote any column back to 384
+    refute down =~ ~r/^\s+modify :embedding/m
   end
 end
