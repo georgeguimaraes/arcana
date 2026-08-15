@@ -73,7 +73,7 @@ defmodule Arcana.MixProject do
       {:ecto_sql, "~> 3.12"},
       {:postgrex, "~> 0.19"},
       {:pgvector, "~> 0.3"},
-      {:bumblebee, "~> 0.6"},
+      {:bumblebee, "~> 0.6", optional: true},
       {:nx, "~> 0.9"},
       {:exla, "~> 0.10", optional: true},
       {:emlx, "~> 0.2", optional: true},
@@ -93,7 +93,7 @@ defmodule Arcana.MixProject do
       {:igniter, "~> 0.5", optional: true},
 
       # LLM integrations via Req.LLM
-      {:req_llm, "~> 1.2"},
+      {:req_llm, "~> 1.2", optional: true},
 
       # Optional: In-memory vector store with HNSW
       {:hnswlib, "~> 0.1", optional: true},

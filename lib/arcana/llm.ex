@@ -161,4 +161,27 @@ defimpl Arcana.LLM, for: Tuple do
   def complete({model, llm_opts}, prompt, context, opts) when is_list(llm_opts) do
     Arcana.LLM.complete(model, prompt, context, Keyword.merge(llm_opts, opts))
   end
+else
+  defimpl Arcana.LLM, for: BitString do
+    def complete(model, _prompt, _context, _opts) do
+      raise """
+      req_llm is required to use model strings like #{inspect(model)} as
+      the LLM but not available.
+
+      Add it to your dependencies:
+
+          {:req_llm, "~> 1.2"}
+
+      Or configure a custom LLM function instead:
+
+          config :arcana, llm: {MyApp.LLM, :complete}
+      """
+    end
+  end
+
+  defimpl Arcana.LLM, for: Tuple do
+    def complete({model, llm_opts}, prompt, context, opts) when is_list(llm_opts) do
+      Arcana.LLM.complete(model, prompt, context, Keyword.merge(llm_opts, opts))
+    end
+  end
 end

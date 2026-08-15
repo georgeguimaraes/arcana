@@ -40,6 +40,8 @@ defmodule Arcana.Reranker.CrossEncoder do
 
   use GenServer
 
+  @compile {:no_warn_undefined, Bumblebee}
+
   @default_model "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
   def start_link(opts \\ []) do
@@ -48,6 +50,17 @@ defmodule Arcana.Reranker.CrossEncoder do
 
   @impl GenServer
   def init(opts) do
+    unless Code.ensure_loaded?(Bumblebee) do
+      raise """
+      Bumblebee is required for Arcana.Reranker.CrossEncoder but not available.
+
+      Add it and a backend to your dependencies:
+
+          {:bumblebee, "~> 0.6"},
+          {:exla, "~> 0.10"}
+      """
+    end
+
     model = Keyword.get(opts, :model, @default_model)
     sequence_length = Keyword.get(opts, :sequence_length, 512)
 

@@ -5,6 +5,8 @@ defmodule Arcana.Embeddings.Serving do
   Uses BAAI/bge-small-en-v1.5 which produces 384-dimensional embeddings by default.
   """
 
+  @compile {:no_warn_undefined, [Bumblebee, Bumblebee.Text.TextEmbedding]}
+
   alias Bumblebee.Text.TextEmbedding
 
   @default_model "BAAI/bge-small-en-v1.5"
@@ -22,6 +24,17 @@ defmodule Arcana.Embeddings.Serving do
   end
 
   def start_link(opts \\ []) do
+    unless Code.ensure_loaded?(Bumblebee) do
+      raise """
+      Bumblebee is required for Arcana.Embeddings.Serving but not available.
+
+      Add it and a backend to your dependencies:
+
+          {:bumblebee, "~> 0.6"},
+          {:exla, "~> 0.10"}
+      """
+    end
+
     model = Keyword.get(opts, :model, @default_model)
     tokenizer_model = Keyword.get(opts, :tokenizer, model)
 

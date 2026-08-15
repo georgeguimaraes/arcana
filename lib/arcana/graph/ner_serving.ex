@@ -55,6 +55,8 @@ defmodule Arcana.Graph.NERServing do
 
   # Private
 
+  @compile {:no_warn_undefined, [Bumblebee, Bumblebee.Text]}
+
   defp start_serving do
     # Use a global lock to prevent race conditions
     :global.trans({__MODULE__, :start}, fn ->
@@ -66,6 +68,17 @@ defmodule Arcana.Graph.NERServing do
   end
 
   defp do_start_serving do
+    unless Code.ensure_loaded?(Bumblebee) do
+      raise """
+      Bumblebee is required for NER entity extraction but not available.
+
+      Add it and a backend to your dependencies:
+
+          {:bumblebee, "~> 0.6"},
+          {:exla, "~> 0.10"}
+      """
+    end
+
     {:ok, model_info} = Bumblebee.load_model({:hf, @model_id})
     {:ok, tokenizer} = Bumblebee.load_tokenizer({:hf, @model_id})
 

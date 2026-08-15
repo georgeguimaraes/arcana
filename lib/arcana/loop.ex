@@ -64,6 +64,16 @@ defmodule Arcana.Loop do
   alias Arcana.Loop.{Context, SystemPrompt, Tools}
   alias ReqLLM.Message.ContentPart
 
+  @compile {:no_warn_undefined,
+            [
+              ReqLLM,
+              ReqLLM.Context,
+              ReqLLM.Message,
+              ReqLLM.Message.ContentPart,
+              ReqLLM.Response,
+              ReqLLM.ToolCall
+            ]}
+
   @doc """
   Builds a new `Arcana.Loop.Context` for `run/2`.
 
@@ -164,6 +174,16 @@ defmodule Arcana.Loop do
   """
   @spec run(Context.t(), keyword()) :: {:ok, Context.t()}
   def run(%Context{} = ctx, opts \\ []) do
+    unless Code.ensure_loaded?(ReqLLM) do
+      raise """
+      req_llm is required for Arcana.Loop but not available.
+
+      Add it to your dependencies:
+
+          {:req_llm, "~> 1.2"}
+      """
+    end
+
     opts = Arcana.Config.merge_app_opts(opts, :loop)
 
     tools = Keyword.get(opts, :tools) || Tools.default(ctx.collections)
@@ -684,15 +704,18 @@ defmodule Arcana.Loop do
 
     canonical_tool_calls = Enum.map(tool_calls, &to_canonical_tool_call/1)
 
-    msg = %ReqLLM.Message{
-      role: :assistant,
-      content: content,
-      name: nil,
-      tool_call_id: nil,
-      tool_calls: canonical_tool_calls,
-      metadata: %{},
-      reasoning_details: nil
-    }
+    # struct!/2 instead of a struct literal so this module compiles when
+    # req_llm (optional dep) is absent; run/2 guards against that upfront.
+    msg =
+      struct!(ReqLLM.Message,
+        role: :assistant,
+        content: content,
+        name: nil,
+        tool_call_id: nil,
+        tool_calls: canonical_tool_calls,
+        metadata: %{},
+        reasoning_details: nil
+      )
 
     ReqLLM.Context.append(messages, msg)
   end
