@@ -25,6 +25,44 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
     end
   end
 
+  describe "persist_entities/3 name identity" do
+    # Whitespace has to fold the same way here as in the Ecto store's SQL,
+    # or the same document builds a different graph depending on the
+    # backend. Mirrors the pairs asserted in EctoTest.
+    for {label, first, second} <- [
+          {"trailing NBSP", "Delivery\u{a0}", "Delivery"},
+          {"mid-string NBSP", "Acme\u{a0}Corp", "Acme Corp"},
+          {"mid-string thin space", "Acme\u{2009}Corp", "Acme Corp"},
+          {"mid-string ideographic space", "Acme\u{3000}Corp", "Acme Corp"}
+        ] do
+      test "treats a #{label} as the same entity as a plain space", %{pid: pid} do
+        collection_id = "ws-#{unquote(label)}"
+
+        for name <- [unquote(first), unquote(second)] do
+          {:ok, _} =
+            Memory.persist_entities(collection_id, [%{name: name, type: "concept"}], pid: pid)
+        end
+
+        assert length(Memory.find_entities(collection_id, pid: pid)) == 1
+      end
+    end
+
+    # Known, documented divergence from the Ecto store: Elixir's
+    # String.downcase/1 decomposes U+0130 into "i" plus a combining dot,
+    # Postgres' lower() folds it to a bare "i". Neither backend applies
+    # canonical (NFC/NFD) normalization either. See Arcana.Graph.EntityName.
+    test "keeps a Turkish dotted capital I distinct, unlike the Ecto store", %{pid: pid} do
+      collection_id = "turkish-i"
+
+      for name <- ["İstanbul", "istanbul"] do
+        {:ok, _} =
+          Memory.persist_entities(collection_id, [%{name: name, type: "place"}], pid: pid)
+      end
+
+      assert length(Memory.find_entities(collection_id, pid: pid)) == 2
+    end
+  end
+
   describe "persist_entities/3" do
     test "stores entities and returns id map", %{pid: pid} do
       collection_id = "col-1"

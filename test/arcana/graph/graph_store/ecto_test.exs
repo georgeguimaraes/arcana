@@ -134,6 +134,48 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       end
     end
 
+    # Distinct spellings that must land on ONE row. Mirrors the pairs
+    # asserted in MemoryTest: the two backends have to agree about which
+    # names are the same entity, or the same document builds a different
+    # graph depending on the store.
+    for {label, first, second} <- [
+          {"trailing NBSP", "Delivery\u{a0}", "Delivery"},
+          {"mid-string NBSP", "Acme\u{a0}Corp", "Acme Corp"},
+          {"mid-string thin space", "Acme\u{2009}Corp", "Acme Corp"},
+          {"mid-string ideographic space", "Acme\u{3000}Corp", "Acme Corp"}
+        ] do
+      test "treats a #{label} as the same entity as a plain space" do
+        collection = create_collection()
+
+        for name <- [unquote(first), unquote(second)] do
+          {:ok, _} =
+            EctoStore.persist_entities(collection.id, [%{name: name, type: "concept"}],
+              repo: Repo
+            )
+        end
+
+        assert Repo.aggregate(from(e in Entity, where: e.collection_id == ^collection.id), :count) ==
+                 1
+      end
+    end
+
+    # Known, documented divergence from the Memory store, which keeps these
+    # two apart: Postgres' lower() folds U+0130 to a bare "i" while Elixir's
+    # String.downcase/1 decomposes it into "i" plus a combining dot. Neither
+    # backend applies canonical (NFC/NFD) normalization either.
+    # See Arcana.Graph.EntityName.
+    test "collapses a Turkish dotted capital I, unlike the Memory store" do
+      collection = create_collection()
+
+      for name <- ["İstanbul", "istanbul"] do
+        {:ok, _} =
+          EctoStore.persist_entities(collection.id, [%{name: name, type: "place"}], repo: Repo)
+      end
+
+      assert Repo.aggregate(from(e in Entity, where: e.collection_id == ^collection.id), :count) ==
+               1
+    end
+
     test "inserts entity with metadata" do
       collection = create_collection()
 
@@ -269,6 +311,33 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
 
       assert [%{chunk_id: chunk_id}] = results
       assert chunk_id == chunk.id
+    end
+
+    # The upsert side is self-consistent whatever the stored name carries,
+    # because both of its sides go through the same SQL. The read path
+    # compares a stored name against one an extractor just emitted, so any
+    # whitespace the normalization fails to fold makes the stored row
+    # unreachable. btrim only strips U+0020, and Postgres' `\s` doesn't
+    # match NBSP — the character every HTML/PDF-derived name arrives with.
+    for {label, stored, queried} <- [
+          {"trailing NBSP", "Delivery\u{a0}", "Delivery"},
+          {"leading NBSP", "\u{a0}Delivery", "Delivery"},
+          {"mid-string NBSP", "Acme\u{a0}Corp", "Acme Corp"},
+          {"trailing thin space", "Delivery\u{2009}", "Delivery"},
+          {"mid-string ideographic space", "Acme\u{3000}Corp", "Acme Corp"}
+        ] do
+      test "reaches an entity stored with a #{label} from its plain spelling" do
+        collection = create_collection()
+        chunk = collection |> create_document() |> create_chunk()
+
+        entity = create_entity(collection, unquote(stored), "concept")
+        create_mention(entity, chunk)
+
+        results = EctoStore.search([unquote(queried)], [collection.id], repo: Repo)
+
+        assert [%{chunk_id: chunk_id}] = results
+        assert chunk_id == chunk.id
+      end
     end
 
     test "empty collection_ids matches nothing instead of searching globally" do

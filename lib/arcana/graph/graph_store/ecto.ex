@@ -15,15 +15,25 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   # lookups match name variants already stored with different
   # casing/underscores.
   #
-  # It does NOT agree with the Elixir version character for character, and
-  # can't be made to: String.trim/1 strips every Unicode whitespace while
-  # btrim strips U+0020, String.downcase/1 decomposes U+0130 while lower()
-  # doesn't, and Postgres' `\s` matches U+2009 while Elixir's doesn't. So
-  # every comparison normalizes BOTH sides through this SQL instead of
-  # comparing an Elixir-computed key against a SQL-computed one — an
-  # entity that fails to match itself re-inserts its own name and trips
-  # the (name, collection_id) unique index.
-  @normalize_template "btrim(regexp_replace(regexp_replace(lower(EXPR), '[_-]+', ' ', 'g'), '\\s+', ' ', 'g'))"
+  # Every comparison normalizes BOTH sides through this SQL rather than
+  # comparing an Elixir-computed key against a SQL-computed one: an entity
+  # that fails to match itself re-inserts its own name and trips the
+  # (name, collection_id) unique index. That keeps the upsert side
+  # self-consistent whatever the name carries, but the read path compares a
+  # stored name against one an extractor just emitted, so the fold itself
+  # still has to be right.
+  #
+  # Hence the spelled-out whitespace class. Postgres' `\s` follows the
+  # database ctype, which does NOT classify NBSP as space — the one
+  # character every HTML/PDF-derived name arrives with — so `btrim` (which
+  # only strips U+0020) left it in the key and made the stored row
+  # unreachable. The class below is the Unicode White_Space set, matching
+  # EntityName.normalize/1 character for character.
+  #
+  # Case folding still differs from Elixir's on U+0130, and neither side
+  # normalizes NFC/NFD. Both are documented in Arcana.Graph.EntityName.
+  @whitespace_class "[\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]+"
+  @normalize_template "btrim(regexp_replace(regexp_replace(lower(EXPR), '[_-]+', ' ', 'g'), '#{@whitespace_class}', ' ', 'g'))"
   @normalize_name_sql String.replace(@normalize_template, "EXPR", "?")
   @normalized_names_match_sql @normalize_name_sql <>
                                 " = ANY(SELECT " <>
