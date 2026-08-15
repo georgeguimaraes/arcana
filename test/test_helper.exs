@@ -13,8 +13,8 @@ Arcana.ConfigCase.enable()
 # Start the task supervisor used by LiveViews for async operations
 # (evaluation, Ask page submissions, maintenance tasks). Without this,
 # LiveView tests that trigger background tasks fail with "no process"
-# on Arcana.TaskSupervisor.
-{:ok, _} = Task.Supervisor.start_link(name: Arcana.TaskSupervisor)
+# on ArcanaWeb.TaskSupervisor.
+{:ok, _} = Task.Supervisor.start_link(name: ArcanaWeb.TaskSupervisor)
 
 # Start the endpoint for LiveView tests
 {:ok, _} = ArcanaWeb.Endpoint.start_link()

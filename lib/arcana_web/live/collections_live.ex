@@ -190,7 +190,7 @@ defmodule ArcanaWeb.CollectionsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:collections}>
+    <.dashboard_layout stats={@stats} current_tab={:collections} prefix={@prefix}>
       <div class="arcana-collections">
         <h2>Collections</h2>
         <p class="arcana-tab-description">

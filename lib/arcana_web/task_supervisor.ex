@@ -1,0 +1,39 @@
+defmodule ArcanaWeb.TaskSupervisor do
+  @moduledoc """
+  Task supervisor for the Arcana dashboard's async operations.
+
+  Add to your application's supervision tree when using the dashboard:
+
+      children = [
+        MyApp.Repo,
+        Arcana.Embedder.Local,
+        ArcanaWeb.TaskSupervisor
+      ]
+
+  This enables supervised async operations in the dashboard (evaluation
+  runs, test case generation, maintenance tasks) with:
+  - Graceful shutdown during deploys
+  - Visibility in Observer/LiveDashboard
+  - Proper crash logging with `$callers` metadata
+
+  Only needed for the dashboard; the Arcana library itself doesn't use it.
+  """
+
+  def child_spec(_opts) do
+    %{
+      id: __MODULE__,
+      start: {Task.Supervisor, :start_link, [[name: __MODULE__]]},
+      type: :supervisor
+    }
+  end
+
+  @doc """
+  Starts a fire-and-forget task under this supervisor.
+
+  The task is not linked to the caller, so crashes won't bring down
+  the calling process. Crashes are logged by the supervisor.
+  """
+  def start_child(fun) when is_function(fun, 0) do
+    Task.Supervisor.start_child(__MODULE__, fun)
+  end
+end

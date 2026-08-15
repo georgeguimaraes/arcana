@@ -114,7 +114,7 @@ defmodule ArcanaWeb.SearchLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:search}>
+    <.dashboard_layout stats={@stats} current_tab={:search} prefix={@prefix}>
       <div class="arcana-search">
         <%= if @viewing_document do %>
           <.search_document_detail viewing={@viewing_document} />

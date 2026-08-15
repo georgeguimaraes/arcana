@@ -210,7 +210,7 @@ defmodule ArcanaWeb.DocumentsLive do
 
     socket = assign(socket, graph_indexing: true)
 
-    Arcana.TaskSupervisor.start_child(fn ->
+    ArcanaWeb.TaskSupervisor.start_child(fn ->
       result = Arcana.Graph.build_and_persist(chunks, collection, repo, [])
       send(parent, {:graph_complete, result})
     end)
@@ -239,7 +239,7 @@ defmodule ArcanaWeb.DocumentsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:documents}>
+    <.dashboard_layout stats={@stats} current_tab={:documents} prefix={@prefix}>
       <div class="arcana-documents">
         <%= if @viewing_document do %>
           <.document_detail

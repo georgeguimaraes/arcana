@@ -179,7 +179,7 @@ defmodule ArcanaWeb.AskLive do
     # push_patch to the corresponding URL so the sub-tab selection is
     # shareable and survives page reloads. handle_params/3 will pick
     # up the new :sub_tab param and update the assigns.
-    {:noreply, push_patch(socket, to: "/arcana/ask/#{sub_tab}")}
+    {:noreply, push_patch(socket, to: "#{socket.assigns.prefix}/ask/#{sub_tab}")}
   end
 
   def handle_event("form_changed", params, socket) do
@@ -305,7 +305,7 @@ defmodule ArcanaWeb.AskLive do
     selected_collections = params["collections"] || []
     parent = self()
 
-    Arcana.TaskSupervisor.start_child(fn ->
+    ArcanaWeb.TaskSupervisor.start_child(fn ->
       handler_id = "pipeline-progress-#{inspect(parent)}"
       trace_handler_id = "trace-progress-#{inspect(parent)}"
       loop_handler_id = "loop-progress-#{inspect(parent)}"
@@ -874,7 +874,7 @@ defmodule ArcanaWeb.AskLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:ask}>
+    <.dashboard_layout stats={@stats} current_tab={:ask} prefix={@prefix}>
       <div class="arcana-ask">
         <h2>Ask</h2>
         <p class="arcana-tab-description">
@@ -1576,6 +1576,7 @@ defmodule ArcanaWeb.AskLive do
 
             <%= if Map.get(@ask_context, :graph_enhanced) do %>
               <.graph_context_section
+                prefix={@prefix}
                 matched_entities={Map.get(@ask_context, :matched_entities, [])}
                 matched_relationships={Map.get(@ask_context, :matched_relationships, [])}
                 expanded={@graph_context_expanded}
@@ -1587,6 +1588,7 @@ defmodule ArcanaWeb.AskLive do
               <div class="arcana-ask-section">
                 <h4>Retrieved Chunks (<%= length(all_results) %>)</h4>
                 <ChunkResultsComponent.chunk_results
+                  prefix={@prefix}
                   chunks={all_results}
                   document_titles={Map.get(@ask_context, :document_titles, %{})}
                   grounding={Map.get(@ask_context, :grounding)}
@@ -1625,7 +1627,7 @@ defmodule ArcanaWeb.AskLive do
                       <span class="arcana-entity-name"><%= entity.name %></span>
                       <span class="arcana-entity-type"><%= entity.type %></span>
                       <%= if Map.get(entity, :id) do %>
-                        <a href={"/arcana/graph?entity=#{entity.id}"} class="arcana-view-in-graph">
+                        <a href={"#{@prefix}/graph?entity=#{entity.id}"} class="arcana-view-in-graph">
                           View in Graph
                         </a>
                       <% end %>

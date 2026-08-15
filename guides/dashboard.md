@@ -6,13 +6,13 @@ A web UI for managing documents and testing search. The dashboard consists of mu
 
 ### 1. Add TaskSupervisor to your supervision tree
 
-The dashboard requires `Arcana.TaskSupervisor` for async operations (Ask, Maintenance):
+The dashboard requires `ArcanaWeb.TaskSupervisor` for async operations (Ask, Maintenance):
 
 ```elixir
 # lib/my_app/application.ex
 children = [
   MyApp.Repo,
-  Arcana.TaskSupervisor,  # Required for dashboard
+  ArcanaWeb.TaskSupervisor,  # Required for dashboard
   # ...
 ]
 ```

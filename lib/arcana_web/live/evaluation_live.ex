@@ -109,7 +109,7 @@ defmodule ArcanaWeb.EvaluationLive do
         nil
       )
 
-      Task.Supervisor.start_child(Arcana.TaskSupervisor, fn ->
+      Task.Supervisor.start_child(ArcanaWeb.TaskSupervisor, fn ->
         result = Evaluation.run(opts)
         :telemetry.detach(handler_id)
         send(parent, {:eval_run_complete, result})
@@ -143,7 +143,7 @@ defmodule ArcanaWeb.EvaluationLive do
         parent = self()
         opts = build_generate_opts(repo, llm, sample_size, collection)
 
-        Task.Supervisor.start_child(Arcana.TaskSupervisor, fn ->
+        Task.Supervisor.start_child(ArcanaWeb.TaskSupervisor, fn ->
           result = Evaluation.generate_test_cases(opts)
           send(parent, {:eval_generate_complete, result})
         end)
@@ -377,7 +377,7 @@ defmodule ArcanaWeb.EvaluationLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:evaluation}>
+    <.dashboard_layout stats={@stats} current_tab={:evaluation} prefix={@prefix}>
       <div class="arcana-evaluation">
         <h2>Evaluation</h2>
         <p class="arcana-tab-description">

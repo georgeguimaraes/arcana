@@ -8,7 +8,7 @@ defmodule ArcanaWeb.DocumentsGraphLiveTest do
 
   describe "graph indexing" do
     setup do
-      # Arcana.TaskSupervisor is started globally in test/test_helper.exs.
+      # ArcanaWeb.TaskSupervisor is started globally in test/test_helper.exs.
 
       # Enable graph for these tests, composing on the global base so the
       # fake entity_extractor from config/test.exs survives.
