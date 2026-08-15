@@ -43,11 +43,7 @@ defmodule Mix.Tasks.Arcana.Graph.EmbedEntities do
 
     Mix.Task.run("app.start")
 
-    repo = Application.get_env(:arcana, :repo)
-
-    unless repo do
-      Mix.raise("No repo configured. Set config :arcana, repo: YourApp.Repo")
-    end
+    repo = Arcana.Config.repo!()
 
     unless quiet do
       Mix.shell().info(

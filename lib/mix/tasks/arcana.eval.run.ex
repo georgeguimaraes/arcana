@@ -48,7 +48,7 @@ defmodule Mix.Tasks.Arcana.Eval.Run do
         ]
       )
 
-    repo = Application.get_env(:arcana, :repo) || raise "Missing :arcana, :repo config"
+    repo = Arcana.Config.repo!()
 
     mode =
       case Keyword.get(opts, :mode, "vector") do

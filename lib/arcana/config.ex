@@ -264,6 +264,69 @@ defmodule Arcana.Config do
     opts[key] || get_env(key)
   end
 
+  @repo_config_shapes """
+  Configure the repo with:
+
+      config :arcana, repo: MyApp.Repo
+
+  or with the per-repo shape:
+
+      config :arcana, MyApp.Repo, priv: "priv/my_repo"
+  """
+
+  @doc """
+  Resolves the Ecto repo configured for Arcana's mix tasks.
+
+  Accepts either configuration shape:
+
+      # Explicit repo key
+      config :arcana, repo: MyApp.Repo
+
+      # Per-repo configuration (e.g. custom priv directory)
+      config :arcana, MyApp.Repo, priv: "priv/my_repo"
+
+  When only the per-repo shape is present and exactly one repo is
+  configured, that repo is used (with a note printed to stderr). Raises
+  `ArgumentError` when no repo can be resolved, or when several per-repo
+  entries exist without an explicit `:repo` key to disambiguate.
+  """
+  def repo!(env \\ Application.get_all_env(:arcana)) do
+    case Keyword.get(env, :repo) do
+      nil -> repo_from_module_keys(env)
+      repo -> repo
+    end
+  end
+
+  defp repo_from_module_keys(env) do
+    env
+    |> Keyword.keys()
+    |> Enum.filter(&ecto_repo_key?/1)
+    |> case do
+      [repo] ->
+        IO.puts(
+          :stderr,
+          "Arcana: using #{inspect(repo)} from `config :arcana, #{inspect(repo)}, ...`. " <>
+            "Set `config :arcana, repo: #{inspect(repo)}` to make this explicit."
+        )
+
+        repo
+
+      [] ->
+        raise ArgumentError, "no Ecto repo configured for :arcana.\n\n" <> @repo_config_shapes
+
+      repos ->
+        raise ArgumentError,
+              "several Ecto repos configured for :arcana " <>
+                "(#{Enum.map_join(repos, ", ", &inspect/1)}) and no `:repo` key to " <>
+                "disambiguate.\n\n" <> @repo_config_shapes
+    end
+  end
+
+  defp ecto_repo_key?(key) do
+    is_atom(key) and String.starts_with?(Atom.to_string(key), "Elixir.") and
+      Code.ensure_loaded?(key) and function_exported?(key, :__adapter__, 0)
+  end
+
   @doc """
   Merges global keyword-list config under `app_key` with per-call opts.
 
