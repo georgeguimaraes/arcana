@@ -429,13 +429,13 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     def handle_event("select_entity", %{"id" => id}, socket) do
-      details = load_entity_details(socket.assigns.repo, id)
+      with_uuid(socket, id, fn uuid ->
+        details = load_entity_details(socket.assigns.repo, uuid)
 
-      if entity_allowed?(socket, details.entity) do
-        {:noreply, assign(socket, selected_entity: id, entity_details: details)}
-      else
-        {:noreply, socket}
-      end
+        if entity_allowed?(socket, details.entity),
+          do: assign(socket, selected_entity: uuid, entity_details: details),
+          else: socket
+      end)
     end
 
     def handle_event("close_entity_detail", _params, socket) do
@@ -459,13 +459,13 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     def handle_event("select_relationship", %{"id" => id}, socket) do
-      details = load_relationship_details(socket.assigns.repo, id)
+      with_uuid(socket, id, fn uuid ->
+        details = load_relationship_details(socket.assigns.repo, uuid)
 
-      if relationship_allowed?(socket, details.relationship) do
-        {:noreply, assign(socket, selected_relationship: id, relationship_details: details)}
-      else
-        {:noreply, socket}
-      end
+        if relationship_allowed?(socket, details.relationship),
+          do: assign(socket, selected_relationship: uuid, relationship_details: details),
+          else: socket
+      end)
     end
 
     def handle_event("close_relationship_detail", _params, socket) do
@@ -487,13 +487,13 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     def handle_event("select_community", %{"id" => id}, socket) do
-      details = load_community_details(socket.assigns.repo, id)
+      with_uuid(socket, id, fn uuid ->
+        details = load_community_details(socket.assigns.repo, uuid)
 
-      if community_allowed?(socket, details.community) do
-        {:noreply, assign(socket, selected_community: id, community_details: details)}
-      else
-        {:noreply, socket}
-      end
+        if community_allowed?(socket, details.community),
+          do: assign(socket, selected_community: uuid, community_details: details),
+          else: socket
+      end)
     end
 
     def handle_event("close_community_detail", _params, socket) do
@@ -597,6 +597,16 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp has_any_graph_data?(collections) do
       Enum.any?(collections, & &1.graph_enabled)
+    end
+
+    # A forged id that isn't a UUID can't match any row, so it's rejected
+    # before it reaches a query that would raise an Ecto.Query.CastError
+    # (a 500) while casting it.
+    defp with_uuid(socket, id, fun) do
+      case Ecto.UUID.cast(id) do
+        {:ok, uuid} -> {:noreply, fun.(uuid)}
+        :error -> {:noreply, socket}
+      end
     end
 
     # Guards for detail panels opened by id: forged ids pointing at graph

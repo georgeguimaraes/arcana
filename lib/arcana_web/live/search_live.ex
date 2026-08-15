@@ -61,7 +61,20 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       {:noreply, assign(socket, expanded_result_id: new_id)}
     end
 
+    # A forged id that isn't a UUID can't match a document, so it's rejected
+    # before the query would raise an Ecto.Query.CastError on the cast.
     def handle_event("view_search_document", %{"id" => id}, socket) do
+      case Ecto.UUID.cast(id) do
+        {:ok, uuid} -> view_search_document(socket, uuid)
+        :error -> {:noreply, socket}
+      end
+    end
+
+    def handle_event("close_search_document", _params, socket) do
+      {:noreply, assign(socket, viewing_document: nil)}
+    end
+
+    defp view_search_document(socket, id) do
       repo = socket.assigns.repo
       import Ecto.Query
 
@@ -93,10 +106,6 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
           {:noreply, assign(socket, viewing_document: %{document: document, chunks: chunks})}
       end
-    end
-
-    def handle_event("close_search_document", _params, socket) do
-      {:noreply, assign(socket, viewing_document: nil)}
     end
 
     defp run_search("", _params, _repo, _allowed), do: []

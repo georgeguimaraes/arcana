@@ -1,9 +1,11 @@
 defmodule ArcanaWeb.AllowedCollectionsTest do
   use ArcanaWeb.ConnCase, async: true
 
+  import Ecto.Query
   import Phoenix.LiveViewTest
 
   alias Arcana.Collection
+  alias Arcana.Evaluation
   alias Arcana.Graph.{Community, Entity, Relationship}
 
   # These tests exercise the /scoped dashboard from the test router, whose
@@ -23,6 +25,39 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
         entity_extractor: fn _text, _opts -> {:ok, [%{name: entity_name, type: "concept"}]} end,
         collection: collection
       )
+  end
+
+  # Evaluation test cases reach a collection through their chunks, so the
+  # seed ingests a document and links every chunk it produced. The tokens
+  # callers pass in must survive HTML escaping untouched (no apostrophes),
+  # otherwise a `refute html =~ token` passes for the wrong reason.
+  defp seed_test_case(collection, text, question, reference_answer \\ nil) do
+    {:ok, doc} = Arcana.ingest(text, repo: Repo, collection: collection)
+
+    chunks = Repo.all(from(c in Arcana.Chunk, where: c.document_id == ^doc.id))
+
+    {:ok, test_case} =
+      Evaluation.create_test_case(
+        repo: Repo,
+        question: question,
+        relevant_chunk_ids: Enum.map(chunks, & &1.id),
+        reference_answer: reference_answer
+      )
+
+    {test_case, chunks}
+  end
+
+  defp insert_run(config) do
+    {:ok, run} =
+      %Evaluation.Run{}
+      |> Evaluation.Run.changeset(%{status: :completed, config: config, test_case_count: 4242})
+      |> Repo.insert()
+
+    run
+  end
+
+  defp latest_run do
+    Repo.one!(from(r in Evaluation.Run, order_by: [desc: r.inserted_at, desc: r.id], limit: 1))
   end
 
   # The ask flow answers asynchronously, so poll the render instead of
@@ -120,6 +155,19 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       assert Repo.get(Collection, collection.id).description == "tenant notes"
     end
 
+    test "a malformed collection id is rejected instead of crashing", %{conn: conn} do
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/collections")
+
+      render_click(view, "delete_collection", %{"id" => "not-a-uuid"})
+
+      render_submit(view, "update_collection", %{
+        "id" => "not-a-uuid",
+        "collection" => %{"description" => "nope"}
+      })
+
+      assert render(view) =~ "Collections"
+    end
+
     test "an empty allowed set hides the create form", %{conn: conn} do
       {:ok, view, html} = conn |> restrict([]) |> live("/scoped/collections")
 
@@ -213,6 +261,8 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/documents")
 
       render_click(view, "delete", %{"id" => "not-a-uuid"})
+      render_click(view, "view_document", %{"id" => "not-a-uuid"})
+      render_click(view, "build_graph", %{})
 
       assert render(view) =~ "Documents"
     end
@@ -243,6 +293,14 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
         render_submit(view, "search", %{"query" => "Elixir", "collections" => ["other"]})
 
       refute html =~ "Elixir content for others"
+    end
+
+    test "a malformed document id is rejected instead of crashing", %{conn: conn} do
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/search")
+
+      render_click(view, "view_search_document", %{"id" => "not-a-uuid"})
+
+      assert render(view) =~ "Search"
     end
 
     test "an empty allowed set never searches anything", %{conn: conn} do
@@ -424,6 +482,16 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       refute html =~ "SecretEntity"
     end
 
+    test "malformed selection ids are rejected instead of crashing", %{conn: conn} do
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/graph")
+
+      render_click(view, "select_entity", %{"id" => "not-a-uuid"})
+      render_click(view, "select_relationship", %{"id" => "not-a-uuid"})
+      render_click(view, "select_community", %{"id" => "not-a-uuid"})
+
+      assert render(view) =~ "Graph"
+    end
+
     test "a forged pagination event cannot read entities outside the allowed set", %{conn: conn} do
       seed_entity("tenant-a", "AllowedEntity")
       seed_entity("other", "SecretEntity")
@@ -481,6 +549,217 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
     end
   end
 
+  describe "evaluation page" do
+    test "lists only test cases whose chunks live in allowed collections", %{conn: conn} do
+      seed_test_case("other", "SecretEvalChunkZulu", "SecretEvalQuestionZulu")
+      seed_test_case("tenant-a", "AllowedEvalChunkZulu", "AllowedEvalQuestionZulu")
+
+      {:ok, _view, html} = conn |> restrict(["tenant-a"]) |> live("/scoped/evaluation")
+
+      assert html =~ "AllowedEvalQuestionZulu"
+      refute html =~ "SecretEvalQuestionZulu"
+      assert html =~ "Test Cases (1)"
+    end
+
+    test "hides a test case that straddles an allowed and a disallowed collection",
+         %{conn: conn} do
+      {_tc, [allowed_chunk]} = seed_test_case("tenant-a", "AllowedEvalChunkZulu", "allowed")
+      {_tc, [secret_chunk]} = seed_test_case("other", "SecretEvalChunkZulu", "secret")
+
+      {:ok, straddler} =
+        Evaluation.create_test_case(
+          repo: Repo,
+          question: "StraddlingEvalQuestionZulu",
+          relevant_chunk_ids: [allowed_chunk.id, secret_chunk.id]
+        )
+
+      {:ok, view, html} = conn |> restrict(["tenant-a"]) |> live("/scoped/evaluation")
+
+      refute html =~ "StraddlingEvalQuestionZulu"
+
+      html = render_click(view, "toggle_test_case", %{"id" => straddler.id})
+
+      refute html =~ "SecretEvalChunkZulu"
+    end
+
+    test "a forged toggle cannot expand a test case outside the allowed collections",
+         %{conn: conn} do
+      {secret, _chunks} =
+        seed_test_case(
+          "other",
+          "SecretEvalChunkZulu",
+          "SecretEvalQuestionZulu",
+          "SecretEvalAnswerZulu"
+        )
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/evaluation")
+
+      html = render_click(view, "toggle_test_case", %{"id" => secret.id})
+
+      refute html =~ "SecretEvalAnswerZulu"
+      refute html =~ "SecretEvalChunkZulu"
+    end
+
+    test "rejects deleting a test case outside the allowed collections", %{conn: conn} do
+      {secret, _chunks} = seed_test_case("other", "SecretEvalChunkZulu", "SecretEvalQuestionZulu")
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/evaluation")
+
+      render_click(view, "eval_delete_test_case", %{"id" => secret.id})
+
+      assert Repo.get(Evaluation.TestCase, secret.id)
+    end
+
+    test "still deletes a test case inside the allowed collections", %{conn: conn} do
+      {allowed, _chunks} =
+        seed_test_case("tenant-a", "AllowedEvalChunkZulu", "AllowedEvalQuestionZulu")
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/evaluation")
+
+      render_click(view, "eval_delete_test_case", %{"id" => allowed.id})
+
+      refute Repo.get(Evaluation.TestCase, allowed.id)
+    end
+
+    test "a malformed test case id is rejected instead of crashing", %{conn: conn} do
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/evaluation")
+
+      render_click(view, "eval_delete_test_case", %{"id" => "not-a-uuid"})
+
+      assert render(view) =~ "Evaluation"
+    end
+
+    test "hides and refuses to delete runs that are not scoped to the allowed collections",
+         %{conn: conn} do
+      global_run = insert_run(%{"mode" => "vector"})
+      foreign_run = insert_run(%{"mode" => "vector", "collections" => ["other"]})
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/evaluation")
+
+      html = render_click(view, "eval_switch_view", %{"view" => "history"})
+
+      refute html =~ "4242 test cases"
+
+      render_click(view, "eval_delete_run", %{"id" => global_run.id})
+      render_click(view, "eval_delete_run", %{"id" => foreign_run.id})
+
+      assert Repo.get(Evaluation.Run, global_run.id)
+      assert Repo.get(Evaluation.Run, foreign_run.id)
+    end
+
+    test "still shows and deletes a run scoped to the allowed collections", %{conn: conn} do
+      run = insert_run(%{"mode" => "vector", "collections" => ["tenant-a"]})
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/evaluation")
+
+      html = render_click(view, "eval_switch_view", %{"view" => "history"})
+
+      assert html =~ "4242 test cases"
+
+      render_click(view, "eval_delete_run", %{"id" => run.id})
+
+      refute Repo.get(Evaluation.Run, run.id)
+    end
+
+    # Running an evaluation is a retrieval primitive: without scoping every
+    # test case searches every collection, so the run's stored results hand
+    # back chunk ids the tenant may not read.
+    test "a restricted evaluation run only retrieves from allowed collections", %{conn: conn} do
+      {_tc, _chunks} =
+        seed_test_case("tenant-a", "AllowedEvalChunkZulu", "AllowedEvalQuestionZulu")
+
+      {:ok, secret_doc} = Arcana.ingest("SecretEvalChunkZulu", repo: Repo, collection: "other")
+
+      secret_ids =
+        Repo.all(from(c in Arcana.Chunk, where: c.document_id == ^secret_doc.id, select: c.id))
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/evaluation")
+
+      render_submit(view, "eval_run", %{"mode" => "vector", "retriever" => "pipeline"})
+      render_until(view, "Evaluation completed!")
+
+      run = latest_run()
+
+      retrieved =
+        run.results
+        |> Map.values()
+        |> Enum.flat_map(&(&1["retrieved_chunk_ids"] || []))
+
+      assert run.config["collections"] == ["tenant-a"]
+      assert Enum.all?(secret_ids, &(&1 not in retrieved))
+    end
+
+    # Telemetry handlers are global, so an unfiltered progress handler
+    # renders whatever question any other evaluation is on right now.
+    test "the progress panel ignores telemetry from other evaluation runs", %{conn: conn} do
+      seed_test_case("tenant-a", "AllowedEvalChunkZulu", "AllowedEvalQuestionZulu")
+      put_arcana_env(:llm, "zai:test-stub")
+
+      put_arcana_env(:loop_runner, fn ctx, _opts ->
+        Process.sleep(300)
+
+        {:ok,
+         %Arcana.Loop.Context{
+           question: ctx.question,
+           answer: "stubbed",
+           tool_history: [],
+           iterations: 1,
+           terminated_by: :answered,
+           chunks: [],
+           grounding: nil
+         }}
+      end)
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/evaluation")
+
+      render_submit(view, "eval_run", %{"mode" => "vector", "retriever" => "loop"})
+
+      :telemetry.execute(
+        [:arcana, :evaluation, :test_case, :start],
+        %{index: 1},
+        %{
+          run_id: Ecto.UUID.generate(),
+          run_ref: make_ref(),
+          index: 1,
+          total: 1,
+          question: "ForeignProgressQuestionZulu"
+        }
+      )
+
+      refute render(view) =~ "ForeignProgressQuestionZulu"
+    end
+
+    test "a restricted Loop evaluation runs scoped and strict", %{conn: conn} do
+      seed_test_case("tenant-a", "AllowedEvalChunkZulu", "AllowedEvalQuestionZulu")
+      put_arcana_env(:llm, "zai:test-stub")
+
+      test_pid = self()
+
+      put_arcana_env(:loop_runner, fn ctx, opts ->
+        send(test_pid, {:loop_scope, ctx.collections, opts[:search_opts]})
+
+        {:ok,
+         %Arcana.Loop.Context{
+           question: ctx.question,
+           answer: "stubbed",
+           tool_history: [],
+           iterations: 1,
+           terminated_by: :answered,
+           chunks: [],
+           grounding: nil
+         }}
+      end)
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/evaluation")
+
+      render_submit(view, "eval_run", %{"mode" => "vector", "retriever" => "loop"})
+
+      assert_receive {:loop_scope, collections, search_opts}, 2_000
+      assert collections == ["tenant-a"]
+      assert search_opts[:strict_collections] == true
+    end
+  end
+
   describe "maintenance page" do
     test "restricted dashboards cannot run collection-wide actions", %{conn: conn} do
       {:ok, _} = Collection.get_or_create("tenant-a", Repo)
@@ -505,6 +784,31 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
 
       html = render_click(view, "reembed", %{})
       refute html =~ "Re-embedding..."
+    end
+
+    # An allowed name with no collection row resolves to "no filter", which
+    # would re-chunk and re-embed every document in the database. The
+    # re-embed has to fail instead.
+    test "a restricted re-embed fails closed when the allowed collection is missing",
+         %{conn: conn} do
+      {:ok, _} = Arcana.ingest("Other tenant content", repo: Repo, collection: "other")
+
+      {:ok, view, _html} = conn |> restrict(["ghost"]) |> live("/scoped/maintenance")
+
+      test_pid = self()
+
+      put_arcana_env(:embedder, fn text ->
+        send(test_pid, {:embedded, text})
+        {:ok, List.duplicate(0.1, 384)}
+      end)
+
+      render_change(view, "select_reembed_collection", %{"collection" => "ghost"})
+      render_click(view, "reembed", %{})
+
+      # The stub embedder is the probe: unscoped, the re-embed walks every
+      # chunk in the database and calls it.
+      refute_receive {:embedded, _}, 500
+      assert render(view) =~ "Maintenance"
     end
   end
 

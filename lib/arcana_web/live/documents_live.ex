@@ -195,7 +195,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     def handle_event("view_document", %{"id" => id}, socket) do
-      {:noreply, load_document_detail(socket, id)}
+      case Ecto.UUID.cast(id) do
+        {:ok, uuid} -> {:noreply, load_document_detail(socket, uuid)}
+        :error -> {:noreply, socket}
+      end
     end
 
     def handle_event("close_detail", _params, socket) do
@@ -256,6 +259,12 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     def handle_event("clear_collection_filter", _params, socket) do
       {:noreply, socket |> assign(filter_collection: nil, page: 1) |> load_documents()}
+    end
+
+    # Only reachable from the open document detail panel; a forged event
+    # with no document open has nothing to build a graph from.
+    def handle_event("build_graph", _params, %{assigns: %{viewing_document: nil}} = socket) do
+      {:noreply, socket}
     end
 
     def handle_event("build_graph", _params, socket) do

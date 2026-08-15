@@ -51,10 +51,11 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp load_evaluation_data(socket) do
       repo = socket.assigns.repo
+      opts = eval_opts(socket)
 
-      test_cases = Evaluation.list_test_cases(repo: repo)
-      runs = Evaluation.list_runs(repo: repo, limit: 10)
-      test_case_count = Evaluation.count_test_cases(repo: repo)
+      test_cases = Evaluation.list_test_cases(opts)
+      runs = Evaluation.list_runs(Keyword.put(opts, :limit, 10))
+      test_case_count = Evaluation.count_test_cases(opts)
       collections = load_collections(repo, socket.assigns.allowed_collections)
 
       assign(socket,
@@ -65,13 +66,22 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       )
     end
 
+    # Evaluation data (test cases, runs, counts) is scoped through the
+    # allow-list: test cases reach a collection through their chunks, runs
+    # through the scope they recorded when they ran.
+    defp eval_opts(socket) do
+      case socket.assigns.allowed_collections do
+        :all -> [repo: socket.assigns.repo]
+        allowed when is_list(allowed) -> [repo: socket.assigns.repo, collections: allowed]
+      end
+    end
+
     @impl true
     def handle_event("eval_switch_view", %{"view" => view}, socket) do
       {:noreply, assign(socket, eval_view: parse_eval_view(view))}
     end
 
     def handle_event("eval_run", params, socket) do
-      repo = socket.assigns.repo
       mode = parse_mode(params["mode"])
       retriever_name = params["retriever"] || "pipeline"
       evaluate_answers = params["evaluate_answers"] == "true"
@@ -80,53 +90,21 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       llm = Arcana.Config.get_env(:llm)
       needs_llm? = evaluate_answers or retriever_name == "loop"
 
-      if needs_llm? and is_nil(llm) do
-        {:noreply,
-         assign(socket,
-           eval_message: {:error, "No LLM configured. Set :arcana, :llm in your config."}
-         )}
-      else
-        socket =
-          assign(socket,
-            eval_running: true,
-            eval_message: nil,
-            eval_progress: %{
-              done: 0,
-              total: socket.assigns.eval_test_case_count,
-              started_at: System.monotonic_time(:millisecond)
-            }
-          )
+      cond do
+        # An empty allow-list has no collection to retrieve from, and an
+        # empty `:collections` option means "everything" downstream, so the
+        # run is refused outright rather than scoped to nothing.
+        socket.assigns.allowed_collections == [] ->
+          {:noreply, assign(socket, eval_message: {:error, "No collections are available"})}
 
-        opts = build_run_opts(repo, mode, evaluate_answers, llm, retriever_name)
+        needs_llm? and is_nil(llm) ->
+          {:noreply,
+           assign(socket,
+             eval_message: {:error, "No LLM configured. Set :arcana, :llm in your config."}
+           )}
 
-        parent = self()
-        handler_id = "eval-progress-#{inspect(parent)}"
-
-        :telemetry.attach_many(
-          handler_id,
-          [
-            [:arcana, :evaluation, :test_case, :start],
-            [:arcana, :evaluation, :test_case, :complete]
-          ],
-          fn event, measurements, metadata, _config ->
-            send(parent, {:eval_progress, event, measurements, metadata})
-          end,
-          nil
-        )
-
-        Task.Supervisor.start_child(ArcanaWeb.TaskSupervisor, fn ->
-          result = Evaluation.run(opts)
-          :telemetry.detach(handler_id)
-          send(parent, {:eval_run_complete, result})
-        end)
-
-        # Self-tick every second so the elapsed-time counter updates live
-        # while a test case is in flight. LiveView only re-renders on
-        # messages; without a tick the elapsed-time label freezes at
-        # whatever it was when the last telemetry event fired.
-        Process.send_after(self(), :eval_tick, 1000)
-
-        {:noreply, socket}
+        true ->
+          {:noreply, start_eval_run(socket, mode, evaluate_answers, llm, retriever_name)}
       end
     end
 
@@ -143,28 +121,89 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       end
     end
 
+    # Only test cases the scoped listing already returned can be expanded:
+    # the detail view renders the reference answer and raw chunk text, so a
+    # forged id has to be a no-op rather than a read.
     def handle_event("toggle_test_case", %{"id" => id}, socket) do
-      current = socket.assigns.expanded_test_case_id
-      next = if current == id, do: nil, else: id
-      {:noreply, assign(socket, expanded_test_case_id: next)}
+      cond do
+        socket.assigns.expanded_test_case_id == id ->
+          {:noreply, assign(socket, expanded_test_case_id: nil)}
+
+        Enum.any?(socket.assigns.eval_test_cases, &(&1.id == id)) ->
+          {:noreply, assign(socket, expanded_test_case_id: id)}
+
+        true ->
+          {:noreply, socket}
+      end
     end
 
     def handle_event("eval_delete_test_case", %{"id" => id}, socket) do
-      repo = socket.assigns.repo
-
-      case Evaluation.delete_test_case(id, repo: repo) do
+      case Evaluation.delete_test_case(id, eval_opts(socket)) do
         {:ok, _} -> {:noreply, load_evaluation_data(socket)}
         {:error, _} -> {:noreply, socket}
       end
     end
 
     def handle_event("eval_delete_run", %{"id" => id}, socket) do
-      repo = socket.assigns.repo
-
-      case Evaluation.delete_run(id, repo: repo) do
+      case Evaluation.delete_run(id, eval_opts(socket)) do
         {:ok, _} -> {:noreply, load_evaluation_data(socket)}
         {:error, _} -> {:noreply, socket}
       end
+    end
+
+    defp start_eval_run(socket, mode, evaluate_answers, llm, retriever_name) do
+      socket =
+        assign(socket,
+          eval_running: true,
+          eval_message: nil,
+          eval_progress: %{
+            done: 0,
+            total: socket.assigns.eval_test_case_count,
+            started_at: System.monotonic_time(:millisecond),
+            # The progress handler updates :current with map-update syntax,
+            # which needs the key to exist from the start.
+            current: nil
+          }
+        )
+
+      # Telemetry handlers are global: without a ref to match on, a
+      # dashboard's progress panel echoes the questions of every evaluation
+      # running anywhere in the VM, including other tenants' dashboards and
+      # mix tasks.
+      run_ref = make_ref()
+      opts = build_run_opts(socket, mode, evaluate_answers, llm, retriever_name)
+      opts = Keyword.put(opts, :run_ref, run_ref)
+
+      parent = self()
+      handler_id = "eval-progress-#{inspect(parent)}"
+
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:arcana, :evaluation, :test_case, :start],
+          [:arcana, :evaluation, :test_case, :complete]
+        ],
+        fn event, measurements, metadata, _config ->
+          if metadata[:run_ref] == run_ref do
+            send(parent, {:eval_progress, event, measurements, metadata})
+          end
+        end,
+        nil
+      )
+
+      Task.Supervisor.start_child(ArcanaWeb.TaskSupervisor, fn ->
+        result = Evaluation.run(opts)
+        :telemetry.detach(handler_id)
+        send(parent, {:eval_run_complete, result})
+      end)
+
+      # Self-tick every second so the elapsed-time counter updates live
+      # while a test case is in flight. LiveView only re-renders on
+      # messages; without a tick the elapsed-time label freezes at
+      # whatever it was when the last telemetry event fired.
+      Process.send_after(self(), :eval_tick, 1000)
+
+      socket
     end
 
     # nil means "sample from every collection", which restricted dashboards
@@ -294,14 +333,25 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       {:noreply, socket}
     end
 
-    defp build_run_opts(repo, mode, evaluate_answers, llm, retriever_name) do
-      base =
-        [repo: repo, mode: mode]
-        |> maybe_put_evaluate_answers(evaluate_answers, llm)
-        |> maybe_put_retriever(retriever_name, repo, llm)
+    defp build_run_opts(socket, mode, evaluate_answers, llm, retriever_name) do
+      repo = socket.assigns.repo
+      allowed = socket.assigns.allowed_collections
 
-      base
+      [repo: repo, mode: mode]
+      |> maybe_put_eval_scope(allowed)
+      |> maybe_put_evaluate_answers(evaluate_answers, llm)
+      |> maybe_put_retriever(retriever_name, repo, llm, allowed)
     end
+
+    # Running an evaluation is retrieval over the whole corpus by default:
+    # every test case searches every collection. A restricted dashboard
+    # confines both the test case set and the searches to its allow-list,
+    # strictly, so an allowed name with no collection row fails the search
+    # instead of widening it.
+    defp maybe_put_eval_scope(opts, :all), do: opts
+
+    defp maybe_put_eval_scope(opts, allowed) when is_list(allowed),
+      do: Keyword.merge(opts, collections: allowed, strict_collections: true)
 
     defp maybe_put_evaluate_answers(opts, false, _llm), do: opts
 
@@ -310,10 +360,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     # Pipeline is the default — no :retriever needed, Arcana.Evaluation.run/1
-    # falls back to &Arcana.search/2.
-    defp maybe_put_retriever(opts, "pipeline", _repo, _llm), do: opts
+    # falls back to &Arcana.search/2 with the run's scope opts.
+    defp maybe_put_retriever(opts, "pipeline", _repo, _llm, _allowed), do: opts
 
-    defp maybe_put_retriever(opts, "loop", repo, llm) do
+    defp maybe_put_retriever(opts, "loop", repo, llm, allowed) do
       # Loop retriever: run a full Arcana.Loop.run/2 per test case and
       # return the 3-tuple {:ok, chunks, answer}. The answer is the one
       # the loop produced, so when evaluate_answers: true is on, the
@@ -321,9 +371,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       runner = loop_runner()
 
       retriever = fn question, _opts ->
-        ctx = Arcana.Loop.new(question, repo: repo)
+        ctx = Arcana.Loop.new(question, loop_new_opts(repo, allowed))
 
-        case runner.(ctx, controller_llm: llm) do
+        case runner.(ctx, loop_run_opts(llm, allowed)) do
           {:ok, %Arcana.Loop.Context{} = result_ctx} ->
             {:ok, result_ctx.chunks, result_ctx.answer}
 
@@ -334,6 +384,20 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
       Keyword.put(opts, :retriever, retriever)
     end
+
+    # An unscoped Arcana.Loop.new/2 leaves ctx.collections as [nil], which
+    # is the whole corpus. The Loop reaches Arcana.search/2 through its
+    # search tool, which merges :search_opts over the collection opts it
+    # derives from the context — same wiring ask_live uses.
+    defp loop_new_opts(repo, :all), do: [repo: repo]
+
+    defp loop_new_opts(repo, allowed) when is_list(allowed),
+      do: [repo: repo, collections: allowed]
+
+    defp loop_run_opts(llm, :all), do: [controller_llm: llm]
+
+    defp loop_run_opts(llm, allowed) when is_list(allowed),
+      do: [controller_llm: llm, search_opts: [strict_collections: true]]
 
     # Testability seam — same pattern used in ask_live.ex so tests can
     # stub Loop execution without spinning up a real controller.

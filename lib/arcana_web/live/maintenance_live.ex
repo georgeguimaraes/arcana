@@ -249,8 +249,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           send(parent, {:reembed_progress, current, total})
         end
 
-        opts = [batch_size: 50, progress: progress_fn]
-        opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
+        opts = maintenance_collection_opts([batch_size: 50, progress: progress_fn], collection)
         result = Arcana.Maintenance.reembed(repo, opts)
         send(parent, {:reembed_complete, result})
       end)
@@ -273,8 +272,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           send(parent, {:rebuild_graph_progress, current, total})
         end
 
-        opts = [progress: progress_fn]
-        opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
+        opts = maintenance_collection_opts([progress: progress_fn], collection)
         result = Arcana.Maintenance.rebuild_graph(repo, opts)
         send(parent, {:rebuild_graph_complete, result})
       end)
@@ -297,14 +295,27 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           send(parent, {:detect_communities_progress, current, total})
         end
 
-        opts = [progress: progress_fn]
-        opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
+        opts = maintenance_collection_opts([progress: progress_fn], collection)
         result = Arcana.Maintenance.detect_communities(repo, opts)
         send(parent, {:detect_communities_complete, result})
       end)
 
       socket
     end
+
+    # A collection name with no row resolves to "no filter", which silently
+    # turns a per-collection action into a global one: re-embedding every
+    # document in the database, rebuilding every graph. Strict resolution
+    # turns that into {:error, {:unknown_collection, name}}, which the
+    # completion handlers already render as a flash. The name can go missing
+    # on any dashboard (never ingested yet, or deleted from another tab), so
+    # this holds for restricted and unrestricted mounts alike. nil is the
+    # explicit "all collections" choice and stays unstrict — restricted
+    # dashboards never get that far (see validate_maintenance_collection/2).
+    defp maintenance_collection_opts(opts, nil), do: opts
+
+    defp maintenance_collection_opts(opts, collection) when is_binary(collection),
+      do: Keyword.merge(opts, collection: collection, strict_collections: true)
 
     defp assign_orphaned_to_collection(repo, collection_id) do
       # Only entities have collection_id - relationships reference entities

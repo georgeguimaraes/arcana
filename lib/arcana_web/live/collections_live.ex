@@ -238,16 +238,15 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     # Fetches a collection by id only when its name is inside the allowed
     # set. Forged ids pointing at collections outside the scope resolve to
-    # nil, the same as a missing row.
+    # nil, the same as a missing row; ids that aren't UUIDs at all are
+    # rejected before the query would raise an Ecto.Query.CastError.
     defp fetch_allowed_collection(socket, id) do
-      case socket.assigns.repo.get(Collection, id) do
-        nil ->
-          nil
-
-        collection ->
-          if allowed_collection?(socket.assigns.allowed_collections, collection.name),
-            do: collection,
-            else: nil
+      with {:ok, uuid} <- Ecto.UUID.cast(id),
+           collection when not is_nil(collection) <- socket.assigns.repo.get(Collection, uuid),
+           true <- allowed_collection?(socket.assigns.allowed_collections, collection.name) do
+        collection
+      else
+        _ -> nil
       end
     end
 
