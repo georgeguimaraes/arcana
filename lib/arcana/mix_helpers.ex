@@ -6,6 +6,8 @@ defmodule Arcana.MixHelpers do
   # into `Mix.raise/1` so the CLI prints a single clean line instead of a
   # stacktrace.
 
+  defguardp is_valid_dimensions(value) when is_integer(value) and value > 0
+
   @doc """
   Resolves the configured repo, converting `Arcana.Config.repo!/1`'s
   `ArgumentError` into a clean `Mix.raise`.
@@ -24,11 +26,16 @@ defmodule Arcana.MixHelpers do
 
   Loads the host application's config first, since the embedder is read
   from app env. Raises a `Mix.Error` with a `--dimensions` hint when the
-  embedder can't be probed.
+  embedder can't be probed, or when it reports something that isn't a
+  positive integer.
   """
   def detect_dimensions! do
     Mix.Task.run("app.config")
-    Arcana.Embedder.dimensions(Arcana.embedder())
+    {module, _opts} = embedder = Arcana.embedder()
+
+    embedder
+    |> Arcana.Embedder.dimensions()
+    |> validate_detected_dimensions!(module)
   rescue
     e in Mix.Error ->
       reraise e, __STACKTRACE__
@@ -50,9 +57,23 @@ defmodule Arcana.MixHelpers do
   """
   def validate_dimensions!(value, flag \\ "--dimensions")
 
-  def validate_dimensions!(value, _flag) when is_integer(value) and value > 0, do: value
+  def validate_dimensions!(value, _flag) when is_valid_dimensions(value), do: value
 
   def validate_dimensions!(value, flag) do
     Mix.raise("#{flag} must be a positive integer, got: #{inspect(value)}")
+  end
+
+  # Same check as validate_dimensions!/2, but the value came from the
+  # embedder rather than the command line, so the flag is the workaround
+  # instead of the culprit.
+  defp validate_detected_dimensions!(value, _module) when is_valid_dimensions(value), do: value
+
+  defp validate_detected_dimensions!(value, module) do
+    Mix.raise("""
+    The configured embedder #{inspect(module)} reported invalid embedding dimensions: #{inspect(value)}
+
+    Dimensions must be a positive integer. Fix the embedder's dimensions/1
+    callback, or pass them explicitly with --dimensions, e.g.: --dimensions 1024
+    """)
   end
 end

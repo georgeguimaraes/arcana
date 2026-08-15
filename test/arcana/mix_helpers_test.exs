@@ -24,6 +24,27 @@ defmodule Arcana.MixHelpersTest do
     end
   end
 
+  describe "detect_dimensions!/0" do
+    defmodule ZeroDimensionEmbedder do
+      def dimensions(_opts), do: 0
+    end
+
+    test "returns what the embedder reports" do
+      put_arcana_env(:embedder, Arcana.Embedder.Local)
+
+      assert MixHelpers.detect_dimensions!() == 384
+    end
+
+    test "raises naming the embedder when it reports an invalid dimension" do
+      put_arcana_env(:embedder, ZeroDimensionEmbedder)
+
+      error = assert_raise Mix.Error, fn -> MixHelpers.detect_dimensions!() end
+
+      assert error.message =~ "ZeroDimensionEmbedder reported invalid embedding dimensions: 0"
+      refute error.message =~ "--dimensions must be"
+    end
+  end
+
   describe "validate_dimensions!/2" do
     test "returns positive integers unchanged" do
       assert MixHelpers.validate_dimensions!(384) == 384
