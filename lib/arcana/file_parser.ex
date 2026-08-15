@@ -38,7 +38,9 @@ defmodule Arcana.FileParser do
         def supports_binary?, do: true
 
         # Optional: report whether the parser can run right now, e.g. a
-        # required CLI is installed (default: true)
+        # required CLI is installed (default: true). A parser reporting
+        # `false` is not invoked at all: parsing returns
+        # `{:error, {:parser_unavailable, module}}`.
         @impl true
         def available?, do: true
       end
@@ -84,9 +86,23 @@ defmodule Arcana.FileParser do
     opts = Keyword.merge(parser_opts, call_opts)
 
     case module.parse(input, opts) do
-      {:ok, text} -> {:ok, text, %{}}
-      {:ok, text, meta} when is_map(meta) -> {:ok, text, meta}
-      {:error, reason} -> {:error, reason}
+      {:ok, text} ->
+        {:ok, text, %{}}
+
+      {:ok, text, meta} when is_map(meta) ->
+        {:ok, text, meta}
+
+      # Metadata is documented as a map (`%{pages: [...]}`); a keyword list
+      # is the easy slip. Report it rather than raising CaseClauseError from
+      # inside the library with no hint of which parser misbehaved.
+      {:ok, _text, meta} ->
+        {:error, {:invalid_parser_metadata, module, meta}}
+
+      {:error, reason} ->
+        {:error, reason}
+
+      other ->
+        {:error, {:invalid_parser_return, module, other}}
     end
   end
 
@@ -104,15 +120,17 @@ defmodule Arcana.FileParser do
   @doc """
   Whether a `{module, opts}` parser can run right now.
 
-  Defaults to `true` for parsers that don't implement `available?/0`.
+  Defaults to `true` for parsers that don't implement `available?/0`, but
+  a module that can't be loaded (a typo in config) or doesn't implement
+  `parse/2` is never available: reporting `true` there only postpones the
+  failure to an `UndefinedFunctionError` at parse time.
   """
   def available?({module, _opts}) do
-    Code.ensure_loaded(module)
-
-    if function_exported?(module, :available?, 0) do
-      module.available?()
-    else
-      true
+    cond do
+      not match?({:module, _}, Code.ensure_loaded(module)) -> false
+      not function_exported?(module, :parse, 2) -> false
+      function_exported?(module, :available?, 0) -> module.available?()
+      true -> true
     end
   end
 end

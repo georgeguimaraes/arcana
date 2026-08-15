@@ -446,9 +446,12 @@ defmodule Arcana.Config do
   # config error (or, for components that accept it, a disabled component).
   defp plain_module?(value), do: is_atom(value) and not is_boolean(value) and not is_nil(value)
 
+  # The head has to pass the same test a bare module does: `{false, opts}`
+  # and `{nil, opts}` look like a {module, opts} pair but land on
+  # `function false.parse/2` at call time, exactly like bare `false` did.
   defp module_opts_tuple?(value) do
     is_tuple(value) and tuple_size(value) == 2 and
-      is_atom(elem(value, 0)) and is_list(elem(value, 1))
+      plain_module?(elem(value, 0)) and is_list(elem(value, 1))
   end
 
   @doc false

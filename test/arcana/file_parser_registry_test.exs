@@ -49,6 +49,35 @@ defmodule UnavailableParser do
   def available?, do: false
 end
 
+defmodule MustNotRunParser do
+  @moduledoc false
+  @behaviour Arcana.FileParser
+
+  @impl true
+  def parse(_input, _opts), do: raise("MustNotRunParser.parse/2 must not be invoked")
+
+  @impl true
+  def supports_binary?, do: true
+
+  @impl true
+  def available?, do: false
+end
+
+defmodule KeywordMetaParser do
+  @moduledoc false
+  @behaviour Arcana.FileParser
+
+  @impl true
+  def parse(_input, _opts), do: {:ok, "text", pages: []}
+
+  @impl true
+  def supports_binary?, do: true
+end
+
+defmodule NotAParserAtAll do
+  @moduledoc false
+end
+
 defmodule Arcana.FileParserRegistryTest do
   use Arcana.DataCase, async: true
 
@@ -149,6 +178,32 @@ defmodule Arcana.FileParserRegistryTest do
         Arcana.Config.fallback_parser()
       end
     end
+
+    test "a boolean or nil tuple head is a config error too" do
+      # bare `false` was already rejected, but `{false, opts}` still looked
+      # like a valid {module, opts} pair and reached `false.parse/2`
+      put_arcana_env(:fallback_parser, {false, []})
+
+      assert_raise ArgumentError, ~r/invalid file parser config: \{false, \[\]\}/, fn ->
+        Arcana.Config.fallback_parser()
+      end
+
+      put_arcana_env(:fallback_parser, {nil, label: "x"})
+
+      assert_raise ArgumentError, ~r/invalid file parser config: \{nil, /, fn ->
+        Arcana.Config.fallback_parser()
+      end
+    end
+
+    test "a boolean tuple head in :file_parsers is a config error, not a runtime crash" do
+      put_arcana_env(:file_parsers, %{".docx" => {false, []}})
+
+      path = temp_file("x", ".docx")
+
+      assert_raise ArgumentError, ~r/invalid file parser config: \{false, \[\]\}/, fn ->
+        Parser.parse(path)
+      end
+    end
   end
 
   describe "disabling an extension" do
@@ -240,6 +295,47 @@ defmodule Arcana.FileParserRegistryTest do
 
     test "is false for extensions nothing handles" do
       refute Parser.available?(".rtf")
+    end
+
+    test "a module that doesn't exist reports unavailable instead of defaulting to true" do
+      put_arcana_env(:file_parsers, %{".docx" => MyApp.NoSuchParserWhatsoever})
+
+      refute Parser.available?(".docx")
+    end
+
+    test "a module without parse/2 reports unavailable" do
+      put_arcana_env(:file_parsers, %{".docx" => NotAParserAtAll})
+
+      refute Parser.available?(".docx")
+    end
+  end
+
+  describe "unavailable parsers" do
+    test "an unavailable parser is never invoked" do
+      put_arcana_env(:file_parsers, %{".docx" => MustNotRunParser})
+
+      path = temp_file("x", ".docx")
+
+      assert {:error, {:parser_unavailable, MustNotRunParser}} = Parser.parse(path)
+
+      assert {:error, {:parser_unavailable, MustNotRunParser}} =
+               Parser.parse_binary("x", "report.docx")
+    end
+
+    test "ingestion surfaces the unavailable parser instead of crashing" do
+      put_arcana_env(:file_parsers, %{".docx" => MustNotRunParser})
+
+      assert {:error, {:parser_unavailable, MustNotRunParser}} =
+               Arcana.ingest_binary("x", filename: "report.docx", repo: Repo)
+    end
+  end
+
+  describe "malformed parser returns" do
+    test "a non-map third element is an error tuple, not a CaseClauseError" do
+      put_arcana_env(:file_parsers, %{".docx" => KeywordMetaParser})
+
+      assert {:error, {:invalid_parser_metadata, KeywordMetaParser, [pages: []]}} =
+               Parser.parse_binary("raw", "doc.docx")
     end
   end
 

@@ -225,7 +225,7 @@ defmodule Arcana.Parser do
       case pdf_content(input, kind) do
         {:ok, content} ->
           if String.starts_with?(content, "%PDF") do
-            FileParser.parse(parser, input, opts)
+            invoke(parser, input, opts)
           else
             {:error, :invalid_pdf}
           end
@@ -234,9 +234,27 @@ defmodule Arcana.Parser do
           error
       end
     else
-      FileParser.parse(parser, input, opts)
+      invoke(parser, input, opts)
     end
   end
+
+  # A parser that reports itself unavailable (`available?/0`) doesn't get
+  # called. Poppler self-guards, so this used to be harmless for the
+  # built-in route, but a third-party parser written to the documented
+  # contract was invoked anyway.
+  defp invoke(parser, input, opts) do
+    if FileParser.available?(parser) do
+      FileParser.parse(parser, input, opts)
+    else
+      {:error, unavailable_reason(parser)}
+    end
+  end
+
+  # Poppler has reported :poppler_not_available since before this gate
+  # existed and callers match on it; keep that exact shape for the
+  # built-in and give everyone else the generic error.
+  defp unavailable_reason({Arcana.FileParser.PDF.Poppler, _opts}), do: :poppler_not_available
+  defp unavailable_reason({module, _opts}), do: {:parser_unavailable, module}
 
   defp pdf_content(binary, :binary), do: {:ok, binary}
 
