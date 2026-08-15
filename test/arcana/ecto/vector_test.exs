@@ -1,3 +1,8 @@
+defmodule OpaqueVector do
+  @moduledoc false
+  defstruct [:blob]
+end
+
 defmodule Arcana.Ecto.VectorTest do
   use Arcana.DataCase, async: true
 
@@ -28,6 +33,28 @@ defmodule Arcana.Ecto.VectorTest do
     test "uncastable values fall back to structural comparison without raising" do
       refute Vector.equal?("not a vector", [1.0])
       assert Vector.equal?("same", "same")
+    end
+
+    test "an enumerable struct from a custom decoder compares by value" do
+      # A custom Postgrex types module can decode vectors into its own
+      # struct; as long as it enumerates to the same numbers it must
+      # compare equal to the list/Pgvector representations (issue #98).
+      # A range stands in for that struct here: protocols are
+      # consolidated in test, so an Enumerable impl defined in this file
+      # would be invisible at runtime.
+      enumerable_struct = 1..3
+
+      assert Vector.equal?(enumerable_struct, [1.0, 2.0, 3.0])
+      assert Vector.equal?([1.0, 2.0, 3.0], enumerable_struct)
+      assert Vector.equal?(enumerable_struct, Pgvector.new([1.0, 2.0, 3.0]))
+      refute Vector.equal?(enumerable_struct, [1.0, 2.0, 3.5])
+    end
+
+    test "an opaque struct falls back to structural comparison" do
+      opaque = %OpaqueVector{blob: "unknown"}
+
+      assert Vector.equal?(opaque, opaque)
+      refute Vector.equal?(opaque, [1.0])
     end
   end
 
