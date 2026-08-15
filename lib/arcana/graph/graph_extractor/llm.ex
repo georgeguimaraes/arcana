@@ -116,6 +116,7 @@ defmodule Arcana.Graph.GraphExtractor.LLM do
     {
       "entities": [
         {"name": "Sam Altman", "type": "person", "description": "Brief context"},
+        {"name": "OpenAI", "type": "organization", "description": "Brief context"},
         {"name": "two year limited warranty", "type": "concept", "description": "Brief context"}
       ],
       "relationships": [
