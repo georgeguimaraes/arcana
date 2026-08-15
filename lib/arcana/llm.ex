@@ -6,7 +6,13 @@ defprotocol Arcana.LLM do
 
   - Model strings via Req.LLM (e.g., `"openai:gpt-4o-mini"`, `"zai:glm-4.5-flash"`)
   - Tuples of `{model_string, opts}` for passing options like `:api_key`
+  - Tuples of `{module, function}` naming a function of arity 1, 2, or 3
+    (`prompt`, `prompt, context`, or `prompt, context, opts`)
   - Anonymous functions (for testing)
+
+  Prefer the `{module, function}` form for `config :arcana, :llm` — unlike
+  a captured function, it serializes into a release's `sys.config`, so it
+  doesn't have to be wired in `runtime.exs`.
 
   ## Examples
 
@@ -15,6 +21,9 @@ defprotocol Arcana.LLM do
 
       # With options
       Arcana.ask("question", llm: {"zai:glm-4.7", api_key: "key"}, repo: MyApp.Repo)
+
+      # Module/function tuple (release-safe for config)
+      config :arcana, llm: {MyApp.LLM, :complete}
 
       # Function (for testing)
       Arcana.ask("question", llm: fn _prompt -> {:ok, "answer"} end, repo: MyApp.Repo)
@@ -122,10 +131,33 @@ if Code.ensure_loaded?(ReqLLM) do
       end)
     end
   end
+end
 
-  defimpl Arcana.LLM, for: Tuple do
-    def complete({model, llm_opts}, prompt, context, opts) do
-      Arcana.LLM.complete(model, prompt, context, Keyword.merge(llm_opts, opts))
-    end
+defimpl Arcana.LLM, for: Tuple do
+  alias Arcana.LLM.Helpers
+
+  def complete({module, function}, prompt, context, opts)
+      when is_atom(module) and is_atom(function) do
+    Helpers.with_telemetry("#{inspect(module)}.#{function}", prompt, context, fn ->
+      Code.ensure_loaded(module)
+
+      cond do
+        function_exported?(module, function, 3) ->
+          apply(module, function, [prompt, context, opts])
+
+        function_exported?(module, function, 2) ->
+          apply(module, function, [prompt, context])
+
+        function_exported?(module, function, 1) ->
+          apply(module, function, [prompt])
+
+        true ->
+          {:error, {:invalid_llm_mfa, {module, function}}}
+      end
+    end)
+  end
+
+  def complete({model, llm_opts}, prompt, context, opts) when is_list(llm_opts) do
+    Arcana.LLM.complete(model, prompt, context, Keyword.merge(llm_opts, opts))
   end
 end

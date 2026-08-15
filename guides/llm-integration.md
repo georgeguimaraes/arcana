@@ -44,6 +44,26 @@ Pass a model string directly to `Arcana.ask/2`:
 
 The model string format is `provider:model-name`. Req.LLM supports 45+ providers including OpenAI, Anthropic, Google, Groq, and OpenRouter.
 
+## Global LLM Configuration
+
+Instead of passing `:llm` on every call, set it once:
+
+```elixir
+config :arcana, llm: "openai:gpt-4o-mini"
+```
+
+For a custom adapter, use a `{module, function}` tuple. Unlike a captured
+function (`&MyApp.LLM.complete/3`), it serializes into a release's
+`sys.config`, so it works from `config.exs` without `runtime.exs` wiring:
+
+```elixir
+config :arcana, llm: {MyApp.LLM, :complete}
+```
+
+The function is called with `prompt`, `prompt, context`, or
+`prompt, context, opts` depending on its arity, and must return
+`{:ok, answer}` or `{:error, reason}`.
+
 ## Custom Prompts
 
 Use the `:prompt` option for custom system prompts:
