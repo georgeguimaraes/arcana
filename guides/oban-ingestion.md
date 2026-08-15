@@ -22,12 +22,15 @@ defmodule MyApp.IngestWorker do
     queue: :ingest,
     max_attempts: 3,
     unique: [
-      # One job per document identity, across queued AND running jobs.
-      # :executing matters: without it a queued duplicate can start
-      # while the first is mid-ingest.
+      # One job per document identity while it waits in the queue.
+      # Deliberately NOT including :executing: replacing args on a job
+      # that is already running does nothing (the worker read its args
+      # at start), so the new content would be silently lost. A
+      # duplicate arriving mid-execution becomes a fresh job instead,
+      # which runs afterwards and supersedes via replace: true.
       fields: [:worker, :args],
       keys: [:collection, :source_id],
-      states: [:available, :scheduled, :retryable, :executing],
+      states: [:available, :scheduled, :retryable],
       # When a duplicate arrives while a job is still queued, keep the
       # job but swap in the newest args, so the latest content wins.
       on_conflict: {:replace, [:args]}
@@ -92,3 +95,10 @@ instead.
 - The Oban uniqueness lock and Arcana's replace advisory lock are
   complementary: uniqueness collapses redundant work before it starts,
   the advisory lock makes whatever does run correct under races.
+- Ordering caveat: if two jobs for the same identity ever execute
+  concurrently (the second enqueued after the first started), Arcana's
+  swap is first-to-complete-wins, not latest-wins. If your content
+  churns faster than ingestion completes and strict latest-wins
+  matters, run the ingest queue with `limit: 1`, or have the worker
+  `{:snooze, n}` when an earlier job for the same identity is still
+  executing.
