@@ -561,10 +561,21 @@ if Code.ensure_loaded?(Igniter) do
 
     defp types_module_taken?(igniter, candidate, found, found_path) do
       path = types_module_path(candidate)
-      {defined?, igniter} = IgniterModule.module_exists(igniter, candidate)
+      {defined?, igniter} = module_defined?(igniter, candidate)
 
       {candidate == found or path == found_path or defined? or Igniter.exists?(igniter, path),
        igniter}
+    end
+
+    # The search parses the files it looks at, so one unparsable file in lib/
+    # would otherwise abort the whole install with a Sourceror error. An app
+    # with a broken file still deserves a working installer, and the path check
+    # below is enough to keep us off an occupied name: whatever the file
+    # contains, it is there.
+    defp module_defined?(igniter, candidate) do
+      IgniterModule.module_exists(igniter, candidate)
+    rescue
+      _ -> {false, igniter}
     end
 
     defp no_free_types_module_message(candidates) do

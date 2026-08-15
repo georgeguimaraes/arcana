@@ -241,6 +241,18 @@ defmodule Mix.Tasks.Arcana.InstallTest do
     |> assert_has_notice(&(&1 =~ "config/broken.exs"))
   end
 
+  test "keeps installing when a lib file at a candidate's path can't be parsed" do
+    # Looking for a module definition parses the file it looks at, so a broken
+    # one used to abort the install with a Sourceror error.
+    test_project()
+    |> add_file_after_setup(
+      "lib/test/postgrex_types.ex",
+      "defmodule Test.Broken do\n  def a(\nend\n"
+    )
+    |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
+    |> assert_creates("lib/test/repo/postgrex_types.ex")
+  end
+
   test "says which places detection looked at when it generates a module" do
     test_project()
     |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
