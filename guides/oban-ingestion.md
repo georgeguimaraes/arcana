@@ -6,8 +6,8 @@ recipe wraps `Arcana.ingest/2` in an [Oban](https://hexdocs.pm/oban) worker
 with the properties a multi-tenant ingestion pipeline needs:
 
 - a dedicated queue so ingestion can't starve your other workers
-- uniqueness on the document identity, including while a job is executing,
-  so the same document is never ingested twice concurrently
+- uniqueness on the document identity while jobs wait in the queue, so
+  redundant work collapses before it starts
 - replace-args-while-queued, so when content changes faster than the queue
   drains, the latest version wins
 - `replace: true` so re-ingesting an identity supersedes the previous
