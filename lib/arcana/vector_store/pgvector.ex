@@ -105,33 +105,35 @@ defmodule Arcana.VectorStore.Pgvector do
     threshold = Keyword.get(opts, :threshold, 0.0)
     source_id = Keyword.get(opts, :source_id)
 
-    collection_id = resolve_filter_collection_id(collection, repo, opts)
+    case resolve_filter_collection_id(collection, repo, opts) do
+      :unknown ->
+        []
 
-    base_query =
-      from(c in Chunk,
-        join: d in Document,
-        on: c.document_id == d.id,
-        select: %{
-          id: c.id,
-          metadata:
-            merge(c.metadata, %{
-              text: c.text,
-              chunk_index: c.chunk_index,
-              document_id: c.document_id
-            }),
-          score: fragment("1 - (? <=> ?)", c.embedding, ^query_embedding)
-        },
-        where: fragment("1 - (? <=> ?) > ?", c.embedding, ^query_embedding, ^threshold),
-        order_by: fragment("? <=> ?", c.embedding, ^query_embedding),
-        limit: ^limit
-      )
+      {:ok, collection_id} ->
+        base_query =
+          from(c in Chunk,
+            join: d in Document,
+            on: c.document_id == d.id,
+            select: %{
+              id: c.id,
+              metadata:
+                merge(c.metadata, %{
+                  text: c.text,
+                  chunk_index: c.chunk_index,
+                  document_id: c.document_id
+                }),
+              score: fragment("1 - (? <=> ?)", c.embedding, ^query_embedding)
+            },
+            where: fragment("1 - (? <=> ?) > ?", c.embedding, ^query_embedding, ^threshold),
+            order_by: fragment("? <=> ?", c.embedding, ^query_embedding),
+            limit: ^limit
+          )
 
-    final_query =
-      base_query
-      |> maybe_filter_source_id(source_id)
-      |> maybe_filter_collection_id(collection_id)
-
-    repo.all(final_query)
+        base_query
+        |> maybe_filter_source_id(source_id)
+        |> maybe_filter_collection_id(collection_id)
+        |> repo.all()
+    end
   end
 
   @impl true
@@ -140,50 +142,52 @@ defmodule Arcana.VectorStore.Pgvector do
     limit = Keyword.get(opts, :limit, 10)
     source_id = Keyword.get(opts, :source_id)
 
-    collection_id = resolve_filter_collection_id(collection, repo, opts)
+    case resolve_filter_collection_id(collection, repo, opts) do
+      :unknown ->
+        []
 
-    base_query =
-      from(c in Chunk,
-        join: d in Document,
-        on: c.document_id == d.id,
-        where:
-          fragment(
-            "to_tsvector('english', ?) @@ plainto_tsquery('english', ?)",
-            c.text,
-            ^query_text
-          ),
-        select: %{
-          id: c.id,
-          metadata:
-            merge(c.metadata, %{
-              text: c.text,
-              chunk_index: c.chunk_index,
-              document_id: c.document_id
-            }),
-          score:
-            fragment(
-              "ts_rank(to_tsvector('english', ?), plainto_tsquery('english', ?))",
-              c.text,
-              ^query_text
-            )
-        },
-        order_by: [
-          desc:
-            fragment(
-              "ts_rank(to_tsvector('english', ?), plainto_tsquery('english', ?))",
-              c.text,
-              ^query_text
-            )
-        ],
-        limit: ^limit
-      )
+      {:ok, collection_id} ->
+        base_query =
+          from(c in Chunk,
+            join: d in Document,
+            on: c.document_id == d.id,
+            where:
+              fragment(
+                "to_tsvector('english', ?) @@ plainto_tsquery('english', ?)",
+                c.text,
+                ^query_text
+              ),
+            select: %{
+              id: c.id,
+              metadata:
+                merge(c.metadata, %{
+                  text: c.text,
+                  chunk_index: c.chunk_index,
+                  document_id: c.document_id
+                }),
+              score:
+                fragment(
+                  "ts_rank(to_tsvector('english', ?), plainto_tsquery('english', ?))",
+                  c.text,
+                  ^query_text
+                )
+            },
+            order_by: [
+              desc:
+                fragment(
+                  "ts_rank(to_tsvector('english', ?), plainto_tsquery('english', ?))",
+                  c.text,
+                  ^query_text
+                )
+            ],
+            limit: ^limit
+          )
 
-    final_query =
-      base_query
-      |> maybe_filter_source_id(source_id)
-      |> maybe_filter_collection_id(collection_id)
-
-    repo.all(final_query)
+        base_query
+        |> maybe_filter_source_id(source_id)
+        |> maybe_filter_collection_id(collection_id)
+        |> repo.all()
+    end
   end
 
   @doc """
@@ -219,15 +223,41 @@ defmodule Arcana.VectorStore.Pgvector do
     threshold = Keyword.get(opts, :threshold, 0.0)
 
     # Resolve the collection filter, converted to binary for raw SQL
-    collection_id =
-      case resolve_filter_collection_id(collection, repo, opts) do
-        nil ->
-          nil
+    case resolve_filter_collection_id(collection, repo, opts) do
+      :unknown ->
+        []
 
-        id ->
-          {:ok, binary_id} = Ecto.UUID.dump(id)
-          binary_id
-      end
+      {:ok, resolved_id} ->
+        collection_id =
+          case resolved_id do
+            nil ->
+              nil
+
+            id ->
+              {:ok, binary_id} = Ecto.UUID.dump(id)
+              binary_id
+          end
+
+        do_search_hybrid(collection_id, query_embedding, query_text, %{
+          repo: repo,
+          limit: limit,
+          source_id: source_id,
+          vector_weight: vector_weight,
+          keyword_weight: keyword_weight,
+          threshold: threshold
+        })
+    end
+  end
+
+  defp do_search_hybrid(collection_id, query_embedding, query_text, params) do
+    %{
+      repo: repo,
+      limit: limit,
+      source_id: source_id,
+      vector_weight: vector_weight,
+      keyword_weight: keyword_weight,
+      threshold: threshold
+    } = params
 
     # Use raw SQL for the hybrid query with CTEs for proper normalization
     sql = """
@@ -415,19 +445,22 @@ defmodule Arcana.VectorStore.Pgvector do
 
   # Prefer a pre-resolved :collection_id (set by Arcana.Search under strict
   # mode so the query is pinned to the validated id); otherwise resolve the
-  # name, keeping the historical no-filter fallback for unknown names.
+  # name. For unknown names: under strict mode return :unknown so callers
+  # match nothing (direct backend calls bypass Arcana.Search's up-front
+  # validation), otherwise keep the historical no-filter fallback.
   defp resolve_filter_collection_id(collection, repo, opts) do
     case Keyword.get(opts, :collection_id) do
-      nil ->
-        if collection do
-          case repo.get_by(Collection, name: collection) do
-            nil -> nil
-            coll -> coll.id
-          end
-        end
+      nil -> resolve_filter_by_name(collection, repo, opts)
+      id -> {:ok, id}
+    end
+  end
 
-      id ->
-        id
+  defp resolve_filter_by_name(nil, _repo, _opts), do: {:ok, nil}
+
+  defp resolve_filter_by_name(collection, repo, opts) do
+    case repo.get_by(Collection, name: collection) do
+      nil -> if Arcana.Config.strict_collections?(opts), do: :unknown, else: {:ok, nil}
+      coll -> {:ok, coll.id}
     end
   end
 

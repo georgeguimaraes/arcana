@@ -370,12 +370,6 @@ defmodule Arcana.Loop do
 
   defp enrich_source(source, _index), do: source
 
-  # Graceful degradation: if the controller hit max_iterations without
-  # calling `answer`, synthesize a final answer from the chunks we have.
-  # Disable with `fallback_synthesis: false`. The synthesizer is a function
-  # `(messages, opts) -> {:ok, text} | {:error, reason}`. The default
-  # appends a "synthesize now" instruction and calls the controller LLM
-  # without tools so it has to produce text.
   defp reject_mfa_llm!(llm, option) do
     case llm do
       {mod, fun} when is_atom(mod) and is_atom(fun) ->
@@ -389,6 +383,12 @@ defmodule Arcana.Loop do
     end
   end
 
+  # Graceful degradation: if the controller hit max_iterations without
+  # calling `answer`, synthesize a final answer from the chunks we have.
+  # Disable with `fallback_synthesis: false`. The synthesizer is a function
+  # `(messages, opts) -> {:ok, text} | {:error, reason}`. The default
+  # appends a "synthesize now" instruction and calls the controller LLM
+  # without tools so it has to produce text.
   defp maybe_synthesize_fallback(%Context{} = ctx, controller_llm, answer_llm, opts) do
     cond do
       ctx.terminated_by != :max_iterations ->

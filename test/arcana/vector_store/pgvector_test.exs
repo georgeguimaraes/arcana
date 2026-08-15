@@ -183,31 +183,70 @@ defmodule Arcana.VectorStore.PgvectorTest do
   describe "search/3 with a pre-resolved collection id" do
     test "the :collection_id opt pins the query instead of re-resolving the name" do
       repo = Arcana.TestRepo
+      embedding = List.duplicate(0.5, 384)
 
       {:ok, collection} = Collection.get_or_create("pinned-coll", repo)
+      {:ok, other} = Collection.get_or_create("pinned-other", repo)
+
+      for {coll, text} <- [{collection, "pinned chunk"}, {other, "foreign chunk"}] do
+        {:ok, doc} =
+          %Document{}
+          |> Document.changeset(%{content: "x", status: :completed, collection_id: coll.id})
+          |> repo.insert()
+
+        %Chunk{}
+        |> Chunk.changeset(%{text: text, embedding: embedding, document_id: doc.id})
+        |> repo.insert!()
+      end
+
+      # The name doesn't resolve, but the id filter must still apply: the
+      # equally-similar chunk in the other collection must be excluded
+      # (without the pin this query would widen and return both).
+      results =
+        Pgvector.search("renamed-since-validation", embedding,
+          repo: repo,
+          collection_id: collection.id
+        )
+
+      assert [%{metadata: %{text: "pinned chunk"}}] = results
+    end
+
+    test "under strict mode a direct backend call with an unknown name matches nothing" do
+      repo = Arcana.TestRepo
+
+      {:ok, collection} = Collection.get_or_create("strict-direct", repo)
 
       {:ok, doc} =
         %Document{}
         |> Document.changeset(%{content: "x", status: :completed, collection_id: collection.id})
         |> repo.insert()
 
-      {:ok, _chunk} =
-        %Chunk{}
-        |> Chunk.changeset(%{
-          text: "pinned chunk",
-          embedding: List.duplicate(0.5, 384),
-          document_id: doc.id
-        })
-        |> repo.insert()
+      %Chunk{}
+      |> Chunk.changeset(%{
+        text: "in collection",
+        embedding: List.duplicate(0.5, 384),
+        document_id: doc.id
+      })
+      |> repo.insert!()
 
-      # The name doesn't resolve, but the id filter must still apply
-      results =
-        Pgvector.search("renamed-since-validation", List.duplicate(0.5, 384),
-          repo: repo,
-          collection_id: collection.id
-        )
+      # Non-strict keeps the historical fail-open (global) behavior
+      refute Pgvector.search("strict-nope", List.duplicate(0.5, 384), repo: repo) == []
 
-      assert [%{metadata: %{text: "pinned chunk"}}] = results
+      # Strict fails closed instead of widening to a global search
+      assert Pgvector.search("strict-nope", List.duplicate(0.5, 384),
+               repo: repo,
+               strict_collections: true
+             ) == []
+
+      assert Pgvector.search_text("strict-nope", "collection",
+               repo: repo,
+               strict_collections: true
+             ) == []
+
+      assert Pgvector.search_hybrid("strict-nope", List.duplicate(0.5, 384), "collection",
+               repo: repo,
+               strict_collections: true
+             ) == []
     end
   end
 

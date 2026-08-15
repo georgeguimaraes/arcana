@@ -389,15 +389,20 @@ defmodule Arcana.Search do
             []
 
           chunk ->
+            # Same normalization as the store-derived modes, so :metadata
+            # is shaped identically whether or not graph search produced
+            # the result.
             [
-              %SearchResult{
+              SearchResult.from_store_result(%{
                 id: chunk.id,
-                text: chunk.text,
-                document_id: chunk.document_id,
-                chunk_index: chunk.chunk_index,
                 score: score,
-                metadata: chunk.metadata || %{}
-              }
+                metadata:
+                  Map.merge(chunk.metadata || %{}, %{
+                    text: chunk.text,
+                    chunk_index: chunk.chunk_index,
+                    document_id: chunk.document_id
+                  })
+              })
             ]
         end
       end)
