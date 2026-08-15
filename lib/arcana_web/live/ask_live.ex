@@ -177,7 +177,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     def handle_event("form_changed", params, socket) do
-      selected = params["collections"] || []
+      # A forged non-list selection is dropped here too: the render path
+      # enumerates @selected_collections, so anything else would crash the
+      # LiveView on the next paint.
+      selected = if is_list(params["collections"]), do: params["collections"], else: []
       pipeline_steps = Map.new(@pipeline_step_keys, &{&1, params[&1] == "true"})
       # Carry the textarea content forward on every form-change so a
       # checkbox click (collections, pipeline steps) doesn't blow away
@@ -251,6 +254,11 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     # today's semantics). Restricted ones fail closed: an empty allowed set
     # refuses every ask, no selection means "all allowed collections", and a
     # selection naming anything outside the allowed set is rejected whole.
+    #
+    # The non-list clause comes first so a forged scalar or map selection is
+    # rejected rather than blowing up in Enum.all?/2 (or slipping through
+    # the :all clause untouched).
+    defp resolve_ask_collections(requested, _allowed) when not is_list(requested), do: :error
     defp resolve_ask_collections(requested, :all), do: {:ok, requested}
     defp resolve_ask_collections(_requested, []), do: :error
     defp resolve_ask_collections([], allowed), do: {:ok, allowed}
@@ -339,6 +347,14 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       repo = socket.assigns.repo
       sub_tab = params["sub_tab"] || "advanced"
       parent = self()
+
+      # Carries both halves of the scoping decision into the task: what the
+      # user picked, and whether this dashboard is restricted at all (which
+      # decides whether retrieval runs under :strict_collections).
+      scope = %{
+        collections: selected_collections,
+        allowed: socket.assigns.allowed_collections
+      }
 
       ArcanaWeb.TaskSupervisor.start_child(fn ->
         handler_id = "pipeline-progress-#{inspect(parent)}"
@@ -472,7 +488,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
             llm,
             socket.assigns.collections,
             params,
-            selected_collections
+            scope
           )
 
         :telemetry.detach(handler_id)
@@ -486,21 +502,22 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       System.convert_time_unit(duration, :native, :millisecond)
     end
 
-    defp run_ask("advanced", question, repo, llm, _all_collections, params, selected_collections) do
-      run_advanced_ask(question, repo, llm, selected_collections, params)
+    defp run_ask("advanced", question, repo, llm, _all_collections, params, scope) do
+      run_advanced_ask(question, repo, llm, scope, params)
     end
 
-    defp run_ask("loop", question, repo, llm, _all_collections, params, selected_collections) do
-      run_loop_ask(question, repo, llm, selected_collections, params)
+    defp run_ask("loop", question, repo, llm, _all_collections, params, scope) do
+      run_loop_ask(question, repo, llm, scope, params)
     end
 
-    defp run_ask("pipeline", question, repo, llm, all_collections, params, selected_collections) do
+    defp run_ask("pipeline", question, repo, llm, all_collections, params, scope) do
       run_pipeline_ask(
         question,
         repo,
         llm,
         all_collections,
-        collections: selected_collections,
+        collections: scope.collections,
+        allowed: scope.allowed,
         use_llm_select: params["llm_select"] == "true",
         use_gate: params["use_gate"] == "true",
         use_rewrite: params["use_rewrite"] == "true",
@@ -622,7 +639,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp mark_step_done([], _step, _duration_ms, _metadata), do: []
 
-    defp run_loop_ask(question, repo, llm, selected_collections, params) do
+    defp run_loop_ask(question, repo, llm, scope, params) do
       max_iterations =
         case Integer.parse(params["max_iterations"] || "10") do
           {n, _} when n > 0 -> n
@@ -644,7 +661,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
       new_opts =
         [repo: repo]
-        |> maybe_put_collection_opt(selected_collections)
+        |> maybe_put_collection_opt(scope.collections)
 
       run_opts =
         [
@@ -655,6 +672,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         |> maybe_put(:controller_temperature, controller_temperature)
         |> maybe_put(:answer_temperature, answer_temperature)
         |> maybe_put(:fallback_temperature, fallback_temperature)
+        |> maybe_put_loop_search_opts(scope.allowed)
 
       ctx = Arcana.Loop.new(question, new_opts)
       runner = loop_runner()
@@ -695,6 +713,22 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp maybe_put_collection_opt(opts, []), do: opts
     defp maybe_put_collection_opt(opts, list), do: Keyword.put(opts, :collections, list)
 
+    # Restricted dashboards retrieve strictly: an allowed collection that
+    # doesn't exist (never created, or deleted mid-session) has to error out
+    # instead of resolving to "no filter", which would widen retrieval to
+    # every collection. Unrestricted dashboards keep the library default.
+    defp maybe_put_strict_opt(opts, :all), do: opts
+
+    defp maybe_put_strict_opt(opts, allowed) when is_list(allowed),
+      do: Keyword.put(opts, :strict_collections, true)
+
+    # The Loop reaches Arcana.search/2 through its search tool, which merges
+    # `:search_opts` over the collection opts it derives from the context.
+    defp maybe_put_loop_search_opts(opts, :all), do: opts
+
+    defp maybe_put_loop_search_opts(opts, allowed) when is_list(allowed),
+      do: Keyword.put(opts, :search_opts, strict_collections: true)
+
     defp format_loop_result(%Arcana.Loop.Context{} = ctx, question) do
       %{
         result_type: :loop,
@@ -715,12 +749,14 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       }
     end
 
-    defp run_advanced_ask(question, repo, llm, selected_collections, params) do
+    defp run_advanced_ask(question, repo, llm, scope, params) do
       graph = params["graph_search"] == "true"
+      selected_collections = scope.collections
 
       opts =
         [repo: repo, llm: llm, graph: graph]
         |> maybe_put_collection_opt(selected_collections)
+        |> maybe_put_strict_opt(scope.allowed)
 
       case Arcana.ask(question, opts) do
         {:ok, answer, results} ->
@@ -850,10 +886,12 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     defp build_search_opts(opts, all_collection_names) do
-      base = [
-        self_correct: Keyword.get(opts, :self_correct, false),
-        graph: Keyword.get(opts, :graph, false)
-      ]
+      base =
+        [
+          self_correct: Keyword.get(opts, :self_correct, false),
+          graph: Keyword.get(opts, :graph, false)
+        ]
+        |> maybe_put_strict_searcher(Keyword.get(opts, :allowed, :all))
 
       use_llm_select = Keyword.get(opts, :use_llm_select, false)
 
@@ -866,6 +904,29 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp add_collection_opts(opts, []), do: opts
     defp add_collection_opts(opts, list), do: Keyword.put(opts, :collections, list)
+
+    # `Arcana.Pipeline.search/2` builds its own searcher opts and drops
+    # everything else, so :strict_collections can't just ride along like it
+    # does on the advanced and loop paths. Swapping in an explicit searcher
+    # is the supported hook: it re-checks the collection against the allowed
+    # set (the LLM-select step can name anything) and searches strictly, so
+    # a missing collection returns an error instead of widening.
+    defp maybe_put_strict_searcher(opts, :all), do: opts
+
+    defp maybe_put_strict_searcher(opts, allowed) when is_list(allowed) do
+      Keyword.put(opts, :searcher, fn question, collection, searcher_opts ->
+        if collection in allowed do
+          Arcana.search(
+            question,
+            searcher_opts
+            |> Keyword.take([:repo, :limit, :threshold])
+            |> Keyword.merge(collection: collection, strict_collections: true)
+          )
+        else
+          {:ok, []}
+        end
+      end)
+    end
 
     defp format_pipeline_result(%{error: error}, _question) when not is_nil(error) do
       {:error, error}

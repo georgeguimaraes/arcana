@@ -151,18 +151,41 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       assign(socket, viewing_document: %{document: document, chunks: chunks})
     end
 
-    defp document_in_allowed_collections?(%{assigns: %{allowed_collections: :all}}, _id),
-      do: true
+    # A forged id that isn't a UUID can't match anything, so it's rejected
+    # before it reaches a query that would raise on the cast.
+    defp delete_document(socket, id) do
+      case Ecto.UUID.cast(id) do
+        {:ok, uuid} -> delete_document(socket, uuid, socket.assigns.allowed_collections)
+        :error -> :error
+      end
+    end
 
-    defp document_in_allowed_collections?(socket, id) do
-      allowed = socket.assigns.allowed_collections
+    defp delete_document(socket, uuid, :all) do
+      case Arcana.delete(uuid, repo: socket.assigns.repo) do
+        :ok -> :ok
+        {:error, _reason} -> :error
+      end
+    end
 
-      socket.assigns.repo.exists?(
+    # Restricted deletes are a single statement: the allowed-collection
+    # predicate rides inside the DELETE, so a rename that moves the
+    # collection out of scope between the allow-check and the delete can't
+    # slip through a stale decision. Zero rows affected means the document
+    # wasn't in scope (or never existed) and the event is rejected. Chunks
+    # and graph rows cascade at the database level, same as
+    # `Arcana.delete/2`.
+    defp delete_document(socket, uuid, allowed) do
+      allowed_ids = from(c in Arcana.Collection, where: c.name in ^allowed, select: c.id)
+
+      query =
         from(d in Document,
-          join: c in assoc(d, :collection),
-          where: d.id == ^id and c.name in ^allowed
+          where: d.id == ^uuid and d.collection_id in subquery(allowed_ids)
         )
-      )
+
+      case socket.assigns.repo.delete_all(query) do
+        {0, _} -> :error
+        {_count, _} -> :ok
+      end
     end
 
     @impl true
@@ -216,15 +239,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     def handle_event("delete", %{"id" => id}, socket) do
-      repo = socket.assigns.repo
-
-      if document_in_allowed_collections?(socket, id) do
-        case Arcana.delete(id, repo: repo) do
-          :ok -> {:noreply, load_data(socket)}
-          {:error, _reason} -> {:noreply, socket}
-        end
-      else
-        {:noreply, socket}
+      case delete_document(socket, id) do
+        :ok -> {:noreply, load_data(socket)}
+        :error -> {:noreply, socket}
       end
     end
 

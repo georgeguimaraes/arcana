@@ -120,6 +120,11 @@ The restriction applies everywhere, and fails closed:
   "All Collections" operations disappear
 - events naming any other collection (including forged form payloads)
   are rejected server-side, not just hidden from the UI
+- retrieval runs under `strict_collections: true`, so an allowed
+  collection that doesn't exist errors out instead of widening the
+  search to everything
+- renaming a collection is blocked: a rename could otherwise move
+  documents into a name another tenant is allowed to see
 - an empty list means the dashboard shows and does nothing
 
 It's a plain `{module, function}` tuple rather than a function capture

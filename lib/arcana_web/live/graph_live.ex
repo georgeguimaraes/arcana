@@ -97,7 +97,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       repo = socket.assigns.repo
 
       socket
-      |> assign(stats: load_stats(repo))
+      |> assign(stats: load_stats(repo, socket.assigns.allowed_collections))
       |> load_collections_with_graph_status()
       |> load_subtab_data()
     end
@@ -135,45 +135,47 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       assign(socket, collections: collections)
     end
 
-    # Restricted mode always queries a concrete allowed collection. When no
-    # selection resolves to a collection id (empty allowed set, or an allowed
-    # name with no matching collection row) render nothing rather than fall
-    # through to the unscoped "all collections" queries.
-    defp load_subtab_data(%{assigns: %{allowed_collections: allowed}} = socket)
-         when is_list(allowed) do
-      if get_selected_collection_id(socket) do
-        dispatch_subtab_data(socket)
-      else
-        assign(socket,
-          entities: [],
-          entities_total: 0,
-          entity_types: [],
-          relationships: [],
-          relationships_total: 0,
-          relationship_types: [],
-          communities: [],
-          communities_total: 0
-        )
-      end
-    end
-
-    defp load_subtab_data(socket), do: dispatch_subtab_data(socket)
-
-    defp dispatch_subtab_data(%{assigns: %{current_subtab: :entities}} = socket) do
+    defp load_subtab_data(%{assigns: %{current_subtab: :entities}} = socket) do
       load_entities(socket)
     end
 
-    defp dispatch_subtab_data(%{assigns: %{current_subtab: :relationships}} = socket) do
+    defp load_subtab_data(%{assigns: %{current_subtab: :relationships}} = socket) do
       load_relationships(socket)
     end
 
-    defp dispatch_subtab_data(%{assigns: %{current_subtab: :communities}} = socket) do
+    defp load_subtab_data(%{assigns: %{current_subtab: :communities}} = socket) do
       load_communities(socket)
     end
 
+    # The one place every loader resolves its scope. Restricted mode always
+    # queries a concrete allowed collection: when the selection resolves to
+    # no collection id (empty allowed set, or an allowed name with no
+    # matching collection row) the loaders bail out with empty results
+    # rather than fall through to the unscoped "all collections" queries.
+    #
+    # This has to live in the loaders, not in handle_params: forged filter
+    # and pagination events call the loaders directly and would otherwise
+    # skip the normalization entirely.
+    defp scoped_collection_id(%{assigns: %{allowed_collections: :all}} = socket) do
+      {:ok, get_selected_collection_id(socket)}
+    end
+
+    defp scoped_collection_id(socket) do
+      case get_selected_collection_id(socket) do
+        nil -> :error
+        collection_id -> {:ok, collection_id}
+      end
+    end
+
     defp load_entities(socket) do
+      case scoped_collection_id(socket) do
+        {:ok, collection_id} -> load_entities(socket, collection_id)
+        :error -> assign(socket, entities: [], entities_total: 0, entity_types: [])
+      end
+    end
+
+    defp load_entities(socket, collection_id) do
       repo = socket.assigns.repo
-      collection_id = get_selected_collection_id(socket)
       name_filter = socket.assigns.entity_filter || ""
       type_filter = socket.assigns.entity_type_filter
       page = socket.assigns.entities_page
@@ -254,8 +256,21 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     defp load_relationships(socket) do
+      case scoped_collection_id(socket) do
+        {:ok, collection_id} ->
+          load_relationships(socket, collection_id)
+
+        :error ->
+          assign(socket,
+            relationships: [],
+            relationships_total: 0,
+            relationship_types: []
+          )
+      end
+    end
+
+    defp load_relationships(socket, collection_id) do
       repo = socket.assigns.repo
-      collection_id = get_selected_collection_id(socket)
       search_filter = socket.assigns.relationship_filter
       type_filter = socket.assigns.relationship_type_filter
       strength_filter = socket.assigns.relationship_strength_filter
@@ -332,8 +347,14 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     defp load_communities(socket) do
+      case scoped_collection_id(socket) do
+        {:ok, collection_id} -> load_communities(socket, collection_id)
+        :error -> assign(socket, communities: [], communities_total: 0)
+      end
+    end
+
+    defp load_communities(socket, collection_id) do
       repo = socket.assigns.repo
-      collection_id = get_selected_collection_id(socket)
       search_filter = socket.assigns.community_filter
       level_filter = socket.assigns.community_level_filter
       page = socket.assigns.communities_page

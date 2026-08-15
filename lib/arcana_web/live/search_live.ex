@@ -110,7 +110,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       # collections option would mean "search everything").
       case resolve_search_collections(requested, allowed) do
         {:ok, collections} ->
-          opts = build_search_opts(params, repo, collections)
+          opts = build_search_opts(params, repo, collections, allowed)
 
           case Arcana.search(query, opts) do
             {:ok, results} -> results
@@ -133,7 +133,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       if Enum.all?(requested, &(&1 in allowed)), do: {:ok, requested}, else: :error
     end
 
-    defp build_search_opts(params, repo, collections) do
+    defp build_search_opts(params, repo, collections, allowed) do
       [
         repo: repo,
         limit: parse_int(params["limit"], 10),
@@ -142,7 +142,19 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       ]
       |> add_source_id_opt(params["source_id"])
       |> add_collection_opt(collections)
+      |> add_strict_opt(allowed)
     end
+
+    # Restricted dashboards search strictly. Without it an allowed name with
+    # no collection row (never created, or deleted mid-session) resolves to
+    # "no filter" and the search widens to every collection; strict turns
+    # that into {:error, {:unknown_collection, _}}, which run_search/4
+    # already renders as no results. Unrestricted dashboards keep the
+    # library default.
+    defp add_strict_opt(opts, :all), do: opts
+
+    defp add_strict_opt(opts, allowed) when is_list(allowed),
+      do: Keyword.put(opts, :strict_collections, true)
 
     defp add_source_id_opt(opts, nil), do: opts
     defp add_source_id_opt(opts, ""), do: opts
