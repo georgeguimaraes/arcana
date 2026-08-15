@@ -12,6 +12,11 @@ if Code.ensure_loaded?(Igniter) do
     - Create the Postgrex types module for pgvector
     - Configure your repo to use the types module
 
+    If your application already defines a Postgrex types module (a
+    `Postgrex.Types.define/3` call, or a `:types` key on your repo config),
+    the installer skips generating one and instead tells you how to add
+    the pgvector extension to your existing module.
+
     ## Options
 
       * `--no-dashboard` - Skip adding the dashboard route
@@ -20,6 +25,7 @@ if Code.ensure_loaded?(Igniter) do
 
     use Igniter.Mix.Task
 
+    alias Igniter.Code.Function
     alias Igniter.Libs.Phoenix
     alias Igniter.Project.Config
 
@@ -53,10 +59,12 @@ if Code.ensure_loaded?(Igniter) do
       web_module = Module.concat([app_module <> "Web"])
       types_module = Module.concat([app_module, "PostgrexTypes"])
 
+      igniter = Igniter.include_glob(igniter, "lib/**/*.ex")
+      existing_types = existing_types_module(igniter, app_name, repo_module)
+
       igniter
       |> create_migration(repo_module)
-      |> create_postgrex_types_module(types_module)
-      |> configure_repo_types(app_name, repo_module, types_module)
+      |> setup_postgrex_types(existing_types, app_name, repo_module, types_module)
       |> maybe_add_dashboard_route(opts[:dashboard], web_module)
       |> Igniter.add_notice("""
 
@@ -203,6 +211,79 @@ if Code.ensure_loaded?(Igniter) do
       """
 
       Igniter.create_new_file(igniter, path, migration_content)
+    end
+
+    # Detects an existing Postgrex types module: either a Postgrex.Types.define/3
+    # call somewhere under lib/, or a :types key already set on the repo config.
+    # Returns the defined module, :unknown when detected but unnamed, or nil.
+    defp existing_types_module(igniter, app_name, repo_module) do
+      find_postgrex_types_define(igniter) ||
+        configured_repo_types(igniter, app_name, repo_module)
+    end
+
+    defp find_postgrex_types_define(igniter) do
+      igniter.rewrite
+      |> Rewrite.sources()
+      |> Enum.filter(&String.ends_with?(&1.path, ".ex"))
+      |> Enum.find_value(&postgrex_types_define_in_source/1)
+    end
+
+    defp postgrex_types_define_in_source(source) do
+      zipper = source |> Rewrite.Source.get(:quoted) |> Sourceror.Zipper.zip()
+
+      case Function.move_to_function_call(zipper, {Postgrex.Types, :define}, :any) do
+        {:ok, call} -> defined_types_module(call)
+        :error -> nil
+      end
+    end
+
+    defp defined_types_module(call_zipper) do
+      with {:ok, arg} <- Function.move_to_nth_argument(call_zipper, 0),
+           {:__aliases__, _, parts} when is_list(parts) <- Sourceror.Zipper.node(arg) do
+        Module.concat(parts)
+      else
+        _ -> :unknown
+      end
+    end
+
+    defp configured_repo_types(igniter, app_name, repo_module) do
+      if Config.configures_key?(igniter, "config.exs", app_name, [repo_module, :types]) do
+        :unknown
+      end
+    end
+
+    defp setup_postgrex_types(igniter, nil, app_name, repo_module, types_module) do
+      igniter
+      |> create_postgrex_types_module(types_module)
+      |> configure_repo_types(app_name, repo_module, types_module)
+    end
+
+    defp setup_postgrex_types(igniter, existing, app_name, repo_module, _types_module) do
+      Igniter.add_notice(igniter, existing_types_notice(existing, app_name, repo_module))
+    end
+
+    defp existing_types_notice(existing, app_name, repo_module) do
+      module_hint =
+        if existing == :unknown, do: "your existing types module", else: inspect(existing)
+
+      module_code = if existing == :unknown, do: "MyApp.PostgrexTypes", else: inspect(existing)
+
+      """
+      An existing Postgrex types module was detected, so Arcana skipped
+      generating one.
+
+      Make sure #{module_hint} includes the pgvector extension:
+
+          Postgrex.Types.define(
+            #{module_code},
+            [Pgvector.Extensions.Vector] ++ Ecto.Adapters.Postgres.extensions(),
+            []
+          )
+
+      and that your repo is configured to use it:
+
+          config :#{app_name}, #{inspect(repo_module)}, types: #{module_code}
+      """
     end
 
     defp create_postgrex_types_module(igniter, types_module) do
