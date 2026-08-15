@@ -11,8 +11,8 @@ defprotocol Arcana.LLM do
   - Anonymous functions (for testing)
 
   Prefer the `{module, function}` form for `config :arcana, :llm` — unlike
-  a captured function, it serializes into a release's `sys.config`, so it
-  doesn't have to be wired in `runtime.exs`.
+  a captured function, it serializes into a release's `sys.config`, and it
+  works without req_llm.
 
   ## Examples
 
