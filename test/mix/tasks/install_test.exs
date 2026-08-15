@@ -17,15 +17,67 @@ defmodule Mix.Tasks.Arcana.InstallTest do
     |> assert_creates("lib/test/postgrex_types.ex")
   end
 
-  test "skips generating when the app already calls Postgrex.Types.define" do
-    test_project(files: %{"lib/test/my_types.ex" => @define_call})
-    |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
-    |> refute_creates("lib/test/postgrex_types.ex")
-    |> assert_has_notice(&(&1 =~ "Test.MyTypes"))
-    |> assert_has_notice(&(&1 =~ "lib/test/my_types.ex"))
+  test "still configures the repo when the app defines an unrelated types module" do
+    igniter =
+      test_project(files: %{"lib/test/my_types.ex" => @define_call})
+      |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
+
+    # The scanned module says nothing about which repo it serves, so Test.Repo
+    # gets its own - skipping would leave it without pgvector registered.
+    assert_creates(igniter, "lib/test/postgrex_types.ex")
+
+    assert_has_patch(
+      igniter,
+      "config/config.exs",
+      "|config :test, Test.Repo, types: Test.PostgrexTypes"
+    )
+
+    assert_has_notice(igniter, &(&1 =~ "Test.MyTypes"))
+    assert_has_notice(igniter, &(&1 =~ "lib/test/my_types.ex"))
+    assert_unchanged(igniter, "lib/test/my_types.ex")
   end
 
-  test "warns that a scanned types module may belong to a different repo" do
+  test "picks a name that can't collide with the module it found" do
+    collides = String.replace(@define_call, "Test.MyTypes", "Test.PostgrexTypes")
+
+    igniter =
+      test_project(files: %{"lib/test/postgrex_types.ex" => collides})
+      |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
+
+    assert_creates(igniter, "lib/test/repo/postgrex_types.ex")
+
+    assert_has_patch(
+      igniter,
+      "config/config.exs",
+      "|config :test, Test.Repo, types: Test.Repo.PostgrexTypes"
+    )
+
+    assert_unchanged(igniter, "lib/test/postgrex_types.ex")
+  end
+
+  test "doesn't claim a lib file that's already there for something else" do
+    unrelated = """
+    defmodule Test.PostgrexTypes do
+      def whatever, do: :ok
+    end
+    """
+
+    igniter =
+      test_project(files: %{"lib/test/postgrex_types.ex" => unrelated})
+      |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
+
+    assert_creates(igniter, "lib/test/repo/postgrex_types.ex")
+
+    assert_has_patch(
+      igniter,
+      "config/config.exs",
+      "|config :test, Test.Repo, types: Test.Repo.PostgrexTypes"
+    )
+
+    assert_unchanged(igniter, "lib/test/postgrex_types.ex")
+  end
+
+  test "leaves another repo's types module alone and generates one for ours" do
     postgis = """
     Postgrex.Types.define(
       Test.PostGISTypes,
@@ -34,10 +86,14 @@ defmodule Mix.Tasks.Arcana.InstallTest do
     )
     """
 
-    test_project(files: %{"lib/test/postgis_types.ex" => postgis})
-    |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
-    |> assert_has_notice(&(&1 =~ "may belong to a different repo"))
-    |> assert_has_notice(&(&1 =~ "config :test, Test.Repo, types: Test.PostGISTypes"))
+    igniter =
+      test_project(files: %{"lib/test/postgis_types.ex" => postgis})
+      |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
+
+    assert_creates(igniter, "lib/test/postgrex_types.ex")
+    assert_unchanged(igniter, "lib/test/postgis_types.ex")
+    assert_has_notice(igniter, &(&1 =~ "generated Test.PostgrexTypes for Test.Repo"))
+    assert_has_notice(igniter, &(&1 =~ "config :test, Test.Repo, types: Test.PostGISTypes"))
   end
 
   test "resolves the __MODULE__.Types idiom instead of crashing" do
@@ -51,7 +107,7 @@ defmodule Mix.Tasks.Arcana.InstallTest do
 
     test_project(files: %{"lib/test/my_repo.ex" => code})
     |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
-    |> refute_creates("lib/test/postgrex_types.ex")
+    |> assert_creates("lib/test/postgrex_types.ex")
     |> assert_has_notice(&(&1 =~ "Test.MyRepo.Types"))
   end
 
@@ -63,7 +119,7 @@ defmodule Mix.Tasks.Arcana.InstallTest do
 
     test_project(files: %{"lib/test/weird_types.ex" => code})
     |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
-    |> refute_creates("lib/test/postgrex_types.ex")
+    |> assert_creates("lib/test/postgrex_types.ex")
     |> assert_has_notice(&(&1 =~ "Arcana found a types module defined by"))
   end
 

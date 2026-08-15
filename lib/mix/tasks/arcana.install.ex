@@ -12,10 +12,15 @@ if Code.ensure_loaded?(Igniter) do
     - Create the Postgrex types module for pgvector
     - Configure your repo to use the types module
 
-    If your application already defines a Postgrex types module (a
-    `Postgrex.Types.define/3` call, or a `:types` key on your repo config),
-    the installer skips generating one and instead tells you how to add
-    the pgvector extension to your existing module.
+    If the repo already has a `:types` key in its config, the installer
+    leaves it alone and tells you how to add the pgvector extension to that
+    module.
+
+    A `Postgrex.Types.define/3` call found by scanning `lib/` is a weaker
+    signal: types modules are per-repo, and nothing in the call says which
+    repo it serves. The installer leaves that module untouched and generates
+    a separate one for the repo it is installing into, named so it cannot
+    collide, so the repo ends up with pgvector registered either way.
 
     Detection reads every `*.exs` file directly inside your config
     directory, plus every `lib/**/*.ex` file that mentions
@@ -472,12 +477,14 @@ if Code.ensure_loaded?(Igniter) do
     end
 
     defp setup_postgrex_types(igniter, nil, app_name, repo_module, types_module) do
+      chosen = free_types_module(igniter, candidates(types_module, repo_module), nil, nil)
+
       igniter
-      |> create_postgrex_types_module(types_module)
-      |> configure_repo_types(app_name, repo_module, types_module)
+      |> create_postgrex_types_module(chosen)
+      |> configure_repo_types(app_name, repo_module, chosen)
       |> Igniter.add_notice("""
 
-      Arcana generated #{inspect(types_module)} because it found no existing
+      Arcana generated #{inspect(chosen)} because it found no existing
       Postgrex types module. It looked in #{config_dir(igniter)}/*.exs and in
       lib/**/*.ex; config imported from elsewhere or built at runtime is not
       followed. If you already have one, delete the generated module and add
@@ -485,8 +492,85 @@ if Code.ensure_loaded?(Igniter) do
       """)
     end
 
-    defp setup_postgrex_types(igniter, existing, app_name, repo_module, _types_module) do
+    defp setup_postgrex_types(
+           igniter,
+           {:config, _path, _module} = existing,
+           app_name,
+           repo_module,
+           _types_module
+         ) do
       Igniter.add_notice(igniter, existing_types_notice(existing, app_name, repo_module))
+    end
+
+    # A Postgrex.Types.define/3 call found by scanning lib/ says nothing about
+    # which repo it serves, and types modules are per-repo. Skipping here would
+    # leave the repo Arcana is installing into with no `:types` key at all, so
+    # pgvector would never be registered for it. Generate one anyway, under a
+    # name that can't collide with the module that's already there.
+    defp setup_postgrex_types(
+           igniter,
+           {:source, found, path},
+           app_name,
+           repo_module,
+           types_module
+         ) do
+      chosen = free_types_module(igniter, candidates(types_module, repo_module), found, path)
+
+      igniter
+      |> create_postgrex_types_module(chosen)
+      |> configure_repo_types(app_name, repo_module, chosen)
+      |> Igniter.add_notice(scanned_types_notice(found, path, app_name, repo_module, chosen))
+    end
+
+    defp candidates(types_module, repo_module) do
+      [
+        types_module,
+        Module.concat([repo_module, "PostgrexTypes"]),
+        Module.concat([repo_module, "ArcanaPostgrexTypes"])
+      ]
+    end
+
+    # Never reuse the name (or the file) of a module that's already there: that
+    # collision is what made the installer overwrite other people's types
+    # modules. The last candidate is the give-up value; a project where all
+    # three names are taken isn't worth more code.
+    defp free_types_module(_igniter, [last], _found, _found_path), do: last
+
+    defp free_types_module(igniter, [candidate | rest], found, found_path) do
+      path = types_module_path(candidate)
+
+      if candidate == found or path == found_path or Igniter.exists?(igniter, path) do
+        free_types_module(igniter, rest, found, found_path)
+      else
+        candidate
+      end
+    end
+
+    defp scanned_types_notice(found, path, app_name, repo_module, chosen) do
+      found_hint = if found == :unknown, do: "a types module", else: inspect(found)
+      found_code = if found == :unknown, do: "TheModuleAbove", else: inspect(found)
+
+      """
+      Arcana found #{found_hint} defined by a Postgrex.Types.define/3 call in
+      #{path}, but #{inspect(repo_module)} has no `:types` key pointing at it.
+
+      Postgrex types modules are per-repo, so Arcana left that one alone and
+      generated #{inspect(chosen)} for #{inspect(repo_module)} instead, with the
+      pgvector extension in it. Nothing else has to happen for Arcana to work.
+
+      If #{found_hint} was meant for #{inspect(repo_module)} all along, delete
+      #{inspect(chosen)}, add the extension to it:
+
+          Postgrex.Types.define(
+            #{found_code},
+            [Pgvector.Extensions.Vector] ++ Ecto.Adapters.Postgres.extensions(),
+            []
+          )
+
+      and point the repo at that one instead:
+
+          config :#{app_name}, #{inspect(repo_module)}, types: #{found_code}
+      """
     end
 
     defp existing_types_notice({:config, path, existing}, _app_name, repo_module) do
@@ -507,35 +591,6 @@ if Code.ensure_loaded?(Igniter) do
       """
     end
 
-    defp existing_types_notice({:source, existing, path}, app_name, repo_module) do
-      module_hint = if existing == :unknown, do: "a types module", else: inspect(existing)
-      module_code = if existing == :unknown, do: "YourApp.PostgrexTypes", else: inspect(existing)
-
-      """
-      Arcana found #{module_hint} defined by a Postgrex.Types.define/3 call in
-      #{path}, so it skipped generating one.
-
-      #{inspect(repo_module)} has no `:types` key configured, so Arcana could
-      not confirm this module is the one it should use - in a multi-repo app it
-      may belong to a different repo. Please verify.
-
-      If it is the right module, add the pgvector extension to it:
-
-          Postgrex.Types.define(
-            #{module_code},
-            [Pgvector.Extensions.Vector] ++ Ecto.Adapters.Postgres.extensions(),
-            []
-          )
-
-      and point the repo at it:
-
-          config :#{app_name}, #{inspect(repo_module)}, types: #{module_code}
-
-      If it belongs to a different repo, define a separate types module for
-      #{inspect(repo_module)} with the same snippet and configure that instead.
-      """
-    end
-
     defp create_postgrex_types_module(igniter, types_module) do
       types_content = """
       Postgrex.Types.define(
@@ -545,13 +600,16 @@ if Code.ensure_loaded?(Igniter) do
       )
       """
 
-      path =
-        types_module
-        |> Module.split()
-        |> Enum.map_join("/", &Macro.underscore/1)
-        |> then(&"lib/#{&1}.ex")
+      Igniter.create_new_file(igniter, types_module_path(types_module), types_content,
+        on_exists: :skip
+      )
+    end
 
-      Igniter.create_new_file(igniter, path, types_content, on_exists: :skip)
+    defp types_module_path(types_module) do
+      types_module
+      |> Module.split()
+      |> Enum.map_join("/", &Macro.underscore/1)
+      |> then(&"lib/#{&1}.ex")
     end
 
     defp configure_repo_types(igniter, app_name, repo_module, types_module) do
