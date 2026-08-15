@@ -189,6 +189,36 @@ defmodule Arcana.GraphIntegrationTest do
       assert length(entities) == 1
     end
 
+    test "rebuilding the graph over unchanged chunks does not duplicate mentions" do
+      entity_extractor = fn _text, _opts ->
+        {:ok, [%{name: "OpenAI", type: "organization"}]}
+      end
+
+      {:ok, document} =
+        Arcana.ingest(
+          "OpenAI builds AI systems.",
+          repo: Repo,
+          graph: true,
+          entity_extractor: entity_extractor,
+          collection: "mention-dedup-test"
+        )
+
+      mentions_before = Repo.aggregate(EntityMention, :count)
+      assert mentions_before > 0
+
+      # Rebuild over the same chunk records, like mix arcana.graph.rebuild
+      # or a re-ingest over unchanged chunks would.
+      chunks = Repo.all(from(c in Arcana.Chunk, where: c.document_id == ^document.id))
+      {:ok, collection} = Arcana.Collection.get_or_create("mention-dedup-test", Repo)
+
+      {:ok, _} =
+        Arcana.Graph.build_and_persist(chunks, collection, Repo,
+          entity_extractor: entity_extractor
+        )
+
+      assert Repo.aggregate(EntityMention, :count) == mentions_before
+    end
+
     test "continues even if entity extraction fails for a chunk" do
       call_count = :counters.new(1, [])
 

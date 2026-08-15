@@ -79,7 +79,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
           span_start: mention[:span_start],
           span_end: mention[:span_end]
         })
-        |> repo.insert!()
+        |> repo.insert!(on_conflict: :nothing)
       end
     end)
 

@@ -151,6 +151,7 @@ if Code.ensure_loaded?(Igniter) do
 
           create index(:arcana_graph_entity_mentions, [:entity_id])
           create index(:arcana_graph_entity_mentions, [:chunk_id])
+          create unique_index(:arcana_graph_entity_mentions, [:entity_id, :chunk_id])
 
           create table(:arcana_graph_relationships, primary_key: false) do
             add :id, :binary_id, primary_key: true
@@ -271,6 +272,7 @@ else
 
         create index(:arcana_graph_entity_mentions, [:entity_id])
         create index(:arcana_graph_entity_mentions, [:chunk_id])
+        create unique_index(:arcana_graph_entity_mentions, [:entity_id, :chunk_id])
 
         create table(:arcana_graph_relationships, primary_key: false) do
           add :id, :binary_id, primary_key: true

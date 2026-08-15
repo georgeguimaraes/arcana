@@ -232,6 +232,8 @@ defmodule Arcana.Graph.GraphStore.Memory do
 
   @impl GenServer
   def handle_call({:persist_mentions, mentions, entity_id_map}, _from, state) do
+    existing_pairs = MapSet.new(state.mentions, fn m -> {m.entity_id, m.chunk_id} end)
+
     valid_mentions =
       mentions
       |> Enum.filter(fn m -> Map.has_key?(entity_id_map, m.entity_name) end)
@@ -244,6 +246,8 @@ defmodule Arcana.Graph.GraphStore.Memory do
           span_end: m[:span_end]
         }
       end)
+      |> Enum.uniq_by(fn m -> {m.entity_id, m.chunk_id} end)
+      |> Enum.reject(fn m -> MapSet.member?(existing_pairs, {m.entity_id, m.chunk_id}) end)
 
     new_state = %{state | mentions: state.mentions ++ valid_mentions}
     {:reply, :ok, new_state}
