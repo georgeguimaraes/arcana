@@ -29,7 +29,10 @@ defmodule Arcana.Ask do
     * `:repo` - The Ecto repo to use (required)
     * `:llm` - Any type implementing the `Arcana.LLM` protocol (required)
     * `:limit` - Maximum number of context chunks to retrieve (default: 5)
-    * `:source_id` - Filter context to a specific source
+    * `:source_id` - Filter context to a specific source. Chunks, matched
+      entities, and relationships are scoped to it; community summaries
+      are collection-level artifacts and may describe entities beyond the
+      source. Use collections (see `:strict_collections`) for isolation.
     * `:threshold` - Minimum similarity score for context (default: 0.0)
     * `:mode` - Search mode: `:vector` (default), `:keyword`, or `:hybrid`.
       `:semantic` and `:fulltext` are deprecated aliases and log a warning.
@@ -235,9 +238,12 @@ defmodule Arcana.Ask do
           []
       end
 
-    # :source_id scopes the graph context too, not just the chunks: without
-    # this, entity descriptions, relationships, and community summaries
-    # from other sources reach the prompt (and traversal widens the leak).
+    # :source_id scopes the graph context too, not just the chunks:
+    # matched entities (and, through them, relationships and which
+    # communities are considered) are limited to the source. Community
+    # SUMMARY TEXT is not: a community is a collection-level cluster, so
+    # its summary can describe entities from other sources in the same
+    # collection. Collections, not sources, are the isolation boundary.
     source_id = Keyword.get(opts, :source_id)
     matched_entities = scope_entities_by_source(matched_entities, source_id, repo)
 
