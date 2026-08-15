@@ -85,11 +85,7 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
     min_size = Keyword.get(opts, :min_size, graph_config[:min_size] || 1)
     max_level = Keyword.get(opts, :max_level, graph_config[:community_levels] || 1)
 
-    repo = Application.get_env(:arcana, :repo)
-
-    unless repo do
-      Mix.raise("No repo configured. Set config :arcana, repo: YourApp.Repo")
-    end
+    repo = Arcana.MixHelpers.repo!()
 
     # Check leidenfold is available
     unless Code.ensure_loaded?(Leidenfold) do

@@ -15,9 +15,14 @@ if Code.ensure_loaded?(Igniter) do
     GraphRAG is optional. Only run this if you want to use knowledge graph
     features for enhanced retrieval.
 
+    Entity embedding dimensions are detected from the configured embedder
+    (via `Arcana.Embedder.dimensions/1`), so the generated table matches
+    your vectors. Use `--dimensions` to override.
+
     ## Options
 
       * `--repo` - The repo to use (defaults to YourApp.Repo)
+      * `--dimensions` - Override auto-detected embedding dimensions
 
     ## Configuration
 
@@ -43,7 +48,8 @@ if Code.ensure_loaded?(Igniter) do
         group: :arcana,
         example: "mix arcana.graph.install",
         schema: [
-          repo: :string
+          repo: :string,
+          dimensions: :integer
         ],
         defaults: [],
         aliases: []
@@ -63,8 +69,10 @@ if Code.ensure_loaded?(Igniter) do
           Module.concat([app_module, "Repo"])
         end
 
+      dimensions = resolve_dimensions(opts[:dimensions])
+
       igniter
-      |> create_migration(repo_module)
+      |> create_migration(repo_module, dimensions)
       |> Igniter.add_notice("""
 
       GraphRAG migration created!
@@ -96,7 +104,10 @@ if Code.ensure_loaded?(Igniter) do
       """)
     end
 
-    defp create_migration(igniter, repo_module) do
+    defp resolve_dimensions(nil), do: Arcana.MixHelpers.detect_dimensions!()
+    defp resolve_dimensions(given), do: Arcana.MixHelpers.validate_dimensions!(given)
+
+    defp create_migration(igniter, repo_module, dimensions) do
       repo_underscore =
         repo_module
         |> Module.split()
@@ -119,7 +130,7 @@ if Code.ensure_loaded?(Igniter) do
             add :name, :string, null: false
             add :type, :string, null: false
             add :description, :text
-            add :embedding, :vector, size: 384
+            add :embedding, :vector, size: #{dimensions}
             add :metadata, :map, default: %{}
             add :chunk_id, references(:arcana_chunks, type: :binary_id, on_delete: :nilify_all)
             add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :delete_all)
@@ -220,9 +231,14 @@ else
     GraphRAG is optional. Only run this if you want to use knowledge graph
     features for enhanced retrieval.
 
+    Entity embedding dimensions are detected from the configured embedder
+    (via `Arcana.Embedder.dimensions/1`), so the generated table matches
+    your vectors. Use `--dimensions` to override.
+
     ## Options
 
       * `--repo` - The repo to generate migrations for (defaults to YourApp.Repo)
+      * `--dimensions` - Override auto-detected embedding dimensions
     """
 
     use Mix.Task
@@ -239,7 +255,7 @@ else
           add :name, :string, null: false
           add :type, :string, null: false
           add :description, :text
-          add :embedding, :vector, size: 384
+          add :embedding, :vector, size: <%= @dimensions %>
           add :metadata, :map, default: %{}
           add :chunk_id, references(:arcana_chunks, type: :binary_id, on_delete: :nilify_all)
           add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :delete_all)
@@ -322,10 +338,11 @@ else
 
     @impl Mix.Task
     def run(args) do
-      {opts, _, _} = OptionParser.parse(args, strict: [repo: :string])
+      {opts, _, _} = OptionParser.parse(args, strict: [repo: :string, dimensions: :integer])
 
       repo = opts[:repo] || infer_repo()
       repo_underscore = Macro.underscore(repo) |> String.replace("/", "_")
+      dimensions = resolve_dimensions(opts[:dimensions])
 
       migrations_path = Path.join(["priv", repo_underscore, "migrations"])
       File.mkdir_p!(migrations_path)
@@ -334,7 +351,8 @@ else
       filename = "#{timestamp}_create_arcana_graph_tables.exs"
       path = Path.join(migrations_path, filename)
 
-      content = EEx.eval_string(@migration_template, assigns: [repo: repo])
+      content =
+        EEx.eval_string(@migration_template, assigns: [repo: repo, dimensions: dimensions])
 
       create_file(path, content)
 
@@ -381,5 +399,8 @@ else
           |> Kernel.<>(".Repo")
       end
     end
+
+    defp resolve_dimensions(nil), do: Arcana.MixHelpers.detect_dimensions!()
+    defp resolve_dimensions(given), do: Arcana.MixHelpers.validate_dimensions!(given)
   end
 end
