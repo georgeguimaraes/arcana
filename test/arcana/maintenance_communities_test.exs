@@ -56,8 +56,13 @@ defmodule Arcana.MaintenanceCommunitiesTest do
     %{collection: collection, entities: entities}
   end
 
+  defp communities(collection) do
+    Repo.all(from(c in Community, where: c.collection_id == ^collection.id, order_by: c.level))
+  end
+
   defp membership(collection) do
-    Repo.all(from(c in Community, where: c.collection_id == ^collection.id))
+    collection
+    |> communities()
     |> Enum.map(&Enum.sort(&1.entity_ids))
     |> Enum.sort()
   end
@@ -140,6 +145,89 @@ defmodule Arcana.MaintenanceCommunitiesTest do
 
       assert first_run != []
       assert first_run == second_run
+    end
+  end
+
+  describe "detect_communities/2 summary reuse" do
+    test "keeps summaries for memberships that didn't change", %{collection: collection} do
+      assert {:ok, _} =
+               Maintenance.detect_communities(Repo, collection: collection.name, seed: 42)
+
+      before = communities(collection)
+      assert length(before) > 1
+
+      for community <- before do
+        community
+        |> Community.changeset(%{
+          summary: "summary of #{length(community.entity_ids)}",
+          dirty: false
+        })
+        |> Repo.update!()
+      end
+
+      assert {:ok, _} =
+               Maintenance.detect_communities(Repo, collection: collection.name, seed: 42)
+
+      after_rerun = communities(collection)
+      assert membership(collection) == Enum.sort(Enum.map(before, &Enum.sort(&1.entity_ids)))
+
+      for community <- after_rerun do
+        assert community.summary == "summary of #{length(community.entity_ids)}"
+        refute community.dirty
+      end
+    end
+
+    test "a community still awaiting a refresh stays dirty", %{collection: collection} do
+      assert {:ok, _} =
+               Maintenance.detect_communities(Repo, collection: collection.name, seed: 42)
+
+      [stale | rest] = communities(collection)
+
+      stale
+      |> Community.changeset(%{summary: "stale summary", dirty: true, change_count: 3})
+      |> Repo.update!()
+
+      for community <- rest do
+        community |> Community.changeset(%{summary: "clean", dirty: false}) |> Repo.update!()
+      end
+
+      assert {:ok, _} =
+               Maintenance.detect_communities(Repo, collection: collection.name, seed: 42)
+
+      stale_ids = Enum.sort(stale.entity_ids)
+      reused = Enum.find(communities(collection), &(Enum.sort(&1.entity_ids) == stale_ids))
+
+      assert reused.summary == "stale summary"
+      assert reused.dirty
+      assert reused.change_count == 3
+    end
+
+    test "new memberships come back dirty with no summary", %{collection: collection} do
+      assert {:ok, _} =
+               Maintenance.detect_communities(Repo, collection: collection.name, seed: 42)
+
+      for community <- communities(collection) do
+        community |> Community.changeset(%{summary: "old", dirty: false}) |> Repo.update!()
+      end
+
+      %Entity{}
+      |> Entity.changeset(%{
+        name: "loner-#{collection.name}",
+        type: "thing",
+        collection_id: collection.id
+      })
+      |> Repo.insert!()
+
+      assert {:ok, _} =
+               Maintenance.detect_communities(Repo, collection: collection.name, seed: 42)
+
+      communities = communities(collection)
+      {fresh, reused} = Enum.split_with(communities, &is_nil(&1.summary))
+
+      assert length(fresh) == 1
+      assert Enum.all?(fresh, & &1.dirty)
+      assert reused != []
+      assert Enum.all?(reused, &(&1.summary == "old" and not &1.dirty))
     end
   end
 

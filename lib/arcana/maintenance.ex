@@ -882,12 +882,15 @@ defmodule Arcana.Maintenance do
     if entities == [] do
       %{communities: 0, entities: 0, relationships: 0}
     else
-      # Clear existing communities for this collection
+      # Clear existing communities for this collection, keeping what we
+      # know about each membership so unchanged ones don't get re-summarized
+      previous = snapshot_communities(collection.id, repo)
       repo.delete_all(from(c in Arcana.Graph.Community, where: c.collection_id == ^collection.id))
 
       case CommunityDetector.detect(detector, entities, relationships) do
         {:ok, communities} ->
           # Persist communities
+          communities = Enum.map(communities, &carry_over_summary(&1, previous))
           :ok = GraphStore.persist_communities(collection.id, communities, repo: repo)
 
           %{
@@ -899,6 +902,41 @@ defmodule Arcana.Maintenance do
         {:error, _reason} ->
           %{communities: 0, entities: length(entities), relationships: length(relationships)}
       end
+    end
+  end
+
+  # Detection is delete-all + reinsert, so without this every rebuild
+  # would recreate each community with a nil summary and dirty: true and
+  # the next summarize pass would pay one LLM call per row, even for
+  # memberships that didn't change. Keyed on the sorted entity-id set
+  # because the community rows themselves are recreated with new ids.
+  defp snapshot_communities(collection_id, repo) do
+    repo.all(
+      from(c in Arcana.Graph.Community,
+        where: c.collection_id == ^collection_id,
+        select: %{
+          entity_ids: c.entity_ids,
+          summary: c.summary,
+          dirty: c.dirty,
+          change_count: c.change_count
+        }
+      )
+    )
+    |> Map.new(fn community ->
+      {Enum.sort(community.entity_ids || []), Map.delete(community, :entity_ids)}
+    end)
+  end
+
+  # Carries the previous summary and change tracking over verbatim: a
+  # clean community stays clean, one that was already awaiting a refresh
+  # stays dirty, and genuinely new memberships keep the schema defaults
+  # (nil summary, dirty) so the summarizer picks them up.
+  defp carry_over_summary(community, previous) do
+    key = community |> Map.get(:entity_ids) |> List.wrap() |> Enum.sort()
+
+    case Map.fetch(previous, key) do
+      {:ok, tracking} -> Map.merge(community, tracking)
+      :error -> community
     end
   end
 
