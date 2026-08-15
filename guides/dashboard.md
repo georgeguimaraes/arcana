@@ -4,6 +4,19 @@ A web UI for managing documents and testing search. The dashboard consists of mu
 
 ## Setup
 
+### 0. Add the phoenix dependencies
+
+Phoenix is an optional dependency: arcana's RAG core works in any app, and
+only the dashboard needs it. Phoenix apps already have these; otherwise add:
+
+```elixir
+{:phoenix_live_view, "~> 1.0"},
+{:phoenix_html, "~> 4.1"}
+```
+
+If arcana was compiled before these were added, force a recompile once:
+`mix deps.compile arcana --force`.
+
 ### 1. Add TaskSupervisor to your supervision tree
 
 The dashboard requires `ArcanaWeb.TaskSupervisor` for async operations (Ask, Maintenance):
