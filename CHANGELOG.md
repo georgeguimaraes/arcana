@@ -5,12 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## Unreleased (3.0.0)
 
 Since v2.0.2, largely driven by feedback from a multi-tenant production
 adoption (#94). The headline is that collection scoping can now fail closed,
 search returns one shape in every mode, and the library no longer drags a
 machine-learning toolchain into apps that bring their own embedder.
+
+This is a major version: see "Backwards incompatible changes" below before
+upgrading. Three things break — the search result shape, the optional
+dependencies, and the PDF parser's return value.
 
 ### Enhancements
 
@@ -22,6 +26,11 @@ machine-learning toolchain into apps that bring their own embedder.
   * [ArcanaWeb.Router] `arcana_dashboard` now derives every link and asset URL from the real mount point, so mounting anywhere other than `/arcana` works
   * [mix] `bumblebee` and `req_llm` are optional dependencies. Apps bringing their own embedder and LLM no longer compile roughly 13 transitive packages, including the tokenizers Rust NIF
   * [ArcanaWeb] The dashboard is optional at compile time: arcana now compiles in apps without Phoenix
+  * [Arcana.FileParser] New behaviour and parser registry: `config :arcana, file_parsers: %{".docx" => MyParser}` routes an extension to your own parser, and `fallback_parser:` catches everything unmatched. Resolution runs registry, then built-ins, then fallback. Registering an extension as `false` disables it
+  * [Arcana] Add `ingest_binary/2` for content that never touches the filesystem, such as bytes pulled from object storage. Requires `:filename` for extension routing and provenance. Parsers that need a real path (the built-in Poppler among them) return `{:error, {:binary_unsupported, module}}` rather than failing obscurely
+  * [Arcana.Chunker.Default] Chunks carry `"start_byte"` and `"end_byte"` in their metadata, so a retrieved chunk can be located in the source document. Chunk metadata is now persisted for every chunker, honouring a contract that had been documented but never implemented
+  * [Arcana.FileParser.PDF.Poppler] Report page byte ranges, which ingestion intersects with chunk offsets to add `"page_start"` and `"page_end"`. PDF citations carry page numbers with no new dependency
+  * [ArcanaWeb.Router] `arcana_dashboard` accepts host-provided collection scoping, so a dashboard mounted for one tenant no longer reads or writes another tenant's data
 
 ### Bug fixes
 
@@ -29,10 +38,14 @@ machine-learning toolchain into apps that bring their own embedder.
   * [Arcana.Ecto.Vector] Compare vectors by encoded value, so re-storing a byte-identical embedding is a no-op instead of dirtying the changeset and churning the HNSW index on every ingest
   * [Arcana.Graph.CommunityDetector.Leiden] Stop storing duplicate partitions when the hierarchy converges before `max_level`, which had been multiplying summarization cost by the level count for no retrieval benefit
   * [ArcanaWeb] Dashboard CSS and navigation no longer 404 when the dashboard is mounted outside `/arcana`
+  * [Arcana.Pipeline] `reason/2` inherits the `:searcher` recorded by `search/2` instead of silently falling back to the default. A pipeline scoped to one tenant's searcher no longer widens on multi-hop follow-up queries
+  * [mix arcana.install] Never claim a Postgrex types module that already exists. The installer used to overwrite another library's types module, or point repo config at a module it had skipped generating; it now picks a free name, or stops with an error naming what is taken
+  * [Arcana.FileParser.PDF.Poppler] The trailing form feed `pdftotext` emits no longer counts as an extra page
 
 ### Backwards incompatible changes
 
   * [Arcana.Search] `search/2` returns `%Arcana.SearchResult{}` structs rather than plain maps, with the same fields in every mode (`vector_score`/`keyword_score` are `nil` where they don't apply, and chunk metadata is carried with string keys). The struct implements `Access`, so `result[:text]` keeps working; code that pattern matches on a bare map, or relies on a key being absent, needs updating
+  * [Arcana.FileParser.PDF.Poppler] `parse/2` returns `{:ok, text, meta}` instead of `{:ok, text}`, where `meta` carries page byte ranges. A custom parser that delegates straight to it and matches `{:ok, text}` now raises a `MatchError`. Callers going through `Arcana.FileParser.PDF.parse/3` or `Arcana.Parser.parse/1` are unaffected: both still normalize to a two-tuple
   * [mix] `bumblebee` and `req_llm` are no longer pulled in transitively. Apps using the default local embedder must add `{:bumblebee, "~> 0.6"}` and a backend such as `{:exla, "~> 0.10"}`; apps passing model strings such as `"openai:gpt-4o-mini"` as the LLM, or using `Arcana.Loop`, must add `{:req_llm, "~> 1.2"}`. Both raise a message naming the missing dependency
 
 ### Deprecations
