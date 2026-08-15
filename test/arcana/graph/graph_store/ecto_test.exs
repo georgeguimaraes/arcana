@@ -43,6 +43,10 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
     |> Repo.insert!()
   end
 
+  defp count_entities(collection) do
+    Repo.aggregate(from(e in Entity, where: e.collection_id == ^collection.id), :count)
+  end
+
   defp create_mention(entity, chunk) do
     %EntityMention{}
     |> EntityMention.changeset(%{
@@ -174,6 +178,38 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
 
       assert Repo.aggregate(from(e in Entity, where: e.collection_id == ^collection.id), :count) ==
                1
+    end
+
+    # Postgres decides which rows exist, so the in-call dedup must not
+    # decide it too. These two spellings share an Elixir dedup key
+    # (String.downcase/1 decomposes U+0130 into exactly the second one) but
+    # not a Postgres one (lower() folds U+0130 to a bare "i"), so deduping
+    # on the Elixir key collapsed them when they arrived in one chunk and
+    # kept them apart when they arrived in two: same document, different
+    # :chunk_size, different graph.
+    test "keeps entity identity out of the hands of chunking" do
+      decomposed = "i" <> <<0x307::utf8>> <> "stanbul"
+      names = ["İstanbul", decomposed]
+
+      assert String.downcase("İstanbul") == decomposed
+
+      one_chunk = create_collection("one-chunk")
+
+      {:ok, _} =
+        EctoStore.persist_entities(
+          one_chunk.id,
+          Enum.map(names, &%{name: &1, type: "place"}),
+          repo: Repo
+        )
+
+      two_chunks = create_collection("two-chunks")
+
+      for name <- names do
+        {:ok, _} =
+          EctoStore.persist_entities(two_chunks.id, [%{name: name, type: "place"}], repo: Repo)
+      end
+
+      assert count_entities(one_chunk) == count_entities(two_chunks)
     end
 
     test "inserts entity with metadata" do

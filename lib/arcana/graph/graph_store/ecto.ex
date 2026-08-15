@@ -46,13 +46,23 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   def persist_entities(collection_id, entities, opts) do
     repo = Keyword.fetch!(opts, :repo)
 
-    # Deduplicate on the normalized name (first-seen entity wins, keeping
-    # its original name for display) and build normalized-name -> id map.
+    # Skip the repeat upserts within this call, then let Postgres decide
+    # which rows exist. Deduping on the ELIXIR key would decide it here
+    # instead: two spellings that share an Elixir key but not a Postgres
+    # one ("İstanbul" and its decomposed form) would collapse when they
+    # arrived in the same chunk and stay apart when they arrived in
+    # different ones — same document, different :chunk_size, different
+    # graph. Identical raw names always share a Postgres key, so deduping
+    # on the raw name can't decide anything Postgres wouldn't.
+    #
+    # The key still gates the reject and keys the returned map, which
+    # persist_mentions/3 and persist_relationships/3 look names up in.
+    # Both engines agree on which names normalize to empty.
     entity_id_map =
       entities
       |> Enum.map(fn entity -> {EntityName.normalize(entity.name), entity} end)
       |> Enum.reject(fn {key, _entity} -> is_nil(key) or key == "" end)
-      |> Enum.uniq_by(fn {key, _entity} -> key end)
+      |> Enum.uniq_by(fn {_key, entity} -> entity.name end)
       |> Enum.reduce(%{}, fn {key, entity}, id_map ->
         entity_record = upsert_entity(entity, collection_id, repo)
         Map.put(id_map, key, entity_record.id)
