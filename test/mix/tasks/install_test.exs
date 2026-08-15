@@ -77,6 +77,30 @@ defmodule Mix.Tasks.Arcana.InstallTest do
     assert_unchanged(igniter, "lib/test/postgrex_types.ex")
   end
 
+  test "finds a candidate module defined outside its conventional path" do
+    # Nothing makes an app put Test.PostgrexTypes in lib/test/postgrex_types.ex,
+    # and generating a second definition of it would be a duplicate module.
+    elsewhere = """
+    defmodule Test.PostgrexTypes do
+      def whatever, do: :ok
+    end
+    """
+
+    igniter =
+      test_project(files: %{"lib/test/db/types.ex" => elsewhere})
+      |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
+
+    assert_creates(igniter, "lib/test/repo/postgrex_types.ex")
+
+    assert_has_patch(
+      igniter,
+      "config/config.exs",
+      "|config :test, Test.Repo, types: Test.Repo.PostgrexTypes"
+    )
+
+    assert_unchanged(igniter, "lib/test/db/types.ex")
+  end
+
   test "stops with an actionable error when every candidate name is taken" do
     occupied = fn module ->
       """

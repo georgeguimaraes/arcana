@@ -41,6 +41,8 @@ if Code.ensure_loaded?(Igniter) do
     alias Igniter.Code.Function
     alias Igniter.Libs.Phoenix
     alias Igniter.Project.Config
+    # Aliased, because plain Module is Elixir's and this file uses both.
+    alias Igniter.Project.Module, as: IgniterModule
 
     @types_define_marker "Postgrex.Types.define"
 
@@ -477,7 +479,8 @@ if Code.ensure_loaded?(Igniter) do
     end
 
     defp setup_postgrex_types(igniter, nil, app_name, repo_module, types_module) do
-      chosen = free_types_module(igniter, candidates(types_module, repo_module), nil, nil)
+      {igniter, chosen} =
+        free_types_module(igniter, candidates(types_module, repo_module), nil, nil)
 
       igniter
       |> create_postgrex_types_module(chosen)
@@ -514,7 +517,8 @@ if Code.ensure_loaded?(Igniter) do
            repo_module,
            types_module
          ) do
-      chosen = free_types_module(igniter, candidates(types_module, repo_module), found, path)
+      {igniter, chosen} =
+        free_types_module(igniter, candidates(types_module, repo_module), found, path)
 
       igniter
       |> create_postgrex_types_module(chosen)
@@ -536,17 +540,31 @@ if Code.ensure_loaded?(Igniter) do
     # module creation skips a path that already exists, so the repo config would
     # end up pointing at somebody else's module, one with no pgvector extension
     # in it, and the install would fail at runtime instead of here.
+    # Checking the conventional path isn't enough: nothing stops an app from
+    # defining MyApp.PostgrexTypes in lib/my_app/db/types.ex, and generating a
+    # second definition of a module that already exists somewhere else is its
+    # own kind of breakage. IgniterModule.module_exists/2 searches the project
+    # for the definition wherever it lives, and hands back an igniter carrying
+    # the module index it built, which is why this threads one through.
     defp free_types_module(igniter, candidates, found, found_path) do
       candidates
-      |> Enum.find(fn candidate ->
-        path = types_module_path(candidate)
+      |> Enum.reduce_while({igniter, nil}, fn candidate, {igniter, _} ->
+        {taken?, igniter} = types_module_taken?(igniter, candidate, found, found_path)
 
-        candidate != found and path != found_path and not Igniter.exists?(igniter, path)
+        if taken?, do: {:cont, {igniter, nil}}, else: {:halt, {igniter, candidate}}
       end)
       |> case do
-        nil -> raise Mix.Error, message: no_free_types_module_message(candidates)
-        candidate -> candidate
+        {_igniter, nil} -> raise Mix.Error, message: no_free_types_module_message(candidates)
+        {igniter, candidate} -> {igniter, candidate}
       end
+    end
+
+    defp types_module_taken?(igniter, candidate, found, found_path) do
+      path = types_module_path(candidate)
+      {defined?, igniter} = IgniterModule.module_exists(igniter, candidate)
+
+      {candidate == found or path == found_path or defined? or Igniter.exists?(igniter, path),
+       igniter}
     end
 
     defp no_free_types_module_message(candidates) do
