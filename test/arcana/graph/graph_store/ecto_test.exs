@@ -215,6 +215,35 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       results = EctoStore.search(["Unknown"], nil, repo: Repo)
       assert results == []
     end
+
+    test "empty collection_ids matches nothing instead of searching globally" do
+      collection = create_collection()
+      document = create_document(collection)
+      chunk = create_chunk(document)
+      alice = create_entity(collection, "Alice")
+      create_mention(alice, chunk)
+
+      # nil is unscoped, [] means the caller named collections that resolved
+      # to nothing: leaking to a global search here is a cross-tenant bug
+      assert EctoStore.search(["Alice"], nil, repo: Repo) != []
+      assert EctoStore.search(["Alice"], [], repo: Repo) == []
+    end
+  end
+
+  describe "search_by_embedding/3" do
+    test "empty collection_ids matches nothing instead of searching globally" do
+      collection = create_collection()
+      entity = create_entity(collection, "Alice")
+
+      entity
+      |> Ecto.Changeset.change(embedding: Enum.map(1..384, fn _ -> 0.1 end))
+      |> Repo.update!()
+
+      query_embedding = Enum.map(1..384, fn _ -> 0.1 end)
+
+      refute EctoStore.search_by_embedding(query_embedding, nil, repo: Repo, threshold: 0.1) == []
+      assert EctoStore.search_by_embedding(query_embedding, [], repo: Repo, threshold: 0.1) == []
+    end
   end
 
   describe "find_entities/2" do

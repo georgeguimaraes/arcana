@@ -80,8 +80,7 @@ defmodule Arcana.SearchTest do
       first = hd(results)
 
       # Single-query hybrid should include both score breakdowns
-      assert Map.has_key?(first, :vector_score)
-      assert Map.has_key?(first, :keyword_score)
+      # (every mode carries the fields now, so assert on values, not keys)
       assert is_number(first.vector_score)
       assert is_number(first.keyword_score)
     end
@@ -157,6 +156,94 @@ defmodule Arcana.SearchTest do
       assert Enum.any?(texts, &String.contains?(&1, "Go"))
       assert Enum.any?(texts, &String.contains?(&1, "Rust"))
       refute Enum.any?(texts, &String.contains?(&1, "JavaScript"))
+    end
+  end
+
+  describe "search/2 result shape" do
+    setup do
+      {:ok, doc} = Arcana.ingest("Elixir is a functional programming language.", repo: Repo)
+      %{doc: doc}
+    end
+
+    test "all modes return SearchResult structs" do
+      for mode <- [:vector, :keyword, :hybrid] do
+        {:ok, results} = Arcana.search("Elixir functional", repo: Repo, mode: mode, graph: false)
+
+        refute Enum.empty?(results), "no results for mode #{mode}"
+        assert Enum.all?(results, &match?(%Arcana.SearchResult{}, &1))
+      end
+    end
+
+    test "score components are nil outside single-query hybrid" do
+      {:ok, [first | _]} = Arcana.search("Elixir", repo: Repo, mode: :vector)
+
+      assert is_nil(first.vector_score)
+      assert is_nil(first.keyword_score)
+      assert is_nil(first.rerank_score)
+    end
+  end
+
+  describe "search/2 strict collections" do
+    setup do
+      {:ok, doc} =
+        Arcana.ingest("Elixir is a functional programming language.",
+          repo: Repo,
+          collection: "strict-known"
+        )
+
+      %{doc: doc}
+    end
+
+    test "unknown collection errors in every mode when strict" do
+      for mode <- [:vector, :keyword, :hybrid] do
+        assert {:error, {:unknown_collection, "strict-nope"}} =
+                 Arcana.search("Elixir",
+                   repo: Repo,
+                   mode: mode,
+                   collection: "strict-nope",
+                   strict_collections: true
+                 )
+      end
+    end
+
+    test "unknown collection still searches unscoped when strict is off" do
+      {:ok, results} = Arcana.search("Elixir", repo: Repo, collection: "strict-nope")
+
+      refute Enum.empty?(results)
+    end
+
+    test "a single unknown name in a collections list fails the whole search" do
+      assert {:error, {:unknown_collection, "strict-nope"}} =
+               Arcana.search("Elixir",
+                 repo: Repo,
+                 collections: ["strict-known", "strict-nope"],
+                 strict_collections: true
+               )
+    end
+
+    test "known collection passes under strict" do
+      {:ok, results} =
+        Arcana.search("Elixir",
+          repo: Repo,
+          collection: "strict-known",
+          strict_collections: true
+        )
+
+      refute Enum.empty?(results)
+    end
+
+    test "global flag is honored and per-call false overrides it" do
+      put_arcana_env(:strict_collections, true)
+
+      assert {:error, {:unknown_collection, "strict-nope"}} =
+               Arcana.search("Elixir", repo: Repo, collection: "strict-nope")
+
+      assert {:ok, _results} =
+               Arcana.search("Elixir",
+                 repo: Repo,
+                 collection: "strict-nope",
+                 strict_collections: false
+               )
     end
   end
 

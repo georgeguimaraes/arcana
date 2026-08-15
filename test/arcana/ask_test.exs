@@ -31,6 +31,16 @@ defmodule Arcana.AskTest do
       refute Enum.empty?(context)
     end
 
+    test "errors on an unknown collection under strict_collections", %{llm: llm} do
+      assert {:error, {:search_failed, {:unknown_collection, "strict-nope"}}} =
+               Arcana.ask("What are the Daleks?",
+                 repo: Repo,
+                 llm: llm,
+                 collection: "strict-nope",
+                 strict_collections: true
+               )
+    end
+
     test "uses custom prompt function", %{llm: llm} do
       custom_prompt = fn _question, _context ->
         "Custom system prompt"

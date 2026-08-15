@@ -25,7 +25,7 @@ defmodule Arcana.Graph.FusionSearch do
       {:ok, entities} = Arcana.Graph.EntityExtractor.NER.extract("Tell me about OpenAI", [])
 
       # Run vector search
-      vector_results = Arcana.search(repo, collection, query, top_k: 10)
+      {:ok, vector_results} = Arcana.search(query, repo: repo, collection: collection, limit: 10)
 
       # Combine with graph search
       FusionSearch.search(graph, entities, vector_results)

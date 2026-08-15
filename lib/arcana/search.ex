@@ -15,7 +15,7 @@ defmodule Arcana.Search do
 
   require Logger
 
-  alias Arcana.{Collection, Embedder, VectorStore}
+  alias Arcana.{Collection, Embedder, SearchResult, VectorStore}
   alias Arcana.VectorStore.Pgvector
 
   @valid_modes [:vector, :keyword, :hybrid]
@@ -49,8 +49,8 @@ defmodule Arcana.Search do
   @doc """
   Searches for chunks similar to the query.
 
-  Returns `{:ok, results}` where results is a list of maps containing chunk
-  information and similarity scores, or `{:error, reason}` on failure.
+  Returns `{:ok, results}` where results is a list of `Arcana.SearchResult`
+  structs (the same shape for every mode), or `{:error, reason}` on failure.
 
   ## Options
 
@@ -61,6 +61,9 @@ defmodule Arcana.Search do
     * `:mode` - Search mode: `:vector` (default), `:keyword`, or `:hybrid`.
       `:semantic` and `:fulltext` are deprecated aliases.
     * `:collection` - Filter results to a specific collection by name
+    * `:strict_collections` - When `true`, an unknown collection name
+      returns `{:error, {:unknown_collection, name}}` instead of searching
+      unscoped. Defaults to `config :arcana, strict_collections: false`.
     * `:vector_store` - Override the configured vector store backend
     * `:vector_weight` - Weight for vector scores in hybrid mode (default: 0.5)
     * `:keyword_weight` - Weight for keyword scores in hybrid mode (default: 0.5)
@@ -84,17 +87,45 @@ defmodule Arcana.Search do
     rewriter = Keyword.get(opts, :rewriter)
     vector_store_opt = Keyword.get(opts, :vector_store)
 
-    collections =
-      cond do
-        Keyword.has_key?(opts, :collections) -> Keyword.get(opts, :collections)
-        Keyword.has_key?(opts, :collection) -> [Keyword.get(opts, :collection)]
-        true -> [nil]
-      end
+    collections = Collection.names_from_opts(opts)
 
     unless mode in @valid_modes do
       raise ArgumentError,
             "invalid search mode: #{inspect(mode)}. Must be one of #{inspect(@valid_modes)}"
     end
+
+    with :ok <- validate_collections(collections, repo, opts) do
+      do_search_with_telemetry(query, collections, mode, repo, opts, %{
+        reranker: reranker,
+        limit: limit,
+        source_id: source_id,
+        threshold: threshold,
+        rewriter: rewriter,
+        vector_store_opt: vector_store_opt
+      })
+    end
+  end
+
+  defp validate_collections(collections, repo, opts) do
+    if repo && Arcana.Config.strict_collections?(opts) do
+      case Collection.resolve_ids(collections, repo, strict: true) do
+        {:ok, _ids} -> :ok
+        {:error, _} = error -> error
+      end
+    else
+      :ok
+    end
+  end
+
+  defp do_search_with_telemetry(query, collections, mode, repo, opts, config) do
+    %{
+      reranker: reranker,
+      limit: limit,
+      source_id: source_id,
+      threshold: threshold,
+      rewriter: rewriter,
+      vector_store_opt: vector_store_opt
+    } = config
 
     start_metadata = %{
       query: query,
@@ -327,12 +358,13 @@ defmodule Arcana.Search do
 
           chunk ->
             [
-              %{
+              %SearchResult{
                 id: chunk.id,
                 text: chunk.text,
                 document_id: chunk.document_id,
                 chunk_index: chunk.chunk_index,
-                score: score
+                score: score,
+                metadata: chunk.metadata || %{}
               }
             ]
         end
@@ -341,7 +373,13 @@ defmodule Arcana.Search do
     end
   end
 
-  defp resolve_collection_ids(collections, repo), do: Collection.resolve_ids(collections, repo)
+  # Strict validation already ran at the entry point, so unknown names can
+  # only appear here in non-strict mode; they resolve to [] which downstream
+  # graph queries treat as "match nothing".
+  defp resolve_collection_ids(collections, repo) do
+    {:ok, ids} = Collection.resolve_ids(collections, repo)
+    ids
+  end
 
   defp do_search(:vector, query, params) do
     case Embedder.embed(Arcana.Config.embedder(), query, intent: :query) do
@@ -401,17 +439,15 @@ defmodule Arcana.Search do
 
         {:ok,
          Enum.map(results, fn result ->
-           metadata = result.metadata || %{}
+           metadata =
+             (result.metadata || %{})
+             |> Map.update(:document_id, nil, &Ecto.UUID.cast!/1)
 
-           %{
+           SearchResult.from_store_result(%{
              id: Ecto.UUID.cast!(result.id),
-             text: metadata[:text] || "",
-             document_id: Ecto.UUID.cast!(metadata[:document_id]),
-             chunk_index: metadata[:chunk_index],
              score: result.score,
-             vector_score: metadata[:vector_score],
-             keyword_score: metadata[:keyword_score]
-           }
+             metadata: metadata
+           })
          end)}
 
       {:error, reason} ->
@@ -433,17 +469,7 @@ defmodule Arcana.Search do
   end
 
   defp transform_results(results) do
-    Enum.map(results, fn result ->
-      metadata = result.metadata || %{}
-
-      %{
-        id: result.id,
-        text: metadata[:text] || "",
-        document_id: metadata[:document_id],
-        chunk_index: metadata[:chunk_index],
-        score: result.score
-      }
-    end)
+    Enum.map(results, &SearchResult.from_store_result/1)
   end
 
   # Build vector_store opts by merging user-provided opts (so backend-specific

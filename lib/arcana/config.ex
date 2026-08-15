@@ -194,6 +194,7 @@ defmodule Arcana.Config do
       },
       vector_store: get_env(:vector_store, :pgvector),
       reranker: get_env(:reranker, Arcana.Reranker.LLM),
+      strict_collections: get_env(:strict_collections, false),
       graph: Arcana.Graph.config()
     }
   end
@@ -216,6 +217,24 @@ defmodule Arcana.Config do
   def graph_enabled?(opts) do
     case Keyword.get(opts, :graph) do
       nil -> Arcana.Graph.enabled?()
+      value -> value
+    end
+  end
+
+  @doc """
+  Returns whether strict collection scoping is enabled.
+
+  When strict, an unknown collection name is an error
+  (`{:error, {:unknown_collection, name}}`) instead of silently widening
+  the operation to every collection. Checks the `:strict_collections`
+  option in the provided opts first (so `strict_collections: false` can
+  override a global `true` per call), then falls back to
+  `config :arcana, strict_collections: true`. Defaults to `false`; the
+  default will flip to `true` in Arcana 3.0.
+  """
+  def strict_collections?(opts \\ []) do
+    case Keyword.get(opts, :strict_collections) do
+      nil -> get_env(:strict_collections, false)
       value -> value
     end
   end

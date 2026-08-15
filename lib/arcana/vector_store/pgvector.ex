@@ -326,16 +326,16 @@ defmodule Arcana.VectorStore.Pgvector do
   @impl true
   def delete(collection, id, opts) do
     repo = Keyword.fetch!(opts, :repo)
+    strict? = Arcana.Config.strict_collections?(opts)
 
     # Get collection_id to verify the chunk belongs to the collection
-    collection_id =
-      if collection do
-        case repo.get_by(Collection, name: collection) do
-          nil -> nil
-          coll -> coll.id
-        end
-      end
+    case Collection.resolve_id(collection, repo, strict?) do
+      {:ok, collection_id} -> do_delete(collection_id, id, repo)
+      {:error, _} = error -> error
+    end
+  end
 
+  defp do_delete(collection_id, id, repo) do
     query =
       from(c in Chunk,
         join: d in Document,
@@ -363,8 +363,12 @@ defmodule Arcana.VectorStore.Pgvector do
   @impl true
   def clear(collection, opts) do
     repo = Keyword.fetch!(opts, :repo)
+    strict? = Arcana.Config.strict_collections?(opts)
 
     case repo.get_by(Collection, name: collection) do
+      nil when strict? ->
+        {:error, {:unknown_collection, collection}}
+
       nil ->
         :ok
 

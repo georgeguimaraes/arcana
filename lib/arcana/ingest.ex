@@ -40,25 +40,29 @@ defmodule Arcana.Ingest do
     }
 
     :telemetry.span([:arcana, :ingest], start_metadata, fn ->
-      {:ok, collection} = Collection.get_or_create(collection_name, repo, collection_description)
+      case resolve_collection(collection_name, collection_description, repo, opts) do
+        {:ok, collection} ->
+          {:ok, document} =
+            %Document{}
+            |> Document.changeset(%{
+              content: text,
+              source_id: source_id,
+              metadata: metadata,
+              status: :processing,
+              collection_id: collection.id
+            })
+            |> repo.insert()
 
-      {:ok, document} =
-        %Document{}
-        |> Document.changeset(%{
-          content: text,
-          source_id: source_id,
-          metadata: metadata,
-          status: :processing,
-          collection_id: collection.id
-        })
-        |> repo.insert()
+          chunks = Chunker.chunk(chunker_config, text, chunk_opts)
+          result = embed_and_store_chunks(chunks, document, repo)
 
-      chunks = Chunker.chunk(chunker_config, text, chunk_opts)
-      result = embed_and_store_chunks(chunks, document, repo)
+          case result do
+            {:ok, chunk_records} ->
+              finalize_ingest(document, chunk_records, collection, repo, opts)
 
-      case result do
-        {:ok, chunk_records} ->
-          finalize_ingest(document, chunk_records, collection, repo, opts)
+            {:error, reason} ->
+              {{:error, reason}, %{error: reason}}
+          end
 
         {:error, reason} ->
           {{:error, reason}, %{error: reason}}
@@ -164,22 +168,33 @@ defmodule Arcana.Ingest do
     chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap, :format, :size_unit])
     chunker_config = Arcana.Config.resolve_chunker(opts)
 
-    {:ok, collection} = Collection.get_or_create(collection_name, repo)
-
-    {:ok, document} =
-      %Document{}
-      |> Document.changeset(%{
-        content: text,
+    with {:ok, collection} <- resolve_collection(collection_name, nil, repo, opts) do
+      do_ingest_with_file_attrs(text, collection, repo, %{
         source_id: source_id,
         metadata: metadata,
         file_path: file_path,
         content_type: content_type,
+        chunk_opts: chunk_opts,
+        chunker_config: chunker_config
+      })
+    end
+  end
+
+  defp do_ingest_with_file_attrs(text, collection, repo, attrs) do
+    {:ok, document} =
+      %Document{}
+      |> Document.changeset(%{
+        content: text,
+        source_id: attrs.source_id,
+        metadata: attrs.metadata,
+        file_path: attrs.file_path,
+        content_type: attrs.content_type,
         status: :processing,
         collection_id: collection.id
       })
       |> repo.insert()
 
-    chunks = Chunker.chunk(chunker_config, text, chunk_opts)
+    chunks = Chunker.chunk(attrs.chunker_config, text, attrs.chunk_opts)
     result = embed_and_store_chunks(chunks, document, repo)
 
     case result do
@@ -193,6 +208,17 @@ defmodule Arcana.Ingest do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # Under strict_collections, ingest requires the collection to already
+  # exist (create explicitly with Collection.get_or_create/3); otherwise
+  # it is created on the fly.
+  defp resolve_collection(name, description, repo, opts) do
+    if Arcana.Config.strict_collections?(opts) do
+      Collection.fetch(name, repo)
+    else
+      Collection.get_or_create(name, repo, description)
     end
   end
 

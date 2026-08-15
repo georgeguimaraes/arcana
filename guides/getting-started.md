@@ -314,6 +314,31 @@ false
 )
 ```
 
+Every mode returns the same `Arcana.SearchResult` struct, with `id`, `text`,
+`document_id`, `chunk_index`, `score`, per-mode score breakdowns
+(`vector_score`/`keyword_score`, set by single-query hybrid search), and the
+chunk's stored `metadata`.
+
+### Strict Collection Scoping
+
+By default, searching a collection name that doesn't exist silently searches
+across all collections, and ingesting into one creates it on the fly. In
+multi-tenant apps that's dangerous: a typo'd tenant collection becomes a
+cross-tenant search. Turn on strict mode to make unknown collection names an
+error instead:
+
+```elixir
+config :arcana, strict_collections: true
+```
+
+With strict mode on, `Arcana.search/2`, `Arcana.ask/2`, `Arcana.ingest/2`,
+vector-store deletes, and maintenance tasks return
+`{:error, {:unknown_collection, name}}` for names that don't exist. Create
+collections explicitly with `Arcana.Collection.get_or_create/3`. The flag can
+also be passed per call (`strict_collections: false` opts out for one call).
+
+Strict mode will become the default in Arcana 3.0.
+
 ### Question Answering
 
 Use `Arcana.ask/2` to combine search with an LLM for answers:

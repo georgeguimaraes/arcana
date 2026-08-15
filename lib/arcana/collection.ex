@@ -69,24 +69,65 @@ defmodule Arcana.Collection do
   end
 
   @doc """
+  Fetches a collection by name.
+
+  Returns `{:ok, collection}` or `{:error, {:unknown_collection, name}}`.
+  """
+  def fetch(name, repo) when is_binary(name) do
+    case repo.get_by(__MODULE__, name: name) do
+      nil -> {:error, {:unknown_collection, name}}
+      collection -> {:ok, collection}
+    end
+  end
+
+  @doc """
   Resolves a list of collection names to their IDs.
 
-  Returns `nil` for unscoped queries (when collections is `[nil]`),
-  otherwise returns a list of UUIDs (possibly empty).
+  Returns `{:ok, nil}` for unscoped queries (when collections is `[nil]`),
+  otherwise `{:ok, ids}`. Unknown names are dropped, so the list can be
+  empty — callers must treat an empty list as "match nothing", never as
+  "no filter". With `strict: true`, the first unknown name returns
+  `{:error, {:unknown_collection, name}}` instead.
   """
-  def resolve_ids([nil], _repo), do: nil
+  def resolve_ids(names, repo, opts \\ [])
 
-  def resolve_ids(names, repo) when is_list(names) do
-    import Ecto.Query
+  def resolve_ids([nil], _repo, _opts), do: {:ok, nil}
+
+  def resolve_ids(names, repo, opts) when is_list(names) do
+    strict? = Keyword.get(opts, :strict, false)
 
     names
     |> Enum.reject(&is_nil/1)
-    |> Enum.flat_map(fn name ->
-      case repo.one(from(c in __MODULE__, where: c.name == ^name, select: c.id)) do
-        nil -> []
-        id -> [id]
+    |> Enum.reduce_while({:ok, []}, fn name, {:ok, acc} ->
+      case resolve_id(name, repo, strict?) do
+        {:ok, nil} -> {:cont, {:ok, acc}}
+        {:ok, id} -> {:cont, {:ok, [id | acc]}}
+        {:error, _} = error -> {:halt, error}
       end
     end)
+    |> case do
+      {:ok, ids} -> {:ok, Enum.reverse(ids)}
+      error -> error
+    end
+  end
+
+  @doc """
+  Resolves a single collection name to its ID.
+
+  Returns `{:ok, nil}` when `name` is `nil` (unscoped) or, in non-strict
+  mode, when the collection doesn't exist. With `strict?` set, an unknown
+  name returns `{:error, {:unknown_collection, name}}`.
+  """
+  def resolve_id(name, repo, strict? \\ false)
+
+  def resolve_id(nil, _repo, _strict?), do: {:ok, nil}
+
+  def resolve_id(name, repo, strict?) when is_binary(name) do
+    case repo.get_by(__MODULE__, name: name) do
+      nil when strict? -> {:error, {:unknown_collection, name}}
+      nil -> {:ok, nil}
+      collection -> {:ok, collection.id}
+    end
   end
 
   @doc """

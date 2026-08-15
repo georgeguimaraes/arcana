@@ -203,9 +203,47 @@ defmodule Arcana.VectorStore.PgvectorTest do
       fake_id = Ecto.UUID.generate()
       assert {:error, :not_found} = Pgvector.delete("any", fake_id, repo: repo)
     end
+
+    test "with strict_collections, an unknown collection blocks the delete" do
+      repo = Arcana.TestRepo
+
+      {:ok, collection} = Collection.get_or_create("strict-delete-test", repo)
+
+      {:ok, doc} =
+        %Document{}
+        |> Document.changeset(%{
+          content: "test",
+          status: :completed,
+          collection_id: collection.id
+        })
+        |> repo.insert()
+
+      {:ok, chunk} =
+        %Chunk{}
+        |> Chunk.changeset(%{
+          text: "kept",
+          embedding: List.duplicate(0.5, 384),
+          document_id: doc.id
+        })
+        |> repo.insert()
+
+      assert {:error, {:unknown_collection, "strict-nope"}} =
+               Pgvector.delete("strict-nope", chunk.id, repo: repo, strict_collections: true)
+
+      assert repo.get(Chunk, chunk.id)
+    end
   end
 
   describe "clear/2" do
+    test "with strict_collections, an unknown collection is an error instead of a no-op" do
+      repo = Arcana.TestRepo
+
+      assert :ok = Pgvector.clear("strict-nope", repo: repo)
+
+      assert {:error, {:unknown_collection, "strict-nope"}} =
+               Pgvector.clear("strict-nope", repo: repo, strict_collections: true)
+    end
+
     test "removes all chunks in collection" do
       repo = Arcana.TestRepo
 

@@ -60,7 +60,21 @@ defmodule Arcana.Maintenance do
     collection_filter = Keyword.get(opts, :collection)
 
     embedder = Arcana.embedder()
-    collection_id = get_collection_id(repo, collection_filter)
+    strict? = Arcana.Config.strict_collections?(opts)
+
+    with {:ok, collection_id} <- Collection.resolve_id(collection_filter, repo, strict?) do
+      do_reembed(repo, embedder, collection_id, %{
+        batch_size: batch_size,
+        concurrency: concurrency,
+        skip: skip,
+        progress_fn: progress_fn
+      })
+    end
+  end
+
+  defp do_reembed(repo, embedder, collection_id, config) do
+    %{batch_size: batch_size, concurrency: concurrency, skip: skip, progress_fn: progress_fn} =
+      config
 
     # First, rechunk documents that have no chunks
     docs_without_chunks = fetch_docs_without_chunks(repo, collection_id)
@@ -91,15 +105,6 @@ defmodule Arcana.Maintenance do
        total_chunks: total_chunks,
        skipped: skipped
      }}
-  end
-
-  defp get_collection_id(_repo, nil), do: nil
-
-  defp get_collection_id(repo, collection_name) when is_binary(collection_name) do
-    case repo.one(from(c in Collection, where: c.name == ^collection_name, select: c.id)) do
-      nil -> nil
-      id -> id
-    end
   end
 
   defp fetch_docs_without_chunks(repo, nil) do
@@ -369,37 +374,31 @@ defmodule Arcana.Maintenance do
     embedder = Arcana.Config.embedder()
 
     query = from(e in Entity, order_by: e.id, select: [:id, :name, :description, :embedding])
+    strict? = Arcana.Config.strict_collections?(opts)
 
-    query =
-      if collection_filter do
-        collection_id =
-          repo.one(
-            from(c in Arcana.Collection, where: c.name == ^collection_filter, select: c.id)
-          )
-
+    with {:ok, collection_id} <- Collection.resolve_id(collection_filter, repo, strict?) do
+      query =
         if collection_id,
           do: from(e in query, where: e.collection_id == ^collection_id),
           else: query
-      else
-        query
-      end
 
-    query = if force, do: query, else: from(e in query, where: is_nil(e.embedding))
+      query = if force, do: query, else: from(e in query, where: is_nil(e.embedding))
 
-    entities = repo.all(query)
-    total = length(entities)
+      entities = repo.all(query)
+      total = length(entities)
 
-    # The reduce's return value is intentionally discarded: we use the
-    # accumulator for per-batch progress reporting, not as a final result.
-    _ =
-      entities
-      |> Enum.chunk_every(batch_size)
-      |> Enum.with_index(1)
-      |> Enum.reduce(0, fn {batch, _batch_idx}, count ->
-        maintenance_batch(batch, count, total, embedder, progress_fn, repo)
-      end)
+      # The reduce's return value is intentionally discarded: we use the
+      # accumulator for per-batch progress reporting, not as a final result.
+      _ =
+        entities
+        |> Enum.chunk_every(batch_size)
+        |> Enum.with_index(1)
+        |> Enum.reduce(0, fn {batch, _batch_idx}, count ->
+          maintenance_batch(batch, count, total, embedder, progress_fn, repo)
+        end)
 
-    {:ok, %{total: total}}
+      {:ok, %{total: total}}
+    end
   end
 
   defp maintenance_batch(batch, count, total, embedder, progress_fn, repo) do
