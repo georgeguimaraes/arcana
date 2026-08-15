@@ -3,6 +3,19 @@ defmodule Arcana.GraphIntegrationTest do
 
   alias Arcana.Graph.{Community, Entity, EntityMention, Relationship}
 
+  # Scoped to the collection under test: the documents table is shared with
+  # every other test in this file, so a global count asserts something no
+  # single test controls.
+  defp documents_in(collection_name) do
+    Repo.all(
+      from(d in Arcana.Document,
+        join: c in Arcana.Collection,
+        on: c.id == d.collection_id,
+        where: c.name == ^collection_name
+      )
+    )
+  end
+
   defp create_collection(name) do
     %Arcana.Collection{}
     |> Arcana.Collection.changeset(%{name: name})
@@ -299,6 +312,53 @@ defmodule Arcana.GraphIntegrationTest do
       # A half-built graph must not leave a document stuck in :processing
       assert [document] = Repo.all(Arcana.Document)
       assert document.status == :failed
+    end
+
+    # Extraction runs inside Task.async_stream, so a raising extractor used
+    # to take the ingest process down through the task's link exit signal
+    # instead of unwinding through the rescue that marks the document
+    # :failed. That is reachable from the shipped default: NERServing
+    # raises outright when Bumblebee isn't loaded, and the LLM extractors
+    # raise KeyError with no LLM configured.
+    for kind <- [:raises, :throws, :exits] do
+      test "marks the document failed when the entity extractor #{kind}" do
+        collection = "graph-extractor-#{unquote(kind)}"
+
+        boom = fn ->
+          case unquote(kind) do
+            :raises -> raise "extractor exploded"
+            :throws -> throw(:extractor_threw)
+            :exits -> exit(:extractor_exited)
+          end
+        end
+
+        parent = self()
+
+        {pid, ref} =
+          spawn_monitor(fn ->
+            receive do
+              :go -> :ok
+            end
+
+            Arcana.ingest("boom content",
+              repo: Repo,
+              graph: true,
+              entity_extractor: fn _text, _opts -> boom.() end,
+              collection: collection
+            )
+
+            send(parent, :ingest_returned)
+          end)
+
+        Ecto.Adapters.SQL.Sandbox.allow(Repo, parent, pid)
+        send(pid, :go)
+
+        assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 10_000
+        refute_received :ingest_returned
+
+        assert [document] = documents_in(collection)
+        assert document.status == :failed
+      end
     end
   end
 

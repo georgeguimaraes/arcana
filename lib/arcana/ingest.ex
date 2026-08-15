@@ -157,22 +157,30 @@ defmodule Arcana.Ingest do
     end
   end
 
-  # A graph build raises on failure (extraction errors are swallowed per
-  # chunk, store failures are not). Mark the document :failed before the
-  # raise escapes, the way the embedding path does, so a crashed build
-  # can't leave a document stuck in :processing with chunks attached.
+  # A graph build blows up on failure (extraction errors that come back as
+  # {:error, reason} are swallowed per chunk, store failures and anything
+  # the extractor raises are not). Mark the document :failed before it
+  # escapes, the way the embedding path does, so a crashed build can't
+  # leave a document stuck in :processing with chunks attached.
   # The already-persisted graph data of earlier chunks stays put — see
   # Arcana.Graph.build_and_persist/4, no caller treats a failed build as
   # having left the graph untouched.
+  #
+  # `catch` rather than `rescue`: an extractor or store is just as free to
+  # throw or exit (a GenServer.call timeout exits) as to raise, and each
+  # strands the document the same way. Arcana.Graph turns the extractors'
+  # in-task failures back into caller-side ones so they reach here at all.
   defp build_graph_or_fail_document(document, chunk_records, collection, repo, opts) do
     maybe_build_graph(chunk_records, collection, repo, opts)
-  rescue
-    error ->
+  catch
+    kind, reason ->
+      stacktrace = __STACKTRACE__
+
       document
       |> Document.changeset(%{status: :failed})
       |> repo.update()
 
-      reraise error, __STACKTRACE__
+      :erlang.raise(kind, reason, stacktrace)
   end
 
   # The replaced predecessors' chunks cascade away with them, which can

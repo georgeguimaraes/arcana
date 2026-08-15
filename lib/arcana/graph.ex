@@ -518,35 +518,56 @@ defmodule Arcana.Graph do
     |> Enum.with_index(1)
     |> Task.async_stream(
       fn {chunk, index} ->
-        # Extract in parallel (the slow LLM part)
-        {entities, mentions, relationships} = extract_fn.(chunk)
-        {index, entities, mentions, relationships}
+        # Extract in parallel (the slow LLM part).
+        #
+        # Catch here, inside the task, and carry the failure back as a
+        # value. Task.async_stream links: an extractor that raises, throws
+        # or exits would otherwise kill this task, and the link exit signal
+        # would take the caller down with it — signals aren't catchable, so
+        # neither the rescue nor a catch in Arcana.Ingest would run and the
+        # document would be stranded at :processing. The reducer re-raises
+        # the original kind/reason/stacktrace in the caller instead, where
+        # it unwinds through the code that marks the document :failed.
+        #
+        # A task killed from the outside (:kill) is still unrecoverable
+        # here; nothing short of an unlinked task covers that.
+        try do
+          {entities, mentions, relationships} = extract_fn.(chunk)
+          {:extracted, index, entities, mentions, relationships}
+        catch
+          kind, reason -> {:extract_failed, kind, reason, __STACKTRACE__}
+        end
       end,
       max_concurrency: concurrency,
       timeout: :infinity,
       ordered: true
     )
-    |> Enum.reduce({%{}, 0}, fn {:ok, {index, entities, mentions, relationships}},
-                                {entity_id_map, rel_count} ->
-      # Embed entity descriptions for GraphRAG-style entity search.
-      # Stays outside the write lock: it can hit a model, and the lock is
-      # for DB writes only.
-      entities = maybe_embed_entities(entities)
+    |> Enum.reduce({%{}, 0}, fn
+      {:ok, {:extract_failed, kind, reason, stacktrace}}, _acc ->
+        # Before persisting anything for this chunk, so a failed extraction
+        # leaves no half-written chunk behind.
+        :erlang.raise(kind, reason, stacktrace)
 
-      merged_entity_id_map =
-        persist_chunk_graph(
-          collection_id,
-          entities,
-          mentions,
-          relationships,
-          entity_id_map,
-          store_opts
-        )
+      {:ok, {:extracted, index, entities, mentions, relationships}}, {entity_id_map, rel_count} ->
+        # Embed entity descriptions for GraphRAG-style entity search.
+        # Stays outside the write lock: it can hit a model, and the lock is
+        # for DB writes only.
+        entities = maybe_embed_entities(entities)
 
-      # Report progress
-      progress_fn.(index, total_chunks)
+        merged_entity_id_map =
+          persist_chunk_graph(
+            collection_id,
+            entities,
+            mentions,
+            relationships,
+            entity_id_map,
+            store_opts
+          )
 
-      {merged_entity_id_map, rel_count + length(relationships)}
+        # Report progress
+        progress_fn.(index, total_chunks)
+
+        {merged_entity_id_map, rel_count + length(relationships)}
     end)
   end
 
