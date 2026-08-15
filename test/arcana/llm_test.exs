@@ -34,6 +34,36 @@ defmodule Arcana.LLMTest do
     end
   end
 
+  describe "{module, function} tuples" do
+    defmodule FakeLLM do
+      def complete(prompt, context, _opts), do: {:ok, "mfa3: #{prompt} (#{length(context)})"}
+      def complete_two(prompt, _context), do: {:ok, "mfa2: #{prompt}"}
+      def rewrite(prompt), do: {:ok, "mfa1: #{prompt}"}
+    end
+
+    test "dispatches to the highest supported arity" do
+      context = [%{text: "chunk1"}]
+
+      assert {:ok, "mfa3: q (1)"} = LLM.complete({FakeLLM, :complete}, "q", context, [])
+      assert {:ok, "mfa2: q"} = LLM.complete({FakeLLM, :complete_two}, "q", context, [])
+      assert {:ok, "mfa1: q"} = LLM.complete({FakeLLM, :rewrite}, "q", context, [])
+    end
+
+    test "returns an error for a function that doesn't exist" do
+      assert {:error, {:invalid_llm_mfa, {FakeLLM, :nope}}} =
+               LLM.complete({FakeLLM, :nope}, "q", [], [])
+    end
+
+    test "distinguishes a module that doesn't exist from a wrong arity" do
+      assert {:error, {:llm_module_not_found, NoSuch.Module}} =
+               LLM.complete({NoSuch.Module, :complete}, "q", [], [])
+    end
+
+    test "model string with opts still dispatches through the tuple impl" do
+      assert LLM.impl_for({"openai:gpt-4o-mini", api_key: "k"}) != nil
+    end
+  end
+
   describe "Req.LLM integration" do
     test "works with OpenAI model string" do
       # We can't actually call the API, but we can verify the string is accepted

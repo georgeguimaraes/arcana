@@ -66,13 +66,22 @@ defmodule Mix.Tasks.Arcana.Graph.EmbedEntities do
         end
       end
 
-    {:ok, %{total: total}} =
+    embed_result =
       Arcana.Maintenance.embed_entities(repo,
         collection: collection,
         batch_size: batch_size,
         force: force,
         progress: progress_fn
       )
+
+    total =
+      case embed_result do
+        {:ok, %{total: total}} ->
+          total
+
+        {:error, {:unknown_collection, name}} ->
+          Mix.raise("Collection #{inspect(name)} does not exist")
+      end
 
     unless quiet do
       Mix.shell().info("\nDone! Embedded #{total} entities.")

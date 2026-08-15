@@ -177,6 +177,11 @@ defmodule Arcana.Loop do
               "or set config :arcana, loop: [controller_llm: ...]"
     end
 
+    # A {module, function} LLM (valid for ask/pipeline via Arcana.LLM) can't
+    # drive the loop: both roles go through ReqLLM message structures.
+    reject_mfa_llm!(controller_llm, ":controller_llm")
+    reject_mfa_llm!(answer_llm, ":answer_llm")
+
     # Force the resolved max_iterations into opts so the system prompt and
     # the loop see the same number, even when the caller didn't pass it.
     # Also surface the configured collections so the system prompt can
@@ -364,6 +369,19 @@ defmodule Arcana.Loop do
   end
 
   defp enrich_source(source, _index), do: source
+
+  defp reject_mfa_llm!(llm, option) do
+    case llm do
+      {mod, fun} when is_atom(mod) and is_atom(fun) ->
+        raise ArgumentError,
+              "Arcana.Loop's #{option} can't use a {module, function} LLM " <>
+                "(#{inspect(llm)}): the loop needs a ReqLLM model spec. " <>
+                "Pass #{option} as \"provider:model\" instead."
+
+      _ ->
+        :ok
+    end
+  end
 
   # Graceful degradation: if the controller hit max_iterations without
   # calling `answer`, synthesize a final answer from the chunks we have.

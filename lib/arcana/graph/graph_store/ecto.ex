@@ -114,8 +114,10 @@ defmodule Arcana.Graph.GraphStore.Ecto do
         }
       )
 
+    # nil means unscoped; a list scopes the query, and an empty list must
+    # match nothing (`in []` compiles to false) — never fall back to global.
     base =
-      if collection_ids && collection_ids != [] do
+      if is_list(collection_ids) do
         from(e in base, where: e.collection_id in ^collection_ids)
       else
         base
@@ -562,7 +564,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     query = from(e in Entity, where: e.name in ^entity_names, select: e.id)
 
     query =
-      if collection_ids && collection_ids != [],
+      if is_list(collection_ids),
         do: from(e in query, where: e.collection_id in ^collection_ids),
         else: query
 

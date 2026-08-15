@@ -41,8 +41,10 @@ defmodule Arcana.Graph.EntityMatcher.NER do
   defp lookup_ids_by_name(entity_names, collection_ids, repo) do
     query = from(e in Entity, where: e.name in ^entity_names, select: e.id)
 
+    # nil means unscoped; a list scopes the query, and an empty list must
+    # match nothing (`in []` compiles to false) — never fall back to global.
     query =
-      if collection_ids && collection_ids != [] do
+      if is_list(collection_ids) do
         from(e in query, where: e.collection_id in ^collection_ids)
       else
         query

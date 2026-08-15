@@ -60,7 +60,21 @@ defmodule Arcana.Maintenance do
     collection_filter = Keyword.get(opts, :collection)
 
     embedder = Arcana.embedder()
-    collection_id = get_collection_id(repo, collection_filter)
+    strict? = Arcana.Config.strict_collections?(opts)
+
+    with {:ok, collection_id} <- Collection.resolve_id(collection_filter, repo, strict?) do
+      do_reembed(repo, embedder, collection_id, %{
+        batch_size: batch_size,
+        concurrency: concurrency,
+        skip: skip,
+        progress_fn: progress_fn
+      })
+    end
+  end
+
+  defp do_reembed(repo, embedder, collection_id, config) do
+    %{batch_size: batch_size, concurrency: concurrency, skip: skip, progress_fn: progress_fn} =
+      config
 
     # First, rechunk documents that have no chunks
     docs_without_chunks = fetch_docs_without_chunks(repo, collection_id)
@@ -91,15 +105,6 @@ defmodule Arcana.Maintenance do
        total_chunks: total_chunks,
        skipped: skipped
      }}
-  end
-
-  defp get_collection_id(_repo, nil), do: nil
-
-  defp get_collection_id(repo, collection_name) when is_binary(collection_name) do
-    case repo.one(from(c in Collection, where: c.name == ^collection_name, select: c.id)) do
-      nil -> nil
-      id -> id
-    end
   end
 
   defp fetch_docs_without_chunks(repo, nil) do
@@ -369,37 +374,31 @@ defmodule Arcana.Maintenance do
     embedder = Arcana.Config.embedder()
 
     query = from(e in Entity, order_by: e.id, select: [:id, :name, :description, :embedding])
+    strict? = Arcana.Config.strict_collections?(opts)
 
-    query =
-      if collection_filter do
-        collection_id =
-          repo.one(
-            from(c in Arcana.Collection, where: c.name == ^collection_filter, select: c.id)
-          )
-
+    with {:ok, collection_id} <- Collection.resolve_id(collection_filter, repo, strict?) do
+      query =
         if collection_id,
           do: from(e in query, where: e.collection_id == ^collection_id),
           else: query
-      else
-        query
-      end
 
-    query = if force, do: query, else: from(e in query, where: is_nil(e.embedding))
+      query = if force, do: query, else: from(e in query, where: is_nil(e.embedding))
 
-    entities = repo.all(query)
-    total = length(entities)
+      entities = repo.all(query)
+      total = length(entities)
 
-    # The reduce's return value is intentionally discarded: we use the
-    # accumulator for per-batch progress reporting, not as a final result.
-    _ =
-      entities
-      |> Enum.chunk_every(batch_size)
-      |> Enum.with_index(1)
-      |> Enum.reduce(0, fn {batch, _batch_idx}, count ->
-        maintenance_batch(batch, count, total, embedder, progress_fn, repo)
-      end)
+      # The reduce's return value is intentionally discarded: we use the
+      # accumulator for per-batch progress reporting, not as a final result.
+      _ =
+        entities
+        |> Enum.chunk_every(batch_size)
+        |> Enum.with_index(1)
+        |> Enum.reduce(0, fn {batch, _batch_idx}, count ->
+          maintenance_batch(batch, count, total, embedder, progress_fn, repo)
+        end)
 
-    {:ok, %{total: total}}
+      {:ok, %{total: total}}
+    end
   end
 
   defp maintenance_batch(batch, count, total, embedder, progress_fn, repo) do
@@ -477,28 +476,30 @@ defmodule Arcana.Maintenance do
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
     collection_filter = Keyword.get(opts, :collection)
 
+    strict? = Arcana.Config.strict_collections?(opts)
+
     # Get collections (optionally filtered)
-    collections = fetch_collections(repo, collection_filter)
+    with {:ok, collections} <- fetch_collections(repo, collection_filter, strict?) do
+      if collections == [] do
+        {:ok, %{collections: 0, entities: 0, relationships: 0, skipped: 0}}
+      else
+        total_collections = length(collections)
 
-    if collections == [] do
-      {:ok, %{collections: 0, entities: 0, relationships: 0, skipped: 0}}
-    else
-      total_collections = length(collections)
+        results =
+          rebuild_graph_for_collections(collections, repo, opts, progress_fn, total_collections)
 
-      results =
-        rebuild_graph_for_collections(collections, repo, opts, progress_fn, total_collections)
+        total_entities = Enum.sum(Enum.map(results, & &1.entities))
+        total_relationships = Enum.sum(Enum.map(results, & &1.relationships))
+        total_skipped = Enum.sum(Enum.map(results, & &1.skipped))
 
-      total_entities = Enum.sum(Enum.map(results, & &1.entities))
-      total_relationships = Enum.sum(Enum.map(results, & &1.relationships))
-      total_skipped = Enum.sum(Enum.map(results, & &1.skipped))
-
-      {:ok,
-       %{
-         collections: total_collections,
-         entities: total_entities,
-         relationships: total_relationships,
-         skipped: total_skipped
-       }}
+        {:ok,
+         %{
+           collections: total_collections,
+           entities: total_entities,
+           relationships: total_relationships,
+           skipped: total_skipped
+         }}
+      end
     end
   end
 
@@ -616,12 +617,15 @@ defmodule Arcana.Maintenance do
     |> MapSet.new()
   end
 
-  defp fetch_collections(repo, nil) do
-    repo.all(from(c in Collection, select: c))
+  defp fetch_collections(repo, nil, _strict?) do
+    {:ok, repo.all(from(c in Collection, select: c))}
   end
 
-  defp fetch_collections(repo, collection_name) when is_binary(collection_name) do
-    repo.all(from(c in Collection, where: c.name == ^collection_name, select: c))
+  defp fetch_collections(repo, collection_name, strict?) when is_binary(collection_name) do
+    case repo.all(from(c in Collection, where: c.name == ^collection_name, select: c)) do
+      [] when strict? -> {:error, {:unknown_collection, collection_name}}
+      collections -> {:ok, collections}
+    end
   end
 
   @doc """
@@ -710,54 +714,56 @@ defmodule Arcana.Maintenance do
     min_size = Keyword.get(opts, :min_size, graph_config[:min_size] || 1)
     max_level = Keyword.get(opts, :max_level, graph_config[:community_levels] || 1)
 
-    collections = fetch_collections(repo, collection_filter)
+    strict? = Arcana.Config.strict_collections?(opts)
 
-    if collections == [] do
-      {:ok, %{collections: 0, communities: 0}}
-    else
-      total_collections = length(collections)
+    with {:ok, collections} <- fetch_collections(repo, collection_filter, strict?) do
+      if collections == [] do
+        {:ok, %{collections: 0, communities: 0}}
+      else
+        total_collections = length(collections)
 
-      detector_opts = [
-        resolution: resolution,
-        objective: objective,
-        iterations: iterations,
-        seed: seed,
-        min_size: min_size,
-        max_level: max_level
-      ]
+        detector_opts = [
+          resolution: resolution,
+          objective: objective,
+          iterations: iterations,
+          seed: seed,
+          min_size: min_size,
+          max_level: max_level
+        ]
 
-      detector_module = Arcana.Graph.CommunityDetector.Leiden
+        detector_module = Arcana.Graph.CommunityDetector.Leiden
 
-      results =
-        collections
-        |> Enum.with_index(1)
-        |> Enum.map(fn {collection, index} ->
-          result =
-            detect_communities_for_collection(
-              collection,
-              repo,
-              detector_module,
-              detector_opts,
-              progress_fn
-            )
+        results =
+          collections
+          |> Enum.with_index(1)
+          |> Enum.map(fn {collection, index} ->
+            result =
+              detect_communities_for_collection(
+                collection,
+                repo,
+                detector_module,
+                detector_opts,
+                progress_fn
+              )
 
-          try do
-            progress_fn.(:collection_complete, %{
-              index: index,
-              total: total_collections,
-              collection: collection.name,
-              result: result
-            })
-          rescue
-            FunctionClauseError -> progress_fn.(index, total_collections)
-          end
+            try do
+              progress_fn.(:collection_complete, %{
+                index: index,
+                total: total_collections,
+                collection: collection.name,
+                result: result
+              })
+            rescue
+              FunctionClauseError -> progress_fn.(index, total_collections)
+            end
 
-          result
-        end)
+            result
+          end)
 
-      total_communities = Enum.sum(Enum.map(results, & &1.communities))
+        total_communities = Enum.sum(Enum.map(results, & &1.communities))
 
-      {:ok, %{collections: total_collections, communities: total_communities}}
+        {:ok, %{collections: total_collections, communities: total_communities}}
+      end
     end
   end
 
@@ -858,60 +864,75 @@ defmodule Arcana.Maintenance do
     force = Keyword.get(opts, :force, false)
     concurrency = Keyword.get(opts, :concurrency, 1)
 
-    # Get LLM function from opts or config
-    llm =
-      Keyword.get_lazy(opts, :llm, fn ->
-        case Arcana.Config.get_env(:llm) do
-          {provider, llm_opts} -> build_llm_fn(provider, llm_opts)
-          nil -> nil
-          provider when is_binary(provider) -> build_llm_fn(provider, [])
-          fun when is_function(fun) -> fun
+    strict? = Arcana.Config.strict_collections?(opts)
+
+    # Validate the collection filter before requiring an LLM, so strict
+    # callers get {:error, {:unknown_collection, name}} consistently.
+    with {:ok, collections} <- fetch_collections(repo, collection_filter, strict?) do
+      summarize_fetched_collections(collections, repo, %{
+        opts: opts,
+        force: force,
+        concurrency: concurrency,
+        progress_fn: progress_fn
+      })
+    end
+  end
+
+  defp summarize_fetched_collections([], _repo, _config) do
+    {:ok, %{communities: 0, summaries: 0}}
+  end
+
+  defp summarize_fetched_collections(collections, repo, config) do
+    %{opts: opts, force: force, concurrency: concurrency, progress_fn: progress_fn} = config
+    llm = resolve_summarizer_llm!(opts)
+    total_collections = length(collections)
+
+    results =
+      collections
+      |> Enum.with_index(1)
+      |> Enum.map(fn {collection, index} ->
+        result =
+          summarize_communities_for_collection(
+            collection,
+            repo,
+            llm,
+            force,
+            concurrency,
+            progress_fn
+          )
+
+        try do
+          progress_fn.(:collection_complete, %{
+            index: index,
+            total: total_collections,
+            collection: collection.name,
+            result: result
+          })
+        rescue
+          FunctionClauseError -> progress_fn.(index, total_collections)
         end
+
+        result
       end)
 
-    unless llm do
-      raise "No LLM configured. Set config :arcana, :llm or pass :llm option"
-    end
+    total_communities = Enum.sum(Enum.map(results, & &1.communities))
+    total_summaries = Enum.sum(Enum.map(results, & &1.summaries))
 
-    collections = fetch_collections(repo, collection_filter)
+    {:ok, %{communities: total_communities, summaries: total_summaries}}
+  end
 
-    if collections == [] do
-      {:ok, %{communities: 0, summaries: 0}}
-    else
-      total_collections = length(collections)
+  # Normalize the LLM to a 3-arity function through the Arcana.LLM
+  # protocol, so every supported config shape (model string, {model, opts},
+  # {module, function}, anonymous function) works here.
+  defp resolve_summarizer_llm!(opts) do
+    case Keyword.get_lazy(opts, :llm, fn -> Arcana.Config.get_env(:llm) end) do
+      nil ->
+        raise "No LLM configured. Set config :arcana, :llm or pass :llm option"
 
-      results =
-        collections
-        |> Enum.with_index(1)
-        |> Enum.map(fn {collection, index} ->
-          result =
-            summarize_communities_for_collection(
-              collection,
-              repo,
-              llm,
-              force,
-              concurrency,
-              progress_fn
-            )
-
-          try do
-            progress_fn.(:collection_complete, %{
-              index: index,
-              total: total_collections,
-              collection: collection.name,
-              result: result
-            })
-          rescue
-            FunctionClauseError -> progress_fn.(index, total_collections)
-          end
-
-          result
-        end)
-
-      total_communities = Enum.sum(Enum.map(results, & &1.communities))
-      total_summaries = Enum.sum(Enum.map(results, & &1.summaries))
-
-      {:ok, %{communities: total_communities, summaries: total_summaries}}
+      llm ->
+        fn prompt, context, call_opts ->
+          Arcana.LLM.complete(llm, prompt, context, call_opts)
+        end
     end
   end
 
@@ -1026,19 +1047,6 @@ defmodule Arcana.Maintenance do
 
       {:error, _reason} ->
         :error
-    end
-  end
-
-  defp build_llm_fn(provider, llm_opts) when is_binary(provider) do
-    fn prompt, context, opts ->
-      Arcana.LLM.complete(provider, prompt, context, Keyword.merge(llm_opts, opts))
-    end
-  end
-
-  defp build_llm_fn({provider, provider_opts}, llm_opts) do
-    fn prompt, context, opts ->
-      merged = Keyword.merge(llm_opts, opts) |> Keyword.merge(provider_opts)
-      Arcana.LLM.complete(provider, prompt, context, merged)
     end
   end
 end

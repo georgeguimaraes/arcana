@@ -3,6 +3,33 @@ defmodule Arcana.IngestWithCollectionTest do
 
   alias Arcana.Collection
 
+  describe "ingest/2 with strict collections" do
+    test "errors instead of auto-creating an unknown collection" do
+      assert {:error, {:unknown_collection, "strict-missing"}} =
+               Arcana.ingest("Test content",
+                 repo: Arcana.TestRepo,
+                 collection: "strict-missing",
+                 strict_collections: true
+               )
+
+      assert Arcana.TestRepo.get_by(Collection, name: "strict-missing") == nil
+    end
+
+    test "ingests into an explicitly created collection" do
+      {:ok, _} = Collection.get_or_create("strict-existing", Arcana.TestRepo)
+
+      {:ok, document} =
+        Arcana.ingest("Test content",
+          repo: Arcana.TestRepo,
+          collection: "strict-existing",
+          strict_collections: true
+        )
+
+      document = Arcana.TestRepo.preload(document, :collection)
+      assert document.collection.name == "strict-existing"
+    end
+  end
+
   describe "ingest/2 with collection" do
     test "ingests document into default collection when no collection specified" do
       {:ok, document} = Arcana.ingest("Test content", repo: Arcana.TestRepo)

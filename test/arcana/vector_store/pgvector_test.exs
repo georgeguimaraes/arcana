@@ -165,6 +165,91 @@ defmodule Arcana.VectorStore.PgvectorTest do
     end
   end
 
+  describe "store/5 with strict collections" do
+    test "errors instead of auto-creating an unknown collection" do
+      repo = Arcana.TestRepo
+      embedding = List.duplicate(0.5, 384)
+
+      assert {:error, {:unknown_collection, "strict-store-nope"}} =
+               Pgvector.store("strict-store-nope", Ecto.UUID.generate(), embedding, %{},
+                 repo: repo,
+                 strict_collections: true
+               )
+
+      assert repo.get_by(Collection, name: "strict-store-nope") == nil
+    end
+  end
+
+  describe "search/3 with a pre-resolved collection id" do
+    test "the :collection_id opt pins the query instead of re-resolving the name" do
+      repo = Arcana.TestRepo
+      embedding = List.duplicate(0.5, 384)
+
+      {:ok, collection} = Collection.get_or_create("pinned-coll", repo)
+      {:ok, other} = Collection.get_or_create("pinned-other", repo)
+
+      for {coll, text} <- [{collection, "pinned chunk"}, {other, "foreign chunk"}] do
+        {:ok, doc} =
+          %Document{}
+          |> Document.changeset(%{content: "x", status: :completed, collection_id: coll.id})
+          |> repo.insert()
+
+        %Chunk{}
+        |> Chunk.changeset(%{text: text, embedding: embedding, document_id: doc.id})
+        |> repo.insert!()
+      end
+
+      # The name doesn't resolve, but the id filter must still apply: the
+      # equally-similar chunk in the other collection must be excluded
+      # (without the pin this query would widen and return both).
+      results =
+        Pgvector.search("renamed-since-validation", embedding,
+          repo: repo,
+          collection_id: collection.id
+        )
+
+      assert [%{metadata: %{text: "pinned chunk"}}] = results
+    end
+
+    test "under strict mode a direct backend call with an unknown name matches nothing" do
+      repo = Arcana.TestRepo
+
+      {:ok, collection} = Collection.get_or_create("strict-direct", repo)
+
+      {:ok, doc} =
+        %Document{}
+        |> Document.changeset(%{content: "x", status: :completed, collection_id: collection.id})
+        |> repo.insert()
+
+      %Chunk{}
+      |> Chunk.changeset(%{
+        text: "in collection",
+        embedding: List.duplicate(0.5, 384),
+        document_id: doc.id
+      })
+      |> repo.insert!()
+
+      # Non-strict keeps the historical fail-open (global) behavior
+      refute Pgvector.search("strict-nope", List.duplicate(0.5, 384), repo: repo) == []
+
+      # Strict fails closed instead of widening to a global search
+      assert Pgvector.search("strict-nope", List.duplicate(0.5, 384),
+               repo: repo,
+               strict_collections: true
+             ) == []
+
+      assert Pgvector.search_text("strict-nope", "collection",
+               repo: repo,
+               strict_collections: true
+             ) == []
+
+      assert Pgvector.search_hybrid("strict-nope", List.duplicate(0.5, 384), "collection",
+               repo: repo,
+               strict_collections: true
+             ) == []
+    end
+  end
+
   describe "delete/3" do
     test "removes chunk from collection" do
       repo = Arcana.TestRepo
@@ -203,9 +288,47 @@ defmodule Arcana.VectorStore.PgvectorTest do
       fake_id = Ecto.UUID.generate()
       assert {:error, :not_found} = Pgvector.delete("any", fake_id, repo: repo)
     end
+
+    test "with strict_collections, an unknown collection blocks the delete" do
+      repo = Arcana.TestRepo
+
+      {:ok, collection} = Collection.get_or_create("strict-delete-test", repo)
+
+      {:ok, doc} =
+        %Document{}
+        |> Document.changeset(%{
+          content: "test",
+          status: :completed,
+          collection_id: collection.id
+        })
+        |> repo.insert()
+
+      {:ok, chunk} =
+        %Chunk{}
+        |> Chunk.changeset(%{
+          text: "kept",
+          embedding: List.duplicate(0.5, 384),
+          document_id: doc.id
+        })
+        |> repo.insert()
+
+      assert {:error, {:unknown_collection, "strict-nope"}} =
+               Pgvector.delete("strict-nope", chunk.id, repo: repo, strict_collections: true)
+
+      assert repo.get(Chunk, chunk.id)
+    end
   end
 
   describe "clear/2" do
+    test "with strict_collections, an unknown collection is an error instead of a no-op" do
+      repo = Arcana.TestRepo
+
+      assert :ok = Pgvector.clear("strict-nope", repo: repo)
+
+      assert {:error, {:unknown_collection, "strict-nope"}} =
+               Pgvector.clear("strict-nope", repo: repo, strict_collections: true)
+    end
+
     test "removes all chunks in collection" do
       repo = Arcana.TestRepo
 

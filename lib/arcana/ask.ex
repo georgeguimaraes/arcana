@@ -274,11 +274,14 @@ defmodule Arcana.Ask do
     end)
   end
 
+  # `nil` means unscoped; `[]` means the named collections resolved to
+  # nothing and downstream graph queries must match nothing. Strict
+  # validation already happened in Arcana.Search.search/2.
   defp resolve_collection_ids(opts, repo) do
-    case Arcana.Collection.names_from_opts(opts) |> Arcana.Collection.resolve_ids(repo) do
-      nil -> nil
-      [] -> nil
-      ids -> ids
-    end
+    {:ok, ids} =
+      Arcana.Collection.names_from_opts(opts)
+      |> Arcana.Collection.resolve_ids(repo)
+
+    ids
   end
 end

@@ -829,15 +829,13 @@ defmodule Arcana.Pipeline do
 
       chunks =
         case Arcana.Search.search(query, Keyword.put(search_opts, :collection, collection)) do
-          {:ok, results} -> Enum.map(results, &result_to_chunk/1)
+          {:ok, results} -> results
           {:error, _} -> []
         end
 
       %{question: query, collection: collection, chunks: chunks}
     end)
   end
-
-  defp result_to_chunk(r), do: Map.take(r, [:id, :text, :score])
 
   defp merge_results(existing_results, new_results) do
     all_results = (existing_results || []) ++ new_results

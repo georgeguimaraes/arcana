@@ -86,6 +86,8 @@ defmodule Arcana.Reranker.CrossEncoder do
         Enum.filter(scored, fn {_chunk, score} -> score >= threshold end)
       end
 
-    {:reply, {:ok, Enum.map(filtered, fn {chunk, _score} -> chunk end)}, state}
+    reranked = Enum.map(filtered, fn {chunk, score} -> Map.put(chunk, :rerank_score, score) end)
+
+    {:reply, {:ok, reranked}, state}
   end
 end

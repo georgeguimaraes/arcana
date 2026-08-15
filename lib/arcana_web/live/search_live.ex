@@ -102,7 +102,7 @@ defmodule ArcanaWeb.SearchLive do
 
   defp add_collection_opt(opts, []), do: opts
   defp add_collection_opt(opts, [single]), do: Keyword.put(opts, :collection, single)
-  defp add_collection_opt(opts, multiple), do: Keyword.put(opts, :collection, multiple)
+  defp add_collection_opt(opts, multiple), do: Keyword.put(opts, :collections, multiple)
 
   defp normalize_collections(nil), do: []
 
