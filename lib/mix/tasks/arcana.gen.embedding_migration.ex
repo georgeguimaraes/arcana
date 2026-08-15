@@ -95,7 +95,14 @@ defmodule Mix.Tasks.Arcana.Gen.EmbeddingMigration do
   # may load embedding models) to read the column's current size.
   defp current_column_dimensions(repo) do
     {:ok, _} = Application.ensure_all_started(:ecto_sql)
-    {:ok, pid} = repo.start_link(pool_size: 1, log: false)
+
+    # A composing task may have already started the repo; leave that one
+    # running and only tear down the one we booted.
+    started =
+      case repo.start_link(pool_size: 1, log: false) do
+        {:ok, pid} -> pid
+        {:error, {:already_started, _pid}} -> nil
+      end
 
     try do
       case repo.query!(@current_dimensions_query) do
@@ -103,8 +110,10 @@ defmodule Mix.Tasks.Arcana.Gen.EmbeddingMigration do
         _ -> nil
       end
     after
-      Process.unlink(pid)
-      Supervisor.stop(pid)
+      if started do
+        Process.unlink(started)
+        Supervisor.stop(started)
+      end
     end
   rescue
     _ -> nil
