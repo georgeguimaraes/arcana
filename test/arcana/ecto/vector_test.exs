@@ -50,6 +50,16 @@ defmodule Arcana.Ecto.VectorTest do
       refute Vector.equal?(enumerable_struct, [1.0, 2.0, 3.5])
     end
 
+    test "an enumerable that raises falls back instead of crashing" do
+      # Streams are enumerable structs, so normalize/1 tries to walk them;
+      # a raising one must degrade to structural comparison, not blow up
+      # the caller's changeset
+      raising = Stream.map([1], fn _ -> raise "boom" end)
+
+      refute Vector.equal?(raising, [1.0])
+      refute Vector.equal?([1.0], raising)
+    end
+
     test "an opaque struct falls back to structural comparison" do
       opaque = %OpaqueVector{blob: "unknown"}
 
@@ -59,31 +69,47 @@ defmodule Arcana.Ecto.VectorTest do
   end
 
   describe "changeset dirty tracking" do
-    test "re-storing a byte-identical embedding is a no-op change" do
+    test "casting an equal value produces no change" do
+      # The discriminating case: cast/3 encodes the incoming list, and
+      # without equal?/2 the loaded representation and the cast one
+      # compare unequal, marking the embedding changed on every re-store.
+      chunk = %Chunk{text: "x", embedding: [1.0, 2.0]}
+
+      changeset = Ecto.Changeset.cast(chunk, %{"embedding" => [1.0, 2.0]}, [:embedding])
+
+      assert changeset.changes == %{}
+    end
+
+    test "a genuinely different embedding is still detected" do
+      chunk = %Chunk{text: "x", embedding: [1.0, 2.0]}
+
+      changeset = Ecto.Changeset.cast(chunk, %{"embedding" => [1.0, 2.5]}, [:embedding])
+
+      assert Map.has_key?(changeset.changes, :embedding)
+    end
+
+    test "re-storing a byte-identical embedding leaves the row untouched" do
       {:ok, doc} = Arcana.ingest("Vector equality regression", repo: Repo)
 
       chunk = Repo.one!(from(c in Chunk, where: c.document_id == ^doc.id, limit: 1))
       same_embedding = Pgvector.to_list(chunk.embedding)
 
       changeset = Chunk.changeset(chunk, %{embedding: same_embedding})
-
-      # Before Arcana.Ecto.Vector, comparing the loaded %Pgvector{}
-      # against a cast list dirtied the changeset on every re-store
-      assert changeset.changes == %{}
-
       {:ok, updated} = Repo.update(changeset)
+
       assert updated.updated_at == chunk.updated_at
     end
 
-    test "a genuinely different embedding is still detected" do
+    test "a changed embedding round-trips through the database" do
       {:ok, doc} = Arcana.ingest("Vector inequality regression", repo: Repo)
 
       chunk = Repo.one!(from(c in Chunk, where: c.document_id == ^doc.id, limit: 1))
       [first | rest] = Pgvector.to_list(chunk.embedding)
+      changed = [first + 1.0 | rest]
 
-      changeset = Chunk.changeset(chunk, %{embedding: [first + 1.0 | rest]})
+      {:ok, _} = chunk |> Chunk.changeset(%{embedding: changed}) |> Repo.update()
 
-      assert Map.has_key?(changeset.changes, :embedding)
+      assert Repo.reload!(chunk).embedding |> Pgvector.to_list() == changed
     end
   end
 end

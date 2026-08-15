@@ -49,11 +49,19 @@ defmodule Arcana.Ecto.Vector do
   defp normalize(value) when is_struct(value) do
     case Enumerable.impl_for(value) do
       nil -> encode(value, value)
-      _ -> encode(Enum.to_list(value), value)
+      _ -> encode_enumerable(value)
     end
   end
 
   defp normalize(value), do: value
+
+  # Enumerating is itself fallible (a stream can raise mid-traversal), so
+  # it happens inside the rescue too.
+  defp encode_enumerable(value) do
+    encode(Enum.to_list(value), value)
+  rescue
+    _ -> value
+  end
 
   # Falls back to the original term when the value can't be encoded, so
   # comparison degrades to structural equality instead of raising.
