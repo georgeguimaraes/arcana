@@ -54,6 +54,11 @@ defmodule Arcana.LLMTest do
                LLM.complete({FakeLLM, :nope}, "q", [], [])
     end
 
+    test "distinguishes a module that doesn't exist from a wrong arity" do
+      assert {:error, {:llm_module_not_found, NoSuch.Module}} =
+               LLM.complete({NoSuch.Module, :complete}, "q", [], [])
+    end
+
     test "model string with opts still dispatches through the tuple impl" do
       assert LLM.impl_for({"openai:gpt-4o-mini", api_key: "k"}) != nil
     end

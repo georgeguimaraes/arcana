@@ -139,9 +139,10 @@ defimpl Arcana.LLM, for: Tuple do
   def complete({module, function}, prompt, context, opts)
       when is_atom(module) and is_atom(function) do
     Helpers.with_telemetry("#{inspect(module)}.#{function}", prompt, context, fn ->
-      Code.ensure_loaded(module)
-
       cond do
+        not match?({:module, _}, Code.ensure_loaded(module)) ->
+          {:error, {:llm_module_not_found, module}}
+
         function_exported?(module, function, 3) ->
           apply(module, function, [prompt, context, opts])
 

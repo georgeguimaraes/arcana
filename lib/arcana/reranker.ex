@@ -37,9 +37,9 @@ defmodule Arcana.Reranker do
   custom `Arcana.Searcher` implementations may supply plain maps, so
   rerankers should not assume the struct. Returns chunks filtered by
   threshold and sorted by score (highest first). Rerankers that compute
-  an explicit score store it under `:rerank_score` (the built-in LLM and
-  ColBERT rerankers do); rerankers that only reorder or filter can
-  return the chunks unchanged.
+  an explicit score store it under `:rerank_score` (all the built-in
+  rerankers do); rerankers that only reorder or filter can return the
+  chunks unchanged.
 
   ## Options
 
