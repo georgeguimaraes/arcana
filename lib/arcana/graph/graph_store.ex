@@ -123,6 +123,11 @@ defmodule Arcana.Graph.GraphStore do
   Intended to run after document deletion or replacement, scoped to the
   affected collection.
 
+  Optional. A store that doesn't implement it simply doesn't sweep:
+  `Arcana.delete/2` and the `replace: true` ingest still succeed, and the
+  collection may keep entities with zero mentions — which is exactly how
+  both paths behaved before this callback existed.
+
   ## Serialization
 
   A sweep must not interleave with a graph build for the same collection:
@@ -171,7 +176,7 @@ defmodule Arcana.Graph.GraphStore do
   @callback with_write_lock(binary(), opts :: keyword(), (-> result)) :: result
             when result: term()
 
-  @optional_callbacks with_write_lock: 3
+  @optional_callbacks with_write_lock: 3, sweep_orphans: 2
 
   # === Detail Query Callbacks ===
 
@@ -851,9 +856,15 @@ defmodule Arcana.Graph.GraphStore do
     module.delete_by_collection(collection_id, opts)
   end
 
+  # sweep_orphans/2 is optional, like with_write_lock/3: a store written
+  # against the behaviour before the callback existed keeps working, and
+  # skipping the sweep is what those callers already did.
   defp dispatch(:sweep_orphans, module, [collection_id], backend_opts, opts) do
-    opts = Keyword.merge(backend_opts, opts)
-    module.sweep_orphans(collection_id, opts)
+    if Code.ensure_loaded?(module) and function_exported?(module, :sweep_orphans, 2) do
+      module.sweep_orphans(collection_id, Keyword.merge(backend_opts, opts))
+    else
+      :ok
+    end
   end
 
   defp dispatch(:get_entity, module, [entity_id], backend_opts, opts) do

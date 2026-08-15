@@ -143,7 +143,7 @@ defmodule Arcana.Ingest do
   end
 
   defp finalize_ingest(document, chunk_records, collection, repo, opts) do
-    maybe_build_graph(chunk_records, collection, repo, opts)
+    build_graph_or_fail_document(document, chunk_records, collection, repo, opts)
 
     if Keyword.get(opts, :replace, false) do
       with {:ok, document} <- finalize_replace(document, chunk_records, repo) do
@@ -155,6 +155,24 @@ defmodule Arcana.Ingest do
       |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
       |> repo.update()
     end
+  end
+
+  # A graph build raises on failure (extraction errors are swallowed per
+  # chunk, store failures are not). Mark the document :failed before the
+  # raise escapes, the way the embedding path does, so a crashed build
+  # can't leave a document stuck in :processing with chunks attached.
+  # The already-persisted graph data of earlier chunks stays put — see
+  # Arcana.Graph.build_and_persist/4, no caller treats a failed build as
+  # having left the graph untouched.
+  defp build_graph_or_fail_document(document, chunk_records, collection, repo, opts) do
+    maybe_build_graph(chunk_records, collection, repo, opts)
+  rescue
+    error ->
+      document
+      |> Document.changeset(%{status: :failed})
+      |> repo.update()
+
+      reraise error, __STACKTRACE__
   end
 
   # The replaced predecessors' chunks cascade away with them, which can

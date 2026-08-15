@@ -49,3 +49,28 @@ defmodule Arcana.FailingSweepGraphStore do
 
   def sweep_orphans(_collection_id, _opts), do: {:error, :sweep_boom}
 end
+
+defmodule Arcana.LegacyGraphStore do
+  @moduledoc false
+  # A third-party store written against the graph store behaviour as it
+  # stood before sweep_orphans/2 existed: everything but that callback.
+
+  alias Arcana.Graph.EntityName
+
+  def persist_entities(_collection_id, entities, _opts) do
+    {:ok, Map.new(entities, fn e -> {EntityName.normalize(e.name), e.name} end)}
+  end
+
+  def persist_relationships(_relationships, _entity_id_map, _opts), do: :ok
+  def persist_mentions(_mentions, _entity_id_map, _opts), do: :ok
+end
+
+defmodule Arcana.RaisingGraphStore do
+  @moduledoc false
+  # Graph store that blows up mid-build, for the partial-document path.
+
+  def persist_entities(_collection_id, _entities, _opts), do: raise("graph store exploded")
+  def persist_relationships(_relationships, _entity_id_map, _opts), do: :ok
+  def persist_mentions(_mentions, _entity_id_map, _opts), do: :ok
+  def sweep_orphans(_collection_id, _opts), do: :ok
+end

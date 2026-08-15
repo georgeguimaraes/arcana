@@ -124,6 +124,10 @@ defmodule Arcana do
   failed, so the collection may hold entities with zero mentions until
   the next sweep.
 
+  Sweeping is optional for custom graph stores: one that doesn't
+  implement `c:Arcana.Graph.GraphStore.sweep_orphans/2` returns `:ok` and
+  leaves the orphans alone.
+
   ## Options
 
     * `:repo` - The Ecto repo to use (required)

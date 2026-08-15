@@ -245,6 +245,61 @@ defmodule Arcana.GraphIntegrationTest do
 
       assert document.status == :completed
     end
+
+    # NBSP arrives with any HTML/PDF-derived text. Elixir's String.trim/1
+    # strips it, Postgres' btrim doesn't, so the entity used to miss itself
+    # on the second chunk's upsert and violate the name unique index.
+    test "handles an entity whose name carries an NBSP across several chunks" do
+      name = "Delivery\u{a0}"
+      extractor = fn _text, _opts -> {:ok, [%{name: name, type: "concept"}]} end
+
+      {:ok, document} =
+        Arcana.ingest(
+          String.duplicate("Delivery terms apply to every order placed here. ", 20),
+          repo: Repo,
+          graph: true,
+          entity_extractor: extractor,
+          collection: "nbsp-chunks",
+          chunk_size: 100,
+          chunk_overlap: 0
+        )
+
+      assert document.chunk_count > 1
+      assert Repo.aggregate(from(e in Entity, where: e.name == ^name), :count) == 1
+    end
+
+    test "re-ingesting a document whose entity name carries an NBSP reuses the entity" do
+      name = "Delivery\u{a0}"
+      extractor = fn _text, _opts -> {:ok, [%{name: name, type: "concept"}]} end
+
+      opts = [
+        repo: Repo,
+        graph: true,
+        entity_extractor: extractor,
+        collection: "nbsp-reingest"
+      ]
+
+      assert {:ok, _} = Arcana.ingest("shipping policy v1", opts)
+      assert {:ok, _} = Arcana.ingest("shipping policy v2", opts)
+
+      assert Repo.aggregate(from(e in Entity, where: e.name == ^name), :count) == 1
+    end
+
+    test "marks the document failed when the graph build blows up" do
+      assert_raise RuntimeError, fn ->
+        Arcana.ingest("boom content",
+          repo: Repo,
+          graph: true,
+          entity_extractor: fn _text, _opts -> {:ok, [%{name: "Boom", type: "concept"}]} end,
+          graph_store: Arcana.RaisingGraphStore,
+          collection: "graph-build-blows-up"
+        )
+      end
+
+      # A half-built graph must not leave a document stuck in :processing
+      assert [document] = Repo.all(Arcana.Document)
+      assert document.status == :failed
+    end
   end
 
   describe "search/2 with graph: true" do
@@ -513,6 +568,11 @@ defmodule Arcana.GraphIntegrationTest do
       assert Repo.get!(Community, alpha_community.id).dirty
       refute Repo.get!(Community, shared_community.id).dirty
       refute Repo.get!(Community, beta_community.id).dirty
+
+      # ...and they drop the swept ids, so entity_count stops counting
+      # entities that no longer exist
+      assert Repo.get!(Community, alpha_community.id).entity_ids == []
+      assert Repo.get!(Community, shared_community.id).entity_ids == [shared.id]
     end
 
     test "replace: true sweeps entities stranded by the replaced document" do
@@ -588,6 +648,30 @@ defmodule Arcana.GraphIntegrationTest do
 
       # Nothing reached the Ecto store
       assert Repo.all(Entity) == []
+    end
+
+    test "a store predating sweep_orphans/2 still deletes cleanly" do
+      extractor = fn _text, _opts -> {:ok, [%{name: "Zeta", type: "concept"}]} end
+
+      {:ok, doc} =
+        Arcana.ingest("zeta content",
+          repo: Repo,
+          graph: true,
+          entity_extractor: extractor,
+          graph_store: Arcana.LegacyGraphStore,
+          collection: "legacy-store"
+        )
+
+      # sweep_orphans/2 is optional: a store that can't sweep just doesn't,
+      # exactly as delete/2 behaved before the callback existed.
+      assert :ok =
+               Arcana.delete(doc.id,
+                 repo: Repo,
+                 graph: true,
+                 graph_store: Arcana.LegacyGraphStore
+               )
+
+      assert Repo.get(Arcana.Document, doc.id) == nil
     end
 
     test "leaves the graph alone when graph is not enabled" do
