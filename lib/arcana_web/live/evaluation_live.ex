@@ -377,7 +377,7 @@ defmodule ArcanaWeb.EvaluationLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:evaluation}>
+    <.dashboard_layout stats={@stats} current_tab={:evaluation} prefix={@prefix}>
       <div class="arcana-evaluation">
         <h2>Evaluation</h2>
         <p class="arcana-tab-description">

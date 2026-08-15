@@ -47,9 +47,14 @@ defmodule ArcanaWeb.Router do
       end
 
     quote bind_quoted: binding() do
+      # Full mount prefix including enclosing scopes, e.g. "/admin/arcana"
+      # for `scope "/admin" do arcana_dashboard "/arcana" end`. Captured
+      # here so links and asset hrefs don't assume a "/arcana" mount.
+      prefix = Phoenix.Router.scoped_path(__MODULE__, path)
+
       scope path, alias: false, as: false do
         {session_name, session_opts, route_opts} =
-          ArcanaWeb.Router.__options__(opts)
+          ArcanaWeb.Router.__options__(opts, prefix)
 
         import Phoenix.Router, only: [get: 4]
         import Phoenix.LiveView.Router, only: [live: 4, live_session: 3]
@@ -83,18 +88,18 @@ defmodule ArcanaWeb.Router do
   defp expand_alias(other, _env), do: other
 
   @doc false
-  def __options__(options) do
+  def __options__(options, prefix) do
     live_socket_path = Keyword.get(options, :live_socket_path, "/live")
     repo = Keyword.get(options, :repo)
 
-    session_args = [repo]
+    session_args = [repo, prefix]
 
     {
       :arcana_dashboard,
       [
         session: {__MODULE__, :__session__, session_args},
         root_layout: {ArcanaWeb.Layouts, :root},
-        on_mount: options[:on_mount] || nil
+        on_mount: [ArcanaWeb.Router.Prefix | options[:on_mount] || []]
       ],
       [
         private: %{live_socket_path: live_socket_path},
@@ -104,7 +109,21 @@ defmodule ArcanaWeb.Router do
   end
 
   @doc false
-  def __session__(_conn, repo) do
-    %{"repo" => repo || Arcana.Config.get_env(:repo)}
+  def __session__(_conn, repo, prefix) do
+    %{
+      "repo" => repo || Arcana.Config.get_env(:repo),
+      "prefix" => prefix
+    }
+  end
+end
+
+defmodule ArcanaWeb.Router.Prefix do
+  @moduledoc false
+
+  # Assigns the dashboard's mount prefix (e.g. "/admin/arcana") to every
+  # dashboard LiveView so links and asset hrefs are built from the actual
+  # mount point instead of assuming "/arcana".
+  def on_mount(:default, _params, session, socket) do
+    {:cont, Phoenix.Component.assign(socket, :prefix, session["prefix"] || "/arcana")}
   end
 end

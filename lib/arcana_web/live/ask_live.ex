@@ -179,7 +179,7 @@ defmodule ArcanaWeb.AskLive do
     # push_patch to the corresponding URL so the sub-tab selection is
     # shareable and survives page reloads. handle_params/3 will pick
     # up the new :sub_tab param and update the assigns.
-    {:noreply, push_patch(socket, to: "/arcana/ask/#{sub_tab}")}
+    {:noreply, push_patch(socket, to: "#{socket.assigns.prefix}/ask/#{sub_tab}")}
   end
 
   def handle_event("form_changed", params, socket) do
@@ -874,7 +874,7 @@ defmodule ArcanaWeb.AskLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:ask}>
+    <.dashboard_layout stats={@stats} current_tab={:ask} prefix={@prefix}>
       <div class="arcana-ask">
         <h2>Ask</h2>
         <p class="arcana-tab-description">

@@ -500,7 +500,7 @@ defmodule ArcanaWeb.GraphLive do
       |> Enum.reject(fn {_k, v} -> is_nil(v) end)
       |> Enum.into(%{})
 
-    "/arcana/graph?" <> URI.encode_query(params)
+    "#{socket.assigns.prefix}/graph?" <> URI.encode_query(params)
   end
 
   defp has_any_graph_data?(collections) do
@@ -532,7 +532,7 @@ defmodule ArcanaWeb.GraphLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.dashboard_layout stats={@stats} current_tab={:graph}>
+    <.dashboard_layout stats={@stats} current_tab={:graph} prefix={@prefix}>
       <div class="arcana-graph">
         <h2>Graph</h2>
         <p class="arcana-tab-description">
