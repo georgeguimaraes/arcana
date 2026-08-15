@@ -97,40 +97,47 @@ defmodule Mix.Tasks.Arcana.Gen.EmbeddingMigration do
     """)
   end
 
-  defp migration_content(dimensions) do
+  @doc false
+  def migration_content(dimensions) do
     """
     defmodule Arcana.Repo.Migrations.UpdateEmbeddingDimensions do
       use Ecto.Migration
 
       def up do
-        # Drop the existing HNSW index
-        drop_if_exists index(:arcana_chunks, [:embedding])
+        # Drop the existing HNSW index. The install migration creates it via
+        # raw SQL as arcana_chunks_embedding_idx; also drop the Ecto-default
+        # name defensively in case it was created under that name instead.
+        execute "DROP INDEX IF EXISTS arcana_chunks_embedding_idx"
+        execute "DROP INDEX IF EXISTS arcana_chunks_embedding_index"
 
         # Alter the embedding column to new dimensions
         alter table(:arcana_chunks) do
           modify :embedding, :vector, size: #{dimensions}
         end
 
-        # Recreate the HNSW index with the new dimensions
-        create index(:arcana_chunks, [:embedding],
-          using: :hnsw,
-          options: "vector_cosine_ops"
-        )
+        # Recreate the HNSW index with the new dimensions. This must be raw
+        # SQL because the operator class (vector_cosine_ops) cannot be
+        # expressed through Ecto's index helper.
+        execute \"\"\"
+        CREATE INDEX arcana_chunks_embedding_idx ON arcana_chunks
+        USING hnsw (embedding vector_cosine_ops)
+        \"\"\"
       end
 
       def down do
         # Note: Down migration requires knowing the previous dimensions
         # This is a best-effort reversal - you may need to adjust the size
-        drop_if_exists index(:arcana_chunks, [:embedding])
+        execute "DROP INDEX IF EXISTS arcana_chunks_embedding_idx"
+        execute "DROP INDEX IF EXISTS arcana_chunks_embedding_index"
 
         alter table(:arcana_chunks) do
           modify :embedding, :vector, size: 384
         end
 
-        create index(:arcana_chunks, [:embedding],
-          using: :hnsw,
-          options: "vector_cosine_ops"
-        )
+        execute \"\"\"
+        CREATE INDEX arcana_chunks_embedding_idx ON arcana_chunks
+        USING hnsw (embedding vector_cosine_ops)
+        \"\"\"
       end
     end
     """
