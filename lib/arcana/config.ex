@@ -488,6 +488,50 @@ defmodule Arcana.Config do
     )
   end
 
+  @doc """
+  Returns the configured file parsers as a map of extension to
+  `{module, opts}`.
+
+  Extensions are normalized to lowercase with a leading dot, so
+  `%{"docx" => ...}` and `%{".DOCX" => ...}` both register `".docx"`.
+
+      config :arcana, file_parsers: %{".docx" => {MyApp.DocxParser, []}}
+
+  """
+  def file_parsers do
+    get_env(:file_parsers, %{})
+    |> Map.new(fn {extension, value} ->
+      {normalize_extension(extension), parse_file_parser_config(value)}
+    end)
+  end
+
+  @doc """
+  Returns the configured fallback parser as `{module, opts}`, or `nil`.
+
+  Consulted for any extension without a native or registered parser:
+
+      config :arcana, fallback_parser: {MyApp.ExtractionService, []}
+
+  """
+  def fallback_parser do
+    case get_env(:fallback_parser) do
+      nil -> nil
+      value -> parse_file_parser_config(value)
+    end
+  end
+
+  @doc false
+  def parse_file_parser_config(value) do
+    parse_pluggable(value, name: "file parser")
+  end
+
+  @doc false
+  def normalize_extension(extension) do
+    extension = extension |> to_string() |> String.downcase()
+
+    if String.starts_with?(extension, "."), do: extension, else: "." <> extension
+  end
+
   @doc false
   def parse_entity_matcher_config(value) do
     parse_pluggable(value,

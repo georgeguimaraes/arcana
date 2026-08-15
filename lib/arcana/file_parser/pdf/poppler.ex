@@ -60,11 +60,31 @@ defmodule Arcana.FileParser.PDF.Poppler do
 
     case System.cmd("pdftotext", args, stderr_to_stdout: true) do
       {text, 0} ->
-        {:ok, String.trim(text)}
+        text = String.trim(text)
+        {:ok, text, %{pages: page_ranges(text)}}
 
       {error_output, _code} ->
         {:error, {:pdftotext_failed, error_output}}
     end
+  end
+
+  # pdftotext separates pages with a form feed, so page byte ranges fall
+  # out of splitting the (already trimmed) output on it. Offsets are
+  # relative to the returned text, which is what chunk positions are
+  # compared against.
+  @doc false
+  def page_ranges(text) do
+    text
+    |> String.split("\f")
+    |> Enum.reduce({[], 0, 1}, fn page, {acc, offset, number} ->
+      page_end = offset + byte_size(page)
+      page_info = %{number: number, start: offset, end: page_end}
+
+      # +1 skips the form feed separating this page from the next
+      {[page_info | acc], page_end + 1, number + 1}
+    end)
+    |> elem(0)
+    |> Enum.reverse()
   end
 
   defp build_args(path, layout) do

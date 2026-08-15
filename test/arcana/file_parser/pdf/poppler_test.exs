@@ -61,4 +61,27 @@ defmodule Arcana.FileParser.PDF.PopplerTest do
   defp fixture_path(filename) do
     Path.join([__DIR__, "..", "..", "..", "fixtures", filename])
   end
+
+  describe "page_ranges/1" do
+    test "derives page byte ranges from form feeds" do
+      text = "page one\fpage two\fpage three"
+
+      assert [
+               %{number: 1, start: 0, end: 8},
+               %{number: 2, start: 9, end: 17},
+               %{number: 3, start: 18, end: 28}
+             ] = Poppler.page_ranges(text)
+
+      # each range slices back to its page's text
+      for %{start: s, end: e} <- Poppler.page_ranges(text) do
+        assert binary_part(text, s, e - s) in ["page one", "page two", "page three"]
+      end
+    end
+
+    test "single-page text is one range covering everything" do
+      text = "just one page"
+
+      assert [%{number: 1, start: 0, end: 13}] = Poppler.page_ranges(text)
+    end
+  end
 end

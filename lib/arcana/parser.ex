@@ -2,15 +2,32 @@ defmodule Arcana.Parser do
   @moduledoc """
   Parses files into text content for ingestion.
 
-  Supports multiple file formats including plain text, markdown, and PDF.
+  Plain text and markdown are read natively, PDFs go through a
+  configurable parser (Poppler's `pdftotext` by default), and any other
+  format is handled by a parser you register.
+
+  ## Resolution order
+
+  For a file's extension (lowercased, with a leading dot):
+
+  1. an exact match in `config :arcana, :file_parsers`
+  2. the built-ins: `.txt`/`.md`/`.markdown` read natively, `.pdf` via
+     `config :arcana, :pdf_parser`
+  3. `config :arcana, :fallback_parser`, if set
+  4. otherwise `{:error, :unsupported_format}`
+
+  ## Registering parsers
+
+      config :arcana,
+        # per-format
+        file_parsers: %{".docx" => {MyApp.DocxParser, []}},
+        # everything else (e.g. an extraction service covering many formats)
+        fallback_parser: {MyApp.ExtractionService, []}
+
+  Registering `".pdf"` in `:file_parsers` overrides the built-in PDF
+  route. See `Arcana.FileParser` for the behaviour.
 
   ## PDF Support
-
-  PDF parsing is handled by a configurable parser. The default uses
-  `pdftotext` from the Poppler library. See `Arcana.FileParser.PDF` for
-  implementing custom PDF parsers.
-
-  ### Default Parser (Poppler)
 
   The default PDF parser requires `pdftotext` to be installed:
 
@@ -23,25 +40,23 @@ defmodule Arcana.Parser do
       # Fedora
       dnf install poppler-utils
 
-  ### Custom PDF Parser
-
-  Configure a custom parser in `config.exs`:
-
-      config :arcana, pdf_parser: MyApp.PDFParser
-
-  See `Arcana.FileParser.PDF` for the behaviour specification.
   """
 
-  alias Arcana.FileParser
+  alias Arcana.{Config, FileParser}
 
   @text_extensions [".txt", ".md", ".markdown"]
   @pdf_extensions [".pdf"]
 
   @doc """
-  Returns list of supported file extensions.
+  Returns the list of supported file extensions.
+
+  Includes the natively handled formats plus any registered through
+  `:file_parsers`. When a `:fallback_parser` is configured every
+  extension is effectively supported, so this list is a lower bound.
   """
   def supported_formats do
-    @text_extensions ++ @pdf_extensions
+    (@text_extensions ++ @pdf_extensions ++ Map.keys(Config.file_parsers()))
+    |> Enum.uniq()
   end
 
   @doc """
@@ -56,13 +71,18 @@ defmodule Arcana.Parser do
       true  # or false if parser not available
 
   """
-  def pdf_support_available? do
-    {module, _opts} = Arcana.Config.pdf_parser()
+  def pdf_support_available?, do: available?(".pdf")
 
-    if function_exported?(module, :available?, 0) do
-      module.available?()
-    else
-      true
+  @doc """
+  Whether the parser handling `extension` can run right now.
+
+  Returns `false` when no parser handles the extension at all.
+  """
+  def available?(extension) do
+    case resolve(extension) do
+      {:ok, :native} -> true
+      {:ok, parser} -> FileParser.available?(parser)
+      {:error, _} -> false
     end
   end
 
@@ -70,57 +90,147 @@ defmodule Arcana.Parser do
   Parses a file and extracts text content.
 
   Returns `{:ok, text}` on success, or `{:error, reason}` on failure.
+  Use `parse_file/2` to also receive positional metadata.
   """
   def parse(path) do
-    cond do
-      not File.exists?(path) ->
-        {:error, :file_not_found}
-
-      text_file?(path) ->
-        parse_text_file(path)
-
-      pdf_file?(path) ->
-        parse_pdf(path)
-
-      true ->
-        {:error, :unsupported_format}
+    case parse_file(path) do
+      {:ok, text, _meta} -> {:ok, text}
+      {:error, reason} -> {:error, reason}
     end
   end
 
-  defp text_file?(path) do
-    ext = Path.extname(path) |> String.downcase()
-    ext in @text_extensions
-  end
+  @doc """
+  Parses a file, returning text and any positional metadata the parser
+  reported.
 
-  defp pdf_file?(path) do
-    ext = Path.extname(path) |> String.downcase()
-    ext in @pdf_extensions
-  end
+  Returns `{:ok, text, meta}` where `meta` is `%{}` for parsers that
+  don't report positions. See `Arcana.FileParser` for the metadata shape.
+  """
+  def parse_file(path, opts \\ []) do
+    extension = Path.extname(path)
 
-  defp parse_text_file(path) do
-    case File.read(path) do
-      {:ok, content} -> {:ok, content}
-      {:error, _} -> {:error, :read_error}
+    if File.exists?(path) do
+      do_parse_file(path, extension, opts)
+    else
+      {:error, :file_not_found}
     end
   end
 
-  defp parse_pdf(path) do
-    # First verify it's a valid PDF by checking magic bytes
-    case File.read(path) do
-      {:ok, content} ->
-        if String.starts_with?(content, "%PDF") do
-          extract_pdf_text(path)
+  @doc """
+  Parses binary content, routing on `filename`'s extension.
+
+  The resolved parser must accept binary input (`supports_binary?/0`),
+  otherwise returns `{:error, {:binary_unsupported, module}}`. Natively
+  handled text formats always work.
+  """
+  def parse_binary(binary, filename, opts \\ []) when is_binary(binary) do
+    extension = Path.extname(filename)
+
+    case resolve(extension) do
+      {:ok, :native} ->
+        {:ok, binary, %{}}
+
+      {:ok, {module, _} = parser} ->
+        if FileParser.supports_binary?(parser) do
+          validate_and_parse(binary, extension, parser, opts)
         else
-          {:error, :invalid_pdf}
+          {:error, {:binary_unsupported, module}}
         end
 
-      {:error, _} ->
-        {:error, :read_error}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  defp extract_pdf_text(path) do
-    pdf_parser = Arcana.Config.pdf_parser()
-    FileParser.PDF.parse(pdf_parser, path)
+  @doc """
+  Returns the content type for a path or filename, based on its
+  extension.
+
+  Registered parsers may declare a `:content_type` in their options;
+  otherwise unknown extensions report `application/octet-stream`.
+  """
+  def content_type_for(path) do
+    extension = Config.normalize_extension(Path.extname(path))
+
+    case extension do
+      ".txt" ->
+        "text/plain"
+
+      ext when ext in [".md", ".markdown"] ->
+        "text/markdown"
+
+      ".pdf" ->
+        "application/pdf"
+
+      _ ->
+        case resolve(extension) do
+          {:ok, {_module, opts}} ->
+            Keyword.get(opts, :content_type, "application/octet-stream")
+
+          _ ->
+            "application/octet-stream"
+        end
+    end
+  end
+
+  # Resolves an extension to :native, a {module, opts} parser, or an error.
+  defp resolve(extension) do
+    extension = Config.normalize_extension(extension)
+    registered = Config.file_parsers()
+
+    cond do
+      Map.has_key?(registered, extension) -> {:ok, Map.fetch!(registered, extension)}
+      extension in @text_extensions -> {:ok, :native}
+      extension in @pdf_extensions -> {:ok, Config.pdf_parser()}
+      fallback = Config.fallback_parser() -> {:ok, fallback}
+      true -> {:error, :unsupported_format}
+    end
+  end
+
+  defp do_parse_file(path, extension, opts) do
+    case resolve(extension) do
+      {:ok, :native} ->
+        case File.read(path) do
+          {:ok, content} -> {:ok, content, %{}}
+          {:error, _} -> {:error, :read_error}
+        end
+
+      {:ok, parser} ->
+        validate_and_parse(path, extension, parser, opts)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # PDFs are magic-byte checked before reaching a parser, so a mislabeled
+  # file fails with :invalid_pdf instead of whatever the tool reports.
+  defp validate_and_parse(input, extension, parser, opts) do
+    if Config.normalize_extension(extension) in @pdf_extensions do
+      case pdf_content(input) do
+        {:ok, content} ->
+          if String.starts_with?(content, "%PDF") do
+            FileParser.parse(parser, input, opts)
+          else
+            {:error, :invalid_pdf}
+          end
+
+        error ->
+          error
+      end
+    else
+      FileParser.parse(parser, input, opts)
+    end
+  end
+
+  defp pdf_content(input) do
+    if File.exists?(input) do
+      case File.read(input) do
+        {:ok, content} -> {:ok, content}
+        {:error, _} -> {:error, :read_error}
+      end
+    else
+      {:ok, input}
+    end
   end
 end

@@ -67,10 +67,20 @@ defmodule Arcana.FileParser.PDF do
 
   The parser is a `{module, opts}` tuple where module implements
   this behaviour.
+
+  Always returns `{:ok, text}`: parsers that also report positional
+  metadata (see `Arcana.FileParser`) have it dropped here, so this
+  function's contract is unchanged. Use `Arcana.FileParser.parse/3` or
+  `Arcana.Parser.parse_file/2` to receive it.
   """
   def parse({module, opts}, path_or_binary, call_opts \\ []) when is_atom(module) do
     merged_opts = Keyword.merge(opts, call_opts)
-    module.parse(path_or_binary, merged_opts)
+
+    case module.parse(path_or_binary, merged_opts) do
+      {:ok, text} -> {:ok, text}
+      {:ok, text, _meta} -> {:ok, text}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc """
