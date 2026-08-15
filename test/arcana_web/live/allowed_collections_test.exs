@@ -665,10 +665,14 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
     # test case searches every collection, so the run's stored results hand
     # back chunk ids the tenant may not read.
     test "a restricted evaluation run only retrieves from allowed collections", %{conn: conn} do
+      # Both documents share the question's term, so an unscoped search
+      # retrieves both; only the collection filter can keep the other
+      # tenant's chunk out of the run's results.
       {_tc, _chunks} =
-        seed_test_case("tenant-a", "AllowedEvalChunkZulu", "AllowedEvalQuestionZulu")
+        seed_test_case("tenant-a", "AllowedEvalChunkZulu zulutopic", "zulutopic")
 
-      {:ok, secret_doc} = Arcana.ingest("SecretEvalChunkZulu", repo: Repo, collection: "other")
+      {:ok, secret_doc} =
+        Arcana.ingest("SecretEvalChunkZulu zulutopic", repo: Repo, collection: "other")
 
       secret_ids =
         Repo.all(from(c in Arcana.Chunk, where: c.document_id == ^secret_doc.id, select: c.id))
@@ -685,8 +689,9 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
         |> Map.values()
         |> Enum.flat_map(&(&1["retrieved_chunk_ids"] || []))
 
-      assert run.config["collections"] == ["tenant-a"]
+      assert secret_ids != []
       assert Enum.all?(secret_ids, &(&1 not in retrieved))
+      assert run.config["collections"] == ["tenant-a"]
     end
 
     # Telemetry handlers are global, so an unfiltered progress handler
