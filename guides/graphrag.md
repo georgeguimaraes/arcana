@@ -63,6 +63,27 @@ config :arcana,
   ]
 ```
 
+Community detection reads all of its knobs from this block: `resolution`,
+`min_size`, `community_levels` (the hierarchy ceiling), plus `objective`,
+`iterations` and `seed`. Pin a non-zero `seed` when you want community
+membership to be reproducible across runs (`0` lets the algorithm
+randomize):
+
+```elixir
+config :arcana,
+  graph: [
+    enabled: true,
+    community_detector: :leiden,
+    seed: 42,
+    objective: :cpm,
+    iterations: 2
+  ]
+```
+
+Options passed to `Arcana.Maintenance.detect_communities/2` override the
+config, and options carried by a `community_detector: {Module, opts}`
+tuple override the generic knobs above.
+
 Or enable per-call:
 
 ```elixir

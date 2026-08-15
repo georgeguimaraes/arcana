@@ -391,6 +391,17 @@ defmodule Arcana.Config do
   end
 
   @doc false
+  def parse_community_detector_config(value) when is_function(value, 3), do: value
+
+  def parse_community_detector_config(value) do
+    parse_pluggable(value,
+      name: "community_detector",
+      shortcuts: %{leiden: Arcana.Graph.CommunityDetector.Leiden},
+      allow_nil?: true
+    )
+  end
+
+  @doc false
   def parse_entity_matcher_config(value) do
     parse_pluggable(value,
       name: "entity_matcher",

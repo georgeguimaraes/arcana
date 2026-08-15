@@ -688,8 +688,30 @@ defmodule Arcana.Maintenance do
 
     * `:collection` - Filter to a specific collection by name (default: all collections)
     * `:resolution` - Community detection resolution (default: 1.0)
-    * `:max_level` - Maximum hierarchy levels (default: 3)
+    * `:objective` - Quality function (default: `:cpm`)
+    * `:iterations` - Optimization iterations (default: 2)
+    * `:seed` - Random seed; `0` lets the algorithm randomize (default: 0)
+    * `:min_size` - Minimum community size to keep (default: 1)
+    * `:max_level` - Maximum hierarchy levels (default: `:community_levels`)
     * `:progress` - Function to call with progress updates `fn current, total -> :ok end`
+
+  ## Configuration
+
+  Every detection knob can also be set globally, and the detector itself
+  is pluggable:
+
+      config :arcana, :graph,
+        community_detector: :leiden,
+        resolution: 1.0,
+        objective: :cpm,
+        iterations: 2,
+        seed: 42,
+        min_size: 1,
+        community_levels: 3
+
+  Knobs resolve in this order, later wins: library defaults, then
+  `config :arcana, :graph`, then options carried by the configured
+  `community_detector` tuple, then the per-call options above.
 
   ## Examples
 
@@ -702,17 +724,13 @@ defmodule Arcana.Maintenance do
       # With custom resolution
       Arcana.Maintenance.detect_communities(MyApp.Repo, resolution: 0.5)
 
+      # Reproducible membership
+      Arcana.Maintenance.detect_communities(MyApp.Repo, seed: 42)
+
   """
   def detect_communities(repo, opts \\ []) do
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
     collection_filter = Keyword.get(opts, :collection)
-    graph_config = Arcana.Graph.config()
-    resolution = Keyword.get(opts, :resolution, graph_config[:resolution] || 1.0)
-    objective = Keyword.get(opts, :objective, :cpm)
-    iterations = Keyword.get(opts, :iterations, 2)
-    seed = Keyword.get(opts, :seed, 0)
-    min_size = Keyword.get(opts, :min_size, graph_config[:min_size] || 1)
-    max_level = Keyword.get(opts, :max_level, graph_config[:community_levels] || 1)
 
     strict? = Arcana.Config.strict_collections?(opts)
 
@@ -721,17 +739,7 @@ defmodule Arcana.Maintenance do
         {:ok, %{collections: 0, communities: 0}}
       else
         total_collections = length(collections)
-
-        detector_opts = [
-          resolution: resolution,
-          objective: objective,
-          iterations: iterations,
-          seed: seed,
-          min_size: min_size,
-          max_level: max_level
-        ]
-
-        detector_module = Arcana.Graph.CommunityDetector.Leiden
+        detector = resolve_detector(opts)
 
         results =
           collections
@@ -741,8 +749,7 @@ defmodule Arcana.Maintenance do
               detect_communities_for_collection(
                 collection,
                 repo,
-                detector_module,
-                detector_opts,
+                detector,
                 progress_fn
               )
 
@@ -767,11 +774,77 @@ defmodule Arcana.Maintenance do
     end
   end
 
+  @detection_keys [:resolution, :objective, :iterations, :seed, :min_size, :max_level]
+  @detection_defaults [
+    resolution: 1.0,
+    objective: :cpm,
+    iterations: 2,
+    seed: 0,
+    min_size: 1,
+    max_level: 1
+  ]
+
+  @doc false
+  # Resolved detection knobs, for callers that want to report what a
+  # detection run will actually use (the detect_communities mix task).
+  def detection_opts(opts \\ []) do
+    case resolve_detector(opts) do
+      {_module, detector_opts} -> detector_opts
+      _detector -> resolve_detection_opts(opts, [])
+    end
+  end
+
+  # Builds the detector from `config :arcana, :graph` plus per-call opts.
+  # Precedence, later wins: library defaults, graph config knobs, opts on
+  # the configured detector tuple, per-call opts.
+  defp resolve_detector(opts) do
+    case configured_detector() do
+      nil -> nil
+      fun when is_function(fun, 3) -> fun
+      {module, mod_opts} -> {module, resolve_detection_opts(opts, mod_opts)}
+    end
+  end
+
+  defp configured_detector do
+    case fetch_graph_config(:community_detector) do
+      {:ok, value} -> Arcana.Config.parse_community_detector_config(value)
+      :error -> {Arcana.Graph.CommunityDetector.Leiden, []}
+    end
+  end
+
+  defp fetch_graph_config(key) do
+    case Arcana.Config.get_env(:graph, []) do
+      graph_opts when is_list(graph_opts) -> Keyword.fetch(graph_opts, key)
+      %{} = graph_opts -> Map.fetch(graph_opts, key)
+      _other -> :error
+    end
+  end
+
+  defp resolve_detection_opts(opts, mod_opts) do
+    @detection_defaults
+    |> Keyword.merge(graph_detection_opts())
+    |> Keyword.merge(mod_opts)
+    |> Keyword.merge(Keyword.take(opts, @detection_keys))
+  end
+
+  defp graph_detection_opts do
+    graph_config = Arcana.Graph.config()
+
+    [
+      resolution: graph_config[:resolution],
+      objective: graph_config[:objective],
+      iterations: graph_config[:iterations],
+      seed: graph_config[:seed],
+      min_size: graph_config[:min_size],
+      max_level: graph_config[:max_level] || graph_config[:community_levels]
+    ]
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
   defp detect_communities_for_collection(
          collection,
          repo,
-         detector_module,
-         detector_opts,
+         detector,
          progress_fn
        ) do
     alias Arcana.Graph.{CommunityDetector, Entity, Relationship}
@@ -783,11 +856,14 @@ defmodule Arcana.Maintenance do
       _ -> :ok
     end
 
-    # Fetch entities and relationships for this collection
+    # Fetch entities and relationships for this collection. The order is
+    # pinned: detectors index nodes by position, so a stable seed only
+    # yields stable membership when the input order is stable too.
     entities =
       repo.all(
         from(e in Entity,
           where: e.collection_id == ^collection.id,
+          order_by: e.id,
           select: %{id: e.id, name: e.name, type: e.type}
         )
       )
@@ -798,6 +874,7 @@ defmodule Arcana.Maintenance do
           join: e in Entity,
           on: r.source_id == e.id,
           where: e.collection_id == ^collection.id,
+          order_by: r.id,
           select: %{source_id: r.source_id, target_id: r.target_id, strength: r.strength}
         )
       )
@@ -807,9 +884,6 @@ defmodule Arcana.Maintenance do
     else
       # Clear existing communities for this collection
       repo.delete_all(from(c in Arcana.Graph.Community, where: c.collection_id == ^collection.id))
-
-      # Run community detection with configured detector
-      detector = {detector_module, detector_opts}
 
       case CommunityDetector.detect(detector, entities, relationships) do
         {:ok, communities} ->
