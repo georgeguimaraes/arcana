@@ -245,24 +245,37 @@ defmodule Arcana.IngestBinaryTest do
       chunks = chunks_of(document)
       assert length(chunks) > 1
 
-      pages = PagedFixtureParser.pages()
+      # Independent recomputation, derived from the fixture text rather
+      # than the parser's ranges: the pages are joined by single newlines
+      # and hold none of their own, so a byte's page is one more than the
+      # number of newlines preceding it. This is total — a chunk starting
+      # exactly on a separator byte (bytes 38 and 78 here, which the
+      # ranges themselves cover in neither page) still gets checked,
+      # landing on the page the newline closes.
+      text = PagedFixtureParser.text()
+
+      page_for = fn byte ->
+        prefix = binary_part(text, 0, min(byte, byte_size(text)))
+        1 + (prefix |> :binary.matches("\n") |> length())
+      end
 
       for chunk <- chunks do
-        page_start = chunk.metadata["page_start"]
-        page_end = chunk.metadata["page_end"]
+        start_byte = chunk.metadata["start_byte"]
+        end_byte = chunk.metadata["end_byte"]
 
-        assert page_start in 1..3
-        assert page_end in 1..3
-        assert page_start <= page_end
+        # end_byte is exclusive, so the chunk's last byte is end_byte - 1
+        assert end_byte > start_byte
 
-        # independently recompute the page holding the chunk's first byte
-        expected =
-          Enum.find(pages, fn page ->
-            chunk.metadata["start_byte"] >= page.start and chunk.metadata["start_byte"] < page.end
-          end)
-
-        if expected, do: assert(page_start == expected.number)
+        assert chunk.metadata["page_start"] == page_for.(start_byte)
+        assert chunk.metadata["page_end"] == page_for.(end_byte - 1)
       end
+
+      # the separator-byte chunks really are in play: without them the
+      # unconditional assertions above would be no stronger than the old
+      # "only when a page contains the byte" version
+      assert Enum.any?(chunks, fn chunk ->
+               chunk.metadata["start_byte"] in [38, 78]
+             end)
 
       # the document really does span more than one page
       assert chunks |> Enum.map(& &1.metadata["page_start"]) |> Enum.uniq() |> length() > 1
