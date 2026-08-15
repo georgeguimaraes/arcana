@@ -60,7 +60,7 @@ defmodule Arcana.FileParser.PDF do
 
   """
   @callback parse(path_or_binary :: binary(), opts :: keyword()) ::
-              {:ok, String.t()} | {:error, term()}
+              {:ok, String.t()} | {:ok, String.t(), map()} | {:error, term()}
 
   @doc """
   Parses a PDF using the configured parser.

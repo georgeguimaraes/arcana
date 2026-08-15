@@ -70,10 +70,10 @@ defmodule Arcana.FileParser.PDF.PopplerTest do
                %{number: 1, start: 0, end: 8},
                %{number: 2, start: 9, end: 17},
                %{number: 3, start: 18, end: 28}
-             ] = Poppler.page_ranges(text)
+             ] = Poppler.page_ranges(text, String.trim(text))
 
       # each range slices back to its page's text
-      for %{start: s, end: e} <- Poppler.page_ranges(text) do
+      for %{start: s, end: e} <- Poppler.page_ranges(text, String.trim(text)) do
         assert binary_part(text, s, e - s) in ["page one", "page two", "page three"]
       end
     end
@@ -81,7 +81,22 @@ defmodule Arcana.FileParser.PDF.PopplerTest do
     test "single-page text is one range covering everything" do
       text = "just one page"
 
-      assert [%{number: 1, start: 0, end: 13}] = Poppler.page_ranges(text)
+      assert [%{number: 1, start: 0, end: 13}] = Poppler.page_ranges(text, String.trim(text))
+    end
+
+    test "blank leading pages keep their numbers and report empty ranges" do
+      # pdftotext emits a form feed per page boundary; two blank pages up
+      # front would otherwise be trimmed away, renumbering everything
+      raw = "\f\fpage three text"
+      trimmed = String.trim(raw)
+
+      assert [
+               %{number: 1, start: 0, end: 0},
+               %{number: 2, start: 0, end: 0},
+               %{number: 3, start: 0, end: 15}
+             ] = Poppler.page_ranges(raw, trimmed)
+
+      assert binary_part(trimmed, 0, 15) == "page three text"
     end
   end
 end

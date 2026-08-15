@@ -132,7 +132,7 @@ defmodule Arcana.Parser do
 
       {:ok, {module, _} = parser} ->
         if FileParser.supports_binary?(parser) do
-          validate_and_parse(binary, extension, parser, opts)
+          validate_and_parse(binary, :binary, extension, parser, opts)
         else
           {:error, {:binary_unsupported, module}}
         end
@@ -152,26 +152,21 @@ defmodule Arcana.Parser do
   def content_type_for(path) do
     extension = Config.normalize_extension(Path.extname(path))
 
-    case extension do
-      ".txt" ->
-        "text/plain"
-
-      ext when ext in [".md", ".markdown"] ->
-        "text/markdown"
-
-      ".pdf" ->
-        "application/pdf"
+    # A registered parser's declared type wins over the built-in default,
+    # since registering an extension overrides its built-in route too.
+    case resolve(extension) do
+      {:ok, {_module, opts}} ->
+        Keyword.get(opts, :content_type) || builtin_content_type(extension)
 
       _ ->
-        case resolve(extension) do
-          {:ok, {_module, opts}} ->
-            Keyword.get(opts, :content_type, "application/octet-stream")
-
-          _ ->
-            "application/octet-stream"
-        end
+        builtin_content_type(extension)
     end
   end
+
+  defp builtin_content_type(".txt"), do: "text/plain"
+  defp builtin_content_type(ext) when ext in [".md", ".markdown"], do: "text/markdown"
+  defp builtin_content_type(".pdf"), do: "application/pdf"
+  defp builtin_content_type(_), do: "application/octet-stream"
 
   # Resolves an extension to :native, a {module, opts} parser, or an error.
   defp resolve(extension) do
@@ -196,7 +191,7 @@ defmodule Arcana.Parser do
         end
 
       {:ok, parser} ->
-        validate_and_parse(path, extension, parser, opts)
+        validate_and_parse(path, :path, extension, parser, opts)
 
       {:error, reason} ->
         {:error, reason}
@@ -205,9 +200,12 @@ defmodule Arcana.Parser do
 
   # PDFs are magic-byte checked before reaching a parser, so a mislabeled
   # file fails with :invalid_pdf instead of whatever the tool reports.
-  defp validate_and_parse(input, extension, parser, opts) do
+  # `kind` says whether `input` is a path to read or the bytes themselves:
+  # binary content that happens to look like a path must never be read
+  # off disk.
+  defp validate_and_parse(input, kind, extension, parser, opts) do
     if Config.normalize_extension(extension) in @pdf_extensions do
-      case pdf_content(input) do
+      case pdf_content(input, kind) do
         {:ok, content} ->
           if String.starts_with?(content, "%PDF") do
             FileParser.parse(parser, input, opts)
@@ -223,14 +221,12 @@ defmodule Arcana.Parser do
     end
   end
 
-  defp pdf_content(input) do
-    if File.exists?(input) do
-      case File.read(input) do
-        {:ok, content} -> {:ok, content}
-        {:error, _} -> {:error, :read_error}
-      end
-    else
-      {:ok, input}
+  defp pdf_content(binary, :binary), do: {:ok, binary}
+
+  defp pdf_content(path, :path) do
+    case File.read(path) do
+      {:ok, content} -> {:ok, content}
+      {:error, _} -> {:error, :read_error}
     end
   end
 end
