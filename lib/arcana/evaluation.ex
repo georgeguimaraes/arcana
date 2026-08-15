@@ -25,6 +25,7 @@ defmodule Arcana.Evaluation do
 
   import Ecto.Query
 
+  alias Arcana.{Collection, Document}
   alias Arcana.Evaluation.{Generator, Metrics, Run, TestCase}
 
   @doc """
@@ -62,6 +63,18 @@ defmodule Arcana.Evaluation do
       strategies (e.g., `Arcana.Loop`) against the same test set with the
       same metrics. The chunks returned must be maps with `:id` so the
       metrics can match them against the test case's `relevant_chunks`.
+    * `:run_ref` - Opaque term echoed back in the per-test-case telemetry
+      metadata. `[:arcana, :evaluation, :test_case, :*]` events carry the
+      question being evaluated, and handlers are global, so a listener that
+      wants only its own run's questions has to filter on something; this
+      is it.
+    * `:collections` - List of collection names to confine the run to. It
+      scopes which test cases run (see `list_test_cases/1`), is forwarded to
+      the retriever so retrieval can't reach outside those collections, and
+      is recorded on the run so scoped listings can find it again.
+      Retrieval then runs with `strict_collections: true` unless
+      `:strict_collections` says otherwise, so a collection name with no
+      row fails the search instead of widening it to the whole corpus.
 
   """
   def run(opts) do
@@ -70,7 +83,12 @@ defmodule Arcana.Evaluation do
     source_id = Keyword.get(opts, :source_id)
     evaluate_answers = Keyword.get(opts, :evaluate_answers, false)
     llm = Keyword.get(opts, :llm)
+    collections = Keyword.get(opts, :collections)
+    run_ref = Keyword.get(opts, :run_ref)
     retriever = Keyword.get(opts, :retriever, &default_retriever/2)
+
+    retriever_opts =
+      [repo: repo, mode: mode, limit: 10] ++ retrieval_scope_opts(opts, collections)
 
     # Validate llm is provided when evaluate_answers is true
     if evaluate_answers and is_nil(llm) do
@@ -90,6 +108,7 @@ defmodule Arcana.Evaluation do
         |> Map.put(:mode, mode)
         |> Map.put(:source_id, source_id)
         |> Map.put(:evaluate_answers, evaluate_answers)
+        |> put_run_collections(collections)
 
       # Create a run record
       {:ok, run} =
@@ -121,6 +140,7 @@ defmodule Arcana.Evaluation do
             %{index: index},
             %{
               run_id: run.id,
+              run_ref: run_ref,
               index: index,
               total: total,
               question: test_case.question
@@ -130,7 +150,7 @@ defmodule Arcana.Evaluation do
           started_at = System.monotonic_time()
 
           result =
-            evaluate_test_case(test_case, repo, mode, evaluate_answers, llm, retriever)
+            evaluate_test_case(test_case, retriever_opts, evaluate_answers, llm, retriever)
 
           duration_ms =
             System.convert_time_unit(
@@ -144,6 +164,7 @@ defmodule Arcana.Evaluation do
             %{duration_ms: duration_ms, index: index},
             %{
               run_id: run.id,
+              run_ref: run_ref,
               index: index,
               total: total,
               question: test_case.question
@@ -186,9 +207,25 @@ defmodule Arcana.Evaluation do
     end
   end
 
-  defp evaluate_test_case(test_case, repo, mode, evaluate_answers, llm, retriever) do
+  # Retrieval scope for the run. Passing `:collections` without strict
+  # resolution would let a collection name with no row resolve to "no
+  # filter", which is the whole corpus — the opposite of what a scoped run
+  # asked for.
+  defp retrieval_scope_opts(_opts, nil), do: []
+
+  defp retrieval_scope_opts(opts, collections) when is_list(collections) do
+    [
+      collections: collections,
+      strict_collections: Keyword.get(opts, :strict_collections, true)
+    ]
+  end
+
+  defp put_run_collections(config, nil), do: config
+  defp put_run_collections(config, collections), do: Map.put(config, :collections, collections)
+
+  defp evaluate_test_case(test_case, retriever_opts, evaluate_answers, llm, retriever) do
     {search_results, pre_generated_answer} =
-      case retriever.(test_case.question, repo: repo, mode: mode, limit: 10) do
+      case retriever.(test_case.question, retriever_opts) do
         {:ok, chunks} -> {chunks, nil}
         {:ok, chunks, answer} -> {chunks, answer}
         # A failing retriever (e.g. Arcana.search/2 returning {:error, _})
@@ -327,6 +364,18 @@ defmodule Arcana.Evaluation do
 
     * `:repo` - Ecto repo (required)
     * `:source_id` - Filter by source (optional)
+    * `:collections` - List of collection names to scope the listing to.
+      See "Collection scoping" below.
+
+  ## Collection scoping
+
+  A test case has no collection of its own: it reaches one through its
+  chunks (the relevant chunks it is scored against, and the source chunk it
+  was generated from). When `:collections` is given, only test cases whose
+  every linked chunk resolves to one of those collections are returned, and
+  at least one link has to resolve. Anything else — a test case straddling
+  two collections, one whose chunks were deleted, one with no links at all
+  — stays hidden, since rendering it would expose the foreign half.
 
   """
   def list_test_cases(opts) do
@@ -350,15 +399,119 @@ defmodule Arcana.Evaluation do
         query
       end
 
-    repo.all(query)
+    query
+    |> scope_test_cases(Keyword.get(opts, :collections))
+    |> repo.all()
   end
 
   @doc """
   Gets a single test case by ID.
+
+  Accepts the same `:collections` scoping option as `list_test_cases/1`;
+  a test case outside the scope reads as missing.
   """
   def get_test_case(id, opts) do
     repo = Keyword.fetch!(opts, :repo)
-    repo.get(TestCase, id) |> repo.preload([:relevant_chunks, :source_chunk])
+
+    case Ecto.UUID.cast(id) do
+      :error ->
+        nil
+
+      {:ok, uuid} ->
+        from(tc in TestCase,
+          where: tc.id == ^uuid,
+          preload: [:relevant_chunks, :source_chunk]
+        )
+        |> scope_test_cases(Keyword.get(opts, :collections))
+        |> repo.one()
+    end
+  end
+
+  defp scope_test_cases(query, nil), do: query
+
+  defp scope_test_cases(query, collections) when is_list(collections) do
+    from(tc in query, where: tc.id in subquery(scoped_test_case_ids(collections)))
+  end
+
+  # Every linked chunk has to land inside the allowed collections, and at
+  # least one has to land there at all. The correlations live inside this
+  # standalone SELECT so callers can use it from `delete_all` too.
+  defp scoped_test_case_ids(collections) do
+    from(tc in TestCase,
+      as: :scoped_test_case,
+      where:
+        exists(allowed_chunks_query(collections)) or
+          exists(allowed_source_chunk_query(collections)),
+      where: not exists(foreign_chunks_query(collections)),
+      where: not exists(foreign_source_chunk_query(collections)),
+      select: tc.id
+    )
+  end
+
+  defp allowed_chunks_query(collections) do
+    from(tc in TestCase,
+      join: chunk in assoc(tc, :relevant_chunks),
+      join: doc in assoc(chunk, :document),
+      join: col in assoc(doc, :collection),
+      where: tc.id == parent_as(:scoped_test_case).id,
+      where: col.name in ^collections,
+      select: 1
+    )
+  end
+
+  defp allowed_source_chunk_query(collections) do
+    from(tc in TestCase,
+      join: chunk in assoc(tc, :source_chunk),
+      join: doc in assoc(chunk, :document),
+      join: col in assoc(doc, :collection),
+      where: tc.id == parent_as(:scoped_test_case).id,
+      where: col.name in ^collections,
+      select: 1
+    )
+  end
+
+  # Left joins on purpose: a chunk whose document or collection is gone has
+  # no readable collection, so it counts as foreign rather than dropping out
+  # of the check.
+  defp foreign_chunks_query(collections) do
+    from(tc in TestCase,
+      join: chunk in assoc(tc, :relevant_chunks),
+      left_join: doc in Document,
+      on: chunk.document_id == doc.id,
+      left_join: col in Collection,
+      on: doc.collection_id == col.id,
+      where: tc.id == parent_as(:scoped_test_case).id,
+      where: is_nil(col.name) or col.name not in ^collections,
+      select: 1
+    )
+  end
+
+  defp foreign_source_chunk_query(collections) do
+    from(tc in TestCase,
+      join: chunk in assoc(tc, :source_chunk),
+      left_join: doc in Document,
+      on: chunk.document_id == doc.id,
+      left_join: col in Collection,
+      on: doc.collection_id == col.id,
+      where: tc.id == parent_as(:scoped_test_case).id,
+      where: is_nil(col.name) or col.name not in ^collections,
+      select: 1
+    )
+  end
+
+  # Runs carry no collection either, and unlike test cases they have nothing
+  # to derive one from, so `run/1` records the scope it ran under in the run
+  # config. A scoped listing only sees runs whose recorded scope is a
+  # non-empty subset of what the caller may read: unscoped runs (an
+  # unrestricted dashboard's, or any run predating this) stay hidden.
+  defp scope_runs(query, nil), do: query
+
+  defp scope_runs(query, collections) when is_list(collections) do
+    from(r in query,
+      where: fragment("jsonb_typeof(?->'collections') = 'array'", r.config),
+      where: fragment("?->'collections' <> '[]'::jsonb", r.config),
+      where: fragment("?->'collections' <@ to_jsonb(?::text[])", r.config, ^collections)
+    )
   end
 
   @doc """
@@ -404,13 +557,19 @@ defmodule Arcana.Evaluation do
 
   @doc """
   Deletes a test case.
+
+  With `:collections`, the scope predicate rides inside the DELETE, so a
+  test case outside the allowed collections is rejected with
+  `{:error, :not_found}` and nothing can change between the check and the
+  delete. A malformed id is rejected the same way.
   """
   def delete_test_case(id, opts) do
     repo = Keyword.fetch!(opts, :repo)
 
-    case repo.get(TestCase, id) do
-      nil -> {:error, :not_found}
-      test_case -> {:ok, repo.delete!(test_case)}
+    with {:ok, uuid} <- cast_id(id) do
+      from(tc in TestCase, where: tc.id == ^uuid, select: tc)
+      |> scope_test_cases(Keyword.get(opts, :collections))
+      |> delete_one(repo)
     end
   end
 
@@ -421,6 +580,8 @@ defmodule Arcana.Evaluation do
 
     * `:repo` - Ecto repo (required)
     * `:limit` - Maximum runs to return (default: 20)
+    * `:collections` - Only list runs recorded as having run under a
+      non-empty subset of these collection names
 
   """
   def list_runs(opts) do
@@ -431,34 +592,70 @@ defmodule Arcana.Evaluation do
       order_by: [desc: r.inserted_at, desc: r.id],
       limit: ^limit
     )
+    |> scope_runs(Keyword.get(opts, :collections))
     |> repo.all()
   end
 
   @doc """
   Gets a single evaluation run by ID.
+
+  Accepts the same `:collections` scoping option as `list_runs/1`.
   """
   def get_run(id, opts) do
     repo = Keyword.fetch!(opts, :repo)
-    repo.get(Run, id)
+
+    case cast_id(id) do
+      {:ok, uuid} ->
+        from(r in Run, where: r.id == ^uuid)
+        |> scope_runs(Keyword.get(opts, :collections))
+        |> repo.one()
+
+      {:error, :not_found} ->
+        nil
+    end
   end
 
   @doc """
   Deletes an evaluation run.
+
+  Scoped the same way as `delete_test_case/2`.
   """
   def delete_run(id, opts) do
     repo = Keyword.fetch!(opts, :repo)
 
-    case repo.get(Run, id) do
-      nil -> {:error, :not_found}
-      run -> {:ok, repo.delete!(run)}
+    with {:ok, uuid} <- cast_id(id) do
+      from(r in Run, where: r.id == ^uuid, select: r)
+      |> scope_runs(Keyword.get(opts, :collections))
+      |> delete_one(repo)
     end
   end
 
   @doc """
   Returns count of test cases.
+
+  Accepts the same `:collections` scoping option as `list_test_cases/1`.
   """
   def count_test_cases(opts) do
     repo = Keyword.fetch!(opts, :repo)
-    repo.aggregate(TestCase, :count)
+
+    from(tc in TestCase, select: count(tc.id))
+    |> scope_test_cases(Keyword.get(opts, :collections))
+    |> repo.one() || 0
+  end
+
+  # A forged id that isn't a UUID can't match anything, so it's rejected
+  # before it reaches a query that would raise on the cast.
+  defp cast_id(id) do
+    case Ecto.UUID.cast(id) do
+      {:ok, uuid} -> {:ok, uuid}
+      :error -> {:error, :not_found}
+    end
+  end
+
+  defp delete_one(query, repo) do
+    case repo.delete_all(query) do
+      {0, _} -> {:error, :not_found}
+      {_count, [record | _]} -> {:ok, record}
+    end
   end
 end

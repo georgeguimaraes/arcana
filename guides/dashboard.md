@@ -71,9 +71,11 @@ appear literally instead of being formatted.
 
 ```elixir
 arcana_dashboard "/arcana",
-  repo: MyApp.Repo,                    # Override repo
-  on_mount: [MyAppWeb.Auth],           # Add authentication
-  live_socket_path: "/live"            # Custom LiveView socket path
+  repo: MyApp.Repo,                            # Override repo
+  on_mount: [MyAppWeb.Auth],                   # Add authentication
+  live_socket_path: "/live",                   # Custom LiveView socket path
+  live_session_name: :arcana_dashboard,        # Unique per mount in one router
+  collections: {MyAppWeb.Access, :collections} # Scope to a collection subset
 ```
 
 ### Authentication
@@ -84,6 +86,81 @@ Protect the dashboard with your existing authentication:
 arcana_dashboard "/arcana",
   on_mount: [MyAppWeb.RequireAdmin]
 ```
+
+### Collection scoping
+
+By default the dashboard sees (and can mutate) every collection, so it's
+superuser territory. The `collections:` option lets you expose it below
+that level: a `{module, function}` pair that gets the `%Plug.Conn{}` of
+the page request and returns either `:all` or the list of collection
+names that user may touch.
+
+```elixir
+arcana_dashboard "/arcana",
+  collections: {MyAppWeb.ArcanaAccess, :allowed_collections}
+```
+
+```elixir
+defmodule MyAppWeb.ArcanaAccess do
+  def allowed_collections(conn) do
+    case conn.assigns.current_user do
+      %{admin: true} -> :all
+      %{tenant: tenant} -> ["#{tenant}-docs", "#{tenant}-tickets"]
+      _ -> []
+    end
+  end
+end
+```
+
+The restriction applies everywhere, and fails closed:
+
+- listings, search, ask, graph views, evaluation test cases and runs,
+  and the header stats only cover the allowed collections
+- ingest and maintenance actions must target an allowed collection;
+  "All Collections" operations disappear
+- events naming any other collection (including forged form payloads)
+  are rejected server-side, not just hidden from the UI
+- retrieval runs under `strict_collections: true`, so an allowed
+  collection that doesn't exist errors out instead of widening the
+  search to everything
+- renaming a collection is blocked: a rename could otherwise move
+  documents into a name another tenant is allowed to see
+- an empty list means the dashboard shows and does nothing
+
+#### When the decision is made
+
+The MFA runs while the page request is served and its answer is
+snapshotted into the signed LiveView session, which is valid for the
+session max age (14 days by default). The websocket connect, reconnects
+and in-dashboard `live_patch`/`live_redirect` all read that snapshot back
+instead of calling the MFA again; only a full page request re-runs it.
+Narrowing someone's permissions therefore doesn't narrow a dashboard they
+already have open. The `on_mount` hook can't fix this by itself, since a
+LiveView mount has no `%Plug.Conn{}` to re-resolve from.
+
+Cut the socket when permissions change. Put a per-user `live_socket_id`
+in the session and broadcast a disconnect:
+
+```elixir
+# on login
+put_session(conn, :live_socket_id, "users_socket:#{user.id}")
+
+# when access changes
+MyAppWeb.Endpoint.broadcast("users_socket:#{user.id}", "disconnect", %{})
+```
+
+The client then reconnects through a full request, which re-runs the MFA
+with the current conn. A shorter session max age puts a hard bound on how
+long a stale scope can survive without that broadcast.
+
+It's a plain `{module, function}` tuple rather than a function capture
+so the router metadata stays serializable. The option composes with
+`on_mount:` auth hooks: use `on_mount` to decide who gets in, and
+`collections:` to decide what they see once inside. It scopes the
+dashboard only, not `Arcana.search/2` or other API calls your app makes.
+
+To mount two dashboards in one router (say a superuser one plus a scoped
+one), give the second a unique `live_session_name:`.
 
 ## Pages
 

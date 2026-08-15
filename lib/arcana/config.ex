@@ -264,6 +264,104 @@ defmodule Arcana.Config do
     opts[key] || get_env(key)
   end
 
+  @repo_unset :__arcana_repo_unset__
+
+  @repo_config_shapes """
+  Configure the repo with:
+
+      config :arcana, repo: MyApp.Repo
+
+  or with the per-repo shape:
+
+      config :arcana, MyApp.Repo, priv: "priv/my_repo"
+  """
+
+  @doc """
+  Resolves the Ecto repo configured for Arcana's mix tasks.
+
+  Accepts either configuration shape:
+
+      # Explicit repo key
+      config :arcana, repo: MyApp.Repo
+
+      # Per-repo configuration (e.g. custom priv directory)
+      config :arcana, MyApp.Repo, priv: "priv/my_repo"
+
+  When only the per-repo shape is present and exactly one repo is
+  configured, that repo is used (with a note printed to stderr). Raises
+  `ArgumentError` when no repo can be resolved, or when several per-repo
+  entries exist without an explicit `:repo` key to disambiguate.
+
+  `repo: nil` means "not set" and falls through to the per-repo scan.
+  `repo: false` is an explicit "no repo", so it raises the same "no Ecto
+  repo configured" error instead of quietly picking a per-repo entry.
+
+  Called without arguments, the `:repo` key is read through `get_env/2` so
+  process-scoped overrides installed via `install_env_reader/1` are honored.
+  Pass an explicit env keyword list to resolve against it directly.
+  """
+  def repo!(env \\ nil)
+
+  def repo!(nil) do
+    # The `:repo` read goes through get_env/2 so test overrides shadow it.
+    # A sentinel default separates "unset" from a configured `nil`/`false`.
+    # The per-repo fallback has to enumerate keys, which the reader seam
+    # can't express (it resolves one key at a time), so it reads the raw
+    # app env.
+    case get_env(:repo, @repo_unset) do
+      false -> raise_repo_disabled()
+      repo when repo in [@repo_unset, nil] -> repo_from_module_keys(all_env())
+      repo -> repo
+    end
+  end
+
+  def repo!(env) when is_list(env) do
+    case Keyword.fetch(env, :repo) do
+      {:ok, false} -> raise_repo_disabled()
+      {:ok, nil} -> repo_from_module_keys(env)
+      {:ok, repo} -> repo
+      :error -> repo_from_module_keys(env)
+    end
+  end
+
+  defp all_env, do: Application.get_all_env(:arcana)
+
+  defp raise_repo_disabled do
+    raise ArgumentError,
+          "no Ecto repo configured for :arcana: `repo: false` disables repo " <>
+            "resolution.\n\n" <> @repo_config_shapes
+  end
+
+  defp repo_from_module_keys(env) do
+    env
+    |> Keyword.keys()
+    |> Enum.filter(&ecto_repo_key?/1)
+    |> case do
+      [repo] ->
+        IO.puts(
+          :stderr,
+          "Arcana: using #{inspect(repo)} from `config :arcana, #{inspect(repo)}, ...`. " <>
+            "Set `config :arcana, repo: #{inspect(repo)}` to make this explicit."
+        )
+
+        repo
+
+      [] ->
+        raise ArgumentError, "no Ecto repo configured for :arcana.\n\n" <> @repo_config_shapes
+
+      repos ->
+        raise ArgumentError,
+              "several Ecto repos configured for :arcana " <>
+                "(#{Enum.map_join(repos, ", ", &inspect/1)}) and no `:repo` key to " <>
+                "disambiguate.\n\n" <> @repo_config_shapes
+    end
+  end
+
+  defp ecto_repo_key?(key) do
+    is_atom(key) and String.starts_with?(Atom.to_string(key), "Elixir.") and
+      Code.ensure_loaded?(key) and function_exported?(key, :__adapter__, 0)
+  end
+
   @doc """
   Merges global keyword-list config under `app_key` with per-call opts.
 

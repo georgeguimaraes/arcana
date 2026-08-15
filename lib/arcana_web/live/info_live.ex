@@ -31,7 +31,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       repo = socket.assigns.repo
 
       socket
-      |> assign(stats: load_stats(repo))
+      |> assign(stats: load_stats(repo, socket.assigns.allowed_collections))
     end
 
     defp get_config_info do

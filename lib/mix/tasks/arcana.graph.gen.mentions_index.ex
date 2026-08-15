@@ -58,12 +58,12 @@ defmodule Mix.Tasks.Arcana.Graph.Gen.MentionsIndex do
     {opts, _, _} = OptionParser.parse(args, strict: [repo: :string])
 
     # Load the host app's config so the repo's `:priv`, if it has one, is
-    # visible to Arcana.MigrationPath.
+    # visible to Arcana.MixHelpers.migrations_path/1.
     Mix.Task.run("app.config")
 
     repo = opts[:repo] || infer_repo()
 
-    migrations_path = Arcana.MigrationPath.migrations_path(repo)
+    migrations_path = Arcana.MixHelpers.migrations_path(repo)
     File.mkdir_p!(migrations_path)
 
     timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")

@@ -20,7 +20,8 @@ defmodule Arcana.Pipeline.Context do
   - `:rewritten_query` - Conversational input rewritten as a clear search query
 
   ### Populated by `select/2`
-  - `:collections` - List of collection names to search
+  - `:collections` - List of collection names to search (also recorded by
+    `search/2`, see below)
   - `:selection_reasoning` - LLM's reasoning for the selection decision
 
   ### Populated by `expand/2`
@@ -35,6 +36,12 @@ defmodule Arcana.Pipeline.Context do
 
   ### Populated by `search/2`
   - `:results` - List of `%{question: _, collection: _, chunks: _}` maps
+  - `:searcher` - The searcher used, so later steps that retrieve (like
+    `reason/2`) stay on the caller's searcher instead of silently falling
+    back to the default one
+  - `:collections` - The collections actually searched, for the same reason.
+    `search/2` resolves them from its own options first, then this field
+    (which `select/2` may have set), so an explicit option still wins
 
   ### Populated by `reason/2`
   - `:queries_tried` - MapSet of queries already searched (prevents loops)
@@ -85,6 +92,7 @@ defmodule Arcana.Pipeline.Context do
 
     # Populated by search/2
     :results,
+    :searcher,
 
     # Populated by reason/2
     :queries_tried,

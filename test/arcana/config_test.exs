@@ -220,4 +220,96 @@ defmodule Arcana.ConfigTest do
       assert Config.parse_reranker_config(fun) == {fun, []}
     end
   end
+
+  describe "repo!/1" do
+    defmodule FakeRepoOne do
+      def __adapter__, do: Ecto.Adapters.Postgres
+    end
+
+    defmodule FakeRepoTwo do
+      def __adapter__, do: Ecto.Adapters.Postgres
+    end
+
+    test "returns the :repo key when set" do
+      assert Config.repo!(repo: Arcana.TestRepo) == Arcana.TestRepo
+    end
+
+    test "reads :repo through get_env/2 when called with no env" do
+      put_arcana_env(:repo, FakeRepoOne)
+
+      assert Config.repo!() == FakeRepoOne
+    end
+
+    test "falls back to the per-repo scan when the :repo override is nil" do
+      put_arcana_env(:repo, nil)
+
+      {repo, stderr} = ExUnit.CaptureIO.with_io(:stderr, fn -> Config.repo!() end)
+
+      # config/test.exs carries `config :arcana, Arcana.TestRepo, ...`
+      assert repo == Arcana.TestRepo
+      assert stderr =~ "config :arcana, repo: Arcana.TestRepo"
+    end
+
+    test "raises when :repo is explicitly false instead of scanning per-repo entries" do
+      put_arcana_env(:repo, false)
+
+      error = assert_raise ArgumentError, fn -> Config.repo!() end
+
+      assert error.message =~ "no Ecto repo configured"
+      assert error.message =~ "`repo: false` disables repo resolution"
+    end
+
+    test "raises for an explicit false in a passed env" do
+      env = [{:repo, false}, {FakeRepoOne, [priv: "priv/one"]}]
+
+      error = assert_raise ArgumentError, fn -> Config.repo!(env) end
+
+      assert error.message =~ "no Ecto repo configured"
+    end
+
+    test "treats a nil :repo in a passed env as absent" do
+      env = [{:repo, nil}, {FakeRepoOne, [priv: "priv/one"]}]
+
+      {repo, _stderr} = ExUnit.CaptureIO.with_io(:stderr, fn -> Config.repo!(env) end)
+
+      assert repo == FakeRepoOne
+    end
+
+    test ":repo key wins over per-repo entries" do
+      env = [{:repo, Arcana.TestRepo}, {FakeRepoOne, [priv: "priv/one"]}]
+      assert Config.repo!(env) == Arcana.TestRepo
+    end
+
+    test "falls back to a single per-repo entry with a note" do
+      env = [
+        {FakeRepoOne, [priv: "priv/one"]},
+        {ArcanaWeb.Endpoint, [http: false]},
+        {:embedder, :local}
+      ]
+
+      {repo, stderr} =
+        ExUnit.CaptureIO.with_io(:stderr, fn -> Config.repo!(env) end)
+
+      assert repo == FakeRepoOne
+      assert stderr =~ "config :arcana, repo: Arcana.ConfigTest.FakeRepoOne"
+    end
+
+    test "raises when no repo is configured, naming both shapes" do
+      error = assert_raise ArgumentError, fn -> Config.repo!(embedder: :local) end
+
+      assert error.message =~ "config :arcana, repo: MyApp.Repo"
+      assert error.message =~ ~s|config :arcana, MyApp.Repo, priv: "priv/my_repo"|
+    end
+
+    test "raises when several per-repo entries exist without :repo" do
+      env = [{FakeRepoOne, []}, {FakeRepoTwo, []}]
+
+      error = assert_raise ArgumentError, fn -> Config.repo!(env) end
+
+      assert error.message =~ "FakeRepoOne"
+      assert error.message =~ "FakeRepoTwo"
+      assert error.message =~ "config :arcana, repo: MyApp.Repo"
+      assert error.message =~ ~s|config :arcana, MyApp.Repo, priv: "priv/my_repo"|
+    end
+  end
 end

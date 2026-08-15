@@ -58,12 +58,77 @@ defmodule ArcanaWeb.RouterTest do
     assert session_mfa == {ArcanaWeb.Router, :__session__, [Arcana.TestRepo, ""]}
   end
 
-  # Phoenix accepts a bare module for :on_mount, so prepending our Prefix
-  # hook must not build an improper list like [Prefix | Module].
+  # Phoenix accepts a bare module for :on_mount, so prepending our Scope
+  # hook must not build an improper list like [Scope | Module].
   test "__options__ wraps a single on_mount module into a proper list" do
     {_name, session_opts, _route_opts} =
       ArcanaWeb.Router.__options__([on_mount: SomeHook], "/arcana")
 
-    assert session_opts[:on_mount] == [ArcanaWeb.Router.Prefix, SomeHook]
+    assert session_opts[:on_mount] == [ArcanaWeb.Router.Scope, SomeHook]
+  end
+
+  describe ":collections option" do
+    defmodule Access do
+      def restricted(_conn), do: ["tenant-a", "tenant-b"]
+      def open(_conn), do: :all
+      def broken(_conn), do: {:ok, ["tenant-a"]}
+      def mixed(_conn), do: ["tenant-a", :oops]
+    end
+
+    test "appends the MFA to the session args when given" do
+      {_name, session_opts, _route_opts} =
+        ArcanaWeb.Router.__options__(
+          [repo: Arcana.TestRepo, collections: {Access, :restricted}],
+          "/arcana"
+        )
+
+      assert session_opts[:session] ==
+               {ArcanaWeb.Router, :__session__,
+                [Arcana.TestRepo, "/arcana", {Access, :restricted}]}
+    end
+
+    test "rejects anything that is not a {module, function} tuple" do
+      for bad <- [&String.length/1, "collections", {Access, :restricted, []}] do
+        assert_raise ArgumentError, ~r/:collections must be a \{module, function\} tuple/, fn ->
+          ArcanaWeb.Router.__options__([collections: bad], "/arcana")
+        end
+      end
+    end
+
+    test "__session__/4 resolves the MFA into allowed_collections" do
+      session =
+        ArcanaWeb.Router.__session__(nil, Arcana.TestRepo, "/arcana", {Access, :restricted})
+
+      assert session["allowed_collections"] == ["tenant-a", "tenant-b"]
+      assert session["prefix"] == "/arcana"
+      assert session["repo"] == Arcana.TestRepo
+    end
+
+    test "__session__/4 keeps :all unrestricted" do
+      session = ArcanaWeb.Router.__session__(nil, Arcana.TestRepo, "/arcana", {Access, :open})
+
+      assert session["allowed_collections"] == :all
+    end
+
+    test "__session__/4 fails closed on invalid returns" do
+      assert_raise ArgumentError, ~r/must return :all or a list/, fn ->
+        ArcanaWeb.Router.__session__(nil, Arcana.TestRepo, "/arcana", {Access, :broken})
+      end
+
+      assert_raise ArgumentError, ~r/non-string entries/, fn ->
+        ArcanaWeb.Router.__session__(nil, Arcana.TestRepo, "/arcana", {Access, :mixed})
+      end
+    end
+
+    test "option absent keeps the session MFA and content unchanged" do
+      {_name, session_opts, _route_opts} =
+        ArcanaWeb.Router.__options__([repo: Arcana.TestRepo], "/arcana")
+
+      assert session_opts[:session] ==
+               {ArcanaWeb.Router, :__session__, [Arcana.TestRepo, "/arcana"]}
+
+      session = ArcanaWeb.Router.__session__(nil, Arcana.TestRepo, "/arcana")
+      refute Map.has_key?(session, "allowed_collections")
+    end
   end
 end
