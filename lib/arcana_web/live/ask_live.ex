@@ -792,7 +792,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       |> maybe_expand(opts)
       |> maybe_decompose(opts)
       |> Pipeline.search(search_opts)
-      |> maybe_reason(opts)
+      |> maybe_reason(opts, search_opts)
       |> maybe_rerank(opts)
       |> maybe_answer_with_hallucinations(opts)
       |> maybe_ground(opts)
@@ -825,8 +825,14 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       if Keyword.get(opts, :use_decompose, false), do: Arcana.Pipeline.decompose(ctx), else: ctx
     end
 
-    defp maybe_reason(ctx, opts) do
-      if Keyword.get(opts, :use_reason, false), do: Arcana.Pipeline.reason(ctx), else: ctx
+    defp maybe_reason(ctx, opts, search_opts) do
+      if Keyword.get(opts, :use_reason, false) do
+        # Carry the strict searcher into reasoning: its follow-up searches
+        # would otherwise run unscoped and could widen past the allow-list.
+        Arcana.Pipeline.reason(ctx, Keyword.take(search_opts, [:searcher]))
+      else
+        ctx
+      end
     end
 
     defp maybe_rerank(ctx, opts) do

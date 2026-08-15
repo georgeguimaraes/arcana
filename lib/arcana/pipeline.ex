@@ -706,11 +706,15 @@ defmodule Arcana.Pipeline do
       llm = Keyword.get(opts, :llm, ctx.llm)
       max_iterations = Keyword.get(opts, :max_iterations, 2)
       custom_prompt_fn = Keyword.get(opts, :prompt)
+      # Follow-up searches go through the same searcher as search/2, so a
+      # caller that scoped retrieval there can't be widened here.
+      searcher = Keyword.get(opts, :searcher, Arcana.Searcher.Arcana)
 
       # Initialize queries_tried if not set
       queries_tried = ctx.queries_tried || MapSet.new([ctx.question])
 
-      updated_ctx = do_reason_loop(ctx, llm, custom_prompt_fn, max_iterations, queries_tried, 0)
+      updated_ctx =
+        do_reason_loop(ctx, llm, custom_prompt_fn, max_iterations, queries_tried, 0, searcher)
 
       stop_metadata = %{iterations: updated_ctx.reason_iterations}
 
@@ -718,12 +722,14 @@ defmodule Arcana.Pipeline do
     end)
   end
 
-  defp do_reason_loop(ctx, _llm, _prompt_fn, max_iterations, queries_tried, iteration)
+  defp do_reason_loop(ctx, llm, prompt_fn, max_iterations, queries_tried, iteration, searcher)
+
+  defp do_reason_loop(ctx, _llm, _prompt_fn, max_iterations, queries_tried, iteration, _searcher)
        when iteration >= max_iterations do
     %{ctx | queries_tried: queries_tried, reason_iterations: iteration}
   end
 
-  defp do_reason_loop(ctx, llm, prompt_fn, max_iterations, queries_tried, iteration) do
+  defp do_reason_loop(ctx, llm, prompt_fn, max_iterations, queries_tried, iteration, searcher) do
     all_chunks =
       (ctx.results || [])
       |> Enum.flat_map(& &1.chunks)
@@ -740,7 +746,7 @@ defmodule Arcana.Pipeline do
           # Search with follow-up query
           updated_queries = MapSet.put(queries_tried, follow_up_query)
 
-          new_results = do_additional_search(ctx, follow_up_query)
+          new_results = do_additional_search(ctx, follow_up_query, searcher)
           merged_results = merge_results(ctx.results, new_results)
           updated_ctx = %{ctx | results: merged_results}
 
@@ -750,7 +756,8 @@ defmodule Arcana.Pipeline do
             prompt_fn,
             max_iterations,
             updated_queries,
-            iteration + 1
+            iteration + 1,
+            searcher
           )
         end
 
@@ -811,7 +818,7 @@ defmodule Arcana.Pipeline do
     end
   end
 
-  defp do_additional_search(ctx, query) do
+  defp do_additional_search(ctx, query, searcher) do
     # Determine which collections to search
     collections =
       cond do
@@ -827,11 +834,7 @@ defmodule Arcana.Pipeline do
         threshold: ctx.threshold
       ]
 
-      chunks =
-        case Arcana.Search.search(query, Keyword.put(search_opts, :collection, collection)) do
-          {:ok, results} -> results
-          {:error, _} -> []
-        end
+      chunks = do_simple_search(searcher, query, collection, search_opts)
 
       %{question: query, collection: collection, chunks: chunks}
     end)

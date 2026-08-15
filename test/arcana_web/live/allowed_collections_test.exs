@@ -25,6 +25,24 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       )
   end
 
+  # The ask flow answers asynchronously, so poll the render instead of
+  # sleeping a magic number of milliseconds.
+  defp render_until(view, expected, attempts \\ 50) do
+    html = render(view)
+
+    cond do
+      html =~ expected ->
+        html
+
+      attempts <= 0 ->
+        html
+
+      true ->
+        Process.sleep(20)
+        render_until(view, expected, attempts - 1)
+    end
+  end
+
   describe "collections page" do
     test "lists only allowed collections", %{conn: conn} do
       {:ok, _} = Collection.get_or_create("tenant-a", Repo)
@@ -320,8 +338,7 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
         "sub_tab" => "advanced"
       })
 
-      :timer.sleep(200)
-      html = render(view)
+      html = render_until(view, "unknown_collection")
 
       assert html =~ "unknown_collection"
       refute html =~ "Elixir content for others"
