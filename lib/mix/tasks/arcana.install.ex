@@ -70,7 +70,7 @@ if Code.ensure_loaded?(Igniter) do
           children = [
             #{inspect(repo_module)},
             Arcana.Embedder.Local,
-            Arcana.TaskSupervisor
+            ArcanaWeb.TaskSupervisor
           ]
 
          For in-memory vector store (no PostgreSQL required), also add:
@@ -406,7 +406,7 @@ else
           children = [
             MyApp.Repo,
             Arcana.Embedder.Local,
-            Arcana.TaskSupervisor
+            ArcanaWeb.TaskSupervisor
           ]
 
          For in-memory vector store (no PostgreSQL required), also add:

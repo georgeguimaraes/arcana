@@ -210,7 +210,7 @@ defmodule ArcanaWeb.DocumentsLive do
 
     socket = assign(socket, graph_indexing: true)
 
-    Arcana.TaskSupervisor.start_child(fn ->
+    ArcanaWeb.TaskSupervisor.start_child(fn ->
       result = Arcana.Graph.build_and_persist(chunks, collection, repo, [])
       send(parent, {:graph_complete, result})
     end)

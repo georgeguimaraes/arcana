@@ -305,7 +305,7 @@ defmodule ArcanaWeb.AskLive do
     selected_collections = params["collections"] || []
     parent = self()
 
-    Arcana.TaskSupervisor.start_child(fn ->
+    ArcanaWeb.TaskSupervisor.start_child(fn ->
       handler_id = "pipeline-progress-#{inspect(parent)}"
       trace_handler_id = "trace-progress-#{inspect(parent)}"
       loop_handler_id = "loop-progress-#{inspect(parent)}"

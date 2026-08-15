@@ -43,7 +43,7 @@ Add the NER serving to your supervision tree for entity extraction:
 # lib/my_app/application.ex
 children = [
   MyApp.Repo,
-  Arcana.TaskSupervisor,
+  ArcanaWeb.TaskSupervisor,
   Arcana.Embedder.Local,
   Arcana.Graph.NERServing  # Add this for GraphRAG
 ]

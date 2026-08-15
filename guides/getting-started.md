@@ -49,12 +49,12 @@ Add Arcana components to your supervision tree:
 # application.ex
 children = [
   MyApp.Repo,
-  Arcana.TaskSupervisor,  # Required for dashboard async operations
+  ArcanaWeb.TaskSupervisor,  # Required for dashboard async operations
   Arcana.Embedder.Local   # Only if using local embeddings
 ]
 ```
 
-`Arcana.TaskSupervisor` is required for the dashboard's async operations (Ask, Maintenance).
+`ArcanaWeb.TaskSupervisor` is required for the dashboard's async operations (Ask, Maintenance).
 `Arcana.Embedder.Local` starts the local embedding model (only needed if using local embeddings).
 
 ### Available Models

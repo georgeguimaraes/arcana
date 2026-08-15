@@ -1,37 +1,25 @@
 defmodule Arcana.TaskSupervisor do
   @moduledoc """
-  Task supervisor for async operations in Arcana.
+  Deprecated alias for `ArcanaWeb.TaskSupervisor`.
 
-  Add to your application's supervision tree:
-
-      children = [
-        MyApp.Repo,
-        Arcana.Embedder.Local,
-        Arcana.TaskSupervisor
-      ]
-
-  This enables supervised async operations in the Arcana dashboard
-  (evaluation runs, test case generation, maintenance tasks) with:
-  - Graceful shutdown during deploys
-  - Visibility in Observer/LiveDashboard
-  - Proper crash logging with `$callers` metadata
+  The task supervisor only serves the dashboard's async operations, so it
+  lives under the `ArcanaWeb` namespace now. This module keeps existing
+  supervision trees working; update your children list to
+  `ArcanaWeb.TaskSupervisor`.
   """
 
-  def child_spec(_opts) do
-    %{
-      id: __MODULE__,
-      start: {Task.Supervisor, :start_link, [[name: __MODULE__]]},
-      type: :supervisor
-    }
+  require Logger
+
+  @deprecated "Use ArcanaWeb.TaskSupervisor instead"
+  def child_spec(opts) do
+    Logger.warning(
+      "Arcana.TaskSupervisor is deprecated, use ArcanaWeb.TaskSupervisor " <>
+        "in your supervision tree instead."
+    )
+
+    ArcanaWeb.TaskSupervisor.child_spec(opts)
   end
 
-  @doc """
-  Starts a fire-and-forget task under this supervisor.
-
-  The task is not linked to the caller, so crashes won't bring down
-  the calling process. Crashes are logged by the supervisor.
-  """
-  def start_child(fun) when is_function(fun, 0) do
-    Task.Supervisor.start_child(__MODULE__, fun)
-  end
+  @deprecated "Use ArcanaWeb.TaskSupervisor.start_child/1 instead"
+  defdelegate start_child(fun), to: ArcanaWeb.TaskSupervisor
 end

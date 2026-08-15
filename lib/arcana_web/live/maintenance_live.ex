@@ -104,7 +104,7 @@ defmodule ArcanaWeb.MaintenanceLive do
 
     socket = assign(socket, reembed_running: true, reembed_progress: %{current: 0, total: 0})
 
-    Arcana.TaskSupervisor.start_child(fn ->
+    ArcanaWeb.TaskSupervisor.start_child(fn ->
       progress_fn = fn current, total ->
         send(parent, {:reembed_progress, current, total})
       end
@@ -131,7 +131,7 @@ defmodule ArcanaWeb.MaintenanceLive do
     socket =
       assign(socket, rebuild_graph_running: true, rebuild_graph_progress: %{current: 0, total: 0})
 
-    Arcana.TaskSupervisor.start_child(fn ->
+    ArcanaWeb.TaskSupervisor.start_child(fn ->
       progress_fn = fn current, total ->
         send(parent, {:rebuild_graph_progress, current, total})
       end
@@ -161,7 +161,7 @@ defmodule ArcanaWeb.MaintenanceLive do
         detect_communities_progress: %{current: 0, total: 0}
       )
 
-    Arcana.TaskSupervisor.start_child(fn ->
+    ArcanaWeb.TaskSupervisor.start_child(fn ->
       progress_fn = fn current, total ->
         send(parent, {:detect_communities_progress, current, total})
       end
