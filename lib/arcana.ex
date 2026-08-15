@@ -118,9 +118,7 @@ defmodule Arcana do
 
   """
   def delete(document_id, opts) do
-    repo =
-      opts[:repo] || Arcana.Config.get_env(:repo) ||
-        raise ArgumentError, "repo is required"
+    repo = Arcana.Config.require_repo!(opts)
 
     case repo.get(Document, document_id) do
       nil -> {:error, :not_found}

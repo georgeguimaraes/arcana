@@ -113,8 +113,5 @@ defmodule Arcana.Documents do
   defp filter_source_id(query, nil), do: query
   defp filter_source_id(query, source_id), do: from(d in query, where: d.source_id == ^source_id)
 
-  defp require_repo!(opts) do
-    opts[:repo] || Arcana.Config.get_env(:repo) ||
-      raise ArgumentError, "repo is required"
-  end
+  defp require_repo!(opts), do: Arcana.Config.require_repo!(opts)
 end
