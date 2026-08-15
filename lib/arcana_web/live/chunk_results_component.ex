@@ -1,5 +1,6 @@
-# The dashboard is optional: everything under ArcanaWeb only compiles when
-# Phoenix LiveView is available (see the optional deps in mix.exs).
+# The dashboard is optional: this module only compiles when Phoenix
+# LiveView is available (see the optional deps in mix.exs). Only
+# ArcanaWeb.TaskSupervisor is phoenix-free and stays available.
 
 if Code.ensure_loaded?(Phoenix.LiveView) do
   defmodule ArcanaWeb.ChunkResultsComponent do

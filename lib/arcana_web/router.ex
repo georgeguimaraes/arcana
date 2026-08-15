@@ -1,6 +1,7 @@
-# The dashboard is optional: everything under ArcanaWeb only compiles when
-# Phoenix LiveView is available (see the optional deps in mix.exs). Without
-# it, a stub arcana_dashboard/2 raises with instructions at compile time.
+# The dashboard is optional: this module only compiles when Phoenix
+# LiveView is available (see the optional deps in mix.exs). Without
+# phoenix, a stub arcana_dashboard/2 raises with instructions at
+# compile time.
 if Code.ensure_loaded?(Phoenix.LiveView) do
   defmodule ArcanaWeb.Router do
     @moduledoc """
