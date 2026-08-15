@@ -16,6 +16,7 @@ defmodule ArcanaWeb.ChunkResultsComponent do
   ## Usage
 
       <ChunkResultsComponent.chunk_results
+        prefix={@prefix}
         chunks={@ask_context.results}
         document_titles={@ask_context.document_titles || %{}}
         grounding={Map.get(@ask_context, :grounding)}
@@ -23,6 +24,11 @@ defmodule ArcanaWeb.ChunkResultsComponent do
       />
   """
   use Phoenix.Component
+
+  attr(:prefix, :string,
+    required: true,
+    doc: "Dashboard mount prefix used to build document links"
+  )
 
   attr(:chunks, :list,
     required: true,
@@ -46,7 +52,7 @@ defmodule ArcanaWeb.ChunkResultsComponent do
           <header class="arcana-chunk-doc-header">
             <h5 class="arcana-chunk-doc-title">
               <%= if doc_id do %>
-                <.link navigate={"/arcana/documents?doc=#{doc_id}"} title={"Document " <> doc_id} class="arcana-chunk-doc-link"><%= document_label(doc_id, @document_titles) %></.link>
+                <.link navigate={"#{@prefix}/documents?doc=#{doc_id}"} title={"Document " <> doc_id} class="arcana-chunk-doc-link"><%= document_label(doc_id, @document_titles) %></.link>
               <% else %>
                 <span title="(unknown document)"><%= document_label(doc_id, @document_titles) %></span>
               <% end %>

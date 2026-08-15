@@ -1576,6 +1576,7 @@ defmodule ArcanaWeb.AskLive do
 
             <%= if Map.get(@ask_context, :graph_enhanced) do %>
               <.graph_context_section
+                prefix={@prefix}
                 matched_entities={Map.get(@ask_context, :matched_entities, [])}
                 matched_relationships={Map.get(@ask_context, :matched_relationships, [])}
                 expanded={@graph_context_expanded}
@@ -1587,6 +1588,7 @@ defmodule ArcanaWeb.AskLive do
               <div class="arcana-ask-section">
                 <h4>Retrieved Chunks (<%= length(all_results) %>)</h4>
                 <ChunkResultsComponent.chunk_results
+                  prefix={@prefix}
                   chunks={all_results}
                   document_titles={Map.get(@ask_context, :document_titles, %{})}
                   grounding={Map.get(@ask_context, :grounding)}
@@ -1625,7 +1627,7 @@ defmodule ArcanaWeb.AskLive do
                       <span class="arcana-entity-name"><%= entity.name %></span>
                       <span class="arcana-entity-type"><%= entity.type %></span>
                       <%= if Map.get(entity, :id) do %>
-                        <a href={"/arcana/graph?entity=#{entity.id}"} class="arcana-view-in-graph">
+                        <a href={"#{@prefix}/graph?entity=#{entity.id}"} class="arcana-view-in-graph">
                           View in Graph
                         </a>
                       <% end %>

@@ -49,8 +49,10 @@ defmodule ArcanaWeb.Router do
     quote bind_quoted: binding() do
       # Full mount prefix including enclosing scopes, e.g. "/admin/arcana"
       # for `scope "/admin" do arcana_dashboard "/arcana" end`. Captured
-      # here so links and asset hrefs don't assume a "/arcana" mount.
-      prefix = Phoenix.Router.scoped_path(__MODULE__, path)
+      # here so links and asset hrefs don't assume a "/arcana" mount. The
+      # trailing slash is trimmed so a root mount ("/") yields an empty
+      # prefix instead of turning hrefs into protocol-relative "//..." URLs.
+      prefix = String.trim_trailing(Phoenix.Router.scoped_path(__MODULE__, path), "/")
 
       scope path, alias: false, as: false do
         {session_name, session_opts, route_opts} =
@@ -99,7 +101,7 @@ defmodule ArcanaWeb.Router do
       [
         session: {__MODULE__, :__session__, session_args},
         root_layout: {ArcanaWeb.Layouts, :root},
-        on_mount: [ArcanaWeb.Router.Prefix | options[:on_mount] || []]
+        on_mount: [ArcanaWeb.Router.Prefix | List.wrap(options[:on_mount])]
       ],
       [
         private: %{live_socket_path: live_socket_path},
