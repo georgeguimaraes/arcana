@@ -70,6 +70,11 @@ defmodule Arcana.Search do
     * `:reranker` - Reranker module or function. Defaults to `config :arcana, :reranker`.
       Pass `false` to disable a globally configured reranker for this call.
       When set, retrieves `limit * over_fetch` candidates, reranks, returns top `limit`.
+    * `:graph_depth` - When graph search is enabled, how many relationship
+      hops to expand matched entities before fetching mentioned chunks
+      (default: 0, direct mentions only). Chunks reached via traversal are
+      down-weighted per hop so direct matches still rank first. The global
+      default is `config :arcana, graph: [query_depth: n]`.
 
   Defaults for `:limit`, `:threshold`, and `:mode` can be set globally:
 
@@ -310,6 +315,8 @@ defmodule Arcana.Search do
 
     {matcher, matcher_opts} = resolve_entity_matcher(opts, graph_config)
     matcher_opts = matcher_opts |> Keyword.put(:repo, repo) |> Keyword.merge(opts)
+    graph_depth = Arcana.Graph.query_depth(opts)
+    depth_decay = graph_config[:query_depth_decay] || 0.5
 
     case matcher.match(query, collection_ids, matcher_opts) do
       {:ok, entity_ids} when entity_ids != [] ->
@@ -317,7 +324,10 @@ defmodule Arcana.Search do
           [:arcana, :graph, :search],
           %{query: query, entity_count: length(entity_ids), matcher: matcher},
           fn ->
-            graph_results = graph_search_by_entity_ids(entity_ids, repo)
+            ids_by_hop =
+              Arcana.Graph.expand_entity_ids(entity_ids, graph_depth, collection_ids, repo: repo)
+
+            graph_results = graph_search_by_entity_ids(ids_by_hop, repo, depth_decay)
             combined = rrf_combine(vector_results, graph_results, limit * rrf_pool, rrf_k)
             final_results = Enum.take(combined, limit)
 
@@ -331,7 +341,10 @@ defmodule Arcana.Search do
             telemetry_metadata = %{
               graph_result_count: length(graph_results),
               combined_count: length(final_results),
-              matcher: matcher
+              matcher: matcher,
+              graph_depth: graph_depth,
+              expanded_entity_count:
+                ids_by_hop |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
             }
 
             {{{:ok, final_results}, caller_result}, telemetry_metadata}
@@ -352,15 +365,17 @@ defmodule Arcana.Search do
     Arcana.Config.parse_entity_matcher_config(value)
   end
 
-  defp graph_search_by_entity_ids(entity_ids, repo) do
+  defp graph_search_by_entity_ids(ids_by_hop, repo, depth_decay) do
     import Ecto.Query
     alias Arcana.Chunk
     alias Arcana.Graph.EntityMention
 
+    all_entity_ids = ids_by_hop |> Map.values() |> List.flatten()
+
     chunk_ids =
       repo.all(
         from(m in EntityMention,
-          where: m.entity_id in ^entity_ids,
+          where: m.entity_id in ^all_entity_ids,
           select: m.chunk_id,
           distinct: true
         )
@@ -369,15 +384,9 @@ defmodule Arcana.Search do
     if chunk_ids == [] do
       []
     else
-      # Score by mention count
-      scored =
-        repo.all(
-          from(m in EntityMention,
-            where: m.chunk_id in ^chunk_ids and m.entity_id in ^entity_ids,
-            group_by: m.chunk_id,
-            select: %{chunk_id: m.chunk_id, score: count() * 0.1}
-          )
-        )
+      # Score by mention count, decayed per hop so chunks that only mention
+      # traversal neighbors rank below chunks mentioning direct matches.
+      scored = score_chunks_by_hop(chunk_ids, ids_by_hop, depth_decay, repo)
 
       chunk_map =
         repo.all(from(c in Chunk, where: c.id in ^chunk_ids, select: {c.id, c}))
@@ -408,6 +417,33 @@ defmodule Arcana.Search do
       end)
       |> Enum.sort_by(& &1.score, :desc)
     end
+  end
+
+  # Returns [%{chunk_id: id, score: score}] where score sums, per hop h,
+  # mention_count_h * 0.1 * decay^h. With a single hop-0 group this reduces
+  # to the original mention_count * 0.1 (decay^0 is exactly 1.0).
+  defp score_chunks_by_hop(chunk_ids, ids_by_hop, depth_decay, repo) do
+    import Ecto.Query
+    alias Arcana.Graph.EntityMention
+
+    ids_by_hop
+    |> Enum.reduce(%{}, fn {hop, entity_ids}, acc ->
+      weight = 0.1 * :math.pow(depth_decay, hop)
+
+      counts =
+        repo.all(
+          from(m in EntityMention,
+            where: m.chunk_id in ^chunk_ids and m.entity_id in ^entity_ids,
+            group_by: m.chunk_id,
+            select: {m.chunk_id, count()}
+          )
+        )
+
+      Enum.reduce(counts, acc, fn {chunk_id, count}, scores ->
+        Map.update(scores, chunk_id, count * weight, &(&1 + count * weight))
+      end)
+    end)
+    |> Enum.map(fn {chunk_id, score} -> %{chunk_id: chunk_id, score: score} end)
   end
 
   # Strict validation already ran at the entry point, so unknown names can

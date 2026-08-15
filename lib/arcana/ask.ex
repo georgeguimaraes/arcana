@@ -40,6 +40,12 @@ defmodule Arcana.Ask do
     * `:reranker` - Reranker module/function (passed through to search)
     * `:rewriter` - Query rewriter (passed through to search)
     * `:graph` - Enable/disable GraphRAG (default: global config)
+    * `:graph_depth` - When GraphRAG is enabled, how many relationship hops
+      to expand matched entities (default: 0). Affects both retrieval (chunks
+      mentioning neighbor entities are pulled in, down-weighted per hop) and
+      the prompt's relationship context, which then includes edges from
+      matched entities to their expanded neighbors. The global default is
+      `config :arcana, graph: [query_depth: n]`.
 
   Defaults for `:limit` can be set globally:
 
@@ -204,7 +210,7 @@ defmodule Arcana.Ask do
 
   defp fetch_graph_context(question, repo, opts) do
     import Ecto.Query
-    alias Arcana.Graph.{Community, Entity, GraphStore, Relationship}
+    alias Arcana.Graph.{Community, GraphStore}
 
     graph_config = Arcana.Graph.config()
     entity_limit = graph_config[:context_entity_limit] || 10
@@ -233,19 +239,15 @@ defmodule Arcana.Ask do
       %{}
     else
       entity_ids = Enum.map(matched_entities, & &1.id)
+      graph_depth = Arcana.Graph.query_depth(opts)
 
-      relationships =
-        repo.all(
-          from(r in Relationship,
-            join: src in Entity,
-            on: r.source_id == src.id,
-            join: tgt in Entity,
-            on: r.target_id == tgt.id,
-            where: r.source_id in ^entity_ids and r.target_id in ^entity_ids,
-            select: %{source: src.name, target: tgt.name, type: r.type},
-            limit: ^rel_limit
-          )
-        )
+      expanded_ids =
+        entity_ids
+        |> Arcana.Graph.expand_entity_ids(graph_depth, collection_ids, repo: repo)
+        |> Map.values()
+        |> List.flatten()
+
+      relationships = fetch_relationships(expanded_ids, entity_ids, graph_depth, rel_limit, repo)
 
       community_summaries =
         repo.all(
@@ -265,6 +267,45 @@ defmodule Arcana.Ask do
         community_summaries: community_summaries
       }
     end
+  end
+
+  # With no traversal the context keeps its original shape: only edges whose
+  # source AND target both matched the query. With graph_depth > 0 the edge
+  # closure runs over the expanded entity set, ordered so edges touching a
+  # directly matched entity win the limit over neighbor-to-neighbor edges.
+  defp fetch_relationships(expanded_ids, _matched_ids, 0, rel_limit, repo) do
+    import Ecto.Query
+    alias Arcana.Graph.{Entity, Relationship}
+
+    repo.all(
+      from(r in Relationship,
+        join: src in Entity,
+        on: r.source_id == src.id,
+        join: tgt in Entity,
+        on: r.target_id == tgt.id,
+        where: r.source_id in ^expanded_ids and r.target_id in ^expanded_ids,
+        select: %{source: src.name, target: tgt.name, type: r.type},
+        limit: ^rel_limit
+      )
+    )
+  end
+
+  defp fetch_relationships(expanded_ids, matched_ids, _depth, rel_limit, repo) do
+    import Ecto.Query
+    alias Arcana.Graph.{Entity, Relationship}
+
+    repo.all(
+      from(r in Relationship,
+        join: src in Entity,
+        on: r.source_id == src.id,
+        join: tgt in Entity,
+        on: r.target_id == tgt.id,
+        where: r.source_id in ^expanded_ids and r.target_id in ^expanded_ids,
+        order_by: [desc: r.source_id in ^matched_ids or r.target_id in ^matched_ids],
+        select: %{source: src.name, target: tgt.name, type: r.type},
+        limit: ^rel_limit
+      )
+    )
   end
 
   defp entity_ids_to_binary(entity_ids) do

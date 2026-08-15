@@ -1,7 +1,7 @@
 defmodule Arcana.AskTest do
   use Arcana.DataCase, async: true
 
-  alias Arcana.Graph.{Community, Entity, EntityMention}
+  alias Arcana.Graph.{Community, Entity, EntityMention, Relationship}
 
   setup do
     {:ok, doc} =
@@ -15,6 +15,31 @@ defmodule Arcana.AskTest do
     end
 
     %{doc: doc, llm: llm}
+  end
+
+  # Runs ask/2 against the "ask-graph-depth" collection with an arity-3
+  # prompt that captures the graph context handed to it.
+  defp captured_graph_context(llm, opts) do
+    received = :ets.new(:received, [:set, :public])
+
+    prompt = fn _question, _context, graph_context ->
+      :ets.insert(received, {:graph_context, graph_context})
+      "System prompt"
+    end
+
+    base_opts = [
+      repo: Arcana.TestRepo,
+      llm: llm,
+      collection: "ask-graph-depth",
+      graph: true,
+      prompt: prompt
+    ]
+
+    {:ok, _, _} = Arcana.ask("Alice", Keyword.merge(base_opts, opts))
+
+    [{:graph_context, graph_context}] = :ets.lookup(received, :graph_context)
+    :ets.delete(received)
+    graph_context
   end
 
   describe "ask/2" do
@@ -124,6 +149,79 @@ defmodule Arcana.AskTest do
 
       [{:prompt, _prompt}] = :ets.lookup(received, :prompt)
       :ets.delete(received)
+    end
+  end
+
+  describe "ask/2 with graph_depth" do
+    setup do
+      collection =
+        %Arcana.Collection{}
+        |> Arcana.Collection.changeset(%{name: "ask-graph-depth"})
+        |> Repo.insert!()
+
+      # Only Alice gets an embedding, so only Alice matches the question.
+      {:ok, embedding} = Arcana.Embedder.embed(Arcana.Config.embedder(), "Alice", intent: :query)
+
+      alice =
+        %Entity{}
+        |> Entity.changeset(%{
+          name: "Alice",
+          type: "person",
+          collection_id: collection.id,
+          embedding: embedding
+        })
+        |> Repo.insert!()
+
+      bob =
+        %Entity{}
+        |> Entity.changeset(%{name: "Bob", type: "person", collection_id: collection.id})
+        |> Repo.insert!()
+
+      carol =
+        %Entity{}
+        |> Entity.changeset(%{name: "Carol", type: "person", collection_id: collection.id})
+        |> Repo.insert!()
+
+      %Relationship{}
+      |> Relationship.changeset(%{
+        source_id: alice.id,
+        target_id: bob.id,
+        type: "knows"
+      })
+      |> Repo.insert!()
+
+      %Relationship{}
+      |> Relationship.changeset(%{
+        source_id: bob.id,
+        target_id: carol.id,
+        type: "mentors"
+      })
+      |> Repo.insert!()
+
+      llm = fn _prompt, _context, _opts -> {:ok, "answer"} end
+
+      %{llm: llm}
+    end
+
+    test "depth 0 keeps relationships restricted to matched entities", %{llm: llm} do
+      graph_context = captured_graph_context(llm, [])
+
+      assert [%{name: "Alice"}] = graph_context.entities
+      assert graph_context.relationships == []
+    end
+
+    test "depth 1 includes edges from matched entities to their neighbors", %{llm: llm} do
+      graph_context = captured_graph_context(llm, graph_depth: 1)
+
+      assert [%{name: "Alice"}] = graph_context.entities
+      assert [%{source: "Alice", target: "Bob", type: "knows"}] = graph_context.relationships
+    end
+
+    test "depth 2 includes the two-hop path edges", %{llm: llm} do
+      graph_context = captured_graph_context(llm, graph_depth: 2)
+
+      types = graph_context.relationships |> Enum.map(& &1.type) |> Enum.sort()
+      assert types == ["knows", "mentors"]
     end
   end
 end
