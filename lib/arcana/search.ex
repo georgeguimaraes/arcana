@@ -327,7 +327,14 @@ defmodule Arcana.Search do
             ids_by_hop =
               Arcana.Graph.expand_entity_ids(entity_ids, graph_depth, collection_ids, repo: repo)
 
-            graph_results = graph_search_by_entity_ids(ids_by_hop, repo, depth_decay)
+            graph_results =
+              graph_search_by_entity_ids(
+                ids_by_hop,
+                repo,
+                depth_decay,
+                Keyword.get(opts, :source_id)
+              )
+
             combined = rrf_combine(vector_results, graph_results, limit * rrf_pool, rrf_k)
             final_results = Enum.take(combined, limit)
 
@@ -365,21 +372,24 @@ defmodule Arcana.Search do
     Arcana.Config.parse_entity_matcher_config(value)
   end
 
-  defp graph_search_by_entity_ids(ids_by_hop, repo, depth_decay) do
+  defp graph_search_by_entity_ids(ids_by_hop, repo, depth_decay, source_id) do
     import Ecto.Query
     alias Arcana.Chunk
     alias Arcana.Graph.EntityMention
 
     all_entity_ids = ids_by_hop |> Map.values() |> List.flatten()
 
-    chunk_ids =
-      repo.all(
-        from(m in EntityMention,
-          where: m.entity_id in ^all_entity_ids,
-          select: m.chunk_id,
-          distinct: true
-        )
+    # Graph-derived chunks honor :source_id like the vector/keyword paths
+    # do; without this a source-scoped search leaks chunks from other
+    # documents that happen to mention a matched entity.
+    mentions_query =
+      from(m in EntityMention,
+        where: m.entity_id in ^all_entity_ids,
+        select: m.chunk_id,
+        distinct: true
       )
+
+    chunk_ids = repo.all(filter_mentions_by_source(mentions_query, source_id))
 
     if chunk_ids == [] do
       []
@@ -422,6 +432,21 @@ defmodule Arcana.Search do
   # Returns [%{chunk_id: id, score: score}] where score sums, per hop h,
   # mention_count_h * 0.1 * decay^h. With a single hop-0 group this reduces
   # to the original mention_count * 0.1 (decay^0 is exactly 1.0).
+  defp filter_mentions_by_source(query, nil), do: query
+
+  defp filter_mentions_by_source(query, source_id) do
+    import Ecto.Query
+    alias Arcana.{Chunk, Document}
+
+    from(m in query,
+      join: c in Chunk,
+      on: c.id == m.chunk_id,
+      join: d in Document,
+      on: d.id == c.document_id,
+      where: d.source_id == ^source_id
+    )
+  end
+
   defp score_chunks_by_hop(chunk_ids, ids_by_hop, depth_decay, repo) do
     import Ecto.Query
     alias Arcana.Graph.EntityMention

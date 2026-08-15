@@ -54,10 +54,15 @@ a query matching entity A can also retrieve chunks about A's neighbors:
 )
 ```
 
-Chunks reached through traversal are down-weighted per hop (score decays by
-`query_depth_decay` per hop, 0.5 by default), so direct matches still rank
-first when results are fused with vector search. Expansion respects collection
-scoping: entities from other collections are never pulled in.
+Chunks reached through traversal are down-weighted per hop: a chunk's graph
+score is `mentions * 0.1 * query_depth_decay^hop` (decay 0.5 by default), so a
+neighbor chunk always scores below an equally-mentioned direct chunk. It does
+not rank below *every* direct chunk — a hop-1 chunk mentioning a neighbor
+three times (`3 * 0.1 * 0.5 = 0.15`) still outscores a direct chunk mentioned
+once (`0.1`). Lower `query_depth_decay` if you want traversal to weigh less.
+
+Expansion respects collection scoping (entities from other collections are
+never pulled in) and honors `:source_id`.
 
 Set a global default and tune the decay in config (per-call `graph_depth`
 wins):

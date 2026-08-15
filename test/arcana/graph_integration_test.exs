@@ -9,15 +9,20 @@ defmodule Arcana.GraphIntegrationTest do
     |> Repo.insert!()
   end
 
-  defp create_document(collection) do
+  defp create_document(collection, attrs \\ %{}) do
     %Arcana.Document{}
-    |> Arcana.Document.changeset(%{
-      title: "test-doc",
-      source: "test",
-      content: "Test document content",
-      collection_id: collection.id,
-      status: :completed
-    })
+    |> Arcana.Document.changeset(
+      Map.merge(
+        %{
+          title: "test-doc",
+          source: "test",
+          content: "Test document content",
+          collection_id: collection.id,
+          status: :completed
+        },
+        attrs
+      )
+    )
     |> Repo.insert!()
   end
 
@@ -314,7 +319,7 @@ defmodule Arcana.GraphIntegrationTest do
       collection = create_collection("depth-test")
       other_collection = create_collection("depth-other")
 
-      document = create_document(collection)
+      document = create_document(collection, %{source_id: "scoped-source"})
       other_document = create_document(other_collection)
 
       chunk_a = create_chunk(document, "Chunk about Alice")
@@ -347,7 +352,15 @@ defmodule Arcana.GraphIntegrationTest do
         end
       ]
 
-      %{opts: opts, chunk_a: chunk_a, chunk_b: chunk_b, chunk_c: chunk_c, chunk_d: chunk_d}
+      %{
+        opts: opts,
+        collection: collection,
+        bob: bob,
+        chunk_a: chunk_a,
+        chunk_b: chunk_b,
+        chunk_c: chunk_c,
+        chunk_d: chunk_d
+      }
     end
 
     test "default depth 0 returns only direct-mention chunks", ctx do
@@ -362,6 +375,25 @@ defmodule Arcana.GraphIntegrationTest do
       {:ok, depth_zero_results} = Arcana.search("Alice", Keyword.put(ctx.opts, :graph_depth, 0))
 
       assert depth_zero_results == default_results
+    end
+
+    test "graph results honor :source_id at every hop", %{opts: opts} = ctx do
+      # Bob (a hop-1 neighbor of Alice) is also mentioned by a chunk in a
+      # different source; a source-scoped search must not surface it
+      other_source_doc = create_document(ctx.collection, %{source_id: "other-source"})
+      foreign_chunk = create_chunk(other_source_doc, "Bob in another source")
+      create_mention(ctx.bob, foreign_chunk)
+
+      scoped_opts =
+        opts
+        |> Keyword.put(:graph_depth, 1)
+        |> Keyword.put(:source_id, "scoped-source")
+
+      {:ok, results} = Arcana.search("Alice", scoped_opts)
+      ids = Enum.map(results, & &1.id)
+
+      assert ctx.chunk_a.id in ids
+      refute foreign_chunk.id in ids
     end
 
     test "graph_depth: 1 pulls in neighbor chunks ranked below direct matches", ctx do

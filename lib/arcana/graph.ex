@@ -251,9 +251,8 @@ defmodule Arcana.Graph do
   defp do_expand(frontier, visited, acc, hop, depth, collection_ids, repo) do
     neighbors =
       frontier
-      |> neighbor_entity_ids(repo)
+      |> neighbor_entity_ids(collection_ids, repo)
       |> Enum.reject(&MapSet.member?(visited, &1))
-      |> scope_entity_ids(collection_ids, repo)
 
     case neighbors do
       [] ->
@@ -265,34 +264,36 @@ defmodule Arcana.Graph do
     end
   end
 
-  defp neighbor_entity_ids(frontier, repo) do
+  # One query per hop: joining both endpoints carries each neighbor's
+  # collection along, so scoping needs no second round trip.
+  defp neighbor_entity_ids(frontier, collection_ids, repo) do
     import Ecto.Query
 
     repo.all(
       from(r in Arcana.Graph.Relationship,
+        join: s in Arcana.Graph.Entity,
+        on: s.id == r.source_id,
+        join: t in Arcana.Graph.Entity,
+        on: t.id == r.target_id,
         where: r.source_id in ^frontier or r.target_id in ^frontier,
-        select: {r.source_id, r.target_id}
+        select: {r.source_id, s.collection_id, r.target_id, t.collection_id}
       )
     )
-    |> Enum.flat_map(fn {source, target} -> [source, target] end)
+    |> Enum.flat_map(fn {source, source_collection, target, target_collection} ->
+      [{source, source_collection}, {target, target_collection}]
+    end)
+    |> Enum.filter(fn {_id, collection_id} -> in_scope?(collection_id, collection_ids) end)
+    |> Enum.map(fn {id, _collection_id} -> id end)
     |> Enum.uniq()
   end
 
+  # nil means unscoped; a list scopes traversal, and an empty list
+  # expands nothing (same semantics as collection filters elsewhere).
+  defp in_scope?(_collection_id, nil), do: true
+  defp in_scope?(collection_id, collection_ids), do: collection_id in collection_ids
+
   # nil means unscoped; a list scopes the expansion, and an empty list must
   # match nothing (`in []` compiles to false) — never fall back to global.
-  defp scope_entity_ids([], _collection_ids, _repo), do: []
-  defp scope_entity_ids(ids, nil, _repo), do: ids
-
-  defp scope_entity_ids(ids, collection_ids, repo) when is_list(collection_ids) do
-    import Ecto.Query
-
-    repo.all(
-      from(e in Arcana.Graph.Entity,
-        where: e.id in ^ids and e.collection_id in ^collection_ids,
-        select: e.id
-      )
-    )
-  end
 
   @doc """
   Builds graph data from document chunks.
