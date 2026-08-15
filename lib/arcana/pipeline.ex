@@ -553,6 +553,10 @@ defmodule Arcana.Pipeline do
   2. `ctx.collections` (set by `select/2` if LLM selection was used)
   3. Falls back to `"default"` collection
 
+  The resolved list is recorded on `ctx.collections`, so later steps that
+  retrieve (like `reason/2`) search the same scope instead of picking one
+  of their own.
+
   This allows you to explicitly specify a collection without using LLM-based selection:
 
       # Search a specific collection
@@ -612,14 +616,7 @@ defmodule Arcana.Pipeline do
   def search(%Context{} = ctx, opts) do
     searcher = Keyword.get(opts, :searcher, Arcana.Searcher.Arcana)
 
-    # Collection priority: option > ctx.collections > default
-    collections =
-      cond do
-        Keyword.has_key?(opts, :collections) -> Keyword.get(opts, :collections)
-        Keyword.has_key?(opts, :collection) -> [Keyword.get(opts, :collection)]
-        ctx.collections != nil -> ctx.collections
-        true -> ["default"]
-      end
+    collections = resolve_collections(ctx, opts)
 
     start_metadata = %{
       question: ctx.question,
@@ -639,7 +636,7 @@ defmodule Arcana.Pipeline do
           %{question: question, collection: collection, chunks: chunks}
         end
 
-      updated_ctx = %{ctx | results: results, searcher: searcher}
+      updated_ctx = %{ctx | results: results, searcher: searcher, collections: collections}
       total_chunks = results |> Enum.flat_map(& &1.chunks) |> length()
 
       stop_metadata = %{
@@ -649,6 +646,21 @@ defmodule Arcana.Pipeline do
 
       {updated_ctx, stop_metadata}
     end)
+  end
+
+  # Collection priority: option > ctx.collections > the "default" collection
+  # that Arcana.ingest/2 writes to when the caller names none.
+  #
+  # search/2 records what this returns on the context, so every later step
+  # that retrieves resolves the same scope by calling this with no options
+  # instead of guessing one from whatever results survived.
+  defp resolve_collections(ctx, opts) do
+    cond do
+      Keyword.has_key?(opts, :collections) -> Keyword.get(opts, :collections)
+      Keyword.has_key?(opts, :collection) -> [Keyword.get(opts, :collection)]
+      ctx.collections != nil -> ctx.collections
+      true -> ["default"]
+    end
   end
 
   defp searcher_name(searcher) when is_atom(searcher), do: searcher
@@ -688,6 +700,9 @@ defmodule Arcana.Pipeline do
     the option. Falls back to `Arcana.Searcher.Arcana` when `search/2` never
     ran.
 
+  Follow-up searches run against `ctx.collections`, which `search/2` records,
+  so the collection scope keeps applying too.
+
   ## Example
 
       ctx
@@ -713,8 +728,14 @@ defmodule Arcana.Pipeline do
       # Follow-up searches go through the same searcher as search/2, so a
       # caller that scoped retrieval there can't be widened here. search/2
       # records its searcher on the context, so the inheritance holds even
-      # when reason/2 is called without repeating the option.
-      searcher = Keyword.get(opts, :searcher) || ctx.searcher || Arcana.Searcher.Arcana
+      # when reason/2 is called without repeating the option. fetch, not
+      # get: an explicit `searcher: nil` is a caller mistake and should
+      # fail the same way it does on search/2, not quietly inherit.
+      searcher =
+        case Keyword.fetch(opts, :searcher) do
+          {:ok, searcher} -> searcher
+          :error -> ctx.searcher || Arcana.Searcher.Arcana
+        end
 
       # Initialize queries_tried if not set
       queries_tried = ctx.queries_tried || MapSet.new([ctx.question])
@@ -825,13 +846,11 @@ defmodule Arcana.Pipeline do
   end
 
   defp do_additional_search(ctx, query, searcher) do
-    # Determine which collections to search
-    collections =
-      cond do
-        ctx.collections && ctx.collections != [] -> ctx.collections
-        ctx.results && ctx.results != [] -> [hd(ctx.results).collection]
-        true -> ["default"]
-      end
+    # Follow-ups search exactly what search/2 searched. Deriving the scope
+    # from ctx.results instead would drift: merge_results drops results
+    # whose chunks came back empty, so one dry follow-up leaves nothing to
+    # derive from and the next one widens past what the caller asked for.
+    collections = resolve_collections(ctx, [])
 
     Enum.map(collections, fn collection ->
       search_opts = [
