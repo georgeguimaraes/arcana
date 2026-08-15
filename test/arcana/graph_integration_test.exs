@@ -310,7 +310,7 @@ defmodule Arcana.GraphIntegrationTest do
       end
 
       # A half-built graph must not leave a document stuck in :processing
-      assert [document] = Repo.all(Arcana.Document)
+      assert [document] = documents_in("graph-build-blows-up")
       assert document.status == :failed
     end
 
