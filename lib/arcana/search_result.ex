@@ -88,17 +88,31 @@ defmodule Arcana.SearchResult do
   def fetch(%__MODULE__{}, _key), do: :error
 
   @impl Access
-  def get_and_update(%__MODULE__{} = result, key, fun) when is_atom(key) do
+  def get_and_update(%__MODULE__{} = result, key, fun) when is_map_key(result, key) do
     current = Map.get(result, key)
 
     case fun.(current) do
       {get, update} -> {get, Map.replace!(result, key, update)}
-      :pop -> {current, Map.replace!(result, key, nil)}
+      :pop -> pop(result, key)
     end
   end
 
+  def get_and_update(%__MODULE__{}, key, _fun) do
+    raise ArgumentError,
+          "Arcana.SearchResult only supports Access updates on its own fields, " <>
+            "got: #{inspect(key)}"
+  end
+
   @impl Access
-  def pop(%__MODULE__{} = result, key) when is_atom(key) do
+  def pop(%__MODULE__{} = result, :metadata), do: {result.metadata, %{result | metadata: %{}}}
+
+  def pop(%__MODULE__{} = result, key) when is_map_key(result, key) do
     {Map.get(result, key), Map.replace!(result, key, nil)}
+  end
+
+  def pop(%__MODULE__{}, key) do
+    raise ArgumentError,
+          "Arcana.SearchResult only supports Access updates on its own fields, " <>
+            "got: #{inspect(key)}"
   end
 end

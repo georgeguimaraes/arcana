@@ -91,8 +91,14 @@ defmodule Mix.Tasks.Arcana.ReembedChunks do
     reembed_opts =
       if collection, do: Keyword.put(reembed_opts, :collection, collection), else: reembed_opts
 
-    {:ok, %{rechunked_documents: docs, total_chunks: total, skipped: skipped}} =
-      Arcana.Maintenance.reembed(repo, reembed_opts)
+    {docs, total, skipped} =
+      case Arcana.Maintenance.reembed(repo, reembed_opts) do
+        {:ok, %{rechunked_documents: docs, total_chunks: total, skipped: skipped}} ->
+          {docs, total, skipped}
+
+        {:error, {:unknown_collection, name}} ->
+          Mix.raise("Collection #{inspect(name)} does not exist")
+      end
 
     unless quiet, do: IO.puts("")
 

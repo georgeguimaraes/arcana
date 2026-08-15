@@ -35,9 +35,22 @@ defmodule Arcana.VectorStore.Pgvector do
   def store(collection, id, embedding, metadata, opts) do
     repo = Keyword.fetch!(opts, :repo)
 
-    # Get or create collection
-    {:ok, coll} = Collection.get_or_create(collection, repo)
+    # Auto-create the collection unless strict mode requires it to exist
+    case resolve_store_collection(collection, repo, opts) do
+      {:ok, coll} -> do_store(coll, id, embedding, metadata, opts, repo)
+      {:error, _} = error -> error
+    end
+  end
 
+  defp resolve_store_collection(collection, repo, opts) do
+    if Arcana.Config.strict_collections?(opts) do
+      Collection.fetch(collection, repo)
+    else
+      Collection.get_or_create(collection, repo)
+    end
+  end
+
+  defp do_store(coll, id, embedding, metadata, opts, repo) do
     # For standalone vector storage, we create a minimal document
     document_id = Keyword.get(opts, :document_id)
 
@@ -92,14 +105,7 @@ defmodule Arcana.VectorStore.Pgvector do
     threshold = Keyword.get(opts, :threshold, 0.0)
     source_id = Keyword.get(opts, :source_id)
 
-    # Get collection_id if collection name is provided
-    collection_id =
-      if collection do
-        case repo.get_by(Collection, name: collection) do
-          nil -> nil
-          coll -> coll.id
-        end
-      end
+    collection_id = resolve_filter_collection_id(collection, repo, opts)
 
     base_query =
       from(c in Chunk,
@@ -134,14 +140,7 @@ defmodule Arcana.VectorStore.Pgvector do
     limit = Keyword.get(opts, :limit, 10)
     source_id = Keyword.get(opts, :source_id)
 
-    # Get collection_id if collection name is provided
-    collection_id =
-      if collection do
-        case repo.get_by(Collection, name: collection) do
-          nil -> nil
-          coll -> coll.id
-        end
-      end
+    collection_id = resolve_filter_collection_id(collection, repo, opts)
 
     base_query =
       from(c in Chunk,
@@ -219,17 +218,15 @@ defmodule Arcana.VectorStore.Pgvector do
     keyword_weight = Keyword.get(opts, :keyword_weight, 0.5)
     threshold = Keyword.get(opts, :threshold, 0.0)
 
-    # Get collection_id if collection name is provided, convert to binary for SQL
+    # Resolve the collection filter, converted to binary for raw SQL
     collection_id =
-      if collection do
-        case repo.get_by(Collection, name: collection) do
-          nil ->
-            nil
+      case resolve_filter_collection_id(collection, repo, opts) do
+        nil ->
+          nil
 
-          coll ->
-            {:ok, binary_id} = Ecto.UUID.dump(coll.id)
-            binary_id
-        end
+        id ->
+          {:ok, binary_id} = Ecto.UUID.dump(id)
+          binary_id
       end
 
     # Use raw SQL for the hybrid query with CTEs for proper normalization
@@ -413,6 +410,24 @@ defmodule Arcana.VectorStore.Pgvector do
 
       true ->
         :ok
+    end
+  end
+
+  # Prefer a pre-resolved :collection_id (set by Arcana.Search under strict
+  # mode so the query is pinned to the validated id); otherwise resolve the
+  # name, keeping the historical no-filter fallback for unknown names.
+  defp resolve_filter_collection_id(collection, repo, opts) do
+    case Keyword.get(opts, :collection_id) do
+      nil ->
+        if collection do
+          case repo.get_by(Collection, name: collection) do
+            nil -> nil
+            coll -> coll.id
+          end
+        end
+
+      id ->
+        id
     end
   end
 

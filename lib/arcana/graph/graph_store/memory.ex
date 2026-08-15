@@ -667,8 +667,9 @@ defmodule Arcana.Graph.GraphStore.Memory do
     end
   end
 
+  # nil means unscoped; [] means the caller named collections that resolved
+  # to nothing and must match nothing, never fall back to everything.
   defp filter_by_collections(entities_map, nil), do: entities_map
-  defp filter_by_collections(entities_map, []), do: entities_map
 
   defp filter_by_collections(entities_map, collection_ids) do
     Map.take(entities_map, collection_ids)

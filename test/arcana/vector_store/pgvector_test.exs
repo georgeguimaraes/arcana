@@ -165,6 +165,52 @@ defmodule Arcana.VectorStore.PgvectorTest do
     end
   end
 
+  describe "store/5 with strict collections" do
+    test "errors instead of auto-creating an unknown collection" do
+      repo = Arcana.TestRepo
+      embedding = List.duplicate(0.5, 384)
+
+      assert {:error, {:unknown_collection, "strict-store-nope"}} =
+               Pgvector.store("strict-store-nope", Ecto.UUID.generate(), embedding, %{},
+                 repo: repo,
+                 strict_collections: true
+               )
+
+      assert repo.get_by(Collection, name: "strict-store-nope") == nil
+    end
+  end
+
+  describe "search/3 with a pre-resolved collection id" do
+    test "the :collection_id opt pins the query instead of re-resolving the name" do
+      repo = Arcana.TestRepo
+
+      {:ok, collection} = Collection.get_or_create("pinned-coll", repo)
+
+      {:ok, doc} =
+        %Document{}
+        |> Document.changeset(%{content: "x", status: :completed, collection_id: collection.id})
+        |> repo.insert()
+
+      {:ok, _chunk} =
+        %Chunk{}
+        |> Chunk.changeset(%{
+          text: "pinned chunk",
+          embedding: List.duplicate(0.5, 384),
+          document_id: doc.id
+        })
+        |> repo.insert()
+
+      # The name doesn't resolve, but the id filter must still apply
+      results =
+        Pgvector.search("renamed-since-validation", List.duplicate(0.5, 384),
+          repo: repo,
+          collection_id: collection.id
+        )
+
+      assert [%{metadata: %{text: "pinned chunk"}}] = results
+    end
+  end
+
   describe "delete/3" do
     test "removes chunk from collection" do
       repo = Arcana.TestRepo

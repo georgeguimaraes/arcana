@@ -94,26 +94,39 @@ defmodule Arcana.Search do
             "invalid search mode: #{inspect(mode)}. Must be one of #{inspect(@valid_modes)}"
     end
 
-    with :ok <- validate_collections(collections, repo, opts) do
+    with {:ok, id_by_name} <- resolve_strict_ids(collections, repo, opts) do
       do_search_with_telemetry(query, collections, mode, repo, opts, %{
         reranker: reranker,
         limit: limit,
         source_id: source_id,
         threshold: threshold,
         rewriter: rewriter,
-        vector_store_opt: vector_store_opt
+        vector_store_opt: vector_store_opt,
+        id_by_name: id_by_name
       })
     end
   end
 
-  defp validate_collections(collections, repo, opts) do
+  # Under strict mode, resolve every named collection up front and keep the
+  # name => id map so backends query by the validated id instead of
+  # re-resolving the name (which could silently widen to a global search if
+  # the collection disappeared in between). Returns {:ok, nil} when strict
+  # is off or the search is unscoped.
+  defp resolve_strict_ids(collections, repo, opts) do
     if repo && Arcana.Config.strict_collections?(opts) do
       case Collection.resolve_ids(collections, repo, strict: true) do
-        {:ok, _ids} -> :ok
-        {:error, _} = error -> error
+        {:ok, nil} ->
+          {:ok, nil}
+
+        {:ok, ids} ->
+          names = Enum.reject(collections, &is_nil/1)
+          {:ok, names |> Enum.zip(ids) |> Map.new()}
+
+        {:error, _} = error ->
+          error
       end
     else
-      :ok
+      {:ok, nil}
     end
   end
 
@@ -124,7 +137,8 @@ defmodule Arcana.Search do
       source_id: source_id,
       threshold: threshold,
       rewriter: rewriter,
-      vector_store_opt: vector_store_opt
+      vector_store_opt: vector_store_opt,
+      id_by_name: id_by_name
     } = config
 
     start_metadata = %{
@@ -149,6 +163,7 @@ defmodule Arcana.Search do
         vector_store: vector_store_opt,
         vector_weight: Keyword.get(opts, :vector_weight, 0.5),
         keyword_weight: Keyword.get(opts, :keyword_weight, 0.5),
+        id_by_name: id_by_name,
         # Original opts so backends can pick up any extra knobs (e.g. :hnsw_ef_search)
         opts: opts
       }
@@ -245,7 +260,14 @@ defmodule Arcana.Search do
   end
 
   defp search_single_collection(mode, search_query, params, collection_name, acc) do
-    case do_search(mode, search_query, Map.put(params, :collection, collection_name)) do
+    collection_id = params.id_by_name && Map.get(params.id_by_name, collection_name)
+
+    params =
+      params
+      |> Map.put(:collection, collection_name)
+      |> Map.put(:collection_id, collection_id)
+
+    case do_search(mode, search_query, params) do
       {:ok, results} -> {:cont, {:ok, acc ++ results}}
       {:error, reason} -> {:halt, {:error, reason}}
     end
@@ -384,7 +406,9 @@ defmodule Arcana.Search do
   defp do_search(:vector, query, params) do
     case Embedder.embed(Arcana.Config.embedder(), query, intent: :query) do
       {:ok, query_embedding} ->
-        vector_store_opts = build_vector_store_opts(params, [:limit, :threshold, :source_id])
+        vector_store_opts =
+          build_vector_store_opts(params, [:limit, :threshold, :source_id, :collection_id])
+
         results = VectorStore.search(params.collection, query_embedding, vector_store_opts)
 
         {:ok, transform_results(results)}
@@ -395,7 +419,7 @@ defmodule Arcana.Search do
   end
 
   defp do_search(:keyword, query, params) do
-    vector_store_opts = build_vector_store_opts(params, [:limit, :source_id])
+    vector_store_opts = build_vector_store_opts(params, [:limit, :source_id, :collection_id])
     results = VectorStore.search_text(params.collection, query, vector_store_opts)
 
     {:ok, transform_results(results)}
@@ -425,6 +449,7 @@ defmodule Arcana.Search do
             limit: params.limit,
             source_id: params.source_id,
             threshold: params.threshold,
+            collection_id: Map.get(params, :collection_id),
             vector_weight: Map.get(params, :vector_weight, 0.5),
             keyword_weight: Map.get(params, :keyword_weight, 0.5)
           )

@@ -332,10 +332,19 @@ config :arcana, strict_collections: true
 ```
 
 With strict mode on, `Arcana.search/2`, `Arcana.ask/2`, `Arcana.ingest/2`,
-vector-store deletes, and maintenance tasks return
+vector-store writes/deletes, and maintenance functions return
 `{:error, {:unknown_collection, name}}` for names that don't exist. Create
 collections explicitly with `Arcana.Collection.get_or_create/3`. The flag can
 also be passed per call (`strict_collections: false` opts out for one call).
+
+Two things to know:
+
+- Ingest without a `:collection` uses the implicit `"default"` collection,
+  which strict mode also requires to exist. Create it once at setup:
+  `Arcana.Collection.get_or_create("default", MyApp.Repo)`.
+- Without strict mode, an unknown name still searches unscoped on the
+  vector/keyword path (legacy behavior), but graph-enhanced context is
+  scoped to nothing rather than leaking across collections.
 
 Strict mode will become the default in Arcana 3.0.
 

@@ -58,5 +58,23 @@ defmodule Arcana.SearchResultTest do
       assert old == 1.0
       assert updated.score == 2.0
     end
+
+    test "updates on unknown keys raise a clear error" do
+      result = %SearchResult{id: "x", text: "hello", score: 1.0}
+
+      assert_raise ArgumentError, ~r/only supports Access updates/, fn ->
+        Access.get_and_update(result, :not_a_field, fn v -> {v, 1} end)
+      end
+
+      assert_raise ArgumentError, ~r/only supports Access updates/, fn ->
+        Access.pop(result, "text")
+      end
+    end
+
+    test "popping metadata resets it to an empty map" do
+      result = %SearchResult{id: "x", text: "t", score: 1.0, metadata: %{"a" => 1}}
+
+      assert {%{"a" => 1}, %SearchResult{metadata: %{}}} = Access.pop(result, :metadata)
+    end
   end
 end
