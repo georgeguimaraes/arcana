@@ -110,6 +110,30 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       assert Repo.get(Entity, existing.id).name == "Two_Year_Limited_Warranty"
     end
 
+    # Elixir's String.downcase/trim and Postgres' lower/btrim disagree on
+    # these three, so an entity used to miss ITSELF on the second upsert,
+    # re-insert its own raw name and trip the (name, collection_id) unique
+    # index. NBSP in particular arrives with any HTML/PDF-derived text.
+    for {label, name} <- [
+          {"trailing NBSP", "Delivery "},
+          {"mid-string thin space", "Acme Corp"},
+          {"turkish dotted capital I", "İstanbul"}
+        ] do
+      test "upserts an entity into itself when the name carries a #{label}" do
+        collection = create_collection()
+        name = unquote(name)
+
+        {:ok, _} =
+          EctoStore.persist_entities(collection.id, [%{name: name, type: "concept"}], repo: Repo)
+
+        {:ok, _} =
+          EctoStore.persist_entities(collection.id, [%{name: name, type: "concept"}], repo: Repo)
+
+        assert Repo.aggregate(from(e in Entity, where: e.collection_id == ^collection.id), :count) ==
+                 1
+      end
+    end
+
     test "inserts entity with metadata" do
       collection = create_collection()
 
@@ -229,6 +253,22 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
     test "returns empty list when no entities match" do
       results = EctoStore.search(["Unknown"], nil, repo: Repo)
       assert results == []
+    end
+
+    test "matches stored name variants, not just the exact stored spelling" do
+      collection = create_collection()
+      chunk = collection |> create_document() |> create_chunk()
+
+      # Write-side dedup collapses variants onto one row that keeps its
+      # first-seen display name, so the read path has to normalize too or
+      # legacy rows become unreachable from the names extractors now emit.
+      warranty = create_entity(collection, "Two_Year_Limited_Warranty", "concept")
+      create_mention(warranty, chunk)
+
+      results = EctoStore.search(["two year limited warranty"], [collection.id], repo: Repo)
+
+      assert [%{chunk_id: chunk_id}] = results
+      assert chunk_id == chunk.id
     end
 
     test "empty collection_ids matches nothing instead of searching globally" do

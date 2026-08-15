@@ -11,9 +11,24 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   alias Arcana.Graph.{Community, Entity, EntityMention, EntityName, Relationship}
   import Ecto.Query
 
-  # Mirrors EntityName.normalize/1 in SQL so upserts match name variants
-  # already stored with different casing/underscores.
-  @normalize_name_sql "btrim(regexp_replace(regexp_replace(lower(?), '[_-]+', ' ', 'g'), '\\s+', ' ', 'g'))"
+  # Postgres-side spelling of EntityName.normalize/1, so upserts and
+  # lookups match name variants already stored with different
+  # casing/underscores.
+  #
+  # It does NOT agree with the Elixir version character for character, and
+  # can't be made to: String.trim/1 strips every Unicode whitespace while
+  # btrim strips U+0020, String.downcase/1 decomposes U+0130 while lower()
+  # doesn't, and Postgres' `\s` matches U+2009 while Elixir's doesn't. So
+  # every comparison normalizes BOTH sides through this SQL instead of
+  # comparing an Elixir-computed key against a SQL-computed one — an
+  # entity that fails to match itself re-inserts its own name and trips
+  # the (name, collection_id) unique index.
+  @normalize_template "btrim(regexp_replace(regexp_replace(lower(EXPR), '[_-]+', ' ', 'g'), '\\s+', ' ', 'g'))"
+  @normalize_name_sql String.replace(@normalize_template, "EXPR", "?")
+  @normalized_names_match_sql @normalize_name_sql <>
+                                " = ANY(SELECT " <>
+                                String.replace(@normalize_template, "EXPR", "n") <>
+                                " FROM unnest(?::text[]) AS n)"
 
   # === Storage Callbacks ===
 
@@ -29,7 +44,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
       |> Enum.reject(fn {key, _entity} -> is_nil(key) or key == "" end)
       |> Enum.uniq_by(fn {key, _entity} -> key end)
       |> Enum.reduce(%{}, fn {key, entity}, id_map ->
-        entity_record = upsert_entity(entity, key, collection_id, repo)
+        entity_record = upsert_entity(entity, collection_id, repo)
         Map.put(id_map, key, entity_record.id)
       end)
 
@@ -295,6 +310,9 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     end)
   end
 
+  # Also drops the swept ids from entity_ids: the community stays dirty
+  # until the next summarize pass, but until then its entity_count would
+  # otherwise keep counting entities that no longer exist.
   defp mark_overlapping_communities_dirty(collection_id, entity_ids, repo) do
     now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
@@ -302,9 +320,21 @@ defmodule Arcana.Graph.GraphStore.Ecto do
       from(c in Community,
         where:
           c.collection_id == ^collection_id and
-            fragment("? && ?", c.entity_ids, type(^entity_ids, {:array, Ecto.UUID}))
+            fragment("? && ?", c.entity_ids, type(^entity_ids, {:array, Ecto.UUID})),
+        update: [
+          set: [
+            dirty: true,
+            updated_at: ^now,
+            entity_ids:
+              fragment(
+                "ARRAY(SELECT x FROM unnest(?) AS x WHERE NOT (x = ANY(?)))",
+                c.entity_ids,
+                type(^entity_ids, {:array, Ecto.UUID})
+              )
+          ]
+        ]
       ),
-      set: [dirty: true, updated_at: now]
+      []
     )
   end
 
@@ -597,10 +627,14 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
   # === Private Helpers ===
 
-  defp upsert_entity(entity, normalized_name, collection_id, repo) do
+  defp upsert_entity(entity, collection_id, repo) do
     # Match on the normalized name so stored variants ("Delivery" vs
-    # "delivery") upsert into one row. Legacy data may already hold
-    # several variants, so take the oldest instead of expecting one.
+    # "delivery") upsert into one row. Both sides go through the SQL
+    # normalization (see @normalize_template): comparing against an
+    # Elixir-computed key makes an entity miss itself whenever the two
+    # engines disagree, and the re-insert then hits the unique index.
+    # Legacy data may already hold several variants, so take the oldest
+    # instead of expecting one.
     #
     # The select-then-insert is only safe because callers hold the
     # collection's write lock (see with_write_lock/3); without it two
@@ -612,7 +646,8 @@ defmodule Arcana.Graph.GraphStore.Ecto do
         from(e in Entity,
           where:
             e.collection_id == ^collection_id and
-              fragment(@normalize_name_sql, e.name) == ^normalized_name,
+              fragment(@normalize_name_sql, e.name) ==
+                fragment(@normalize_name_sql, type(^entity.name, :string)),
           order_by: [asc: e.inserted_at],
           limit: 1
         )
@@ -648,7 +683,21 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   defp find_entity_ids([], _collection_ids, _repo), do: []
 
   defp find_entity_ids(entity_names, collection_ids, repo) do
-    query = from(e in Entity, where: e.name in ^entity_names, select: e.id)
+    # Match normalized names, not raw ones: the write side collapses
+    # variants onto one row that keeps its first-seen display name, so a
+    # stored "Two_Year_Limited_Warranty" is unreachable from the "two year
+    # limited warranty" a query-time extractor emits. Both sides normalize
+    # through the same SQL for the reasons in @normalize_template.
+    query =
+      from(e in Entity,
+        where:
+          fragment(
+            @normalized_names_match_sql,
+            e.name,
+            type(^entity_names, {:array, :string})
+          ),
+        select: e.id
+      )
 
     query =
       if is_list(collection_ids),

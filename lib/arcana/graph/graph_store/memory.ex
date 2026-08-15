@@ -267,12 +267,17 @@ defmodule Arcana.Graph.GraphStore.Memory do
 
   @impl GenServer
   def handle_call({:search, entity_names, collection_ids}, _from, state) do
-    # Find entity IDs matching names
+    # Match on the normalized name: persistence collapses variants onto
+    # one entity keeping its first-seen display name, so matching raw
+    # names here would miss a stored "Two_Year_Limited_Warranty" for a
+    # query that asks for "two year limited warranty".
+    wanted = MapSet.new(entity_names, &EntityName.normalize/1)
+
     entity_ids =
       state.entities
       |> filter_by_collections(collection_ids)
       |> Enum.flat_map(fn {_cid, entities} -> entities end)
-      |> Enum.filter(fn e -> e.name in entity_names end)
+      |> Enum.filter(fn e -> MapSet.member?(wanted, EntityName.normalize(e.name)) end)
       |> Enum.map(& &1.id)
       |> MapSet.new()
 
@@ -745,11 +750,23 @@ defmodule Arcana.Graph.GraphStore.Memory do
     find_related_bfs(related_ids, new_visited, depth - 1, relationships)
   end
 
+  # Drops the swept ids from entity_ids too, so entity_count stops
+  # counting entities that no longer exist, and bumps updated_at the way
+  # the Ecto backend does.
   defp mark_overlapping_dirty(communities, orphaned_ids) do
-    Enum.map(communities, fn community ->
-      overlaps? = Enum.any?(community.entity_ids || [], &MapSet.member?(orphaned_ids, &1))
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
-      if overlaps?, do: Map.put(community, :dirty, true), else: community
+    Enum.map(communities, fn community ->
+      entity_ids = community.entity_ids || []
+
+      if Enum.any?(entity_ids, &MapSet.member?(orphaned_ids, &1)) do
+        community
+        |> Map.put(:dirty, true)
+        |> Map.put(:updated_at, now)
+        |> Map.put(:entity_ids, Enum.reject(entity_ids, &MapSet.member?(orphaned_ids, &1)))
+      else
+        community
+      end
     end)
   end
 

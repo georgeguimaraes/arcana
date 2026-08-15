@@ -163,6 +163,28 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       results = Memory.search(["Unknown"], nil, pid: pid)
       assert results == []
     end
+
+    test "matches stored name variants, not just the exact stored spelling", %{pid: pid} do
+      collection_id = "col-variants"
+
+      {:ok, id_map} =
+        Memory.persist_entities(
+          collection_id,
+          [%{name: "Two_Year_Limited_Warranty", type: "concept"}],
+          pid: pid
+        )
+
+      :ok =
+        Memory.persist_mentions(
+          [%{entity_name: "Two_Year_Limited_Warranty", chunk_id: "chunk-1"}],
+          id_map,
+          pid: pid
+        )
+
+      results = Memory.search(["two year limited warranty"], [collection_id], pid: pid)
+
+      assert [%{chunk_id: "chunk-1"}] = results
+    end
   end
 
   describe "find_entities/2" do
@@ -295,6 +317,11 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       {:ok, comm2} = Memory.get_community("comm-2", pid: pid)
       assert comm1.dirty
       refute comm2.dirty
+
+      # entity_count is derived from entity_ids, so the swept id has to go
+      # or the community over-reports until the next summarize
+      assert comm1.entity_ids == []
+      assert comm2.entity_ids == [id_map["kept"]]
     end
   end
 end
