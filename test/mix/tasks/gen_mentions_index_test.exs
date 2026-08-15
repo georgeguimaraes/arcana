@@ -11,16 +11,23 @@ defmodule Mix.Tasks.Arcana.Graph.Gen.MentionsIndexTest do
   # has an explicit :priv. Expectations are computed from
   # Mix.EctoSQL.source_repo_priv/1 — the same function `mix ecto.migrate`
   # resolves migrations through — not from a hand-written string.
+  #
+  # They hang off their own otp_app, not :arcana. Arcana.Config.repo!/1
+  # scans the :arcana app env for per-repo entries and raises when it finds
+  # more than one, so registering a second Ecto repo there would break
+  # whichever async test happens to be scanning at the time.
+  @otp_app :arcana_mentions_index_test
+
   defmodule DefaultPrivRepo do
-    use Ecto.Repo, otp_app: :arcana, adapter: Ecto.Adapters.Postgres
+    use Ecto.Repo, otp_app: :arcana_mentions_index_test, adapter: Ecto.Adapters.Postgres
   end
 
   defmodule CustomPrivRepo do
-    use Ecto.Repo, otp_app: :arcana, adapter: Ecto.Adapters.Postgres
+    use Ecto.Repo, otp_app: :arcana_mentions_index_test, adapter: Ecto.Adapters.Postgres
   end
 
   setup_all do
-    Application.put_env(:arcana, CustomPrivRepo, priv: "priv/mentions_index_custom_priv")
+    Application.put_env(@otp_app, CustomPrivRepo, priv: "priv/mentions_index_custom_priv")
     :ok
   end
 
