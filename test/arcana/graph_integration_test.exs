@@ -2,6 +2,7 @@ defmodule Arcana.GraphIntegrationTest do
   use Arcana.DataCase, async: true
 
   alias Arcana.Graph.{Community, Entity, EntityMention, Relationship}
+  alias Ecto.Adapters.SQL.Sandbox
 
   # Scoped to the collection under test: the documents table is shared with
   # every other test in this file, so a global count asserts something no
@@ -350,7 +351,7 @@ defmodule Arcana.GraphIntegrationTest do
             send(parent, :ingest_returned)
           end)
 
-        Ecto.Adapters.SQL.Sandbox.allow(Repo, parent, pid)
+        Sandbox.allow(Repo, parent, pid)
         send(pid, :go)
 
         assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 10_000
