@@ -32,7 +32,7 @@ defmodule Arcana.Graph do
           enabled: true,
 
           # Community detection
-          community_levels: 5,      # Hierarchy depth for Leiden algorithm
+          community_levels: 1,      # Hierarchy depth for Leiden algorithm (1 = flat)
           resolution: 1.0,          # Leiden granularity (lower = fewer, larger communities)
           min_size: 1,              # Minimum community size
 
@@ -42,7 +42,7 @@ defmodule Arcana.Graph do
 
           # Community summaries in ask pipeline
           community_summary_limit: 5,  # Max summaries injected as background context
-          community_summary_level: 0,  # Hierarchy level to pull summaries from
+          community_summary_level: 0,  # Level(s) to pull summaries from: integer, list, range or :all
 
           # Community summarization prompt limits
           summary_max_entities: 50,       # Top N entities by connection count per summary
@@ -122,7 +122,7 @@ defmodule Arcana.Graph do
 
   @default_config %{
     enabled: false,
-    community_levels: 5,
+    community_levels: 1,
     resolution: 1.0,
     min_size: 1,
     rrf_k: 60,
@@ -142,7 +142,7 @@ defmodule Arcana.Graph do
   ## Example
 
       Arcana.Graph.config()
-      # => %{enabled: false, community_levels: 5, resolution: 1.0}
+      # => %{enabled: false, community_levels: 1, resolution: 1.0}
 
   """
   def config do
@@ -163,6 +163,48 @@ defmodule Arcana.Graph do
     config
     |> Enum.reject(fn {_k, v} -> is_function(v) or is_pid(v) or is_reference(v) end)
     |> Map.new()
+  end
+
+  @doc """
+  Returns the community hierarchy levels that queries read summaries from.
+
+  Configured with `community_summary_level`, which accepts an integer, a
+  list of integers, a range, or `:all`. Summarization consumes the same
+  key, so the levels that get summarized and the levels `ask/2` reads
+  can't drift apart.
+
+  Returns `:all` or a list of levels.
+
+  ## Examples
+
+      Arcana.Graph.summary_levels()
+      # => [0]
+
+  """
+  def summary_levels(config \\ config()) do
+    normalize_levels(config[:community_summary_level])
+  end
+
+  @doc """
+  Normalizes a level selection into `:all` or a list of levels.
+  """
+  def normalize_levels(nil), do: [0]
+  def normalize_levels(:all), do: :all
+  def normalize_levels(level) when is_integer(level), do: [level]
+  def normalize_levels(first..last//step), do: Enum.to_list(first..last//step)
+
+  def normalize_levels(levels) when is_list(levels) do
+    if Enum.all?(levels, &is_integer/1) do
+      levels
+    else
+      raise ArgumentError, "community summary levels must be integers, got: #{inspect(levels)}"
+    end
+  end
+
+  def normalize_levels(other) do
+    raise ArgumentError,
+          "invalid community summary level: #{inspect(other)} " <>
+            "(expected an integer, a list, a range or :all)"
   end
 
   @doc """

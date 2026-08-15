@@ -12,6 +12,8 @@ defmodule Mix.Tasks.Arcana.Graph.SummarizeCommunities do
     * `--collection` - Only summarize communities for the specified collection
     * `--force` - Regenerate all summaries, not just dirty ones
     * `--concurrency` - Number of parallel summarization tasks (default: 1)
+    * `--levels` - Hierarchy levels to summarize: `all` or a comma-separated
+      list (default: the levels `ask` reads, `community_summary_level`)
     * `--quiet` - Suppress progress output
 
   ## Examples
@@ -24,6 +26,9 @@ defmodule Mix.Tasks.Arcana.Graph.SummarizeCommunities do
 
       # Force regenerate all summaries
       mix arcana.graph.summarize_communities --force
+
+      # Summarize every hierarchy level, not just the readable ones
+      mix arcana.graph.summarize_communities --levels all
 
       # Parallel summarization (4 concurrent tasks)
       mix arcana.graph.summarize_communities --concurrency 4
@@ -54,7 +59,8 @@ defmodule Mix.Tasks.Arcana.Graph.SummarizeCommunities do
           quiet: :boolean,
           collection: :string,
           force: :boolean,
-          concurrency: :integer
+          concurrency: :integer,
+          levels: :string
         ],
         aliases: [f: :force, c: :concurrency]
       )
@@ -63,6 +69,7 @@ defmodule Mix.Tasks.Arcana.Graph.SummarizeCommunities do
     collection = Keyword.get(opts, :collection)
     force = Keyword.get(opts, :force, false)
     concurrency = Keyword.get(opts, :concurrency, 1)
+    levels = parse_levels(Keyword.get(opts, :levels))
 
     # Start the host application (which will start the repo)
     Mix.Task.run("app.start")
@@ -95,7 +102,10 @@ defmodule Mix.Tasks.Arcana.Graph.SummarizeCommunities do
     # Show current config
     info = Arcana.Maintenance.graph_info()
     Mix.shell().info("Graph config: #{format_info(info)}")
-    Mix.shell().info("Summarization: force=#{force}, concurrency=#{concurrency}")
+
+    Mix.shell().info(
+      "Summarization: force=#{force}, concurrency=#{concurrency}, levels=#{format_levels(levels)}"
+    )
 
     # Build progress callback
     progress_fn =
@@ -111,7 +121,8 @@ defmodule Mix.Tasks.Arcana.Graph.SummarizeCommunities do
     summarize_opts = [
       progress: progress_fn,
       force: force,
-      concurrency: concurrency
+      concurrency: concurrency,
+      levels: levels
     ]
 
     summarize_opts =
@@ -129,6 +140,18 @@ defmodule Mix.Tasks.Arcana.Graph.SummarizeCommunities do
         Mix.raise("Collection #{inspect(name)} does not exist")
     end
   end
+
+  defp parse_levels(nil), do: Arcana.Graph.summary_levels()
+  defp parse_levels("all"), do: :all
+
+  defp parse_levels(levels) do
+    levels
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.to_integer(String.trim(&1)))
+  end
+
+  defp format_levels(:all), do: "all"
+  defp format_levels(levels), do: Enum.join(levels, ",")
 
   defp format_info(%{enabled: enabled, extractor_name: name, community_levels: levels}) do
     status = if enabled, do: "enabled", else: "disabled"

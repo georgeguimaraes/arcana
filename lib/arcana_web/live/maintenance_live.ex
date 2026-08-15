@@ -63,15 +63,24 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     # Communities the summarizer would pick up: without a summary they're
     # invisible to `ask(graph: true)`, dirty ones carry a stale summary.
+    # Scoped to the levels that get summarized, so the hint can reach zero.
     defp count_unsummarized_communities(repo) do
       repo.one(
         from(c in Arcana.Graph.Community,
           where: is_nil(c.summary) or c.summary == "" or c.dirty,
+          where: ^summarizable_levels(),
           select: count(c.id)
         )
       ) || 0
     rescue
       _ -> 0
+    end
+
+    defp summarizable_levels do
+      case Arcana.Graph.summary_levels() do
+        :all -> dynamic([c], not is_nil(c.level))
+        levels -> dynamic([c], c.level in ^levels)
+      end
     end
 
     defp fetch_collections(repo) do

@@ -26,7 +26,7 @@ if Code.ensure_loaded?(Igniter) do
         config :arcana,
           graph: [
             enabled: true,
-            community_levels: 5,
+            community_levels: 1,
             resolution: 1.0
           ]
 
@@ -77,7 +77,7 @@ if Code.ensure_loaded?(Igniter) do
           config :arcana,
             graph: [
               enabled: true,
-              community_levels: 5,
+              community_levels: 1,
               resolution: 1.0
             ]
 
@@ -350,7 +350,7 @@ else
           config :arcana,
             graph: [
               enabled: true,
-              community_levels: 5,
+              community_levels: 1,
               resolution: 1.0
             ]
 

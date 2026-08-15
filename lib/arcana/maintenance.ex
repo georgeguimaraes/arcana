@@ -692,7 +692,7 @@ defmodule Arcana.Maintenance do
     * `:iterations` - Optimization iterations (default: 2)
     * `:seed` - Random seed; `0` lets the algorithm randomize (default: 0)
     * `:min_size` - Minimum community size to keep (default: 1)
-    * `:max_level` - Maximum hierarchy levels (default: `:community_levels`)
+    * `:max_level` - Maximum hierarchy levels (default: 1, from `:community_levels`)
     * `:progress` - Function to call with progress updates `fn current, total -> :ok end`
 
   ## Configuration
@@ -953,6 +953,10 @@ defmodule Arcana.Maintenance do
     - `:force` - Regenerate all summaries even if not dirty (default: false)
     - `:concurrency` - Number of parallel summarization tasks (default: 1)
     - `:llm` - LLM function for summarization (uses config if not provided)
+    - `:levels` - Hierarchy levels to summarize: an integer, a list, a range
+      or `:all`. Defaults to `config :arcana, :graph, community_summary_level`,
+      the levels `Arcana.ask/2` actually reads, so detection can generate a
+      deeper hierarchy without paying an LLM call per unread level.
 
   ## Returns
 
@@ -968,6 +972,9 @@ defmodule Arcana.Maintenance do
 
       # Summarize a specific collection
       Maintenance.summarize_communities(repo, collection: "my-docs")
+
+      # Summarize every hierarchy level, not just the readable ones
+      Maintenance.summarize_communities(repo, levels: :all)
 
   """
   def summarize_communities(repo, opts \\ []) do
@@ -985,6 +992,7 @@ defmodule Arcana.Maintenance do
         opts: opts,
         force: force,
         concurrency: concurrency,
+        levels: summary_levels(opts),
         progress_fn: progress_fn
       })
     end
@@ -995,23 +1003,15 @@ defmodule Arcana.Maintenance do
   end
 
   defp summarize_fetched_collections(collections, repo, config) do
-    %{opts: opts, force: force, concurrency: concurrency, progress_fn: progress_fn} = config
-    llm = resolve_summarizer_llm!(opts)
+    %{opts: opts, progress_fn: progress_fn} = config
+    ctx = Map.put(config, :llm, resolve_summarizer_llm!(opts))
     total_collections = length(collections)
 
     results =
       collections
       |> Enum.with_index(1)
       |> Enum.map(fn {collection, index} ->
-        result =
-          summarize_communities_for_collection(
-            collection,
-            repo,
-            llm,
-            force,
-            concurrency,
-            progress_fn
-          )
+        result = summarize_communities_for_collection(collection, repo, ctx)
 
         try do
           progress_fn.(:collection_complete, %{
@@ -1048,15 +1048,10 @@ defmodule Arcana.Maintenance do
     end
   end
 
-  defp summarize_communities_for_collection(
-         collection,
-         repo,
-         llm,
-         force,
-         concurrency,
-         progress_fn
-       ) do
+  defp summarize_communities_for_collection(collection, repo, ctx) do
     alias Arcana.Graph.{Community, CommunitySummarizer, Entity, Relationship}
+
+    %{llm: llm, force: force, concurrency: concurrency, progress_fn: progress_fn} = ctx
 
     # Report start
     try do
@@ -1065,11 +1060,13 @@ defmodule Arcana.Maintenance do
       _ -> :ok
     end
 
-    # Fetch communities for this collection
+    # Fetch the communities a query path can actually read: summarizing a
+    # level nothing reads costs one LLM call per row for nothing.
     communities =
       repo.all(
         from(c in Community,
           where: c.collection_id == ^collection.id,
+          where: ^level_filter(ctx.levels),
           select: c
         )
       )
@@ -1110,6 +1107,18 @@ defmodule Arcana.Maintenance do
       %{communities: length(communities), summaries: summaries_generated}
     end
   end
+
+  # Levels to summarize: per-call `:levels` wins, otherwise the levels
+  # `ask/2` reads (`community_summary_level`), so the two can't drift.
+  defp summary_levels(opts) do
+    case Keyword.fetch(opts, :levels) do
+      {:ok, levels} -> Arcana.Graph.normalize_levels(levels)
+      :error -> Arcana.Graph.summary_levels()
+    end
+  end
+
+  defp level_filter(:all), do: dynamic([c], not is_nil(c.level))
+  defp level_filter(levels), do: dynamic([c], c.level in ^levels)
 
   defp summarize_single_community(community, repo, llm) do
     alias Arcana.Graph.{Community, CommunitySummarizer, Entity, Relationship}

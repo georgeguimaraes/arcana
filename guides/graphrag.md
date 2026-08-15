@@ -58,13 +58,13 @@ GraphRAG is disabled by default. Enable it globally:
 config :arcana,
   graph: [
     enabled: true,
-    community_levels: 5,
+    community_levels: 1,
     resolution: 1.0
   ]
 ```
 
 Community detection reads all of its knobs from this block: `resolution`,
-`min_size`, `community_levels` (the hierarchy ceiling), plus `objective`,
+`min_size`, `community_levels` (the hierarchy ceiling, default `1`), plus `objective`,
 `iterations` and `seed`. Pin a non-zero `seed` when you want community
 membership to be reproducible across runs (`0` lets the algorithm
 randomize):
@@ -670,6 +670,23 @@ mix arcana.graph.summarize_communities --concurrency 4
 
 # Quiet mode (less output)
 mix arcana.graph.summarize_communities --quiet
+
+# Every hierarchy level, not just the ones ask reads
+mix arcana.graph.summarize_communities --levels all
+```
+
+Summarization only covers the levels `ask` reads, which is
+`community_summary_level` (default `0`). Detection can generate a deeper
+hierarchy with `community_levels`, but summarizing a level nothing queries
+costs one LLM call per community for nothing. The key accepts an integer, a
+list, a range or `:all`, and both sides read it:
+
+```elixir
+config :arcana,
+  graph: [
+    community_levels: 3,          # generate three levels
+    community_summary_level: 0..1 # summarize and read the first two
+  ]
 ```
 
 Requires an LLM to be configured. All standard `:llm` config formats are supported:

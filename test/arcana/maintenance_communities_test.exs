@@ -231,7 +231,87 @@ defmodule Arcana.MaintenanceCommunitiesTest do
     end
   end
 
+  describe "summarize_communities/2 levels" do
+    setup %{collection: collection, entities: entities} do
+      ids = Enum.map(entities, & &1.id)
+
+      for level <- 0..2 do
+        %Community{}
+        |> Community.changeset(%{
+          level: level,
+          entity_ids: ids,
+          collection_id: collection.id,
+          dirty: true
+        })
+        |> Repo.insert!()
+      end
+
+      %{llm: [llm: fn _prompt, _context, _opts -> {:ok, "a summary"} end]}
+    end
+
+    test "only summarizes the levels a query can read", %{collection: collection, llm: llm} do
+      assert {:ok, %{communities: 1, summaries: 1}} =
+               Maintenance.summarize_communities(Repo, [collection: collection.name] ++ llm)
+
+      by_level = Map.new(communities(collection), &{&1.level, &1})
+
+      assert by_level[0].summary == "a summary"
+      refute by_level[0].dirty
+      assert is_nil(by_level[1].summary)
+      assert is_nil(by_level[2].summary)
+    end
+
+    test "follows community_summary_level when it names several levels", %{
+      collection: collection,
+      llm: llm
+    } do
+      put_arcana_env(:graph, community_summary_level: 0..1)
+
+      assert {:ok, %{communities: 2, summaries: 2}} =
+               Maintenance.summarize_communities(Repo, [collection: collection.name] ++ llm)
+
+      by_level = Map.new(communities(collection), &{&1.level, &1})
+
+      assert by_level[0].summary == "a summary"
+      assert by_level[1].summary == "a summary"
+      assert is_nil(by_level[2].summary)
+    end
+
+    test "levels: :all opts every level back in", %{collection: collection, llm: llm} do
+      assert {:ok, %{communities: 3, summaries: 3}} =
+               Maintenance.summarize_communities(
+                 Repo,
+                 [collection: collection.name, levels: :all] ++ llm
+               )
+
+      assert Enum.all?(communities(collection), &(&1.summary == "a summary"))
+    end
+
+    test "force re-summarizes clean communities in the selected levels", %{
+      collection: collection,
+      llm: llm
+    } do
+      for community <- communities(collection) do
+        community |> Community.changeset(%{summary: "old", dirty: false}) |> Repo.update!()
+      end
+
+      assert {:ok, %{summaries: 3}} =
+               Maintenance.summarize_communities(
+                 Repo,
+                 [collection: collection.name, levels: :all, force: true] ++ llm
+               )
+
+      assert Enum.all?(communities(collection), &(&1.summary == "a summary"))
+    end
+  end
+
   describe "detection_opts/1" do
+    test "defaults the hierarchy ceiling to a single level" do
+      # The documented default in Graph, Leiden and the detect docstring.
+      assert Arcana.Graph.config().community_levels == 1
+      assert Maintenance.detection_opts()[:max_level] == 1
+    end
+
     test "layers defaults, graph config and per-call options" do
       put_arcana_env(:graph, seed: 42, objective: :modularity, community_levels: 3)
 
