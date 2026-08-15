@@ -13,7 +13,7 @@ search returns one shape in every mode, and the library no longer drags a
 machine-learning toolchain into apps that bring their own embedder.
 
 This is a major version. Read "Backwards incompatible changes" before
-upgrading: seven things break, and one of them is a migration existing
+upgrading: ten things break, and one of them is a migration existing
 GraphRAG installs have to run.
 
 ### Enhancements
@@ -23,14 +23,16 @@ GraphRAG installs have to run.
   * [Arcana.Config] Add `strict_collections`, which turns an unknown collection name into `{:error, {:unknown_collection, name}}` instead of silently resolving to no filter. It is opt-in and still defaults to `false` in 3.0. It covers more than search: under strict mode ingesting into a collection that does not exist yet errors instead of auto-creating it (the implicit `"default"` collection has to be created first), and the vector store's `store`/`delete`/`clear` and all five `Arcana.Maintenance` entry points are scoped the same way
   * [Arcana.Search] Add opt-in `graph_depth`, expanding matched entities through the relationships table before fetching chunks, with per-hop score decay. Defaults to `0` (previous behavior)
   * [Arcana.LLM] Accept `{module, function}` as an LLM. Unlike a captured function it serializes into a release's `sys.config`, so it no longer has to be wired in `runtime.exs`. `Arcana.Loop`'s `:controller_llm` and `:answer_llm` do not accept this form and raise an `ArgumentError`
+  * [Arcana.Config] `repo!/1` is public, and supports a per-repo config shape: `config :arcana, MyApp.Repo, priv: "priv/my_repo"`. With exactly one such entry it is selected automatically (with a note on stderr); with several it raises unless `:repo` says which
   * [Arcana.Graph] `community_summary_level` accepts a list, a range or `:all`, so a query can draw on several levels of the community hierarchy at once
   * [Arcana.Graph.GraphStore] Add an optional `sweep_orphans/2` callback. Custom graph stores that do not implement it keep working unchanged
+  * [mix] New options: `--previous-dimensions` on `arcana.gen.embedding_migration` and `--dimensions` on `arcana.graph.install`, for when detection can't reach a running repo
   * [mix arcana.graph.gen.mentions_index] New generator producing the migration that existing GraphRAG installs need (see "Backwards incompatible changes")
   * [ArcanaWeb.Router] `arcana_dashboard` now derives every link and asset URL from the real mount point, so mounting anywhere other than `/arcana` works
   * [mix] `bumblebee` and `req_llm` are optional dependencies. Apps bringing their own embedder and LLM no longer compile roughly 13 transitive packages, including the tokenizers Rust NIF
   * [ArcanaWeb] The dashboard is optional at compile time: arcana now compiles in apps without Phoenix
   * [Arcana.FileParser] New behaviour and parser registry: `config :arcana, file_parsers: %{".docx" => MyParser}` routes an extension to your own parser, and `fallback_parser:` catches everything unmatched. Resolution runs registry, then built-ins, then fallback. Registering an extension as `false` disables it
-  * [Arcana] Add `ingest_binary/2` for content that never touches the filesystem, such as bytes pulled from object storage. Requires `:filename` for extension routing and provenance. Parsers that need a real path (the built-in Poppler among them) return `{:error, {:binary_unsupported, module}}` rather than failing obscurely. Like `ingest_file/2`, it does not build graph data and ignores `replace: true`
+  * [Arcana] Add `ingest_binary/2` for content that never touches the filesystem, such as bytes pulled from object storage. Requires `:filename` for extension routing and provenance. Parsers that need a real path (the built-in Poppler among them) return `{:error, {:binary_unsupported, module}}` rather than failing obscurely. It does not build graph data and ignores `replace: true`
   * [Arcana.Chunker.Default] Chunks carry `"start_byte"` and `"end_byte"` in their metadata, so a retrieved chunk can be located in the source document. Chunk metadata is now persisted for every chunker, honouring a contract that had been documented but never implemented
   * [Arcana.FileParser.PDF.Poppler] Report page byte ranges, which ingestion intersects with chunk offsets to add `"page_start"` and `"page_end"`. PDF citations carry page numbers with no new dependency
   * [ArcanaWeb.Router] `arcana_dashboard` accepts host-provided collection scoping, so one mount can be restricted to one tenant's collections. The scope is resolved once per page request and snapshotted into the LiveView session, so narrowing someone's permissions does not narrow a dashboard they already have open: to revoke promptly, set `live_socket_id` and broadcast a disconnect. Mounting the dashboard more than once needs the new `:live_session_name` option
@@ -40,7 +42,7 @@ GraphRAG installs have to run.
 
   * [Arcana.Search] Named collections that resolve to nothing now match nothing on the graph path instead of widening to a global search, and under `strict_collections` an unknown name errors outright. Without strict mode the vector and keyword paths still fall back to searching unscoped for an unknown name, which is the historical behavior: multi-tenant setups should opt into strict mode
   * [Arcana.Search] `source_id` now scopes the graph path too. A source-scoped search used to leak chunks from other documents that happened to mention a matched entity, and `Arcana.ask/2` did the same for entities and relationships
-  * [Arcana.Graph] Entity names are normalized on both sides of every comparison in Postgres, so names differing only by Unicode whitespace or case no longer split into duplicate entities, or collide with themselves and abort an ingest. Dedup outcomes on existing graphs change accordingly
+  * [Arcana.Graph] Entity names are normalized on both sides of every comparison in Postgres, which lowercases, folds underscores and hyphens to spaces, and collapses runs of whitespace. `Two_Year_Limited_Warranty`, `two-year limited warranty` and `Two Year Limited Warranty` are now one entity rather than three. There is no Unicode normalization pass, so precomposed and decomposed forms still differ. Names no longer split into duplicate entities, or collide with themselves and abort an ingest. Dedup outcomes on existing graphs change accordingly
   * [Arcana.Ask] The default prompt now receives graph context, which it silently discarded before. Answers change for anyone running with `graph: true`
   * [Arcana.Ecto.Vector] Compare vectors by encoded value, so re-storing a byte-identical embedding is a no-op instead of dirtying the changeset and churning the HNSW index on every ingest
   * [Arcana.Graph.CommunityDetector.Leiden] Stop storing duplicate partitions when the hierarchy converges before `max_level`, which had been multiplying summarization cost by the level count for no retrieval benefit
@@ -50,22 +52,23 @@ GraphRAG installs have to run.
   * [Arcana.FileParser.PDF.Poppler] The trailing form feed `pdftotext` emits no longer counts as an extra page
   * [Arcana.Reranker] The built-in LLM and cross-encoder rerankers attach a `:rerank_score` to the results they reorder, instead of returning chunks untouched
   * [Arcana] `Arcana.delete/2` sweeps the graph data belonging to a deleted document, rather than leaving orphaned entities and mentions behind
-  * [mix arcana.gen.embedding_migration] Rolling back restores the previous vector size instead of a hardcoded one, and the previous size is read correctly when the repo is already started
-  * [mix arcana.install] `repo: false` is honored as an explicit "no repo", and the installer validates the dimensions the configured embedder actually reports rather than trusting a flag
+  * [mix arcana.gen.embedding_migration] Rolling back restores the previous vector size instead of a hardcoded one, and the previous size is read correctly when the repo is already started. When the previous size cannot be read and `--previous-dimensions` is not given, the generated `down` raises instead of silently reverting to 384: the migration is not reversible until you fill the size in
+  * [Arcana.Config] `repo!/1` honors `repo: false` as an explicit "no repo". It backs every mix task through `Arcana.MixHelpers`, so `arcana.install`, `arcana.eval.generate`, `arcana.eval.run`, `arcana.gen.embedding_migration`, `arcana.graph.detect_communities`, `arcana.graph.embed_entities` and `arcana.graph.rebuild` all pick up the new behavior
+  * [mix arcana.install] Validate the dimensions the configured embedder actually reports rather than trusting a flag
   * [mix arcana.graph.install] Detect the entity embedding dimension instead of assuming the default
 
 ### Backwards incompatible changes
 
-  * [Arcana.Search] `search/2` returns `%Arcana.SearchResult{}` structs rather than plain maps, with the same fields in every mode (`vector_score`/`keyword_score` are `nil` where they don't apply, and chunk metadata is carried with string keys). The same structs now come back from `Arcana.ask/2`'s context and from `Arcana.Pipeline` results. The struct implements `Access`, so `result[:text]` keeps working; code that pattern matches on a bare map, or relies on a key being absent, needs updating
+  * [Arcana.Search] `search/2` returns `%Arcana.SearchResult{}` structs rather than plain maps, with the same fields in every mode (`vector_score`/`keyword_score` are `nil` where they don't apply, and chunk metadata is carried with string keys). The same structs now come back from `Arcana.ask/2`'s context and from `Arcana.Pipeline` results. The struct implements `Access`, so `result[:text]` keeps working; code that pattern matches on a bare map, or relies on a key being absent, needs updating. Custom `Arcana.Reranker` and `Arcana.Searcher` implementations receive the structs too: the reranker callback is now `[Arcana.SearchResult.t() | map()]`
   * [Arcana.SearchResult] The struct is deliberately not derived for `Jason.Encoder`/`JSON.Encoder`, so `Jason.encode!(results)` raises `Protocol.UndefinedError` where v2.0.2 returned encodable plain maps. Encode `Map.from_struct/1`, or derive the protocol yourself
   * [Arcana] `Arcana.delete/2` can now return `{:error, {:sweep_failed, reason}}`. The document is still deleted in that case, so `:ok = Arcana.delete(...)` needs updating
+  * [ArcanaWeb.Router] The `on_mount` hook is renamed `ArcanaWeb.Router.Prefix` to `ArcanaWeb.Router.Scope`. Apps that named it in their own `on_mount` list must update it
   * [Arcana.Collection] `resolve_ids/2` returns `{:ok, nil} | {:ok, [uuid]} | {:error, {:unknown_collection, name}}` instead of `nil | [uuid]`
   * [Arcana.Graph] `community_levels` defaults to `1` (flat) instead of `5`. Existing installs that relied on the deeper hierarchy, and on the summarization cost that came with it, must set it explicitly
   * [mix arcana.graph.gen.mentions_index] **Existing GraphRAG installs must run this migration.** Installs predating the unique index on `arcana_graph_entity_mentions(entity_id, chunk_id)` accumulate one mention row per (entity, chunk) per ingest, because the `on_conflict: :nothing` the graph store writes with is a silent no-op without the index. The generated migration deletes the duplicates, then adds the index. New installs get it from `mix arcana.graph.install`
   * [Arcana.FileParser.PDF.Poppler] `parse/2` returns `{:ok, text, meta}` instead of `{:ok, text}`, where `meta` carries page byte ranges. A custom parser that delegates straight to it and matches `{:ok, text}` now raises a `MatchError`. Callers going through `Arcana.FileParser.PDF.parse/3` or `Arcana.Parser.parse/1` are unaffected: both still normalize to a two-tuple
   * [mix] `bumblebee` and `req_llm` are no longer pulled in transitively. Apps using the default local embedder must add `{:bumblebee, "~> 0.6"}` and a backend such as `{:exla, "~> 0.10"}`; apps passing model strings such as `"openai:gpt-4o-mini"` as the LLM, or using `Arcana.Loop`, must add `{:req_llm, "~> 1.2"}`. Both raise a message naming the missing dependency
-
-  * [Arcana.TaskSupervisor] The supervisor now registers its process under `ArcanaWeb.TaskSupervisor`. Calling `Task.Supervisor.start_child(Arcana.TaskSupervisor, fun)` by the old registered name fails; the module alias below only covers the supervision-tree child spec
+  * [Arcana.TaskSupervisor] The supervisor now registers its process under `ArcanaWeb.TaskSupervisor`. Calling `Task.Supervisor.start_child(Arcana.TaskSupervisor, fun)` by the old registered name fails. The deprecated module still delegates `child_spec/1` and `start_child/1`, so only passing the module as a registered name to `Task.Supervisor` directly breaks
 
 ### Deprecations
 
