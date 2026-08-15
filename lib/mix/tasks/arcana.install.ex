@@ -567,11 +567,17 @@ if Code.ensure_loaded?(Igniter) do
        igniter}
     end
 
-    # The search parses the files it looks at, so one unparsable file in lib/
-    # would otherwise abort the whole install with a Sourceror error. An app
-    # with a broken file still deserves a working installer, and the path check
-    # below is enough to keep us off an occupied name: whatever the file
-    # contains, it is there.
+    # The search parses the files it looks at, and its last resort parses every
+    # .ex/.exs under lib/, test/ and config/, so a single unparsable file
+    # anywhere in the project would otherwise abort the whole install with a
+    # Sourceror error. An app mid-refactor still deserves a working installer.
+    #
+    # Degrading to the path check is not free: when the broken file IS the
+    # candidate's own file, the path check still sees it and we skip the name.
+    # When the broken file is elsewhere AND the candidate is defined somewhere
+    # only the full scan would have found, we can still generate a second
+    # definition of it. That trade buys an installer that runs at all, and the
+    # compiler names the duplicate if it happens.
     defp module_defined?(igniter, candidate) do
       IgniterModule.module_exists(igniter, candidate)
     rescue
