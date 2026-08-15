@@ -1,7 +1,7 @@
 defmodule Arcana.GraphIntegrationTest do
   use Arcana.DataCase, async: true
 
-  alias Arcana.Graph.{Entity, EntityMention, Relationship}
+  alias Arcana.Graph.{Community, Entity, EntityMention, Relationship}
 
   defp create_collection(name) do
     %Arcana.Collection{}
@@ -462,6 +462,105 @@ defmodule Arcana.GraphIntegrationTest do
     end
   end
 
+  describe "delete/2 with graph enabled" do
+    test "sweeps zero-mention entities in the document's collection and dirties overlapping communities" do
+      extractor = fn text, _opts ->
+        cond do
+          text =~ "alpha" ->
+            {:ok, [%{name: "Alpha", type: "concept"}, %{name: "Shared", type: "concept"}]}
+
+          text =~ "shared" ->
+            {:ok, [%{name: "Shared", type: "concept"}]}
+
+          text =~ "beta" ->
+            {:ok, [%{name: "Beta", type: "concept"}]}
+
+          true ->
+            {:ok, []}
+        end
+      end
+
+      opts = [repo: Repo, graph: true, entity_extractor: extractor]
+
+      {:ok, doc1} = Arcana.ingest("alpha content", opts ++ [collection: "sweep-a"])
+      {:ok, _doc2} = Arcana.ingest("shared content", opts ++ [collection: "sweep-a"])
+      {:ok, _doc3} = Arcana.ingest("beta content", opts ++ [collection: "sweep-b"])
+
+      alpha = Repo.one!(from(e in Entity, where: e.name == "Alpha"))
+      shared = Repo.one!(from(e in Entity, where: e.name == "Shared"))
+      beta = Repo.one!(from(e in Entity, where: e.name == "Beta"))
+
+      relationship =
+        %Relationship{}
+        |> Relationship.changeset(%{source_id: alpha.id, target_id: shared.id, type: "RELATED"})
+        |> Repo.insert!()
+
+      alpha_community = insert_community(alpha.collection_id, [alpha.id])
+      shared_community = insert_community(shared.collection_id, [shared.id])
+      beta_community = insert_community(beta.collection_id, [beta.id])
+
+      :ok = Arcana.delete(doc1.id, repo: Repo, graph: true)
+
+      # Alpha lost its only mention and is swept; its relationships cascade
+      assert Repo.get(Entity, alpha.id) == nil
+      assert Repo.get(Relationship, relationship.id) == nil
+
+      # Shared still has a mention in doc2; Beta lives in another collection
+      assert Repo.get(Entity, shared.id)
+      assert Repo.get(Entity, beta.id)
+
+      # Only communities overlapping the swept entities get marked dirty
+      assert Repo.get!(Community, alpha_community.id).dirty
+      refute Repo.get!(Community, shared_community.id).dirty
+      refute Repo.get!(Community, beta_community.id).dirty
+    end
+
+    test "replace: true sweeps entities stranded by the replaced document" do
+      extractor = fn text, _opts ->
+        cond do
+          text =~ "v1" -> {:ok, [%{name: "OldEntity", type: "concept"}]}
+          text =~ "v2" -> {:ok, [%{name: "NewEntity", type: "concept"}]}
+          true -> {:ok, []}
+        end
+      end
+
+      opts = [
+        repo: Repo,
+        graph: true,
+        entity_extractor: extractor,
+        collection: "replace-sweep",
+        source_id: "doc-1",
+        replace: true
+      ]
+
+      {:ok, _v1} = Arcana.ingest("v1 content", opts)
+      {:ok, _v2} = Arcana.ingest("v2 content", opts)
+
+      names = Repo.all(Entity) |> Enum.map(& &1.name)
+      assert "NewEntity" in names
+      refute "OldEntity" in names
+    end
+
+    test "leaves the graph alone when graph is not enabled" do
+      extractor = fn _text, _opts -> {:ok, [%{name: "Gamma", type: "concept"}]} end
+
+      {:ok, doc} =
+        Arcana.ingest("gamma content",
+          repo: Repo,
+          graph: true,
+          entity_extractor: extractor,
+          collection: "sweep-off"
+        )
+
+      gamma = Repo.one!(from(e in Entity, where: e.name == "Gamma"))
+
+      :ok = Arcana.delete(doc.id, repo: Repo)
+
+      # Entity survives (stranded, but sweeping requires graph enabled)
+      assert Repo.get(Entity, gamma.id)
+    end
+  end
+
   describe "config/0" do
     test "includes graph configuration" do
       config = Arcana.config()
@@ -470,5 +569,17 @@ defmodule Arcana.GraphIntegrationTest do
       assert is_map(config.graph)
       assert Map.has_key?(config.graph, :enabled)
     end
+  end
+
+  defp insert_community(collection_id, entity_ids) do
+    %Community{}
+    |> Community.changeset(%{
+      level: 0,
+      entity_ids: entity_ids,
+      dirty: false,
+      summary: "existing summary",
+      collection_id: collection_id
+    })
+    |> Repo.insert!()
   end
 end

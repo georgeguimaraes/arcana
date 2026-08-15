@@ -222,4 +222,54 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       assert "Work colleagues" in summaries
     end
   end
+
+  describe "sweep_orphans/2" do
+    test "removes zero-mention entities in the collection and dirties overlapping communities",
+         %{pid: pid} do
+      {:ok, id_map} =
+        Memory.persist_entities(
+          "col-1",
+          [%{name: "Orphan", type: "concept"}, %{name: "Kept", type: "concept"}],
+          pid: pid
+        )
+
+      {:ok, _} =
+        Memory.persist_entities("col-2", [%{name: "Elsewhere", type: "concept"}], pid: pid)
+
+      :ok =
+        Memory.persist_mentions([%{entity_name: "Kept", chunk_id: "chunk-1"}], id_map, pid: pid)
+
+      :ok =
+        Memory.persist_relationships(
+          [%{source: "Orphan", target: "Kept", type: "RELATED"}],
+          id_map,
+          pid: pid
+        )
+
+      :ok =
+        Memory.persist_communities(
+          "col-1",
+          [
+            %{id: "comm-1", level: 0, summary: "s", entity_ids: [id_map["Orphan"]], dirty: false},
+            %{id: "comm-2", level: 0, summary: "s", entity_ids: [id_map["Kept"]], dirty: false}
+          ],
+          pid: pid
+        )
+
+      :ok = Memory.sweep_orphans("col-1", pid: pid)
+
+      assert [%{name: "Kept"}] = Memory.find_entities("col-1", pid: pid)
+
+      # sweep is scoped: col-2's zero-mention entity survives
+      assert [%{name: "Elsewhere"}] = Memory.find_entities("col-2", pid: pid)
+
+      # relationship touching the orphan is gone
+      assert Memory.get_relationships(id_map["Kept"], pid: pid) == []
+
+      {:ok, comm1} = Memory.get_community("comm-1", pid: pid)
+      {:ok, comm2} = Memory.get_community("comm-2", pid: pid)
+      assert comm1.dirty
+      refute comm2.dirty
+    end
+  end
 end

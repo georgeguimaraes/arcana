@@ -112,6 +112,20 @@ defmodule Arcana.Graph.GraphStore do
   @callback delete_by_collection(binary(), opts :: keyword()) ::
               :ok | {:error, term()}
 
+  @doc """
+  Sweeps orphaned graph data in a collection.
+
+  Deletes entities in the collection that have no remaining mentions
+  (their relationships cascade away), and marks communities whose
+  `entity_ids` overlap the deleted entities as dirty so the next
+  summarize pass regenerates them.
+
+  Intended to run after document deletion or replacement, scoped to the
+  affected collection.
+  """
+  @callback sweep_orphans(binary(), opts :: keyword()) ::
+              :ok | {:error, term()}
+
   # === Detail Query Callbacks ===
 
   @doc """
@@ -368,6 +382,22 @@ defmodule Arcana.Graph.GraphStore do
   end
 
   @doc """
+  Sweeps orphaned graph data in a collection using the configured backend.
+  """
+  def sweep_orphans(collection_id, opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+
+    :telemetry.span(
+      [:arcana, :graph_store, :sweep_orphans],
+      %{collection_id: collection_id},
+      fn ->
+        result = dispatch(:sweep_orphans, backend, [collection_id], backend_opts, opts)
+        {result, %{backend: backend}}
+      end
+    )
+  end
+
+  @doc """
   Gets a single entity by ID using the configured backend.
   """
   def get_entity(entity_id, opts \\ []) do
@@ -507,6 +537,11 @@ defmodule Arcana.Graph.GraphStore do
     __MODULE__.Ecto.delete_by_collection(collection_id, opts)
   end
 
+  defp dispatch(:sweep_orphans, :ecto, [collection_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.sweep_orphans(collection_id, opts)
+  end
+
   defp dispatch(:get_entity, :ecto, [entity_id], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     __MODULE__.Ecto.get_entity(entity_id, opts)
@@ -615,6 +650,11 @@ defmodule Arcana.Graph.GraphStore do
     __MODULE__.Memory.delete_by_collection(collection_id, opts)
   end
 
+  defp dispatch(:sweep_orphans, :memory, [collection_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.sweep_orphans(collection_id, opts)
+  end
+
   defp dispatch(:get_entity, :memory, [entity_id], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     __MODULE__.Memory.get_entity(entity_id, opts)
@@ -721,6 +761,11 @@ defmodule Arcana.Graph.GraphStore do
   defp dispatch(:delete_by_collection, module, [collection_id], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     module.delete_by_collection(collection_id, opts)
+  end
+
+  defp dispatch(:sweep_orphans, module, [collection_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    module.sweep_orphans(collection_id, opts)
   end
 
   defp dispatch(:get_entity, module, [entity_id], backend_opts, opts) do

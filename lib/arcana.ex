@@ -30,6 +30,7 @@ defmodule Arcana do
   """
 
   alias Arcana.Document
+  alias Arcana.Graph.GraphStore
 
   # === Configuration ===
 
@@ -112,17 +113,34 @@ defmodule Arcana do
   @doc """
   Deletes a document and all its chunks.
 
+  When the graph is enabled, also sweeps the document's collection for
+  orphaned graph data: entities left with zero mentions are deleted and
+  communities that referenced them are marked dirty so the next
+  summarize pass regenerates them.
+
   ## Options
 
     * `:repo` - The Ecto repo to use (required)
+    * `:graph` - Sweep orphaned graph data after deletion (default: from config)
 
   """
   def delete(document_id, opts) do
     repo = Arcana.Config.require_repo!(opts)
 
     case repo.get(Document, document_id) do
-      nil -> {:error, :not_found}
-      document -> repo.delete!(document) && :ok
+      nil ->
+        {:error, :not_found}
+
+      document ->
+        repo.delete!(document)
+        maybe_sweep_graph_orphans(document.collection_id, repo, opts)
+        :ok
+    end
+  end
+
+  defp maybe_sweep_graph_orphans(collection_id, repo, opts) do
+    if collection_id && Arcana.Config.graph_enabled?(opts) do
+      GraphStore.sweep_orphans(collection_id, Keyword.put(opts, :repo, repo))
     end
   end
 end

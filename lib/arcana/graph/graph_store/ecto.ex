@@ -234,6 +234,44 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     :ok
   end
 
+  @impl true
+  def sweep_orphans(collection_id, opts) do
+    repo = Keyword.fetch!(opts, :repo)
+
+    orphaned_ids =
+      repo.all(
+        from(e in Entity,
+          left_join: m in EntityMention,
+          on: m.entity_id == e.id,
+          where: e.collection_id == ^collection_id,
+          group_by: e.id,
+          having: count(m.id) == 0,
+          select: e.id
+        )
+      )
+
+    if orphaned_ids != [] do
+      # Relationships cascade via FK on source_id/target_id
+      repo.delete_all(from(e in Entity, where: e.id in ^orphaned_ids))
+      mark_overlapping_communities_dirty(collection_id, orphaned_ids, repo)
+    end
+
+    :ok
+  end
+
+  defp mark_overlapping_communities_dirty(collection_id, entity_ids, repo) do
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    repo.update_all(
+      from(c in Community,
+        where:
+          c.collection_id == ^collection_id and
+            fragment("? && ?", c.entity_ids, type(^entity_ids, {:array, Ecto.UUID}))
+      ),
+      set: [dirty: true, updated_at: now]
+    )
+  end
+
   # === Detail Query Callbacks ===
 
   @impl true

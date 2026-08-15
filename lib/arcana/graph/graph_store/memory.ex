@@ -109,6 +109,12 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl Arcana.Graph.GraphStore
+  def sweep_orphans(collection_id, opts) do
+    server = get_server(opts)
+    GenServer.call(server, {:sweep_orphans, collection_id})
+  end
+
+  @impl Arcana.Graph.GraphStore
   def get_entity(entity_id, opts) do
     server = get_server(opts)
     GenServer.call(server, {:get_entity, entity_id})
@@ -411,6 +417,40 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl GenServer
+  def handle_call({:sweep_orphans, collection_id}, _from, state) do
+    mentioned_ids = MapSet.new(state.mentions, & &1.entity_id)
+
+    {kept, orphaned} =
+      state.entities
+      |> Map.get(collection_id, [])
+      |> Enum.split_with(fn e -> MapSet.member?(mentioned_ids, e.id) end)
+
+    orphaned_ids = MapSet.new(orphaned, & &1.id)
+
+    new_relationships =
+      Enum.reject(state.relationships, fn r ->
+        MapSet.member?(orphaned_ids, r.source_id) or MapSet.member?(orphaned_ids, r.target_id)
+      end)
+
+    new_communities =
+      Map.update(
+        state.communities,
+        collection_id,
+        [],
+        &mark_overlapping_dirty(&1, orphaned_ids)
+      )
+
+    new_state = %{
+      state
+      | entities: Map.put(state.entities, collection_id, kept),
+        relationships: new_relationships,
+        communities: new_communities
+    }
+
+    {:reply, :ok, new_state}
+  end
+
+  @impl GenServer
   def handle_call({:get_entity, entity_id}, _from, state) do
     entity =
       state.entities
@@ -697,6 +737,14 @@ defmodule Arcana.Graph.GraphStore.Memory do
     new_visited = Enum.reduce(related_ids, visited, &MapSet.put(&2, &1))
 
     find_related_bfs(related_ids, new_visited, depth - 1, relationships)
+  end
+
+  defp mark_overlapping_dirty(communities, orphaned_ids) do
+    Enum.map(communities, fn community ->
+      overlaps? = Enum.any?(community.entity_ids || [], &MapSet.member?(orphaned_ids, &1))
+
+      if overlaps?, do: Map.put(community, :dirty, true), else: community
+    end)
   end
 
   # Entity filters

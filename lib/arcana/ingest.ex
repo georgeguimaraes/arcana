@@ -7,6 +7,7 @@ defmodule Arcana.Ingest do
   """
 
   alias Arcana.{Chunk, Chunker, Collection, Document, Embedder, Parser}
+  alias Arcana.Graph.GraphStore
 
   @doc """
   Ingests text content, creating a document with embedded chunks.
@@ -143,11 +144,22 @@ defmodule Arcana.Ingest do
     maybe_build_graph(chunk_records, collection, repo, opts)
 
     if Keyword.get(opts, :replace, false) do
-      finalize_replace(document, chunk_records, repo)
+      with {:ok, document} <- finalize_replace(document, chunk_records, repo) do
+        maybe_sweep_graph_orphans(document.collection_id, repo, opts)
+        {:ok, document}
+      end
     else
       document
       |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
       |> repo.update()
+    end
+  end
+
+  # The replaced predecessors' chunks cascade away with them, which can
+  # strand zero-mention entities; sweep them like Arcana.delete/2 does.
+  defp maybe_sweep_graph_orphans(collection_id, repo, opts) do
+    if collection_id && Arcana.Config.graph_enabled?(opts) do
+      GraphStore.sweep_orphans(collection_id, Keyword.put(opts, :repo, repo))
     end
   end
 
