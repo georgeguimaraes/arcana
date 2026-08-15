@@ -8,8 +8,12 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
   @behaviour Arcana.Graph.GraphStore
 
-  alias Arcana.Graph.{Community, Entity, EntityMention, Relationship}
+  alias Arcana.Graph.{Community, Entity, EntityMention, EntityName, Relationship}
   import Ecto.Query
+
+  # Mirrors EntityName.normalize/1 in SQL so upserts match name variants
+  # already stored with different casing/underscores.
+  @normalize_name_sql "btrim(regexp_replace(regexp_replace(lower(?), '[_-]+', ' ', 'g'), '\\s+', ' ', 'g'))"
 
   # === Storage Callbacks ===
 
@@ -17,21 +21,16 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   def persist_entities(collection_id, entities, opts) do
     repo = Keyword.fetch!(opts, :repo)
 
-    # Deduplicate by name
-    unique_entities =
-      entities
-      |> Enum.reduce(%{}, fn entity, acc ->
-        Map.put_new(acc, entity.name, entity)
-      end)
-      |> Map.values()
-
-    # Upsert each entity and build name -> id mapping
+    # Deduplicate on the normalized name (first-seen entity wins, keeping
+    # its original name for display) and build normalized-name -> id map.
     entity_id_map =
-      unique_entities
-      |> Enum.reject(fn e -> is_nil(e.name) or e.name == "" end)
-      |> Enum.reduce(%{}, fn entity, id_map ->
-        entity_record = upsert_entity(entity, collection_id, repo)
-        Map.put(id_map, entity.name, entity_record.id)
+      entities
+      |> Enum.map(fn entity -> {EntityName.normalize(entity.name), entity} end)
+      |> Enum.reject(fn {key, _entity} -> is_nil(key) or key == "" end)
+      |> Enum.uniq_by(fn {key, _entity} -> key end)
+      |> Enum.reduce(%{}, fn {key, entity}, id_map ->
+        entity_record = upsert_entity(entity, key, collection_id, repo)
+        Map.put(id_map, key, entity_record.id)
       end)
 
     {:ok, entity_id_map}
@@ -43,8 +42,8 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
     relationships
     |> Enum.each(fn rel ->
-      source_id = Map.get(entity_id_map, rel.source)
-      target_id = Map.get(entity_id_map, rel.target)
+      source_id = Map.get(entity_id_map, EntityName.normalize(rel.source))
+      target_id = Map.get(entity_id_map, EntityName.normalize(rel.target))
 
       if source_id && target_id && rel.type && rel.type != "" do
         %Relationship{}
@@ -69,7 +68,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
     mentions
     |> Enum.each(fn mention ->
-      entity_id = Map.get(entity_id_map, mention.entity_name)
+      entity_id = Map.get(entity_id_map, EntityName.normalize(mention.entity_name))
 
       if entity_id do
         %EntityMention{}
@@ -561,11 +560,18 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
   # === Private Helpers ===
 
-  defp upsert_entity(entity, collection_id, repo) do
+  defp upsert_entity(entity, normalized_name, collection_id, repo) do
+    # Match on the normalized name so stored variants ("Delivery" vs
+    # "delivery") upsert into one row. Legacy data may already hold
+    # several variants, so take the oldest instead of expecting one.
     existing =
       repo.one(
         from(e in Entity,
-          where: e.name == ^entity.name and e.collection_id == ^collection_id
+          where:
+            e.collection_id == ^collection_id and
+              fragment(@normalize_name_sql, e.name) == ^normalized_name,
+          order_by: [asc: e.inserted_at],
+          limit: 1
         )
       )
 

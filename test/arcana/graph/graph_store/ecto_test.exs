@@ -63,9 +63,10 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
 
       {:ok, id_map} = EctoStore.persist_entities(collection.id, entities, repo: Repo)
 
+      # id map is keyed by the normalized name
       assert map_size(id_map) == 2
-      assert Map.has_key?(id_map, "Alice")
-      assert Map.has_key?(id_map, "Bob")
+      assert Map.has_key?(id_map, "alice")
+      assert Map.has_key?(id_map, "bob")
 
       # Verify entities exist in DB
       assert Repo.get_by(Entity, name: "Alice", collection_id: collection.id)
@@ -92,7 +93,21 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       entities = [%{name: "Alice", type: "person"}]
       {:ok, id_map} = EctoStore.persist_entities(collection.id, entities, repo: Repo)
 
-      assert id_map["Alice"] == existing.id
+      assert id_map["alice"] == existing.id
+    end
+
+    test "upserts name variants into the same entity" do
+      collection = create_collection()
+      existing = create_entity(collection, "Two_Year_Limited_Warranty", "concept")
+
+      entities = [%{name: "two year limited warranty", type: "concept"}]
+      {:ok, id_map} = EctoStore.persist_entities(collection.id, entities, repo: Repo)
+
+      assert id_map["two year limited warranty"] == existing.id
+      assert Repo.aggregate(Entity, :count) == 1
+
+      # First-seen display name is kept
+      assert Repo.get(Entity, existing.id).name == "Two_Year_Limited_Warranty"
     end
 
     test "inserts entity with metadata" do
@@ -107,7 +122,7 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       ]
 
       {:ok, id_map} = EctoStore.persist_entities(collection.id, entities, repo: Repo)
-      alice_id = id_map["Alice"]
+      alice_id = id_map["alice"]
 
       alice = Repo.get(Entity, alice_id)
       assert alice.metadata == %{"age" => 30, "city" => "New York"}
@@ -119,7 +134,7 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       collection = create_collection()
       alice = create_entity(collection, "Alice")
       bob = create_entity(collection, "Bob")
-      entity_id_map = %{"Alice" => alice.id, "Bob" => bob.id}
+      entity_id_map = %{"alice" => alice.id, "bob" => bob.id}
 
       relationships = [
         %{source: "Alice", target: "Bob", type: "knows"}
@@ -135,7 +150,7 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       collection = create_collection()
       alice = create_entity(collection, "Alice")
       bob = create_entity(collection, "Bob")
-      entity_id_map = %{"Alice" => alice.id, "Bob" => bob.id}
+      entity_id_map = %{"alice" => alice.id, "bob" => bob.id}
 
       relationships = [
         %{
@@ -156,7 +171,7 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
     end
 
     test "skips relationships with missing entities" do
-      entity_id_map = %{"Alice" => Ecto.UUID.generate()}
+      entity_id_map = %{"alice" => Ecto.UUID.generate()}
 
       relationships = [
         %{source: "Alice", target: "Unknown", type: "knows"}
@@ -173,7 +188,7 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       document = create_document(collection)
       chunk = create_chunk(document)
       alice = create_entity(collection, "Alice")
-      entity_id_map = %{"Alice" => alice.id}
+      entity_id_map = %{"alice" => alice.id}
 
       mentions = [
         %{entity_name: "Alice", chunk_id: chunk.id}

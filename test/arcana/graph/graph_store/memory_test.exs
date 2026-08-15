@@ -17,7 +17,7 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       {:ok, id_map} =
         GraphStore.persist_entities(collection_id, entities, graph_store: {:memory, pid: pid})
 
-      assert Map.has_key?(id_map, "Test")
+      assert Map.has_key?(id_map, "test")
 
       found = GraphStore.find_entities(collection_id, graph_store: {:memory, pid: pid})
       assert length(found) == 1
@@ -36,9 +36,10 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
 
       {:ok, id_map} = Memory.persist_entities(collection_id, entities, pid: pid)
 
+      # id map is keyed by the normalized name
       assert map_size(id_map) == 2
-      assert Map.has_key?(id_map, "Alice")
-      assert Map.has_key?(id_map, "Bob")
+      assert Map.has_key?(id_map, "alice")
+      assert Map.has_key?(id_map, "bob")
     end
 
     test "deduplicates entities by name", %{pid: pid} do
@@ -61,7 +62,31 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       {:ok, id_map1} = Memory.persist_entities(collection_id, entities, pid: pid)
       {:ok, id_map2} = Memory.persist_entities(collection_id, entities, pid: pid)
 
-      assert id_map1["Alice"] == id_map2["Alice"]
+      assert id_map1["alice"] == id_map2["alice"]
+    end
+
+    test "upserts name variants into the same entity", %{pid: pid} do
+      collection_id = "col-1"
+
+      {:ok, id_map1} =
+        Memory.persist_entities(
+          collection_id,
+          [%{name: "Two_Year_Limited_Warranty", type: "concept"}],
+          pid: pid
+        )
+
+      {:ok, id_map2} =
+        Memory.persist_entities(
+          collection_id,
+          [%{name: "two year limited warranty", type: "concept"}],
+          pid: pid
+        )
+
+      assert id_map1["two year limited warranty"] == id_map2["two year limited warranty"]
+
+      # First-seen display name is kept
+      assert [%{name: "Two_Year_Limited_Warranty"}] =
+               Memory.find_entities(collection_id, pid: pid)
     end
   end
 
@@ -185,7 +210,7 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       :ok = Memory.persist_relationships(relationships, id_map, pid: pid)
 
       # From Alice, depth 1 should find Bob
-      alice_id = id_map["Alice"]
+      alice_id = id_map["alice"]
       related = Memory.find_related_entities(alice_id, 1, pid: pid)
       names = Enum.map(related, & &1.name)
 
@@ -250,8 +275,8 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
         Memory.persist_communities(
           "col-1",
           [
-            %{id: "comm-1", level: 0, summary: "s", entity_ids: [id_map["Orphan"]], dirty: false},
-            %{id: "comm-2", level: 0, summary: "s", entity_ids: [id_map["Kept"]], dirty: false}
+            %{id: "comm-1", level: 0, summary: "s", entity_ids: [id_map["orphan"]], dirty: false},
+            %{id: "comm-2", level: 0, summary: "s", entity_ids: [id_map["kept"]], dirty: false}
           ],
           pid: pid
         )
@@ -264,7 +289,7 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       assert [%{name: "Elsewhere"}] = Memory.find_entities("col-2", pid: pid)
 
       # relationship touching the orphan is gone
-      assert Memory.get_relationships(id_map["Kept"], pid: pid) == []
+      assert Memory.get_relationships(id_map["kept"], pid: pid) == []
 
       {:ok, comm1} = Memory.get_community("comm-1", pid: pid)
       {:ok, comm2} = Memory.get_community("comm-2", pid: pid)
