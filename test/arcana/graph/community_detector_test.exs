@@ -75,6 +75,35 @@ defmodule Arcana.Graph.CommunityDetectorTest do
       assert Enum.all?(levels, &(&1 <= 1))
     end
 
+    test "drops duplicate levels once the hierarchy converges" do
+      # A tiny flat graph converges immediately: with max_level: 5 the
+      # detector used to store five identical copies of the same
+      # partition (issue #115). Consecutive identical partitions must
+      # collapse to one.
+      entities = Enum.map(1..6, &%{id: "#{&1}", name: "Entity #{&1}"})
+
+      relationships = [
+        %{source_id: "1", target_id: "2", strength: 10},
+        %{source_id: "2", target_id: "3", strength: 10},
+        %{source_id: "4", target_id: "5", strength: 10},
+        %{source_id: "5", target_id: "6", strength: 10}
+      ]
+
+      detector = {Leiden, max_level: 5, seed: 42}
+      {:ok, communities} = CommunityDetector.detect(detector, entities, relationships)
+
+      partitions_by_level =
+        communities
+        |> Enum.group_by(& &1.level)
+        |> Enum.sort_by(&elem(&1, 0))
+        |> Enum.map(fn {_level, comms} ->
+          comms |> Enum.map(&Enum.sort(&1.entity_ids)) |> Enum.sort()
+        end)
+
+      # No two consecutive stored levels carry the same partition
+      assert partitions_by_level == Enum.dedup(partitions_by_level)
+    end
+
     test "respects resolution parameter" do
       entities = Enum.map(1..6, &%{id: "#{&1}", name: "Entity #{&1}"})
 
