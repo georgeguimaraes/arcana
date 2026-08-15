@@ -134,11 +134,28 @@ if Code.ensure_loaded?(Leidenfold) do
       end)
     end
 
-    # Convert hierarchical levels from leidenfold to community maps
+    # Convert hierarchical levels from leidenfold to community maps.
+    #
+    # On small or naturally flat graphs the hierarchy converges before
+    # max_level and the remaining levels are byte-identical partitions;
+    # keep only the first level of each identical run so max_level acts
+    # as a ceiling, not a multiplier (every duplicate row would otherwise
+    # cost an LLM call in summarize_communities).
     defp format_hierarchical_levels(levels, index_to_id, min_size) do
-      Enum.flat_map(levels, fn %{level: level, membership: membership} ->
+      levels
+      |> Enum.map(fn %{level: level, membership: membership} ->
         format_communities(membership, index_to_id, level, min_size)
       end)
+      |> Enum.dedup_by(&partition_signature/1)
+      |> List.flatten()
+    end
+
+    # A level's identity is its set of entity-id sets, independent of
+    # level number and ordering.
+    defp partition_signature(communities) do
+      communities
+      |> Enum.map(fn %{entity_ids: ids} -> Enum.sort(ids) end)
+      |> Enum.sort()
     end
 
     # Convert membership list to community maps
