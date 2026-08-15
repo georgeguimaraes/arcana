@@ -907,7 +907,7 @@ defmodule ArcanaWeb.GraphLive do
               >
                 <td>
                   <%= if community.summary do %>
-                    <%= String.slice(community.summary, 0, 50) %><%= if String.length(community.summary || "") > 50, do: "...", else: "" %>
+                    <%= String.slice(community.summary, 0, 50) %><%= if String.length(community.summary) > 50, do: "...", else: "" %>
                   <% else %>
                     <span class="arcana-no-summary">No summary</span>
                   <% end %>
