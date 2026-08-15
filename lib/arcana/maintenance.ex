@@ -869,62 +869,70 @@ defmodule Arcana.Maintenance do
     # Validate the collection filter before requiring an LLM, so strict
     # callers get {:error, {:unknown_collection, name}} consistently.
     with {:ok, collections} <- fetch_collections(repo, collection_filter, strict?) do
-      if collections == [] do
-        {:ok, %{communities: 0, summaries: 0}}
-      else
-        # Normalize the LLM to a 3-arity function through the Arcana.LLM
-        # protocol, so every supported config shape (model string,
-        # {model, opts}, {module, function}, anonymous function) works here.
-        llm =
-          case Keyword.get_lazy(opts, :llm, fn -> Arcana.Config.get_env(:llm) end) do
-            nil ->
-              nil
+      summarize_fetched_collections(collections, repo, %{
+        opts: opts,
+        force: force,
+        concurrency: concurrency,
+        progress_fn: progress_fn
+      })
+    end
+  end
 
-            llm ->
-              fn prompt, context, call_opts ->
-                Arcana.LLM.complete(llm, prompt, context, call_opts)
-              end
-          end
+  defp summarize_fetched_collections([], _repo, _config) do
+    {:ok, %{communities: 0, summaries: 0}}
+  end
 
-        unless llm do
-          raise "No LLM configured. Set config :arcana, :llm or pass :llm option"
+  defp summarize_fetched_collections(collections, repo, config) do
+    %{opts: opts, force: force, concurrency: concurrency, progress_fn: progress_fn} = config
+    llm = resolve_summarizer_llm!(opts)
+    total_collections = length(collections)
+
+    results =
+      collections
+      |> Enum.with_index(1)
+      |> Enum.map(fn {collection, index} ->
+        result =
+          summarize_communities_for_collection(
+            collection,
+            repo,
+            llm,
+            force,
+            concurrency,
+            progress_fn
+          )
+
+        try do
+          progress_fn.(:collection_complete, %{
+            index: index,
+            total: total_collections,
+            collection: collection.name,
+            result: result
+          })
+        rescue
+          FunctionClauseError -> progress_fn.(index, total_collections)
         end
 
-        total_collections = length(collections)
+        result
+      end)
 
-        results =
-          collections
-          |> Enum.with_index(1)
-          |> Enum.map(fn {collection, index} ->
-            result =
-              summarize_communities_for_collection(
-                collection,
-                repo,
-                llm,
-                force,
-                concurrency,
-                progress_fn
-              )
+    total_communities = Enum.sum(Enum.map(results, & &1.communities))
+    total_summaries = Enum.sum(Enum.map(results, & &1.summaries))
 
-            try do
-              progress_fn.(:collection_complete, %{
-                index: index,
-                total: total_collections,
-                collection: collection.name,
-                result: result
-              })
-            rescue
-              FunctionClauseError -> progress_fn.(index, total_collections)
-            end
+    {:ok, %{communities: total_communities, summaries: total_summaries}}
+  end
 
-            result
-          end)
+  # Normalize the LLM to a 3-arity function through the Arcana.LLM
+  # protocol, so every supported config shape (model string, {model, opts},
+  # {module, function}, anonymous function) works here.
+  defp resolve_summarizer_llm!(opts) do
+    case Keyword.get_lazy(opts, :llm, fn -> Arcana.Config.get_env(:llm) end) do
+      nil ->
+        raise "No LLM configured. Set config :arcana, :llm or pass :llm option"
 
-        total_communities = Enum.sum(Enum.map(results, & &1.communities))
-        total_summaries = Enum.sum(Enum.map(results, & &1.summaries))
-
-        {:ok, %{communities: total_communities, summaries: total_summaries}}
-      end
+      llm ->
+        fn prompt, context, call_opts ->
+          Arcana.LLM.complete(llm, prompt, context, call_opts)
+        end
     end
   end
 
