@@ -45,7 +45,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       repo = socket.assigns.repo
 
       socket
-      |> assign(stats: load_stats(repo))
+      |> assign(stats: load_stats(repo, socket.assigns.allowed_collections))
       |> load_evaluation_data()
     end
 
@@ -55,7 +55,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       test_cases = Evaluation.list_test_cases(repo: repo)
       runs = Evaluation.list_runs(repo: repo, limit: 10)
       test_case_count = Evaluation.count_test_cases(repo: repo)
-      collections = load_collections(repo)
+      collections = load_collections(repo, socket.assigns.allowed_collections)
 
       assign(socket,
         eval_test_cases: test_cases,
@@ -135,25 +135,11 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       sample_size = parse_int(params["sample_size"], 10)
       collection = blank_to_nil(params["collection"])
 
-      case Arcana.Config.get_env(:llm) do
-        nil ->
-          {:noreply,
-           assign(socket,
-             eval_message: {:error, "No LLM configured. Set :arcana, :llm in your config."}
-           )}
-
-        llm ->
-          socket = assign(socket, eval_generating: true, eval_message: nil)
-
-          parent = self()
-          opts = build_generate_opts(repo, llm, sample_size, collection)
-
-          Task.Supervisor.start_child(ArcanaWeb.TaskSupervisor, fn ->
-            result = Evaluation.generate_test_cases(opts)
-            send(parent, {:eval_generate_complete, result})
-          end)
-
-          {:noreply, socket}
+      if eval_collection_allowed?(socket, collection) do
+        generate_test_cases(socket, repo, sample_size, collection)
+      else
+        {:noreply,
+         assign(socket, eval_message: {:error, "The selected collection is not allowed"})}
       end
     end
 
@@ -178,6 +164,38 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       case Evaluation.delete_run(id, repo: repo) do
         {:ok, _} -> {:noreply, load_evaluation_data(socket)}
         {:error, _} -> {:noreply, socket}
+      end
+    end
+
+    # nil means "sample from every collection", which restricted dashboards
+    # must not do; they need a concrete allowed collection.
+    defp eval_collection_allowed?(socket, collection) do
+      case socket.assigns.allowed_collections do
+        :all -> true
+        allowed -> is_binary(collection) and collection in allowed
+      end
+    end
+
+    defp generate_test_cases(socket, repo, sample_size, collection) do
+      case Arcana.Config.get_env(:llm) do
+        nil ->
+          {:noreply,
+           assign(socket,
+             eval_message: {:error, "No LLM configured. Set :arcana, :llm in your config."}
+           )}
+
+        llm ->
+          socket = assign(socket, eval_generating: true, eval_message: nil)
+
+          parent = self()
+          opts = build_generate_opts(repo, llm, sample_size, collection)
+
+          Task.Supervisor.start_child(ArcanaWeb.TaskSupervisor, fn ->
+            result = Evaluation.generate_test_cases(opts)
+            send(parent, {:eval_generate_complete, result})
+          end)
+
+          {:noreply, socket}
       end
     end
 
@@ -425,6 +443,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
                 test_cases={@eval_test_cases}
                 generating={@eval_generating}
                 collections={@collections}
+                all_collections_allowed={@allowed_collections == :all}
                 expanded_id={@expanded_test_case_id}
               />
             <% :run -> %>
@@ -449,12 +468,16 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
             <div class="arcana-eval-field">
               <label class="arcana-eval-field-label" for="eval-collection">Collection</label>
               <select name="collection" id="eval-collection" class="arcana-eval-select">
-                <option value="">All collections</option>
+                <%= if @all_collections_allowed do %>
+                  <option value="">All collections</option>
+                <% end %>
                 <%= for col <- @collections do %>
                   <option value={col.name}><%= col.name %></option>
                 <% end %>
               </select>
-              <small class="arcana-eval-hint">Leave blank to sample from every collection.</small>
+              <%= if @all_collections_allowed do %>
+                <small class="arcana-eval-hint">Leave blank to sample from every collection.</small>
+              <% end %>
             </div>
 
             <div class="arcana-eval-field">

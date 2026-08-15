@@ -38,17 +38,18 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp load_data(socket) do
       repo = socket.assigns.repo
+      allowed = socket.assigns.allowed_collections
 
       socket
-      |> assign(stats: load_stats(repo))
-      |> assign(collections: load_collections(repo))
-      |> assign(source_ids: load_source_ids(repo))
+      |> assign(stats: load_stats(repo, allowed))
+      |> assign(collections: load_collections(repo, allowed))
+      |> assign(source_ids: load_source_ids(repo, allowed))
     end
 
     @impl true
     def handle_event("search", params, socket) do
       query = params["query"] || ""
-      results = run_search(query, params, socket.assigns.repo)
+      results = run_search(query, params, socket.assigns.repo, socket.assigns.allowed_collections)
 
       {:noreply,
        assign(socket, search_results: results, search_query: query, expanded_result_id: nil)}
@@ -64,33 +65,75 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       repo = socket.assigns.repo
       import Ecto.Query
 
-      document = repo.get(Document, id)
+      document_query = from(d in Document, where: d.id == ^id)
 
-      chunks =
-        repo.all(
-          from(c in Arcana.Chunk,
-            where: c.document_id == ^id,
-            order_by: c.chunk_index
-          )
-        )
+      # Forged ids pointing outside the allowed collections resolve to
+      # nothing, same as a missing document.
+      document_query =
+        case socket.assigns.allowed_collections do
+          :all ->
+            document_query
 
-      {:noreply, assign(socket, viewing_document: %{document: document, chunks: chunks})}
+          names when is_list(names) ->
+            from(d in document_query, join: c in assoc(d, :collection), where: c.name in ^names)
+        end
+
+      case repo.one(document_query) do
+        nil ->
+          {:noreply, socket}
+
+        document ->
+          chunks =
+            repo.all(
+              from(c in Arcana.Chunk,
+                where: c.document_id == ^id,
+                order_by: c.chunk_index
+              )
+            )
+
+          {:noreply, assign(socket, viewing_document: %{document: document, chunks: chunks})}
+      end
     end
 
     def handle_event("close_search_document", _params, socket) do
       {:noreply, assign(socket, viewing_document: nil)}
     end
 
-    defp run_search("", _params, _repo), do: []
+    defp run_search("", _params, _repo, _allowed), do: []
 
-    defp run_search(query, params, repo) do
-      case params |> build_search_opts(repo) |> then(&Arcana.search(query, &1)) do
-        {:ok, results} -> results
-        {:error, _reason} -> []
+    defp run_search(query, params, repo, allowed) do
+      requested = normalize_collections(params["collections"])
+
+      # Fail closed: a request naming any collection outside the allowed set
+      # refuses the whole search instead of silently narrowing it, and an
+      # empty allowed set never reaches Arcana.search/2 (where an empty
+      # collections option would mean "search everything").
+      case resolve_search_collections(requested, allowed) do
+        {:ok, collections} ->
+          opts = build_search_opts(params, repo, collections)
+
+          case Arcana.search(query, opts) do
+            {:ok, results} -> results
+            {:error, _reason} -> []
+          end
+
+        :error ->
+          []
       end
     end
 
-    defp build_search_opts(params, repo) do
+    # Unrestricted: requested collections pass through untouched, [] keeps
+    # today's "search everything" behavior via add_collection_opt/2.
+    defp resolve_search_collections(requested, :all), do: {:ok, requested}
+
+    defp resolve_search_collections([], []), do: :error
+    defp resolve_search_collections([], allowed), do: {:ok, allowed}
+
+    defp resolve_search_collections(requested, allowed) do
+      if Enum.all?(requested, &(&1 in allowed)), do: {:ok, requested}, else: :error
+    end
+
+    defp build_search_opts(params, repo, collections) do
       [
         repo: repo,
         limit: parse_int(params["limit"], 10),
@@ -98,7 +141,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         mode: parse_mode(params["mode"])
       ]
       |> add_source_id_opt(params["source_id"])
-      |> add_collection_opt(normalize_collections(params["collections"]))
+      |> add_collection_opt(collections)
     end
 
     defp add_source_id_opt(opts, nil), do: opts

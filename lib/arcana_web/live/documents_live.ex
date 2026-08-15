@@ -48,14 +48,15 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp load_data(socket) do
       repo = socket.assigns.repo
+      allowed = socket.assigns.allowed_collections
 
       socket
-      |> assign(stats: load_stats(repo))
-      |> assign(collections: load_collections(repo))
+      |> assign(stats: load_stats(repo, allowed))
+      |> assign(collections: load_collections(repo, allowed))
       |> load_documents()
     end
 
-    defp load_documents(socket) do
+    defp load_documents(%{assigns: %{allowed_collections: :all}} = socket) do
       page = socket.assigns.page
       per_page = socket.assigns.per_page
 
@@ -77,30 +78,91 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       )
     end
 
+    # Restricted listing: Arcana.list_documents/1 only takes a single
+    # :collection, so scope by the allowed name list here. Ordering mirrors
+    # Arcana.Documents so pagination behaves identically across modes.
+    defp load_documents(%{assigns: %{allowed_collections: allowed}} = socket) do
+      repo = socket.assigns.repo
+      page = socket.assigns.page
+      per_page = socket.assigns.per_page
+
+      names =
+        case socket.assigns.filter_collection do
+          nil -> allowed
+          name -> Enum.filter([name], &(&1 in allowed))
+        end
+
+      base = from(d in Document, join: c in assoc(d, :collection), where: c.name in ^names)
+
+      total_count = repo.aggregate(base, :count)
+      total_pages = max(1, ceil(total_count / per_page))
+
+      documents =
+        base
+        |> order_by([d], desc: d.inserted_at, desc: d.id)
+        |> limit(^per_page)
+        |> offset(^((page - 1) * per_page))
+        |> preload([:collection])
+        |> repo.all()
+
+      assign(socket,
+        documents: documents,
+        total_pages: total_pages,
+        total_count: total_count
+      )
+    end
+
     defp load_document_detail(socket, doc_id) do
       repo = socket.assigns.repo
 
-      document =
-        repo.one(
-          from(d in Document,
-            where: d.id == ^doc_id,
-            preload: [:collection]
-          )
-        )
+      query = from(d in Document, where: d.id == ^doc_id, preload: [:collection])
+
+      # Forged or bookmarked ids pointing outside the allowed collections
+      # resolve to nothing, same as a missing document.
+      query =
+        case socket.assigns.allowed_collections do
+          :all ->
+            query
+
+          names when is_list(names) ->
+            from(d in query, join: c in assoc(d, :collection), where: c.name in ^names)
+        end
+
+      document = repo.one(query)
 
       if document do
-        chunks =
-          repo.all(
-            from(c in Arcana.Chunk,
-              where: c.document_id == ^doc_id,
-              order_by: c.chunk_index
-            )
-          )
-
-        assign(socket, viewing_document: %{document: document, chunks: chunks})
+        load_document_chunks(socket, document, doc_id)
       else
         socket
       end
+    end
+
+    defp load_document_chunks(socket, document, doc_id) do
+      repo = socket.assigns.repo
+
+      chunks =
+        repo.all(
+          from(c in Arcana.Chunk,
+            where: c.document_id == ^doc_id,
+            order_by: c.chunk_index
+          )
+        )
+
+      assign(socket, viewing_document: %{document: document, chunks: chunks})
+    end
+
+    defp document_in_allowed_collections?(%{assigns: %{allowed_collections: :all}}, _id),
+      do: true
+
+    defp document_in_allowed_collections?(socket, id) do
+      allowed = socket.assigns.allowed_collections
+
+      socket.assigns.repo.exists?(
+        from(d in Document,
+          join: c in assoc(d, :collection),
+          where: d.id == ^id and c.name in ^allowed
+        )
+      )
     end
 
     @impl true
@@ -124,16 +186,79 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       collection = normalize_collection(params["collection"])
       graph = params["graph"] == "true"
 
-      {:ok, _doc} =
-        Arcana.ingest(content, repo: repo, format: format, collection: collection, graph: graph)
+      if allowed_collection?(socket.assigns.allowed_collections, collection) do
+        {:ok, _doc} =
+          Arcana.ingest(content, repo: repo, format: format, collection: collection, graph: graph)
 
-      {:noreply, load_data(socket)}
+        {:noreply, load_data(socket)}
+      else
+        {:noreply, put_flash(socket, :error, "Collection #{inspect(collection)} is not allowed")}
+      end
     end
 
     def handle_event("upload_files", params, socket) do
-      repo = socket.assigns.repo
       collection = normalize_collection(params["collection"])
-      graph = params["graph"] == "true"
+
+      if allowed_collection?(socket.assigns.allowed_collections, collection) do
+        {:noreply, ingest_uploads(socket, collection, params["graph"] == "true")}
+      else
+        {:noreply,
+         assign(socket, upload_error: "Collection #{inspect(collection)} is not allowed")}
+      end
+    end
+
+    def handle_event("cancel_upload", %{"ref" => ref}, socket) do
+      {:noreply, cancel_upload(socket, :files, ref)}
+    end
+
+    def handle_event("validate_upload", _params, socket) do
+      {:noreply, socket}
+    end
+
+    def handle_event("delete", %{"id" => id}, socket) do
+      repo = socket.assigns.repo
+
+      if document_in_allowed_collections?(socket, id) do
+        case Arcana.delete(id, repo: repo) do
+          :ok -> {:noreply, load_data(socket)}
+          {:error, _reason} -> {:noreply, socket}
+        end
+      else
+        {:noreply, socket}
+      end
+    end
+
+    def handle_event("filter_by_collection", %{"collection" => collection_name}, socket) do
+      if allowed_collection?(socket.assigns.allowed_collections, collection_name) do
+        {:noreply,
+         socket |> assign(filter_collection: collection_name, page: 1) |> load_documents()}
+      else
+        {:noreply, socket}
+      end
+    end
+
+    def handle_event("clear_collection_filter", _params, socket) do
+      {:noreply, socket |> assign(filter_collection: nil, page: 1) |> load_documents()}
+    end
+
+    def handle_event("build_graph", _params, socket) do
+      %{document: document, chunks: chunks} = socket.assigns.viewing_document
+      collection = document.collection
+      repo = socket.assigns.repo
+      parent = self()
+
+      socket = assign(socket, graph_indexing: true)
+
+      ArcanaWeb.TaskSupervisor.start_child(fn ->
+        result = Arcana.Graph.build_and_persist(chunks, collection, repo, [])
+        send(parent, {:graph_complete, result})
+      end)
+
+      {:noreply, socket}
+    end
+
+    defp ingest_uploads(socket, collection, graph) do
+      repo = socket.assigns.repo
 
       uploaded_files =
         consume_uploaded_entries(socket, :files, fn %{path: path}, entry ->
@@ -161,49 +286,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           assign(socket, upload_error: "Some files failed: #{error_msg}")
         end
 
-      {:noreply, load_data(socket)}
-    end
-
-    def handle_event("cancel_upload", %{"ref" => ref}, socket) do
-      {:noreply, cancel_upload(socket, :files, ref)}
-    end
-
-    def handle_event("validate_upload", _params, socket) do
-      {:noreply, socket}
-    end
-
-    def handle_event("delete", %{"id" => id}, socket) do
-      repo = socket.assigns.repo
-
-      case Arcana.delete(id, repo: repo) do
-        :ok -> {:noreply, load_data(socket)}
-        {:error, _reason} -> {:noreply, socket}
-      end
-    end
-
-    def handle_event("filter_by_collection", %{"collection" => collection_name}, socket) do
-      {:noreply,
-       socket |> assign(filter_collection: collection_name, page: 1) |> load_documents()}
-    end
-
-    def handle_event("clear_collection_filter", _params, socket) do
-      {:noreply, socket |> assign(filter_collection: nil, page: 1) |> load_documents()}
-    end
-
-    def handle_event("build_graph", _params, socket) do
-      %{document: document, chunks: chunks} = socket.assigns.viewing_document
-      collection = document.collection
-      repo = socket.assigns.repo
-      parent = self()
-
-      socket = assign(socket, graph_indexing: true)
-
-      ArcanaWeb.TaskSupervisor.start_child(fn ->
-        result = Arcana.Graph.build_and_persist(chunks, collection, repo, [])
-        send(parent, {:graph_complete, result})
-      end)
-
-      {:noreply, socket}
+      load_data(socket)
     end
 
     @impl true
@@ -273,7 +356,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
                     <label>
                       Collection
                       <select name="collection">
-                        <option value="">default</option>
+                        <%= if allowed_collection?(@allowed_collections, "default") do %>
+                          <option value="">default</option>
+                        <% end %>
                         <%= for collection <- @collections do %>
                           <option value={collection.name}><%= collection.name %></option>
                         <% end %>
@@ -310,7 +395,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
                 <label>
                   Collection
                   <select name="collection">
-                    <option value="">default</option>
+                    <%= if allowed_collection?(@allowed_collections, "default") do %>
+                      <option value="">default</option>
+                    <% end %>
                     <%= for collection <- @collections do %>
                       <option value={collection.name}><%= collection.name %></option>
                     <% end %>

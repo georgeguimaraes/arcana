@@ -71,9 +71,11 @@ appear literally instead of being formatted.
 
 ```elixir
 arcana_dashboard "/arcana",
-  repo: MyApp.Repo,                    # Override repo
-  on_mount: [MyAppWeb.Auth],           # Add authentication
-  live_socket_path: "/live"            # Custom LiveView socket path
+  repo: MyApp.Repo,                            # Override repo
+  on_mount: [MyAppWeb.Auth],                   # Add authentication
+  live_socket_path: "/live",                   # Custom LiveView socket path
+  live_session_name: :arcana_dashboard,        # Unique per mount in one router
+  collections: {MyAppWeb.Access, :collections} # Scope to a collection subset
 ```
 
 ### Authentication
@@ -84,6 +86,50 @@ Protect the dashboard with your existing authentication:
 arcana_dashboard "/arcana",
   on_mount: [MyAppWeb.RequireAdmin]
 ```
+
+### Collection scoping
+
+By default the dashboard sees (and can mutate) every collection, so it's
+superuser territory. The `collections:` option lets you expose it below
+that level: a `{module, function}` pair that gets the `%Plug.Conn{}` at
+request time and returns either `:all` or the list of collection names
+this request may touch.
+
+```elixir
+arcana_dashboard "/arcana",
+  collections: {MyAppWeb.ArcanaAccess, :allowed_collections}
+```
+
+```elixir
+defmodule MyAppWeb.ArcanaAccess do
+  def allowed_collections(conn) do
+    case conn.assigns.current_user do
+      %{admin: true} -> :all
+      %{tenant: tenant} -> ["#{tenant}-docs", "#{tenant}-tickets"]
+      _ -> []
+    end
+  end
+end
+```
+
+The restriction applies everywhere, and fails closed:
+
+- listings, search, ask, graph views, and the header stats only cover
+  the allowed collections
+- ingest and maintenance actions must target an allowed collection;
+  "All Collections" operations disappear
+- events naming any other collection (including forged form payloads)
+  are rejected server-side, not just hidden from the UI
+- an empty list means the dashboard shows and does nothing
+
+It's a plain `{module, function}` tuple rather than a function capture
+so the router metadata stays serializable. The option composes with
+`on_mount:` auth hooks: use `on_mount` to decide who gets in, and
+`collections:` to decide what they see once inside. It scopes the
+dashboard only, not `Arcana.search/2` or other API calls your app makes.
+
+To mount two dashboards in one router (say a superuser one plus a scoped
+one), give the second a unique `live_session_name:`.
 
 ## Pages
 

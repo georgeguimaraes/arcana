@@ -104,14 +104,15 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp load_data(socket) do
       repo = socket.assigns.repo
+      allowed = socket.assigns.allowed_collections
 
       socket
-      |> assign(stats: load_stats(repo))
-      |> assign(collections: load_collections_with_graph_status(repo))
+      |> assign(stats: load_stats(repo, allowed))
+      |> assign(collections: load_collections_with_graph_status(repo, allowed))
     end
 
-    defp load_collections_with_graph_status(repo) do
-      collections = load_collections(repo)
+    defp load_collections_with_graph_status(repo, allowed) do
+      collections = load_collections(repo, allowed)
 
       # Get entity counts per collection
       entity_counts =
@@ -139,32 +140,20 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     @impl true
     def handle_event("ask_submit", params, socket) do
       question = params["question"] || ""
+      requested = params["collections"] || []
 
-      case {Arcana.Config.get_env(:llm), question} do
-        {nil, _} ->
+      # Collection scoping is checked before anything else (including the
+      # LLM config) so a forged selection never reaches a retrieval call.
+      case resolve_ask_collections(requested, socket.assigns.allowed_collections) do
+        {:ok, collections} ->
+          submit_ask(socket, params, question, collections)
+
+        :error ->
           {:noreply,
            assign(socket,
-             ask_error: "No LLM configured. Set :arcana, :llm in your config.",
+             ask_error: "The selected collections are not allowed",
              ask_running: false
            )}
-
-        {_, ""} ->
-          {:noreply, assign(socket, ask_error: "Please enter a question")}
-
-        {llm, question} ->
-          socket =
-            assign(socket,
-              ask_running: true,
-              ask_error: nil,
-              ask_question: question,
-              ask_context: nil,
-              loop_live_history: [],
-              loop_phase: :idle,
-              trace_history: []
-            )
-
-          start_ask_task(socket, params, llm, question)
-          {:noreply, socket}
       end
     end
 
@@ -226,6 +215,48 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         end)
 
       {:noreply, assign(socket, pipeline_steps: steps)}
+    end
+
+    defp submit_ask(socket, params, question, collections) do
+      case {Arcana.Config.get_env(:llm), question} do
+        {nil, _} ->
+          {:noreply,
+           assign(socket,
+             ask_error: "No LLM configured. Set :arcana, :llm in your config.",
+             ask_running: false
+           )}
+
+        {_, ""} ->
+          {:noreply, assign(socket, ask_error: "Please enter a question")}
+
+        {llm, question} ->
+          socket =
+            assign(socket,
+              ask_running: true,
+              ask_error: nil,
+              ask_question: question,
+              ask_context: nil,
+              loop_live_history: [],
+              loop_phase: :idle,
+              trace_history: []
+            )
+
+          start_ask_task(socket, params, llm, question, collections)
+          {:noreply, socket}
+      end
+    end
+
+    # Resolves the user's collection selection against the allowed set.
+    # Unrestricted dashboards pass the selection through untouched ([] keeps
+    # today's semantics). Restricted ones fail closed: an empty allowed set
+    # refuses every ask, no selection means "all allowed collections", and a
+    # selection naming anything outside the allowed set is rejected whole.
+    defp resolve_ask_collections(requested, :all), do: {:ok, requested}
+    defp resolve_ask_collections(_requested, []), do: :error
+    defp resolve_ask_collections([], allowed), do: {:ok, allowed}
+
+    defp resolve_ask_collections(requested, allowed) do
+      if Enum.all?(requested, &(&1 in allowed)), do: {:ok, requested}, else: :error
     end
 
     defp ask_loading_label(:advanced, _step, _phase), do: "Generating answer..."
@@ -304,10 +335,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp format_llm_spec(model) when is_atom(model), do: Atom.to_string(model)
     defp format_llm_spec(other), do: inspect(other, limit: 1)
 
-    defp start_ask_task(socket, params, llm, question) do
+    defp start_ask_task(socket, params, llm, question, selected_collections) do
       repo = socket.assigns.repo
       sub_tab = params["sub_tab"] || "advanced"
-      selected_collections = params["collections"] || []
       parent = self()
 
       ArcanaWeb.TaskSupervisor.start_child(fn ->

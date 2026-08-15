@@ -32,31 +32,38 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp load_data(socket) do
       repo = socket.assigns.repo
-      {collections, has_graph_data} = load_collections_with_stats(repo)
+      allowed = socket.assigns.allowed_collections
+      {collections, has_graph_data} = load_collections_with_stats(repo, allowed)
 
       socket
-      |> assign(stats: load_stats(repo))
+      |> assign(stats: load_stats(repo, allowed))
       |> assign(collections: collections)
       |> assign(show_graph_stats: has_graph_data)
     end
 
-    defp load_collections_with_stats(repo) do
+    defp load_collections_with_stats(repo, allowed) do
       # Base collection data with document count
-      collections =
-        repo.all(
-          from(c in Collection,
-            left_join: d in Arcana.Document,
-            on: d.collection_id == c.id,
-            group_by: c.id,
-            order_by: c.name,
-            select: %{
-              id: c.id,
-              name: c.name,
-              description: c.description,
-              document_count: count(d.id)
-            }
-          )
+      base_query =
+        from(c in Collection,
+          left_join: d in Arcana.Document,
+          on: d.collection_id == c.id,
+          group_by: c.id,
+          order_by: c.name,
+          select: %{
+            id: c.id,
+            name: c.name,
+            description: c.description,
+            document_count: count(d.id)
+          }
         )
+
+      base_query =
+        case allowed do
+          :all -> base_query
+          names when is_list(names) -> where(base_query, [c], c.name in ^names)
+        end
+
+      collections = repo.all(base_query)
 
       # Add chunk counts
       chunk_counts =
@@ -132,20 +139,26 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       name = params["name"] || ""
       description = params["description"]
 
-      case Collection.get_or_create(name, repo, description) do
-        {:ok, _collection} ->
-          {:noreply, load_data(socket)}
+      if allowed_collection?(socket.assigns.allowed_collections, name) do
+        case Collection.get_or_create(name, repo, description) do
+          {:ok, _collection} ->
+            {:noreply, load_data(socket)}
 
-        {:error, changeset} ->
-          {:noreply,
-           put_flash(socket, :error, "Failed to create collection: #{inspect(changeset.errors)}")}
+          {:error, changeset} ->
+            {:noreply,
+             put_flash(
+               socket,
+               :error,
+               "Failed to create collection: #{inspect(changeset.errors)}"
+             )}
+        end
+      else
+        {:noreply, put_flash(socket, :error, "Collection #{inspect(name)} is not allowed")}
       end
     end
 
     def handle_event("edit_collection", %{"id" => id}, socket) do
-      repo = socket.assigns.repo
-      collection = repo.get(Collection, id)
-      {:noreply, assign(socket, editing_collection: collection)}
+      {:noreply, assign(socket, editing_collection: fetch_allowed_collection(socket, id))}
     end
 
     def handle_event("cancel_edit_collection", _params, socket) do
@@ -154,20 +167,19 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     def handle_event("update_collection", %{"id" => id, "collection" => params}, socket) do
       repo = socket.assigns.repo
-      collection = repo.get!(Collection, id)
 
-      changeset =
-        Collection.changeset(collection, %{
-          name: params["name"] || collection.name,
-          description: params["description"]
-        })
+      case fetch_allowed_collection(socket, id) do
+        nil ->
+          {:noreply, put_flash(socket, :error, "Collection is not allowed")}
 
-      case repo.update(changeset) do
-        {:ok, _updated} ->
-          {:noreply, socket |> assign(editing_collection: nil) |> load_data()}
+        collection ->
+          changeset =
+            Collection.changeset(collection, %{
+              name: params["name"] || collection.name,
+              description: params["description"]
+            })
 
-        {:error, changeset} ->
-          {:noreply, put_flash(socket, :error, "Failed to update: #{inspect(changeset.errors)}")}
+          update_collection(socket, repo, changeset)
       end
     end
 
@@ -182,13 +194,38 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     def handle_event("delete_collection", %{"id" => id}, socket) do
       repo = socket.assigns.repo
 
-      case repo.get(Collection, id) do
+      case fetch_allowed_collection(socket, id) do
         nil ->
           {:noreply, assign(socket, confirm_delete_collection: nil)}
 
         collection ->
           repo.delete!(collection)
           {:noreply, socket |> assign(confirm_delete_collection: nil) |> load_data()}
+      end
+    end
+
+    defp update_collection(socket, repo, changeset) do
+      case repo.update(changeset) do
+        {:ok, _updated} ->
+          {:noreply, socket |> assign(editing_collection: nil) |> load_data()}
+
+        {:error, changeset} ->
+          {:noreply, put_flash(socket, :error, "Failed to update: #{inspect(changeset.errors)}")}
+      end
+    end
+
+    # Fetches a collection by id only when its name is inside the allowed
+    # set. Forged ids pointing at collections outside the scope resolve to
+    # nil, the same as a missing row.
+    defp fetch_allowed_collection(socket, id) do
+      case socket.assigns.repo.get(Collection, id) do
+        nil ->
+          nil
+
+        collection ->
+          if allowed_collection?(socket.assigns.allowed_collections, collection.name),
+            do: collection,
+            else: nil
       end
     end
 

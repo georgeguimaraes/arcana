@@ -69,12 +69,28 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           _ -> :entities
         end
 
-      selected_collection = params["collection"]
+      selected_collection =
+        normalize_selected_collection(params["collection"], socket.assigns.allowed_collections)
 
       {:noreply,
        socket
        |> assign(current_subtab: subtab, selected_collection: selected_collection)
        |> load_data()}
+    end
+
+    # Unrestricted dashboards keep the param as-is (nil means "all
+    # collections"). Restricted ones must never query unscoped, so a missing
+    # or disallowed name is forced to the first allowed collection instead
+    # of falling through to nil. This runs before load_data/1 so a forged
+    # collection param can't resolve to an unscoped query.
+    defp normalize_selected_collection(selected, :all), do: selected
+
+    defp normalize_selected_collection(selected, allowed) do
+      if is_binary(selected) and selected in allowed do
+        selected
+      else
+        List.first(allowed)
+      end
     end
 
     defp load_data(socket) do
@@ -89,21 +105,29 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp load_collections_with_graph_status(socket) do
       repo = socket.assigns.repo
 
-      collections =
-        repo.all(
-          from(c in Arcana.Collection,
-            left_join: e in Entity,
-            on: e.collection_id == c.id,
-            group_by: c.id,
-            order_by: c.name,
-            select: %{
-              id: c.id,
-              name: c.name,
-              description: c.description,
-              entity_count: count(e.id, :distinct)
-            }
-          )
+      query =
+        from(c in Arcana.Collection,
+          left_join: e in Entity,
+          on: e.collection_id == c.id,
+          group_by: c.id,
+          order_by: c.name,
+          select: %{
+            id: c.id,
+            name: c.name,
+            description: c.description,
+            entity_count: count(e.id, :distinct)
+          }
         )
+
+      query =
+        case socket.assigns.allowed_collections do
+          :all -> query
+          names when is_list(names) -> where(query, [c], c.name in ^names)
+        end
+
+      collections =
+        query
+        |> repo.all()
         |> Enum.map(fn c ->
           Map.put(c, :graph_enabled, c.entity_count > 0)
         end)
@@ -111,15 +135,39 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       assign(socket, collections: collections)
     end
 
-    defp load_subtab_data(%{assigns: %{current_subtab: :entities}} = socket) do
+    # Restricted mode always queries a concrete allowed collection. When no
+    # selection resolves to a collection id (empty allowed set, or an allowed
+    # name with no matching collection row) render nothing rather than fall
+    # through to the unscoped "all collections" queries.
+    defp load_subtab_data(%{assigns: %{allowed_collections: allowed}} = socket)
+         when is_list(allowed) do
+      if get_selected_collection_id(socket) do
+        dispatch_subtab_data(socket)
+      else
+        assign(socket,
+          entities: [],
+          entities_total: 0,
+          entity_types: [],
+          relationships: [],
+          relationships_total: 0,
+          relationship_types: [],
+          communities: [],
+          communities_total: 0
+        )
+      end
+    end
+
+    defp load_subtab_data(socket), do: dispatch_subtab_data(socket)
+
+    defp dispatch_subtab_data(%{assigns: %{current_subtab: :entities}} = socket) do
       load_entities(socket)
     end
 
-    defp load_subtab_data(%{assigns: %{current_subtab: :relationships}} = socket) do
+    defp dispatch_subtab_data(%{assigns: %{current_subtab: :relationships}} = socket) do
       load_relationships(socket)
     end
 
-    defp load_subtab_data(%{assigns: %{current_subtab: :communities}} = socket) do
+    defp dispatch_subtab_data(%{assigns: %{current_subtab: :communities}} = socket) do
       load_communities(socket)
     end
 
@@ -361,7 +409,12 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     def handle_event("select_entity", %{"id" => id}, socket) do
       details = load_entity_details(socket.assigns.repo, id)
-      {:noreply, assign(socket, selected_entity: id, entity_details: details)}
+
+      if entity_allowed?(socket, details.entity) do
+        {:noreply, assign(socket, selected_entity: id, entity_details: details)}
+      else
+        {:noreply, socket}
+      end
     end
 
     def handle_event("close_entity_detail", _params, socket) do
@@ -386,7 +439,12 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     def handle_event("select_relationship", %{"id" => id}, socket) do
       details = load_relationship_details(socket.assigns.repo, id)
-      {:noreply, assign(socket, selected_relationship: id, relationship_details: details)}
+
+      if relationship_allowed?(socket, details.relationship) do
+        {:noreply, assign(socket, selected_relationship: id, relationship_details: details)}
+      else
+        {:noreply, socket}
+      end
     end
 
     def handle_event("close_relationship_detail", _params, socket) do
@@ -409,7 +467,12 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     def handle_event("select_community", %{"id" => id}, socket) do
       details = load_community_details(socket.assigns.repo, id)
-      {:noreply, assign(socket, selected_community: id, community_details: details)}
+
+      if community_allowed?(socket, details.community) do
+        {:noreply, assign(socket, selected_community: id, community_details: details)}
+      else
+        {:noreply, socket}
+      end
     end
 
     def handle_event("close_community_detail", _params, socket) do
@@ -515,6 +578,37 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       Enum.any?(collections, & &1.graph_enabled)
     end
 
+    # Guards for detail panels opened by id: forged ids pointing at graph
+    # data outside the allowed collections are ignored. Unrestricted
+    # dashboards keep today's behavior, including nil records for unknown
+    # ids. The @collections assign is already filtered to the allowed set,
+    # so membership by collection_id is the whole check.
+    defp entity_allowed?(%{assigns: %{allowed_collections: :all}}, _entity), do: true
+    defp entity_allowed?(_socket, nil), do: false
+
+    defp entity_allowed?(socket, entity) do
+      Enum.any?(socket.assigns.collections, &(&1.id == entity.collection_id))
+    end
+
+    defp relationship_allowed?(%{assigns: %{allowed_collections: :all}}, _rel), do: true
+    defp relationship_allowed?(_socket, nil), do: false
+
+    # Relationships carry no collection_id, so scope through the source
+    # entity, mirroring how the relationship listings are scoped.
+    defp relationship_allowed?(socket, relationship) do
+      case GraphStore.get_entity(relationship.source_id, repo: socket.assigns.repo) do
+        {:ok, entity} -> entity_allowed?(socket, entity)
+        {:error, :not_found} -> false
+      end
+    end
+
+    defp community_allowed?(%{assigns: %{allowed_collections: :all}}, _community), do: true
+    defp community_allowed?(_socket, nil), do: false
+
+    defp community_allowed?(socket, community) do
+      Enum.any?(socket.assigns.collections, &(&1.id == community.collection_id))
+    end
+
     defp get_selected_collection_id(socket) do
       selected_name = socket.assigns.selected_collection
 
@@ -550,7 +644,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           <div class="arcana-collection-selector">
             <label>Collection:</label>
             <select phx-change="select_collection" name="collection">
-              <option value="">All Collections</option>
+              <%= if @allowed_collections == :all do %>
+                <option value="">All Collections</option>
+              <% end %>
               <%= for coll <- @collections do %>
                 <option value={coll.name} selected={@selected_collection == coll.name}>
                   <%= coll.name %>
