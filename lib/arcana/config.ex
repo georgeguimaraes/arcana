@@ -441,7 +441,10 @@ defmodule Arcana.Config do
   defp custom_function_result(fun, nil), do: {fun, []}
   defp custom_function_result(fun, module), do: {module, [fun: fun]}
 
-  defp plain_module?(value), do: is_atom(value) and not is_nil(value)
+  # `true`/`false` are atoms but never module names: letting them through
+  # here produced `function false.parse/2` at call time instead of a
+  # config error (or, for components that accept it, a disabled component).
+  defp plain_module?(value), do: is_atom(value) and not is_boolean(value) and not is_nil(value)
 
   defp module_opts_tuple?(value) do
     is_tuple(value) and tuple_size(value) == 2 and
@@ -497,6 +500,12 @@ defmodule Arcana.Config do
 
       config :arcana, file_parsers: %{".docx" => {MyApp.DocxParser, []}}
 
+  Mapping an extension to `false` disables it: nothing parses it, not the
+  built-in route and not the `:fallback_parser`. Such entries come back
+  as `nil`.
+
+      config :arcana, file_parsers: %{".pdf" => false}
+
   """
   def file_parsers do
     get_env(:file_parsers, %{})
@@ -512,17 +521,15 @@ defmodule Arcana.Config do
 
       config :arcana, fallback_parser: {MyApp.ExtractionService, []}
 
+  `nil` and `false` both mean "no fallback".
   """
   def fallback_parser do
-    case get_env(:fallback_parser) do
-      nil -> nil
-      value -> parse_file_parser_config(value)
-    end
+    get_env(:fallback_parser) |> parse_file_parser_config()
   end
 
   @doc false
   def parse_file_parser_config(value) do
-    parse_pluggable(value, name: "file parser")
+    parse_pluggable(value, name: "file parser", allow_nil?: true)
   end
 
   @doc false

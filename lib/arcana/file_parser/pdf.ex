@@ -5,6 +5,11 @@ defmodule Arcana.FileParser.PDF do
   Arcana accepts any module that implements this behaviour for PDF text extraction.
   The built-in implementation uses poppler's `pdftotext` command.
 
+  This behaviour is a narrower spelling of `Arcana.FileParser`, which is
+  what the built-in `Arcana.FileParser.PDF.Poppler` declares (a module
+  can't declare both without a conflicting-behaviours warning, since each
+  defines `parse/2`). Either one works as a `:pdf_parser`.
+
   ## Configuration
 
   Configure your PDF parser in `config.exs`:

@@ -121,6 +121,66 @@ defmodule Arcana.FileParserRegistryTest do
 
       assert {:error, :unsupported_format} = Parser.parse(path)
     end
+
+    test "false disables the fallback instead of being treated as a module" do
+      # `false` is an atom, so it used to sail through as a module name
+      # and blow up with `function false.parse/2` at parse time
+      put_arcana_env(:fallback_parser, false)
+
+      assert Arcana.Config.fallback_parser() == nil
+
+      path = temp_file("x", ".rtf")
+
+      assert {:error, :unsupported_format} = Parser.parse(path)
+    end
+
+    test "a disabled fallback still leaves native formats alone" do
+      put_arcana_env(:fallback_parser, false)
+
+      path = temp_file("plain text", ".txt")
+
+      assert {:ok, "plain text"} = Parser.parse(path)
+    end
+
+    test "a non-module fallback is a config error, not a runtime one" do
+      put_arcana_env(:fallback_parser, true)
+
+      assert_raise ArgumentError, ~r/invalid file parser config: true/, fn ->
+        Arcana.Config.fallback_parser()
+      end
+    end
+  end
+
+  describe "disabling an extension" do
+    test "a file_parsers entry of false turns the extension off" do
+      put_arcana_env(:file_parsers, %{".docx" => false})
+
+      path = temp_file("x", ".docx")
+
+      assert {:error, :unsupported_format} = Parser.parse(path)
+      refute Parser.available?(".docx")
+      refute ".docx" in Parser.supported_formats()
+    end
+
+    test "false beats the fallback parser, which would otherwise claim it" do
+      put_arcana_env(:fallback_parser, {FakeDocxParser, label: "fallback"})
+      put_arcana_env(:file_parsers, %{".docx" => false})
+
+      path = temp_file("x", ".docx")
+
+      assert {:error, :unsupported_format} = Parser.parse(path)
+      assert {:error, :unsupported_format} = Parser.parse_binary("x", "a.docx")
+    end
+
+    test "false beats a built-in format too" do
+      put_arcana_env(:file_parsers, %{".txt" => false})
+
+      path = temp_file("plain text", ".txt")
+
+      assert {:error, :unsupported_format} = Parser.parse(path)
+      refute ".txt" in Parser.supported_formats()
+      assert ".md" in Parser.supported_formats()
+    end
   end
 
   describe "parse_binary/3" do

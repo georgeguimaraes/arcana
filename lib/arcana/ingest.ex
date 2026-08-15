@@ -95,7 +95,11 @@ defmodule Arcana.Ingest do
   @doc """
   Ingests a file, parsing its content and creating a document with embedded chunks.
 
-  Supports multiple file formats including plain text, markdown, and PDF.
+  Handles plain text, markdown, and PDF natively, plus any format with a
+  parser registered under `config :arcana, :file_parsers` — see
+  `Arcana.Parser` for resolution and `Arcana.FileParser` for the
+  behaviour. The document's `content_type` comes from the resolved
+  parser.
 
   ## Options
 
@@ -106,18 +110,71 @@ defmodule Arcana.Ingest do
     * `:chunk_overlap` - Overlap between chunks (default: 200)
     * `:collection` - Collection name to organize the document (default: "default")
 
+  ## Chunk metadata
+
+  Every chunk stores the `"start_byte"`/`"end_byte"` range it occupies in
+  the extracted text. When the parser also reports page positions (the
+  built-in PDF parser does), chunks additionally carry `"page_start"` and
+  `"page_end"`, so `Arcana.search/2` results can cite a page:
+
+      [result | _] = Arcana.search("refund policy", repo: Repo)
+      result.metadata["page_start"]
+      #=> 4
+
   """
   def ingest_file(path, opts) when is_binary(path) do
-    case Parser.parse(path) do
-      {:ok, text} ->
-        content_type = content_type_for_path(path)
+    case Parser.parse_file(path) do
+      {:ok, text, parse_meta} ->
+        opts
+        |> Keyword.put(:file_path, path)
+        |> Keyword.put(:content_type, Parser.content_type_for(path))
+        |> Keyword.put(:parse_meta, parse_meta)
+        |> then(&ingest_with_file_attrs(text, &1))
 
-        opts =
-          opts
-          |> Keyword.put(:file_path, path)
-          |> Keyword.put(:content_type, content_type)
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
-        ingest_with_file_attrs(text, opts)
+  @doc """
+  Ingests in-memory bytes, parsing them the same way `ingest_file/2`
+  parses a file on disk.
+
+  `:filename` is required: its extension picks the parser and its value
+  is stored as the document's `file_path` for provenance. Nothing is
+  written to disk.
+
+  ## Options
+
+    * `:filename` - Name the bytes came from, e.g. `"report.docx"` (required)
+    * `:repo` - The Ecto repo to use (required)
+    * `:source_id` - An optional identifier for grouping/filtering
+    * `:metadata` - Optional map of metadata to store with the document
+    * `:chunk_size` - Maximum chunk size in characters (default: 1024)
+    * `:chunk_overlap` - Overlap between chunks (default: 200)
+    * `:collection` - Collection name to organize the document (default: "default")
+
+  ## Parsers that need a path
+
+  A parser only handles binaries when it says so via
+  `c:Arcana.FileParser.supports_binary?/0`. The built-in PDF parser
+  shells out to `pdftotext` and needs a real file, so ingesting PDF bytes
+  returns `{:error, {:binary_unsupported, Arcana.FileParser.PDF.Poppler}}`
+  — write them to a temp file and use `ingest_file/2` instead.
+  """
+  def ingest_binary(binary, opts) when is_binary(binary) do
+    filename =
+      Keyword.get(opts, :filename) ||
+        raise ArgumentError, "ingest_binary/2 requires a :filename to route on and record"
+
+    case Parser.parse_binary(binary, filename) do
+      {:ok, text, parse_meta} ->
+        opts
+        |> Keyword.delete(:filename)
+        |> Keyword.put(:file_path, filename)
+        |> Keyword.put(:content_type, Parser.content_type_for(filename))
+        |> Keyword.put(:parse_meta, parse_meta)
+        |> then(&ingest_with_file_attrs(text, &1))
 
       {:error, reason} ->
         {:error, reason}
@@ -213,6 +270,7 @@ defmodule Arcana.Ingest do
             embedding: embedding,
             chunk_index: chunk.chunk_index,
             token_count: chunk.token_count,
+            metadata: chunk_metadata(chunk),
             document_id: document.id
           })
           |> repo.insert!()
@@ -227,6 +285,22 @@ defmodule Arcana.Ingest do
         {:halt, {:error, {:embedding_failed, reason}}}
     end
   end
+
+  # `Arcana.Chunker` promises that keys beyond :text/:chunk_index/
+  # :token_count reach storage. A chunker's own `:metadata` map is the
+  # canonical place for them (that's what Arcana.Chunker.Default uses for
+  # its byte offsets); anything else it hands back is folded in with
+  # string keys, since chunk metadata round-trips through JSONB.
+  @chunk_fields [:text, :chunk_index, :token_count, :metadata, :embedding, :id, :document_id]
+
+  defp chunk_metadata(chunk) do
+    extras = chunk |> Map.drop([:__struct__ | @chunk_fields]) |> stringify_keys()
+    declared = chunk |> Map.get(:metadata) |> Kernel.||(%{}) |> stringify_keys()
+
+    Map.merge(extras, declared)
+  end
+
+  defp stringify_keys(map), do: Map.new(map, fn {key, value} -> {to_string(key), value} end)
 
   defp ingest_with_file_attrs(text, opts) do
     repo = require_repo!(opts)
@@ -245,7 +319,8 @@ defmodule Arcana.Ingest do
         file_path: file_path,
         content_type: content_type,
         chunk_opts: chunk_opts,
-        chunker_config: chunker_config
+        chunker_config: chunker_config,
+        pages: Keyword.get(opts, :parse_meta, %{})[:pages]
       })
     end
   end
@@ -264,7 +339,11 @@ defmodule Arcana.Ingest do
       })
       |> repo.insert()
 
-    chunks = Chunker.chunk(attrs.chunker_config, text, attrs.chunk_opts)
+    chunks =
+      attrs.chunker_config
+      |> Chunker.chunk(text, attrs.chunk_opts)
+      |> attach_pages(attrs.pages)
+
     result = embed_and_store_chunks(chunks, document, repo)
 
     case result do
@@ -281,6 +360,50 @@ defmodule Arcana.Ingest do
     end
   end
 
+  # Parsers that report page positions (see `Arcana.FileParser`) give
+  # byte ranges into the extracted text; the chunker reports byte ranges
+  # for each chunk. Intersecting the two turns "chunk 7" into "pages
+  # 3-4", which is what a citation actually needs. A chunk straddling a
+  # page break reports different start and end pages.
+  #
+  # No pages, or a chunker that doesn't report offsets, leaves chunks
+  # untouched rather than guessing.
+  defp attach_pages(chunks, pages) when is_list(pages) and pages != [] do
+    Enum.map(chunks, fn chunk ->
+      metadata = Map.get(chunk, :metadata) || %{}
+
+      case {metadata["start_byte"], metadata["end_byte"]} do
+        {start_byte, end_byte} when is_integer(start_byte) and is_integer(end_byte) ->
+          last_byte = max(end_byte - 1, start_byte)
+
+          page_metadata = %{
+            "page_start" => page_at(pages, start_byte),
+            "page_end" => page_at(pages, last_byte)
+          }
+
+          Map.put(chunk, :metadata, Map.merge(metadata, page_metadata))
+
+        _ ->
+          chunk
+      end
+    end)
+  end
+
+  defp attach_pages(chunks, _pages), do: chunks
+
+  # Pages that trimming emptied out have start == end and can't contain
+  # anything, so they never match; a byte past the last page's end (the
+  # chunker counts a trailing newline the parser trimmed, say) falls back
+  # to the last page that starts at or before it.
+  defp page_at(pages, byte) do
+    page =
+      Enum.find(pages, fn page -> byte >= page.start and byte < page.end end) ||
+        pages |> Enum.filter(&(&1.start <= byte)) |> List.last() ||
+        List.first(pages)
+
+    page.number
+  end
+
   # Under strict_collections, ingest requires the collection to already
   # exist (create explicitly with Collection.get_or_create/3); otherwise
   # it is created on the fly.
@@ -289,16 +412,6 @@ defmodule Arcana.Ingest do
       Collection.fetch(name, repo)
     else
       Collection.get_or_create(name, repo, description)
-    end
-  end
-
-  defp content_type_for_path(path) do
-    case Path.extname(path) |> String.downcase() do
-      ".txt" -> "text/plain"
-      ".md" -> "text/markdown"
-      ".markdown" -> "text/markdown"
-      ".pdf" -> "application/pdf"
-      _ -> "application/octet-stream"
     end
   end
 

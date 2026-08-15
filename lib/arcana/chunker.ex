@@ -53,8 +53,15 @@ defmodule Arcana.Chunker do
     * `:text` - The chunk text content (required)
     * `:chunk_index` - Zero-based index of this chunk (required)
     * `:token_count` - Estimated token count (required)
+    * `:metadata` - Optional map stored on the chunk as-is
 
-  Additional keys may be included and will be passed through to storage.
+  Any other key is folded into the stored metadata too. Metadata
+  round-trips through JSONB, so keys are stringified on the way in:
+  a chunk of `%{text: ..., chunk_index: 0, token_count: 8, page: 3}`
+  reads back as `metadata["page"] == 3`.
+
+  `Arcana.Chunker.Default` uses this to report each chunk's
+  `"start_byte"`/`"end_byte"` range in the source text.
   """
 
   @doc """

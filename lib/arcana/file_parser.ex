@@ -18,7 +18,8 @@ defmodule Arcana.FileParser do
 
   Exact extension matches win over the fallback, and the built-in
   handling for `.txt`/`.md`/`.pdf` can be overridden by registering
-  those extensions explicitly.
+  those extensions explicitly. Registering one as `false` disables it
+  outright, fallback included.
 
   ## Implementing a parser
 
@@ -30,8 +31,9 @@ defmodule Arcana.FileParser do
           {:ok, extracted_text}
         end
 
-        # Optional: accept binary content, enabling Arcana.ingest_binary/2
-        # for this format (default: false, path only)
+        # Optional: accept binary content, enabling `Arcana.ingest_binary/2`
+        # for this format (default: false, path only). Path-only parsers
+        # make ingest_binary/2 return {:error, {:binary_unsupported, mod}}.
         @impl true
         def supports_binary?, do: true
 
@@ -45,9 +47,20 @@ defmodule Arcana.FileParser do
 
   `parse/2` may return `{:ok, text, meta}` instead of `{:ok, text}`.
   Arcana understands `%{pages: [%{number: 1, start: 0, end: 1234}, ...]}`,
-  where the offsets are byte positions **in the returned text**, and uses
-  them to attach page numbers to chunks. Parsers that don't know about
-  pages return `{:ok, text}` as before.
+  where the offsets are byte positions **in the returned text**. Parsers
+  that don't know about pages return `{:ok, text}` as before.
+
+  During ingestion Arcana intersects those ranges with each chunk's own
+  byte range and stores the result as `"page_start"`/`"page_end"` in the
+  chunk's metadata, where `Arcana.search/2` surfaces it:
+
+      {:ok, _doc} = Arcana.ingest_file("manual.pdf", repo: Repo)
+
+      [result | _] = Arcana.search("warranty", repo: Repo)
+      result.metadata["page_start"]
+      #=> 12
+
+  A chunk straddling a page break reports the two different pages.
   """
 
   @type meta :: map()

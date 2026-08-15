@@ -10,10 +10,11 @@ defmodule Arcana.Parser do
 
   For a file's extension (lowercased, with a leading dot):
 
-  1. an exact match in `config :arcana, :file_parsers`
+  1. an exact match in `config :arcana, :file_parsers` (a `false` entry
+     means the extension is disabled and resolution stops here)
   2. the built-ins: `.txt`/`.md`/`.markdown` read natively, `.pdf` via
      `config :arcana, :pdf_parser`
-  3. `config :arcana, :fallback_parser`, if set
+  3. `config :arcana, :fallback_parser`, unless it is `nil`/`false`
   4. otherwise `{:error, :unsupported_format}`
 
   ## Registering parsers
@@ -25,7 +26,8 @@ defmodule Arcana.Parser do
         fallback_parser: {MyApp.ExtractionService, []}
 
   Registering `".pdf"` in `:file_parsers` overrides the built-in PDF
-  route. See `Arcana.FileParser` for the behaviour.
+  route; registering it as `false` turns it off entirely, fallback
+  included. See `Arcana.FileParser` for the behaviour.
 
   ## PDF Support
 
@@ -51,12 +53,17 @@ defmodule Arcana.Parser do
   Returns the list of supported file extensions.
 
   Includes the natively handled formats plus any registered through
-  `:file_parsers`. When a `:fallback_parser` is configured every
-  extension is effectively supported, so this list is a lower bound.
+  `:file_parsers`, minus any disabled with `false`. When a
+  `:fallback_parser` is configured every extension is effectively
+  supported, so this list is a lower bound.
   """
   def supported_formats do
-    (@text_extensions ++ @pdf_extensions ++ Map.keys(Config.file_parsers()))
+    registered = Config.file_parsers()
+    disabled = for {extension, nil} <- registered, do: extension
+
+    (@text_extensions ++ @pdf_extensions ++ Map.keys(registered))
     |> Enum.uniq()
+    |> Enum.reject(&(&1 in disabled))
   end
 
   @doc """
@@ -169,12 +176,22 @@ defmodule Arcana.Parser do
   defp builtin_content_type(_), do: "application/octet-stream"
 
   # Resolves an extension to :native, a {module, opts} parser, or an error.
+  #
+  # A registered entry always wins, including `%{".pdf" => false}`, which
+  # arrives here as nil and means "disabled": it blocks the built-in route
+  # and the fallback rather than quietly deferring to them.
   defp resolve(extension) do
     extension = Config.normalize_extension(extension)
-    registered = Config.file_parsers()
 
+    case Map.fetch(Config.file_parsers(), extension) do
+      {:ok, nil} -> {:error, :unsupported_format}
+      {:ok, parser} -> {:ok, parser}
+      :error -> resolve_builtin(extension)
+    end
+  end
+
+  defp resolve_builtin(extension) do
     cond do
-      Map.has_key?(registered, extension) -> {:ok, Map.fetch!(registered, extension)}
       extension in @text_extensions -> {:ok, :native}
       extension in @pdf_extensions -> {:ok, Config.pdf_parser()}
       fallback = Config.fallback_parser() -> {:ok, fallback}
