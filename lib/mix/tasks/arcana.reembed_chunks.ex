@@ -59,7 +59,7 @@ defmodule Mix.Tasks.Arcana.ReembedChunks do
     # Start the host application (which will start the repo)
     Mix.Task.run("app.start")
 
-    repo = Arcana.Config.repo!()
+    repo = Arcana.MixHelpers.repo!()
 
     # Show current embedding info
     info = Arcana.Maintenance.embedding_info()

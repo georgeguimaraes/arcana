@@ -69,7 +69,7 @@ if Code.ensure_loaded?(Igniter) do
           Module.concat([app_module, "Repo"])
         end
 
-      dimensions = opts[:dimensions] || detect_dimensions()
+      dimensions = resolve_dimensions(opts[:dimensions])
 
       igniter
       |> create_migration(repo_module, dimensions)
@@ -104,17 +104,8 @@ if Code.ensure_loaded?(Igniter) do
       """)
     end
 
-    defp detect_dimensions do
-      Mix.Task.run("app.config")
-      Arcana.Embedder.dimensions(Arcana.embedder())
-    rescue
-      e ->
-        Mix.raise("""
-        Could not detect embedding dimensions from the configured embedder: #{Exception.message(e)}
-
-        Pass them explicitly, e.g.: mix arcana.graph.install --dimensions 1024
-        """)
-    end
+    defp resolve_dimensions(nil), do: Arcana.MixHelpers.detect_dimensions!()
+    defp resolve_dimensions(given), do: Arcana.MixHelpers.validate_dimensions!(given)
 
     defp create_migration(igniter, repo_module, dimensions) do
       repo_underscore =
@@ -351,7 +342,7 @@ else
 
       repo = opts[:repo] || infer_repo()
       repo_underscore = Macro.underscore(repo) |> String.replace("/", "_")
-      dimensions = opts[:dimensions] || detect_dimensions()
+      dimensions = resolve_dimensions(opts[:dimensions])
 
       migrations_path = Path.join(["priv", repo_underscore, "migrations"])
       File.mkdir_p!(migrations_path)
@@ -409,16 +400,7 @@ else
       end
     end
 
-    defp detect_dimensions do
-      Mix.Task.run("app.config")
-      Arcana.Embedder.dimensions(Arcana.embedder())
-    rescue
-      e ->
-        Mix.raise("""
-        Could not detect embedding dimensions from the configured embedder: #{Exception.message(e)}
-
-        Pass them explicitly, e.g.: mix arcana.graph.install --dimensions 1024
-        """)
-    end
+    defp resolve_dimensions(nil), do: Arcana.MixHelpers.detect_dimensions!()
+    defp resolve_dimensions(given), do: Arcana.MixHelpers.validate_dimensions!(given)
   end
 end

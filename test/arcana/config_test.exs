@@ -234,6 +234,22 @@ defmodule Arcana.ConfigTest do
       assert Config.repo!(repo: Arcana.TestRepo) == Arcana.TestRepo
     end
 
+    test "reads :repo through get_env/2 when called with no env" do
+      put_arcana_env(:repo, FakeRepoOne)
+
+      assert Config.repo!() == FakeRepoOne
+    end
+
+    test "falls back to the per-repo scan when the :repo override is nil" do
+      put_arcana_env(:repo, nil)
+
+      {repo, stderr} = ExUnit.CaptureIO.with_io(:stderr, fn -> Config.repo!() end)
+
+      # config/test.exs carries `config :arcana, Arcana.TestRepo, ...`
+      assert repo == Arcana.TestRepo
+      assert stderr =~ "config :arcana, repo: Arcana.TestRepo"
+    end
+
     test ":repo key wins over per-repo entries" do
       env = [{:repo, Arcana.TestRepo}, {FakeRepoOne, [priv: "priv/one"]}]
       assert Config.repo!(env) == Arcana.TestRepo

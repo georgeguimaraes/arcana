@@ -43,7 +43,7 @@ defmodule Mix.Tasks.Arcana.Graph.EmbedEntities do
 
     Mix.Task.run("app.start")
 
-    repo = Arcana.Config.repo!()
+    repo = Arcana.MixHelpers.repo!()
 
     unless quiet do
       Mix.shell().info(

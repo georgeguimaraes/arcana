@@ -52,7 +52,7 @@ defmodule Mix.Tasks.Arcana.Graph.Rebuild do
     # Start the host application (which will start the repo)
     Mix.Task.run("app.start")
 
-    repo = Arcana.Config.repo!()
+    repo = Arcana.MixHelpers.repo!()
 
     # Show current graph info
     info = Arcana.Maintenance.graph_info()

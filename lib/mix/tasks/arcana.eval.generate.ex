@@ -41,7 +41,7 @@ defmodule Mix.Tasks.Arcana.Eval.Generate do
     source_id = Keyword.get(opts, :source_id)
     collection = Keyword.get(opts, :collection)
 
-    repo = Arcana.Config.repo!()
+    repo = Arcana.MixHelpers.repo!()
     llm = Application.get_env(:arcana, :llm) || raise "Missing :arcana, :llm config"
 
     IO.puts("Generating test cases from #{sample_size} chunks...")

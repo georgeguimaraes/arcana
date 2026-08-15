@@ -67,7 +67,7 @@ defmodule Mix.Tasks.Arcana.Graph.SummarizeCommunities do
     # Start the host application (which will start the repo)
     Mix.Task.run("app.start")
 
-    repo = Arcana.Config.repo!()
+    repo = Arcana.MixHelpers.repo!()
 
     # Check LLM is configured
     unless Application.get_env(:arcana, :llm) do

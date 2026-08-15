@@ -48,6 +48,15 @@ defmodule Mix.Tasks.Arcana.Graph.InstallTest do
     assert migration_content(igniter) =~ ":embedding, :vector, size: 512"
   end
 
+  test "rejects a non-positive --dimensions instead of generating vector(0)" do
+    for value <- ["0", "-5"] do
+      assert_raise Mix.Error, ~r/--dimensions must be a positive integer/, fn ->
+        test_project()
+        |> Igniter.compose_task("arcana.graph.install", ["--dimensions", value])
+      end
+    end
+  end
+
   defp migration_content(igniter) do
     source =
       igniter.rewrite

@@ -289,8 +289,22 @@ defmodule Arcana.Config do
   configured, that repo is used (with a note printed to stderr). Raises
   `ArgumentError` when no repo can be resolved, or when several per-repo
   entries exist without an explicit `:repo` key to disambiguate.
+
+  Called without arguments, the `:repo` key is read through `get_env/2` so
+  process-scoped overrides installed via `install_env_reader/1` are honored.
+  Pass an explicit env keyword list to resolve against it directly.
   """
-  def repo!(env \\ Application.get_all_env(:arcana)) do
+  def repo!(env \\ nil)
+
+  def repo!(nil) do
+    # The `:repo` read goes through get_env/2 so test overrides shadow it.
+    # The per-repo fallback has to enumerate keys, which the reader seam
+    # can't express (it resolves one key at a time), so it reads the raw
+    # app env.
+    get_env(:repo) || repo_from_module_keys(Application.get_all_env(:arcana))
+  end
+
+  def repo!(env) when is_list(env) do
     case Keyword.get(env, :repo) do
       nil -> repo_from_module_keys(env)
       repo -> repo

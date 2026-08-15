@@ -48,7 +48,7 @@ defmodule Mix.Tasks.Arcana.Eval.Run do
         ]
       )
 
-    repo = Arcana.Config.repo!()
+    repo = Arcana.MixHelpers.repo!()
 
     mode =
       case Keyword.get(opts, :mode, "vector") do
