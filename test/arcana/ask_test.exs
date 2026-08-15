@@ -203,6 +203,44 @@ defmodule Arcana.AskTest do
       %{llm: llm}
     end
 
+    test "source_id scopes graph context, not just chunks", %{llm: llm} do
+      # Alice is mentioned in src-a, her neighbour Bob only in src-b.
+      # Asking within src-a must not leak Bob's edge into the prompt.
+      collection = Repo.get_by!(Arcana.Collection, name: "ask-graph-depth")
+      alice = Repo.get_by!(Entity, name: "Alice", collection_id: collection.id)
+      bob = Repo.get_by!(Entity, name: "Bob", collection_id: collection.id)
+
+      for {entity, source} <- [{alice, "src-a"}, {bob, "src-b"}] do
+        document =
+          %Arcana.Document{}
+          |> Arcana.Document.changeset(%{
+            content: "doc for #{source}",
+            source_id: source,
+            status: :completed,
+            collection_id: collection.id
+          })
+          |> Repo.insert!()
+
+        chunk =
+          %Arcana.Chunk{}
+          |> Arcana.Chunk.changeset(%{
+            text: "chunk for #{source}",
+            document_id: document.id,
+            embedding: Enum.map(1..384, fn _ -> 0.1 end)
+          })
+          |> Repo.insert!()
+
+        %EntityMention{}
+        |> EntityMention.changeset(%{entity_id: entity.id, chunk_id: chunk.id})
+        |> Repo.insert!()
+      end
+
+      graph_context = captured_graph_context(llm, graph_depth: 1, source_id: "src-a")
+
+      assert [%{name: "Alice"}] = graph_context.entities
+      assert graph_context.relationships == []
+    end
+
     test "depth 0 keeps relationships restricted to matched entities", %{llm: llm} do
       graph_context = captured_graph_context(llm, [])
 

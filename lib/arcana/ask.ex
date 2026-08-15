@@ -235,6 +235,12 @@ defmodule Arcana.Ask do
           []
       end
 
+    # :source_id scopes the graph context too, not just the chunks: without
+    # this, entity descriptions, relationships, and community summaries
+    # from other sources reach the prompt (and traversal widens the leak).
+    source_id = Keyword.get(opts, :source_id)
+    matched_entities = scope_entities_by_source(matched_entities, source_id, repo)
+
     if matched_entities == [] do
       %{}
     else
@@ -246,6 +252,7 @@ defmodule Arcana.Ask do
         |> Arcana.Graph.expand_entity_ids(graph_depth, collection_ids, repo: repo)
         |> Map.values()
         |> List.flatten()
+        |> entity_ids_in_source(source_id, repo)
 
       relationships = fetch_relationships(expanded_ids, entity_ids, graph_depth, rel_limit, repo)
 
@@ -304,6 +311,42 @@ defmodule Arcana.Ask do
         order_by: [desc: r.source_id in ^matched_ids or r.target_id in ^matched_ids],
         select: %{source: src.name, target: tgt.name, type: r.type},
         limit: ^rel_limit
+      )
+    )
+  end
+
+  defp scope_entities_by_source(entities, nil, _repo), do: entities
+  defp scope_entities_by_source([], _source_id, _repo), do: []
+
+  defp scope_entities_by_source(entities, source_id, repo) do
+    in_source =
+      entities
+      |> Enum.map(& &1.id)
+      |> entity_ids_in_source(source_id, repo)
+      |> MapSet.new()
+
+    Enum.filter(entities, &MapSet.member?(in_source, &1.id))
+  end
+
+  # An entity belongs to a source when at least one of its mentions sits
+  # on a chunk of a document with that source_id.
+  defp entity_ids_in_source(ids, nil, _repo), do: ids
+  defp entity_ids_in_source([], _source_id, _repo), do: []
+
+  defp entity_ids_in_source(ids, source_id, repo) do
+    import Ecto.Query
+    alias Arcana.{Chunk, Document}
+    alias Arcana.Graph.EntityMention
+
+    repo.all(
+      from(m in EntityMention,
+        join: c in Chunk,
+        on: c.id == m.chunk_id,
+        join: d in Document,
+        on: d.id == c.document_id,
+        where: m.entity_id in ^ids and d.source_id == ^source_id,
+        select: m.entity_id,
+        distinct: true
       )
     )
   end

@@ -429,9 +429,6 @@ defmodule Arcana.Search do
     end
   end
 
-  # Returns [%{chunk_id: id, score: score}] where score sums, per hop h,
-  # mention_count_h * 0.1 * decay^h. With a single hop-0 group this reduces
-  # to the original mention_count * 0.1 (decay^0 is exactly 1.0).
   defp filter_mentions_by_source(query, nil), do: query
 
   defp filter_mentions_by_source(query, source_id) do
@@ -447,6 +444,9 @@ defmodule Arcana.Search do
     )
   end
 
+  # Returns [%{chunk_id: id, score: score}] where score sums, per hop h,
+  # mention_count_h * 0.1 * decay^h. With a single hop-0 group this reduces
+  # to the original mention_count * 0.1 (decay^0 is exactly 1.0).
   defp score_chunks_by_hop(chunk_ids, ids_by_hop, depth_decay, repo) do
     import Ecto.Query
     alias Arcana.Graph.EntityMention
