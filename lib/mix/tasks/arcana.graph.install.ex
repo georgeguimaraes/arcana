@@ -97,14 +97,7 @@ if Code.ensure_loaded?(Igniter) do
     end
 
     defp create_migration(igniter, repo_module) do
-      repo_underscore =
-        repo_module
-        |> Module.split()
-        |> Enum.join(".")
-        |> Macro.underscore()
-        |> String.replace("/", "_")
-
-      migrations_path = Path.join(["priv", repo_underscore, "migrations"])
+      migrations_path = Arcana.MigrationPath.migrations_path(repo_module)
       timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
       filename = "#{timestamp}_create_arcana_graph_tables.exs"
       path = Path.join(migrations_path, filename)
@@ -326,10 +319,13 @@ else
     def run(args) do
       {opts, _, _} = OptionParser.parse(args, strict: [repo: :string])
 
-      repo = opts[:repo] || infer_repo()
-      repo_underscore = Macro.underscore(repo) |> String.replace("/", "_")
+      # Load the host app's config so the repo's `:priv`, if it has one, is
+      # visible to Arcana.MigrationPath.
+      Mix.Task.run("app.config")
 
-      migrations_path = Path.join(["priv", repo_underscore, "migrations"])
+      repo = opts[:repo] || infer_repo()
+
+      migrations_path = Arcana.MigrationPath.migrations_path(repo)
       File.mkdir_p!(migrations_path)
 
       timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
