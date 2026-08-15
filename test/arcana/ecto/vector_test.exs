@@ -109,7 +109,13 @@ defmodule Arcana.Ecto.VectorTest do
 
       {:ok, _} = chunk |> Chunk.changeset(%{embedding: changed}) |> Repo.update()
 
-      assert Repo.reload!(chunk).embedding |> Pgvector.to_list() == changed
+      # The column is float4, so compare against the f32-normalized value
+      # rather than the f64 arithmetic result
+      expected = changed |> Pgvector.new() |> Pgvector.to_list()
+      reloaded = Repo.reload!(chunk).embedding |> Pgvector.to_list()
+
+      assert reloaded == expected
+      refute reloaded == Pgvector.to_list(chunk.embedding)
     end
   end
 end
