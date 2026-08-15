@@ -457,6 +457,11 @@ defmodule Arcana.Graph do
     concurrency = Keyword.get(opts, :concurrency, @default_concurrency)
     total_chunks = length(chunk_records)
 
+    # Carry a per-call :graph_store through to persistence, so a build and
+    # the sweep that follows it (Arcana.delete/2, replace ingest) always
+    # hit the same backend instead of one going to the configured default.
+    store_opts = opts |> Keyword.take([:graph_store]) |> Keyword.put(:repo, repo)
+
     :telemetry.span(
       [:arcana, :graph, :build],
       %{chunk_count: total_chunks, collection: collection_name},
@@ -470,7 +475,7 @@ defmodule Arcana.Graph do
             process_chunks_concurrently(
               chunk_records,
               collection_id,
-              repo,
+              store_opts,
               progress_fn,
               total_chunks,
               concurrency,
@@ -483,7 +488,7 @@ defmodule Arcana.Graph do
             process_chunks_concurrently(
               chunk_records,
               collection_id,
-              repo,
+              store_opts,
               progress_fn,
               total_chunks,
               concurrency,
@@ -501,7 +506,7 @@ defmodule Arcana.Graph do
   defp process_chunks_concurrently(
          chunks,
          collection_id,
-         repo,
+         store_opts,
          progress_fn,
          total_chunks,
          concurrency,
@@ -523,22 +528,50 @@ defmodule Arcana.Graph do
     )
     |> Enum.reduce({%{}, 0}, fn {:ok, {index, entities, mentions, relationships}},
                                 {entity_id_map, rel_count} ->
-      # Embed entity descriptions for GraphRAG-style entity search
+      # Embed entity descriptions for GraphRAG-style entity search.
+      # Stays outside the write lock: it can hit a model, and the lock is
+      # for DB writes only.
       entities = maybe_embed_entities(entities)
 
-      # Persist sequentially (fast DB operations)
-      {:ok, new_entity_ids} =
-        GraphStore.persist_entities(collection_id, entities, repo: repo)
-
-      merged_entity_id_map = Map.merge(entity_id_map, new_entity_ids)
-
-      :ok = GraphStore.persist_mentions(mentions, merged_entity_id_map, repo: repo)
-      :ok = GraphStore.persist_relationships(relationships, merged_entity_id_map, repo: repo)
+      merged_entity_id_map =
+        persist_chunk_graph(
+          collection_id,
+          entities,
+          mentions,
+          relationships,
+          entity_id_map,
+          store_opts
+        )
 
       # Report progress
       progress_fn.(index, total_chunks)
 
       {merged_entity_id_map, rel_count + length(relationships)}
+    end)
+  end
+
+  # Entities, their mentions and their relationships land together under
+  # the collection's write lock, so a concurrent sweep_orphans can't run
+  # between the entity insert and the mention insert and delete an entity
+  # that is about to be referenced. A failure anywhere in here rolls the
+  # whole chunk back rather than leaving half-persisted graph data.
+  defp persist_chunk_graph(
+         collection_id,
+         entities,
+         mentions,
+         relationships,
+         entity_id_map,
+         store_opts
+       ) do
+    GraphStore.with_write_lock(collection_id, store_opts, fn ->
+      {:ok, new_entity_ids} = GraphStore.persist_entities(collection_id, entities, store_opts)
+
+      merged_entity_id_map = Map.merge(entity_id_map, new_entity_ids)
+
+      :ok = GraphStore.persist_mentions(mentions, merged_entity_id_map, store_opts)
+      :ok = GraphStore.persist_relationships(relationships, merged_entity_id_map, store_opts)
+
+      merged_entity_id_map
     end)
   end
 

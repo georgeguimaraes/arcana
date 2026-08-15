@@ -118,6 +118,12 @@ defmodule Arcana do
   communities that referenced them are marked dirty so the next
   summarize pass regenerates them.
 
+  Returns `:ok`, `{:error, :not_found}`, or `{:error, {:sweep_failed,
+  reason}}` when the graph store fails to sweep. In the `:sweep_failed`
+  case the document and its chunks ARE deleted — only the orphan cleanup
+  failed, so the collection may hold entities with zero mentions until
+  the next sweep.
+
   ## Options
 
     * `:repo` - The Ecto repo to use (required)
@@ -133,14 +139,11 @@ defmodule Arcana do
 
       document ->
         repo.delete!(document)
-        maybe_sweep_graph_orphans(document.collection_id, repo, opts)
-        :ok
-    end
-  end
 
-  defp maybe_sweep_graph_orphans(collection_id, repo, opts) do
-    if collection_id && Arcana.Config.graph_enabled?(opts) do
-      GraphStore.sweep_orphans(collection_id, Keyword.put(opts, :repo, repo))
+        case GraphStore.maybe_sweep_orphans(document.collection_id, repo, opts) do
+          :ok -> :ok
+          {:error, reason} -> {:error, {:sweep_failed, reason}}
+        end
     end
   end
 end

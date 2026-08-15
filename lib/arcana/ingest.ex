@@ -6,6 +6,8 @@ defmodule Arcana.Ingest do
   GraphRAG entity/relationship extraction.
   """
 
+  require Logger
+
   alias Arcana.{Chunk, Chunker, Collection, Document, Embedder, Parser}
   alias Arcana.Graph.GraphStore
 
@@ -145,7 +147,7 @@ defmodule Arcana.Ingest do
 
     if Keyword.get(opts, :replace, false) do
       with {:ok, document} <- finalize_replace(document, chunk_records, repo) do
-        maybe_sweep_graph_orphans(document.collection_id, repo, opts)
+        sweep_graph_orphans(document.collection_id, repo, opts)
         {:ok, document}
       end
     else
@@ -157,9 +159,21 @@ defmodule Arcana.Ingest do
 
   # The replaced predecessors' chunks cascade away with them, which can
   # strand zero-mention entities; sweep them like Arcana.delete/2 does.
-  defp maybe_sweep_graph_orphans(collection_id, repo, opts) do
-    if collection_id && Arcana.Config.graph_enabled?(opts) do
-      GraphStore.sweep_orphans(collection_id, Keyword.put(opts, :repo, repo))
+  # Unlike delete/2 a failed sweep doesn't fail the call: the new document
+  # is already committed, and returning an error here would push the
+  # caller into redoing the whole (LLM-priced) ingest over a cleanup
+  # problem. Log it and leave the orphans for the next sweep.
+  defp sweep_graph_orphans(collection_id, repo, opts) do
+    case GraphStore.maybe_sweep_orphans(collection_id, repo, opts) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Arcana: graph orphan sweep failed for collection #{collection_id}: #{inspect(reason)}"
+        )
+
+        :ok
     end
   end
 

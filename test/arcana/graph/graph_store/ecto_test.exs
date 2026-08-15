@@ -261,6 +261,47 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
     end
   end
 
+  describe "with_write_lock/3" do
+    test "runs the function under the collection's advisory lock" do
+      collection = create_collection("locked-collection")
+      other = create_collection("other-collection")
+
+      assert :ran == EctoStore.with_write_lock(collection.id, [repo: Repo], fn -> :ran end)
+
+      # The sandbox keeps this test's transaction open, so the xact lock
+      # is still held: an independent connection cannot take the same key.
+      refute advisory_lock_free?(collection.id)
+      assert advisory_lock_free?(other.id)
+    end
+
+    test "sweep_orphans/2 takes the same lock, so it can't interleave with a build" do
+      collection = create_collection("swept-collection")
+
+      :ok = EctoStore.sweep_orphans(collection.id, repo: Repo)
+
+      refute advisory_lock_free?(collection.id)
+    end
+  end
+
+  # Asks a connection outside the sandbox whether the graph write lock for
+  # this collection is available. pg_try_advisory_xact_lock releases at the
+  # end of its own (implicit) transaction, so this only observes.
+  defp advisory_lock_free?(collection_id) do
+    conn_opts =
+      Arcana.TestRepo.config()
+      |> Keyword.take([:hostname, :port, :username, :password, :database, :socket_dir])
+
+    {:ok, conn} = Postgrex.start_link(conn_opts)
+
+    %Postgrex.Result{rows: [[free]]} =
+      Postgrex.query!(conn, "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))", [
+        "arcana:graph:#{collection_id}"
+      ])
+
+    GenServer.stop(conn)
+    free
+  end
+
   describe "find_entities/2" do
     test "returns all entities in collection" do
       collection = create_collection("test-find")

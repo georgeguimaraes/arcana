@@ -541,6 +541,55 @@ defmodule Arcana.GraphIntegrationTest do
       refute "OldEntity" in names
     end
 
+    test "propagates a failing sweep after the document is already deleted" do
+      extractor = fn _text, _opts -> {:ok, [%{name: "Delta", type: "concept"}]} end
+
+      {:ok, doc} =
+        Arcana.ingest("delta content",
+          repo: Repo,
+          graph: true,
+          entity_extractor: extractor,
+          graph_store: Arcana.FailingSweepGraphStore,
+          collection: "sweep-fails"
+        )
+
+      assert {:error, {:sweep_failed, :sweep_boom}} =
+               Arcana.delete(doc.id,
+                 repo: Repo,
+                 graph: true,
+                 graph_store: Arcana.FailingSweepGraphStore
+               )
+
+      # The document is gone regardless: only the cleanup failed
+      assert Repo.get(Arcana.Document, doc.id) == nil
+    end
+
+    test "build and sweep use the same per-call graph store" do
+      extractor = fn _text, _opts -> {:ok, [%{name: "Epsilon", type: "concept"}]} end
+
+      opts = [
+        repo: Repo,
+        graph: true,
+        entity_extractor: extractor,
+        graph_store: {Arcana.SpyGraphStore, notify: self()},
+        collection: "spy-store",
+        source_id: "spied",
+        replace: true
+      ]
+
+      {:ok, _doc} = Arcana.ingest("epsilon content", opts)
+
+      # Persistence must land on the opts-provided backend, not the
+      # configured default, or the sweep below would target a graph the
+      # build never wrote to.
+      assert_received {:spy_graph_store, {:persist_entities, _collection_id, ["Epsilon"]}}
+      assert_received {:spy_graph_store, {:persist_mentions, 1}}
+      assert_received {:spy_graph_store, {:sweep_orphans, _collection_id}}
+
+      # Nothing reached the Ecto store
+      assert Repo.all(Entity) == []
+    end
+
     test "leaves the graph alone when graph is not enabled" do
       extractor = fn _text, _opts -> {:ok, [%{name: "Gamma", type: "concept"}]} end
 

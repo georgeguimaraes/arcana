@@ -233,29 +233,66 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     :ok
   end
 
+  @doc """
+  Runs `fun` inside a transaction holding the collection's advisory lock.
+
+  Uses `pg_advisory_xact_lock/1` keyed on the collection, the same idiom
+  `Arcana.Ingest` uses for the replace swap. Both the entity/mention
+  persist path and `sweep_orphans/2` take it, so a sweep can never land
+  between an entity insert and its mention insert.
+
+  Keep the wrapped work to DB writes: the lock blocks every concurrent
+  graph write for the collection until the transaction commits.
+  """
+  @impl true
+  def with_write_lock(collection_id, opts, fun) when is_function(fun, 0) do
+    repo = Keyword.fetch!(opts, :repo)
+
+    {:ok, result} =
+      repo.transaction(fn ->
+        repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+          "arcana:graph:#{collection_id}"
+        ])
+
+        fun.()
+      end)
+
+    result
+  end
+
+  @doc """
+  Deletes entities in the collection that have no remaining mentions.
+
+  Runs under the collection's write lock (see `with_write_lock/3`) so it
+  cannot delete an entity a concurrent build has inserted but not yet
+  mentioned. Relationships cascade via FK; communities overlapping the
+  deleted entities are marked dirty.
+  """
   @impl true
   def sweep_orphans(collection_id, opts) do
     repo = Keyword.fetch!(opts, :repo)
 
-    orphaned_ids =
-      repo.all(
-        from(e in Entity,
-          left_join: m in EntityMention,
-          on: m.entity_id == e.id,
-          where: e.collection_id == ^collection_id,
-          group_by: e.id,
-          having: count(m.id) == 0,
-          select: e.id
+    with_write_lock(collection_id, opts, fn ->
+      orphaned_ids =
+        repo.all(
+          from(e in Entity,
+            left_join: m in EntityMention,
+            on: m.entity_id == e.id,
+            where: e.collection_id == ^collection_id,
+            group_by: e.id,
+            having: count(m.id) == 0,
+            select: e.id
+          )
         )
-      )
 
-    if orphaned_ids != [] do
-      # Relationships cascade via FK on source_id/target_id
-      repo.delete_all(from(e in Entity, where: e.id in ^orphaned_ids))
-      mark_overlapping_communities_dirty(collection_id, orphaned_ids, repo)
-    end
+      if orphaned_ids != [] do
+        # Relationships cascade via FK on source_id/target_id
+        repo.delete_all(from(e in Entity, where: e.id in ^orphaned_ids))
+        mark_overlapping_communities_dirty(collection_id, orphaned_ids, repo)
+      end
 
-    :ok
+      :ok
+    end)
   end
 
   defp mark_overlapping_communities_dirty(collection_id, entity_ids, repo) do
@@ -564,6 +601,12 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     # Match on the normalized name so stored variants ("Delivery" vs
     # "delivery") upsert into one row. Legacy data may already hold
     # several variants, so take the oldest instead of expecting one.
+    #
+    # The select-then-insert is only safe because callers hold the
+    # collection's write lock (see with_write_lock/3); without it two
+    # concurrent builds could both miss and insert competing variants.
+    # There is no unique index on the normalized expression precisely
+    # because legacy rows may already violate it.
     existing =
       repo.one(
         from(e in Entity,
