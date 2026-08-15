@@ -77,6 +77,36 @@ defmodule Mix.Tasks.Arcana.InstallTest do
     assert_unchanged(igniter, "lib/test/postgrex_types.ex")
   end
 
+  test "stops with an actionable error when every candidate name is taken" do
+    occupied = fn module ->
+      """
+      defmodule #{module} do
+        def whatever, do: :ok
+      end
+      """
+    end
+
+    project =
+      test_project(
+        files: %{
+          "lib/test/postgrex_types.ex" => occupied.("Test.PostgrexTypes"),
+          "lib/test/repo/postgrex_types.ex" => occupied.("Test.Repo.PostgrexTypes"),
+          "lib/test/repo/arcana_postgrex_types.ex" => occupied.("Test.Repo.ArcanaPostgrexTypes")
+        }
+      )
+
+    # Picking an occupied name silently would point the repo config at a module
+    # that has no pgvector extension in it, so this has to stop the install.
+    error =
+      assert_raise Mix.Error, fn ->
+        Igniter.compose_task(project, "arcana.install", ["--no-dashboard"])
+      end
+
+    assert error.message =~ "Test.Repo.ArcanaPostgrexTypes"
+    assert error.message =~ "lib/test/repo/arcana_postgrex_types.ex"
+    assert error.message =~ "Pgvector.Extensions.Vector"
+  end
+
   test "leaves another repo's types module alone and generates one for ours" do
     postgis = """
     Postgrex.Types.define(

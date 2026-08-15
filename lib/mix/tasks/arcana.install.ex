@@ -532,18 +532,43 @@ if Code.ensure_loaded?(Igniter) do
 
     # Never reuse the name (or the file) of a module that's already there: that
     # collision is what made the installer overwrite other people's types
-    # modules. The last candidate is the give-up value; a project where all
-    # three names are taken isn't worth more code.
-    defp free_types_module(_igniter, [last], _found, _found_path), do: last
+    # modules. Settling for an occupied name would be worse than stopping:
+    # module creation skips a path that already exists, so the repo config would
+    # end up pointing at somebody else's module, one with no pgvector extension
+    # in it, and the install would fail at runtime instead of here.
+    defp free_types_module(igniter, candidates, found, found_path) do
+      candidates
+      |> Enum.find(fn candidate ->
+        path = types_module_path(candidate)
 
-    defp free_types_module(igniter, [candidate | rest], found, found_path) do
-      path = types_module_path(candidate)
-
-      if candidate == found or path == found_path or Igniter.exists?(igniter, path) do
-        free_types_module(igniter, rest, found, found_path)
-      else
-        candidate
+        candidate != found and path != found_path and not Igniter.exists?(igniter, path)
+      end)
+      |> case do
+        nil -> raise Mix.Error, message: no_free_types_module_message(candidates)
+        candidate -> candidate
       end
+    end
+
+    defp no_free_types_module_message(candidates) do
+      taken = Enum.map_join(candidates, "\n", &"  * #{inspect(&1)} (#{types_module_path(&1)})")
+
+      """
+      Arcana needs to generate a Postgrex types module with the pgvector
+      extension in it, but every name it would use is already taken:
+
+      #{taken}
+
+      Rename or delete one of those, or add the extension to the types module
+      you already have:
+
+          Postgrex.Types.define(
+            YourApp.PostgrexTypes,
+            [Pgvector.Extensions.Vector] ++ Ecto.Adapters.Postgres.extensions(),
+            []
+          )
+
+      and point your repo at it with `types: YourApp.PostgrexTypes`.
+      """
     end
 
     defp scanned_types_notice(found, path, app_name, repo_module, chosen) do
