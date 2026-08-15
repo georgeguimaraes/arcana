@@ -553,8 +553,16 @@ defmodule Arcana.Graph do
   # Entities, their mentions and their relationships land together under
   # the collection's write lock, so a concurrent sweep_orphans can't run
   # between the entity insert and the mention insert and delete an entity
-  # that is about to be referenced. A failure anywhere in here rolls the
-  # whole chunk back rather than leaving half-persisted graph data.
+  # that is about to be referenced.
+  #
+  # Atomicity here is store-dependent (see GraphStore.with_write_lock/3).
+  # The :ecto backend holds the lock inside a transaction, so a failure
+  # anywhere in the trio rolls the whole chunk back. The :memory backend
+  # and custom stores that skip the optional callback just run the trio,
+  # so a failure mid-trio leaves that chunk's graph data half-persisted;
+  # the raise then aborts the build. Nothing downstream cleans that up,
+  # and no caller of build_and_persist/4 treats a failed build as having
+  # left the graph untouched.
   defp persist_chunk_graph(
          collection_id,
          entities,

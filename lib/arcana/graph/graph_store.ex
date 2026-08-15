@@ -150,6 +150,23 @@ defmodule Arcana.Graph.GraphStore do
 
   The lock is meant to cover DB writes only, never extraction, so callers
   keep the wrapped work short.
+
+  ## Guarantees
+
+  The contract is mutual exclusion per collection, nothing more.
+  Atomicity is best-effort and store-dependent: callers must not assume
+  that a failure inside `fun` rolls back the writes it already made.
+
+  The `:ecto` backend does give both, because it takes the advisory lock
+  inside a transaction. The `:memory` backend implements neither (it
+  falls through to running `fun`), so a mid-`fun` failure leaves partial
+  graph data behind, which is fine for a test backend.
+
+  A custom store that wants the full guarantee has to do what the `:ecto`
+  backend does: hold a per-collection exclusive lock *and* run `fun`
+  inside a transaction that rolls back on failure, releasing the lock
+  when the transaction ends. Doing only one of the two is worse than
+  doing neither, since it reads as if both were covered.
   """
   @callback with_write_lock(binary(), opts :: keyword(), (-> result)) :: result
             when result: term()
@@ -446,7 +463,9 @@ defmodule Arcana.Graph.GraphStore do
   @doc """
   Runs `fun` holding the collection's graph write lock on the configured backend.
 
-  Backends that don't implement `c:with_write_lock/3` just run `fun`.
+  Backends that don't implement `c:with_write_lock/3` just run `fun`, with
+  no locking and no rollback. See `c:with_write_lock/3` for what each
+  backend actually guarantees.
   """
   def with_write_lock(collection_id, opts, fun) when is_function(fun, 0) do
     {backend, backend_opts, opts} = extract_backend(opts)
