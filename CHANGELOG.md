@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+Since v2.0.2, largely driven by feedback from a multi-tenant production
+adoption (#94). The headline is that collection scoping can now fail closed,
+search returns one shape in every mode, and the library no longer drags a
+machine-learning toolchain into apps that bring their own embedder.
+
+### Enhancements
+
+  * [Arcana] Add `list_documents/1`, `count_documents/1` and `get_document/2`, so admin surfaces and tests can read documents through the public API instead of querying `Arcana.Document` directly
+  * [Arcana] Add `replace: true` to `ingest/2`: re-ingesting a `(collection, source_id)` identity supersedes the previous document atomically, with old chunks staying searchable until the new ingest lands
+  * [Arcana.Config] Add `strict_collections`, which turns an unknown collection name into `{:error, {:unknown_collection, name}}` instead of silently searching every collection. Opt-in in 2.x, default in 3.0
+  * [Arcana.Search] Add opt-in `graph_depth`, expanding matched entities through the relationships table before fetching chunks, with per-hop score decay. Defaults to `0` (previous behavior)
+  * [Arcana.LLM] Accept `{module, function}` as an LLM. Unlike a captured function it serializes into a release's `sys.config`, so it no longer has to be wired in `runtime.exs`
+  * [ArcanaWeb.Router] `arcana_dashboard` now derives every link and asset URL from the real mount point, so mounting anywhere other than `/arcana` works
+  * [mix] `bumblebee` and `req_llm` are optional dependencies. Apps bringing their own embedder and LLM no longer compile roughly 13 transitive packages, including the tokenizers Rust NIF
+  * [ArcanaWeb] The dashboard is optional at compile time: arcana now compiles in apps without Phoenix
+
+### Bug fixes
+
+  * [Arcana.Search] An unknown collection name no longer resolves to "no filter". Under `strict_collections` it errors; either way, named collections that resolve to nothing now match nothing on the graph path instead of widening to a global search
+  * [Arcana.Ecto.Vector] Compare vectors by encoded value, so re-storing a byte-identical embedding is a no-op instead of dirtying the changeset and churning the HNSW index on every ingest
+  * [Arcana.Graph.CommunityDetector.Leiden] Stop storing duplicate partitions when the hierarchy converges before `max_level`, which had been multiplying summarization cost by the level count for no retrieval benefit
+  * [ArcanaWeb] Dashboard CSS and navigation no longer 404 when the dashboard is mounted outside `/arcana`
+
+### Backwards incompatible changes
+
+  * [Arcana.Search] `search/2` returns `%Arcana.SearchResult{}` structs rather than plain maps, with the same fields in every mode (`vector_score`/`keyword_score` are `nil` where they don't apply, and chunk metadata is carried with string keys). The struct implements `Access`, so `result[:text]` keeps working; code that pattern matches on a bare map, or relies on a key being absent, needs updating
+  * [mix] `bumblebee` and `req_llm` are no longer pulled in transitively. Apps using the default local embedder must add `{:bumblebee, "~> 0.6"}` and a backend such as `{:exla, "~> 0.10"}`; apps passing model strings such as `"openai:gpt-4o-mini"` as the LLM, or using `Arcana.Loop`, must add `{:req_llm, "~> 1.2"}`. Both raise a message naming the missing dependency
+
+### Deprecations
+
+  * [Arcana.TaskSupervisor] Renamed to `ArcanaWeb.TaskSupervisor`, since it only serves the dashboard's async operations. The old module still works and starts the same process, with a deprecation warning
+
 ## [2.0.2](https://github.com/georgeguimaraes/arcana/compare/v2.0.1...v2.0.2) (2026-08-15)
 
 
