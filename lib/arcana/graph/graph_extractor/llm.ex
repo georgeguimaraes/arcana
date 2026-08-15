@@ -115,10 +115,11 @@ defmodule Arcana.Graph.GraphExtractor.LLM do
     ```json
     {
       "entities": [
-        {"name": "Entity Name", "type": "type", "description": "Brief context"}
+        {"name": "Sam Altman", "type": "person", "description": "Brief context"},
+        {"name": "two year limited warranty", "type": "concept", "description": "Brief context"}
       ],
       "relationships": [
-        {"source": "Source Entity", "target": "Target Entity", "type": "RELATIONSHIP_TYPE", "description": "Brief description", "strength": 8}
+        {"source": "Sam Altman", "target": "OpenAI", "type": "RELATIONSHIP_TYPE", "description": "Brief description", "strength": 8}
       ]
     }
     ```

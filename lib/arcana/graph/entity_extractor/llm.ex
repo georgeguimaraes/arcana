@@ -128,9 +128,16 @@ defmodule Arcana.Graph.EntityExtractor.LLM do
 
     ## Output format:
     Return a JSON array of entity objects. Each object should have:
-    - "name": The entity name (required)
+    - "name": The entity name, written per instruction 4 (required)
     - "type": One of the types listed above (required)
     - "description": Brief description from context (optional)
+
+    ```json
+    [
+      {"name": "Sam Altman", "type": "person", "description": "Brief context"},
+      {"name": "two year limited warranty", "type": "concept", "description": "Brief context"}
+    ]
+    ```
 
     Return only the JSON array, no other text.
     """
