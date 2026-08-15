@@ -43,6 +43,15 @@ defmodule Arcana.GraphExpandTest do
     test "raises on invalid values" do
       assert_raise ArgumentError, fn -> Graph.query_depth(graph_depth: -1) end
       assert_raise ArgumentError, fn -> Graph.query_depth(graph_depth: "two") end
+      assert_raise ArgumentError, fn -> Graph.query_depth(graph_depth: nil) end
+    end
+
+    test "graph_depth: false disables traversal even with a global default" do
+      put_arcana_env(:graph, query_depth: 2)
+
+      # matches the reranker: false disable idiom; previously fell
+      # through || to the global config and silently traversed
+      assert Graph.query_depth(graph_depth: false) == 0
     end
   end
 

@@ -194,7 +194,13 @@ defmodule Arcana.Graph do
   `ArgumentError` on anything other than a non-negative integer.
   """
   def query_depth(opts) do
-    depth = Keyword.get(opts, :graph_depth) || config()[:query_depth] || 0
+    depth =
+      case Keyword.fetch(opts, :graph_depth) do
+        # `false` disables traversal, matching the `reranker: false` idiom
+        {:ok, false} -> 0
+        {:ok, value} -> value
+        :error -> config()[:query_depth] || 0
+      end
 
     unless is_integer(depth) and depth >= 0 do
       raise ArgumentError,
