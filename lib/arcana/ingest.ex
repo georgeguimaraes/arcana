@@ -270,7 +270,7 @@ defmodule Arcana.Ingest do
             embedding: embedding,
             chunk_index: chunk.chunk_index,
             token_count: chunk.token_count,
-            metadata: chunk_metadata(chunk),
+            metadata: Chunker.metadata_for(chunk),
             document_id: document.id
           })
           |> repo.insert!()
@@ -285,22 +285,6 @@ defmodule Arcana.Ingest do
         {:halt, {:error, {:embedding_failed, reason}}}
     end
   end
-
-  # `Arcana.Chunker` promises that keys beyond :text/:chunk_index/
-  # :token_count reach storage. A chunker's own `:metadata` map is the
-  # canonical place for them (that's what Arcana.Chunker.Default uses for
-  # its byte offsets); anything else it hands back is folded in with
-  # string keys, since chunk metadata round-trips through JSONB.
-  @chunk_fields [:text, :chunk_index, :token_count, :metadata, :embedding, :id, :document_id]
-
-  defp chunk_metadata(chunk) do
-    extras = chunk |> Map.drop([:__struct__ | @chunk_fields]) |> stringify_keys()
-    declared = chunk |> Map.get(:metadata) |> Kernel.||(%{}) |> stringify_keys()
-
-    Map.merge(extras, declared)
-  end
-
-  defp stringify_keys(map), do: Map.new(map, fn {key, value} -> {to_string(key), value} end)
 
   defp ingest_with_file_attrs(text, opts) do
     repo = require_repo!(opts)
@@ -391,11 +375,11 @@ defmodule Arcana.Ingest do
 
   defp attach_pages(chunks, _pages), do: chunks
 
-  # Keys are only stringified at insert time (see `chunk_metadata/1`), so
+  # Keys are only stringified at insert time (see `Arcana.Chunker.metadata_for/1`), so
   # this runs against whatever shape the chunker used. `Arcana.Chunker`
   # accepts offsets under `:metadata` or as top-level extras, with atom or
   # string keys; reading just one shape drops pages silently for every
-  # chunker but the built-in one. Precedence mirrors chunk_metadata/1:
+  # chunker but the built-in one. Precedence mirrors metadata_for/1:
   # a declared :metadata entry wins over a top-level extra.
   defp chunk_offset(chunk, metadata, key) do
     fetch_either(metadata, key) || fetch_either(chunk, key)

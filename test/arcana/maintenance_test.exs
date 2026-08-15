@@ -1,7 +1,67 @@
 defmodule Arcana.MaintenanceTest do
   use Arcana.DataCase, async: true
 
-  alias Arcana.Maintenance
+  alias Arcana.{Chunk, Collection, Document, Maintenance}
+
+  describe "rechunking crashed ingests" do
+    test "recovered chunks carry the same metadata a fresh ingest would" do
+      {:ok, collection} = Collection.get_or_create("default", Repo)
+
+      {:ok, document} =
+        %Document{}
+        |> Document.changeset(%{
+          content: "Alpha alpha alpha the first part. Bravo bravo bravo the second part.",
+          status: :pending,
+          chunk_count: 0,
+          collection_id: collection.id
+        })
+        |> Repo.insert()
+
+      assert {:ok, %{rechunked_documents: 1}} = Maintenance.reembed(Repo)
+
+      chunks = Repo.all(from(c in Chunk, where: c.document_id == ^document.id))
+
+      assert chunks != []
+
+      for chunk <- chunks do
+        assert is_integer(chunk.metadata["start_byte"])
+        assert is_integer(chunk.metadata["end_byte"])
+        assert chunk.metadata["end_byte"] > chunk.metadata["start_byte"]
+      end
+    end
+
+    test "a custom chunker's extra keys survive rechunking too" do
+      {:ok, collection} = Collection.get_or_create("default", Repo)
+
+      {:ok, document} =
+        %Document{}
+        |> Document.changeset(%{
+          content: "whatever",
+          status: :pending,
+          chunk_count: 0,
+          collection_id: collection.id
+        })
+        |> Repo.insert()
+
+      put_arcana_env(:chunker, fn text, _opts ->
+        [
+          %{
+            text: text,
+            chunk_index: 0,
+            token_count: 2,
+            page: 7,
+            metadata: %{"section" => "intro"}
+          }
+        ]
+      end)
+
+      assert {:ok, %{rechunked_documents: 1}} = Maintenance.reembed(Repo)
+
+      assert [chunk] = Repo.all(from(c in Chunk, where: c.document_id == ^document.id))
+      assert chunk.metadata["page"] == 7
+      assert chunk.metadata["section"] == "intro"
+    end
+  end
 
   describe "strict collections" do
     test "reembed/2 errors on an unknown collection" do
