@@ -91,9 +91,9 @@ arcana_dashboard "/arcana",
 
 By default the dashboard sees (and can mutate) every collection, so it's
 superuser territory. The `collections:` option lets you expose it below
-that level: a `{module, function}` pair that gets the `%Plug.Conn{}` at
-request time and returns either `:all` or the list of collection names
-this request may touch.
+that level: a `{module, function}` pair that gets the `%Plug.Conn{}` of
+the page request and returns either `:all` or the list of collection
+names that user may touch.
 
 ```elixir
 arcana_dashboard "/arcana",
@@ -114,8 +114,8 @@ end
 
 The restriction applies everywhere, and fails closed:
 
-- listings, search, ask, graph views, and the header stats only cover
-  the allowed collections
+- listings, search, ask, graph views, evaluation test cases and runs,
+  and the header stats only cover the allowed collections
 - ingest and maintenance actions must target an allowed collection;
   "All Collections" operations disappear
 - events naming any other collection (including forged form payloads)
@@ -126,6 +126,32 @@ The restriction applies everywhere, and fails closed:
 - renaming a collection is blocked: a rename could otherwise move
   documents into a name another tenant is allowed to see
 - an empty list means the dashboard shows and does nothing
+
+#### When the decision is made
+
+The MFA runs while the page request is served and its answer is
+snapshotted into the signed LiveView session, which is valid for the
+session max age (14 days by default). The websocket connect, reconnects
+and in-dashboard `live_patch`/`live_redirect` all read that snapshot back
+instead of calling the MFA again; only a full page request re-runs it.
+Narrowing someone's permissions therefore doesn't narrow a dashboard they
+already have open. The `on_mount` hook can't fix this by itself, since a
+LiveView mount has no `%Plug.Conn{}` to re-resolve from.
+
+Cut the socket when permissions change. Put a per-user `live_socket_id`
+in the session and broadcast a disconnect:
+
+```elixir
+# on login
+put_session(conn, :live_socket_id, "users_socket:#{user.id}")
+
+# when access changes
+MyAppWeb.Endpoint.broadcast("users_socket:#{user.id}", "disconnect", %{})
+```
+
+The client then reconnects through a full request, which re-runs the MFA
+with the current conn. A shorter session max age puts a hard bound on how
+long a stale scope can survive without that broadcast.
 
 It's a plain `{module, function}` tuple rather than a function capture
 so the router metadata stays serializable. The option composes with

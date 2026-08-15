@@ -36,13 +36,15 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         name for each extra mount.
 
       * `:collections` - Optional `{module, function}` pair that scopes the
-        dashboard to a subset of collections. At request time the function
-        receives the `%Plug.Conn{}` and must return either `:all` (no
+        dashboard to a subset of collections. The function receives the
+        `%Plug.Conn{}` of the page request and must return either `:all` (no
         restriction) or a list of collection names. Every dashboard surface
-        (listings, search, ask, ingest, maintenance, stats) is limited to
-        those collections, and events naming any other collection are
-        rejected server-side. A plain `{module, function}` tuple is required
-        (not a function capture) so the route metadata stays serializable.
+        (listings, search, ask, ingest, evaluation, maintenance, stats) is
+        limited to those collections, and events naming any other collection
+        are rejected server-side. A plain `{module, function}` tuple is
+        required (not a function capture) so the route metadata stays
+        serializable. See "Scoping collections" for when the decision is
+        re-evaluated.
 
     ## Example with options
 
@@ -63,6 +65,32 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
             end
           end
         end
+
+    ### When the decision is made
+
+    The function runs while the page request is being served, and its result
+    is **snapshotted into the LiveView session**: Phoenix signs it into the
+    rendered `data-phx-session` payload, which stays valid for the session's
+    max age (14 days by default). The websocket connect, every reconnect,
+    and every `live_patch`/`live_redirect` inside the dashboard read back
+    that snapshot instead of calling the function again. Only a full page
+    request re-runs it.
+
+    So narrowing a user's permissions does not narrow an already-rendered
+    dashboard. Until the user loads a fresh page, they keep the scope they
+    mounted with. The `on_mount` hook cannot close that gap on its own —
+    there is no `%Plug.Conn{}` in a LiveView mount to re-resolve from.
+
+    The mitigation is to cut the socket when permissions change. Set a
+    `live_socket_id` per user in your session (Phoenix's
+    `put_session(conn, :live_socket_id, "users_socket:\#{user.id}")`), then
+    broadcast a disconnect when their access changes:
+
+        MyAppWeb.Endpoint.broadcast("users_socket:\#{user.id}", "disconnect", %{})
+
+    The client reconnects through a full request, which re-runs the MFA with
+    the current `%Plug.Conn{}`. Pair it with a short session max age if you
+    need a hard upper bound on how long a stale scope can live.
 
     """
 
@@ -211,6 +239,11 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     # resolved by the router's :collections MFA (:all when the option is
     # absent). An empty list is a valid restriction and must not collapse to
     # :all, so only a missing session key falls back.
+    #
+    # The list is read back from the signed session, not re-resolved: a
+    # LiveView mount has no %Plug.Conn{} to hand the MFA. See the
+    # "Scoping collections" section of ArcanaWeb.Router for what that means
+    # for permission changes mid-session, and how to force a re-resolve.
     def on_mount(:default, _params, session, socket) do
       {:cont,
        Phoenix.Component.assign(socket,
