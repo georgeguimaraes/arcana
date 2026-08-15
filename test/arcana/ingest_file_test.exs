@@ -88,6 +88,38 @@ defmodule Arcana.IngestFileTest do
       assert {:error, :unsupported_format} =
                Arcana.ingest_file(path, repo: Arcana.TestRepo)
     end
+
+    test "builds the graph when graph: true" do
+      path = create_temp_file("Sam Altman leads OpenAI.", ".txt")
+
+      entity_extractor = fn _text, _opts ->
+        {:ok, [%{name: "OpenAI", type: "organization"}]}
+      end
+
+      assert {:ok, document} =
+               Arcana.ingest_file(path,
+                 repo: Arcana.TestRepo,
+                 graph: true,
+                 entity_extractor: entity_extractor,
+                 collection: "file-graph-test"
+               )
+
+      assert document.status == :completed
+
+      entities = Arcana.TestRepo.all(Arcana.Graph.Entity)
+      assert Enum.any?(entities, fn e -> e.name == "OpenAI" end)
+
+      mentions = Arcana.TestRepo.all(Arcana.Graph.EntityMention)
+      refute Enum.empty?(mentions)
+    end
+
+    test "replace: true requires a source_id" do
+      path = create_temp_file("content", ".txt")
+
+      assert_raise ArgumentError, ~r/requires a :source_id/, fn ->
+        Arcana.ingest_file(path, repo: Arcana.TestRepo, replace: true)
+      end
+    end
   end
 
   # Helper functions

@@ -42,12 +42,9 @@ defmodule Arcana.Ingest do
   """
   def ingest(text, opts) when is_binary(text) do
     repo = require_repo!(opts)
+    validate_replace_opts!(opts)
     source_id = Keyword.get(opts, :source_id)
     metadata = Keyword.get(opts, :metadata, %{})
-
-    if Keyword.get(opts, :replace, false) and (is_nil(source_id) or source_id == "") do
-      raise ArgumentError, "replace: true requires a :source_id document identity"
-    end
 
     {collection_name, collection_description} =
       parse_collection_opt(Keyword.get(opts, :collection, "default"))
@@ -80,7 +77,7 @@ defmodule Arcana.Ingest do
 
           case result do
             {:ok, chunk_records} ->
-              finalize_ingest(document, chunk_records, collection, repo, opts)
+              finalize_with_telemetry(document, chunk_records, collection, repo, opts)
 
             {:error, reason} ->
               {{:error, reason}, %{error: reason}}
@@ -105,6 +102,10 @@ defmodule Arcana.Ingest do
     * `:chunk_size` - Maximum chunk size in characters (default: 1024)
     * `:chunk_overlap` - Overlap between chunks (default: 200)
     * `:collection` - Collection name to organize the document (default: "default")
+    * `:graph` - Enable GraphRAG extraction (default: from config)
+    * `:replace` - When true, atomically replaces any prior document with the
+      same `(collection, source_id)` once the new ingest completes. Requires
+      `:source_id`. See "Replacing documents" in `ingest/2`.
 
   """
   def ingest_file(path, opts) when is_binary(path) do
@@ -128,18 +129,25 @@ defmodule Arcana.Ingest do
 
   defp require_repo!(opts), do: Arcana.Config.require_repo!(opts)
 
+  defp finalize_with_telemetry(document, chunk_records, collection, repo, opts) do
+    case finalize_ingest(document, chunk_records, collection, repo, opts) do
+      {:ok, document} ->
+        {{:ok, document}, %{document: document, chunk_count: length(chunk_records)}}
+
+      {:error, reason} ->
+        {{:error, reason}, %{error: reason}}
+    end
+  end
+
   defp finalize_ingest(document, chunk_records, collection, repo, opts) do
     maybe_build_graph(chunk_records, collection, repo, opts)
 
     if Keyword.get(opts, :replace, false) do
       finalize_replace(document, chunk_records, repo)
     else
-      {:ok, document} =
-        document
-        |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
-        |> repo.update()
-
-      {{:ok, document}, %{document: document, chunk_count: length(chunk_records)}}
+      document
+      |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
+      |> repo.update()
     end
   end
 
@@ -151,42 +159,33 @@ defmodule Arcana.Ingest do
   # around chunking/embedding. A run whose document was already deleted by a
   # faster concurrent replace loses cleanly.
   defp finalize_replace(document, chunk_records, repo) do
-    result =
-      repo.transaction(fn ->
-        repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
-          "arcana:replace:#{document.collection_id}:#{document.source_id}"
-        ])
+    repo.transaction(fn ->
+      repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+        "arcana:replace:#{document.collection_id}:#{document.source_id}"
+      ])
 
-        if repo.get(Document, document.id) do
-          import Ecto.Query, only: [from: 2]
+      if repo.get(Document, document.id) do
+        import Ecto.Query, only: [from: 2]
 
-          repo.delete_all(
-            from(d in Document,
-              where:
-                d.collection_id == ^document.collection_id and
-                  d.source_id == ^document.source_id and
-                  d.id != ^document.id
-            )
+        repo.delete_all(
+          from(d in Document,
+            where:
+              d.collection_id == ^document.collection_id and
+                d.source_id == ^document.source_id and
+                d.id != ^document.id
           )
+        )
 
-          {:ok, document} =
-            document
-            |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
-            |> repo.update()
-
+        {:ok, document} =
           document
-        else
-          repo.rollback(:replaced_by_concurrent_ingest)
-        end
-      end)
+          |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
+          |> repo.update()
 
-    case result do
-      {:ok, document} ->
-        {{:ok, document}, %{document: document, chunk_count: length(chunk_records)}}
-
-      {:error, :replaced_by_concurrent_ingest} ->
-        {{:error, :replaced_by_concurrent_ingest}, %{error: :replaced_by_concurrent_ingest}}
-    end
+        document
+      else
+        repo.rollback(:replaced_by_concurrent_ingest)
+      end
+    end)
   end
 
   defp maybe_build_graph(chunk_records, collection, repo, opts) do
@@ -230,6 +229,7 @@ defmodule Arcana.Ingest do
 
   defp ingest_with_file_attrs(text, opts) do
     repo = require_repo!(opts)
+    validate_replace_opts!(opts)
     source_id = Keyword.get(opts, :source_id)
     metadata = Keyword.get(opts, :metadata, %{})
     file_path = Keyword.get(opts, :file_path)
@@ -238,19 +238,21 @@ defmodule Arcana.Ingest do
     chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap, :format, :size_unit])
     chunker_config = Arcana.Config.resolve_chunker(opts)
 
+    attrs = %{
+      source_id: source_id,
+      metadata: metadata,
+      file_path: file_path,
+      content_type: content_type,
+      chunk_opts: chunk_opts,
+      chunker_config: chunker_config
+    }
+
     with {:ok, collection} <- resolve_collection(collection_name, nil, repo, opts) do
-      do_ingest_with_file_attrs(text, collection, repo, %{
-        source_id: source_id,
-        metadata: metadata,
-        file_path: file_path,
-        content_type: content_type,
-        chunk_opts: chunk_opts,
-        chunker_config: chunker_config
-      })
+      do_ingest_with_file_attrs(text, collection, repo, attrs, opts)
     end
   end
 
-  defp do_ingest_with_file_attrs(text, collection, repo, attrs) do
+  defp do_ingest_with_file_attrs(text, collection, repo, attrs, opts) do
     {:ok, document} =
       %Document{}
       |> Document.changeset(%{
@@ -265,19 +267,17 @@ defmodule Arcana.Ingest do
       |> repo.insert()
 
     chunks = Chunker.chunk(attrs.chunker_config, text, attrs.chunk_opts)
-    result = embed_and_store_chunks(chunks, document, repo)
 
-    case result do
-      {:ok, chunk_records} ->
-        {:ok, document} =
-          document
-          |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
-          |> repo.update()
+    with {:ok, chunk_records} <- embed_and_store_chunks(chunks, document, repo) do
+      finalize_ingest(document, chunk_records, collection, repo, opts)
+    end
+  end
 
-        {:ok, document}
+  defp validate_replace_opts!(opts) do
+    source_id = Keyword.get(opts, :source_id)
 
-      {:error, reason} ->
-        {:error, reason}
+    if Keyword.get(opts, :replace, false) and (is_nil(source_id) or source_id == "") do
+      raise ArgumentError, "replace: true requires a :source_id document identity"
     end
   end
 
