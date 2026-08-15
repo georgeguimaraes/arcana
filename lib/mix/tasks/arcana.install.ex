@@ -17,6 +17,14 @@ if Code.ensure_loaded?(Igniter) do
     the installer skips generating one and instead tells you how to add
     the pgvector extension to your existing module.
 
+    Detection reads every `*.exs` file directly inside your config
+    directory, plus every `lib/**/*.ex` file that mentions
+    `Postgrex.Types.define`. It does not evaluate config, so a `:types` key
+    that only exists in a file imported from outside the config directory,
+    or that is built at runtime, is invisible to it - the installer will
+    generate a second types module. If that happens, delete the generated
+    module and add `Pgvector.Extensions.Vector` to yours instead.
+
     ## Options
 
       * `--no-dashboard` - Skip adding the dashboard route
@@ -28,11 +36,6 @@ if Code.ensure_loaded?(Igniter) do
     alias Igniter.Code.Function
     alias Igniter.Libs.Phoenix
     alias Igniter.Project.Config
-
-    # Files that can hold `config :app, Repo, types: ...`. config.exs alone
-    # misses env files, which `import_config` pulls in but igniter's config
-    # helpers don't follow.
-    @config_files ["config.exs", "dev.exs", "test.exs", "prod.exs", "runtime.exs"]
 
     @types_define_marker "Postgrex.Types.define"
 
@@ -66,13 +69,13 @@ if Code.ensure_loaded?(Igniter) do
       web_module = Module.concat([app_module <> "Web"])
       types_module = Module.concat([app_module, "PostgrexTypes"])
 
-      {igniter, unparsable} = include_types_candidates(igniter)
-      existing_types = existing_types_module(igniter, app_name, repo_module)
+      {igniter, unparsable_lib} = include_types_candidates(igniter)
+      {existing_types, unparsable_config} = existing_types_module(igniter, app_name, repo_module)
 
       igniter
       |> create_migration(repo_module)
       |> setup_postgrex_types(existing_types, app_name, repo_module, types_module)
-      |> maybe_warn_unparsable(unparsable)
+      |> maybe_warn_unparsable(unparsable_lib ++ unparsable_config)
       |> maybe_add_dashboard_route(opts[:dashboard], web_module)
       |> Igniter.add_notice("""
 
@@ -276,8 +279,8 @@ if Code.ensure_loaded?(Igniter) do
 
       #{Enum.map_join(paths, "\n", &"    #{&1}")}
 
-      Installation continued as if no types module existed. If one of them
-      does define one, remove the module Arcana just generated and add
+      Detection ran without them. If one of them defines or configures a
+      types module, remove the one Arcana just generated (if any) and add
       Pgvector.Extensions.Vector to yours instead.
       """)
     end
@@ -285,9 +288,14 @@ if Code.ensure_loaded?(Igniter) do
     # Detects an existing Postgrex types module. The `:types` key on the repo
     # being configured is authoritative; a Postgrex.Types.define/3 call found
     # by scanning lib/ is a hint, since it may belong to a different repo.
+    #
+    # Returns the detection result plus any config files that could not be
+    # parsed, so the caller can say detection ran with a blind spot.
     defp existing_types_module(igniter, app_name, repo_module) do
-      configured_repo_types(igniter, app_name, repo_module) ||
-        find_postgrex_types_define(igniter)
+      case configured_repo_types(igniter, app_name, repo_module) do
+        {nil, unparsable} -> {find_postgrex_types_define(igniter), unparsable}
+        {configured, unparsable} -> {configured, unparsable}
+      end
     end
 
     defp find_postgrex_types_define(igniter) do
@@ -370,33 +378,129 @@ if Code.ensure_loaded?(Igniter) do
       end
     end
 
+    # Scans every config file for `config :app, Repo, types: ...`. Igniter's
+    # config helpers look at one named file and don't follow `import_config`,
+    # so the whole config directory gets scanned rather than a hardcoded list
+    # of the usual env files.
     defp configured_repo_types(igniter, app_name, repo_module) do
-      Enum.find_value(@config_files, fn file ->
-        if Config.configures_key?(igniter, file, app_name, [repo_module, :types]) do
-          {:config, file}
-        end
+      {found, unparsable} =
+        igniter
+        |> config_file_names()
+        |> Enum.reduce_while({nil, []}, fn file, {_found, unparsable} ->
+          case configured_types_in(igniter, file, app_name, repo_module) do
+            :none -> {:cont, {nil, unparsable}}
+            :unparsable -> {:cont, {nil, [config_path(igniter, file) | unparsable]}}
+            {:ok, module} -> {:halt, {{:config, config_path(igniter, file), module}, unparsable}}
+          end
+        end)
+
+      {found, Enum.reverse(unparsable)}
+    end
+
+    defp config_file_names(igniter) do
+      dir = config_dir(igniter)
+
+      igniter
+      |> project_file_paths(dir)
+      |> Enum.filter(&(Path.dirname(&1) == dir and String.ends_with?(&1, ".exs")))
+      |> Enum.map(&Path.basename/1)
+      |> Enum.sort()
+    end
+
+    defp project_file_paths(igniter, dir) do
+      if igniter.assigns[:test_mode?] do
+        Map.keys(igniter.assigns[:test_files])
+      else
+        Path.wildcard(Path.join(dir, "*.exs"))
+      end
+    end
+
+    # Igniter addresses config files by name relative to the project's config
+    # directory, which `:config_path` in mix.exs can move.
+    defp config_dir(igniter) do
+      igniter
+      |> Igniter.Project.Application.config_path()
+      |> Path.dirname()
+    end
+
+    defp config_path(igniter, file), do: Path.join(config_dir(igniter), file)
+
+    defp configured_types_in(igniter, file, app_name, repo_module) do
+      if Config.configures_key?(igniter, file, app_name, [repo_module, :types]) do
+        {:ok, configured_types_module(igniter, file, app_name, repo_module)}
+      else
+        :none
+      end
+    rescue
+      _ -> :unparsable
+    end
+
+    # Best effort: `configures_key?/4` above already said the key is there,
+    # this only recovers the module name for the notice. The two-argument
+    # `config :app, Repo: [types: ...]` shape and any non-literal value
+    # degrade to :unknown rather than naming the wrong module.
+    defp configured_types_module(igniter, file, app_name, repo_module) do
+      with {:ok, zipper} <- config_zipper(igniter, file),
+           {:ok, call} <- move_to_repo_config(zipper, app_name, repo_module),
+           {:ok, opts} <- Function.move_to_nth_argument(call, 2),
+           {:ok, value} <- Igniter.Code.Keyword.get_key(opts, :types),
+           {:__aliases__, _, parts} when is_list(parts) <- Sourceror.Zipper.node(value),
+           true <- Enum.all?(parts, &is_atom/1) do
+        Module.concat(parts)
+      else
+        _ -> :unknown
+      end
+    rescue
+      _ -> :unknown
+    end
+
+    defp move_to_repo_config(zipper, app_name, repo_module) do
+      Function.move_to_function_call_in_current_scope(zipper, :config, 3, fn call ->
+        Function.argument_equals?(call, 0, app_name) and
+          Function.argument_equals?(call, 1, repo_module)
       end)
+    end
+
+    defp config_zipper(igniter, file) do
+      path = config_path(igniter, file)
+      igniter = Igniter.include_existing_file(igniter, path, required?: false)
+
+      case Rewrite.source(igniter.rewrite, path) do
+        {:ok, source} -> {:ok, source |> Rewrite.Source.get(:quoted) |> Sourceror.Zipper.zip()}
+        _ -> :error
+      end
     end
 
     defp setup_postgrex_types(igniter, nil, app_name, repo_module, types_module) do
       igniter
       |> create_postgrex_types_module(types_module)
       |> configure_repo_types(app_name, repo_module, types_module)
+      |> Igniter.add_notice("""
+
+      Arcana generated #{inspect(types_module)} because it found no existing
+      Postgrex types module. It looked in #{config_dir(igniter)}/*.exs and in
+      lib/**/*.ex; config imported from elsewhere or built at runtime is not
+      followed. If you already have one, delete the generated module and add
+      Pgvector.Extensions.Vector to yours instead.
+      """)
     end
 
     defp setup_postgrex_types(igniter, existing, app_name, repo_module, _types_module) do
       Igniter.add_notice(igniter, existing_types_notice(existing, app_name, repo_module))
     end
 
-    defp existing_types_notice({:config, file}, _app_name, repo_module) do
+    defp existing_types_notice({:config, path, existing}, _app_name, repo_module) do
+      named = if existing == :unknown, do: "", else: ": #{inspect(existing)}"
+      module_code = if existing == :unknown, do: "YourApp.PostgrexTypes", else: inspect(existing)
+
       """
       #{inspect(repo_module)} already has a `:types` module configured in
-      config/#{file}, so Arcana skipped generating one.
+      #{path}#{named}, so Arcana skipped generating one.
 
       Make sure that module includes the pgvector extension:
 
           Postgrex.Types.define(
-            YourApp.PostgrexTypes,
+            #{module_code},
             [Pgvector.Extensions.Vector] ++ Ecto.Adapters.Postgres.extensions(),
             []
           )

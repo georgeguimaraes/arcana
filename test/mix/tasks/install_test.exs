@@ -81,6 +81,61 @@ defmodule Mix.Tasks.Arcana.InstallTest do
     |> refute_creates("lib/test/postgrex_types.ex")
     |> assert_has_notice(&(&1 =~ "already has a `:types` module configured"))
     |> assert_has_notice(&(&1 =~ "config/config.exs"))
+    |> assert_has_notice(&(&1 =~ "Test.ExistingTypes"))
+  end
+
+  test "names the configured module in the skip notice, not a placeholder" do
+    igniter =
+      test_project(
+        files: %{
+          "config/config.exs" => """
+          import Config
+
+          config :test, Test.Repo, types: Test.ExistingTypes
+          """
+        }
+      )
+      |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
+
+    assert_has_notice(igniter, &(&1 =~ "Postgrex.Types.define(\n      Test.ExistingTypes,"))
+    refute Enum.any?(igniter.notices, &(&1 =~ "YourApp.PostgrexTypes"))
+  end
+
+  test "detects :types in a config file outside the usual env set" do
+    test_project(
+      files: %{
+        "config/config.exs" => """
+        import Config
+
+        import_config "local.exs"
+        """,
+        "config/local.exs" => """
+        import Config
+
+        config :test, Test.Repo, types: Test.LocalTypes
+        """
+      }
+    )
+    |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
+    |> refute_creates("lib/test/postgrex_types.ex")
+    |> assert_has_notice(&(&1 =~ "config/local.exs"))
+    |> assert_has_notice(&(&1 =~ "Test.LocalTypes"))
+  end
+
+  test "keeps installing when a config file can't be parsed" do
+    test_project()
+    |> add_file_after_setup("config/broken.exs", "import Config\n\nconfig :test, [\n")
+    |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
+    |> assert_creates("lib/test/postgrex_types.ex")
+    |> assert_has_notice(&(&1 =~ "could not parse these files"))
+    |> assert_has_notice(&(&1 =~ "config/broken.exs"))
+  end
+
+  test "says which places detection looked at when it generates a module" do
+    test_project()
+    |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
+    |> assert_creates("lib/test/postgrex_types.ex")
+    |> assert_has_notice(&(&1 =~ "config imported from elsewhere or built at runtime"))
   end
 
   test "the repo's own :types config wins over an unrelated define found in lib/" do
@@ -119,6 +174,7 @@ defmodule Mix.Tasks.Arcana.InstallTest do
     |> Igniter.compose_task("arcana.install", ["--no-dashboard"])
     |> refute_creates("lib/test/postgrex_types.ex")
     |> assert_has_notice(&(&1 =~ "config/runtime.exs"))
+    |> assert_has_notice(&(&1 =~ "Test.ExistingTypes"))
   end
 
   test "keeps installing when a lib file mentioning the call has a syntax error" do
