@@ -97,7 +97,12 @@ defmodule ArcanaWeb.MaintenanceLiveTest do
       {:ok, view, _html} = live(conn, "/arcana/maintenance")
 
       render_click(view, "summarize_communities")
-      assert wait_for(view, "Summarized")
+
+      # The count matters: the flash reads "Summarized N communities", so a
+      # bare "Summarized" also matches a run that summarized nothing. That
+      # made a no-op run sail past this line and fail on the hint below,
+      # pointing at the wrong thing.
+      assert wait_for(view, "Summarized 1 communities")
 
       refute has_element?(view, ".arcana-summarize-hint")
       assert Repo.get!(Community, community.id).summary == "a summary"
