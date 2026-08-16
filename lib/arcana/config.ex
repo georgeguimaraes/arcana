@@ -441,11 +441,17 @@ defmodule Arcana.Config do
   defp custom_function_result(fun, nil), do: {fun, []}
   defp custom_function_result(fun, module), do: {module, [fun: fun]}
 
-  defp plain_module?(value), do: is_atom(value) and not is_nil(value)
+  # `true`/`false` are atoms but never module names: letting them through
+  # here produced `function false.parse/2` at call time instead of a
+  # config error (or, for components that accept it, a disabled component).
+  defp plain_module?(value), do: is_atom(value) and not is_boolean(value) and not is_nil(value)
 
+  # The head has to pass the same test a bare module does: `{false, opts}`
+  # and `{nil, opts}` look like a {module, opts} pair but land on
+  # `function false.parse/2` at call time, exactly like bare `false` did.
   defp module_opts_tuple?(value) do
     is_tuple(value) and tuple_size(value) == 2 and
-      is_atom(elem(value, 0)) and is_list(elem(value, 1))
+      plain_module?(elem(value, 0)) and is_list(elem(value, 1))
   end
 
   @doc false
@@ -486,6 +492,54 @@ defmodule Arcana.Config do
       name: "pdf_parser",
       shortcuts: %{poppler: Arcana.FileParser.PDF.Poppler}
     )
+  end
+
+  @doc """
+  Returns the configured file parsers as a map of extension to
+  `{module, opts}`.
+
+  Extensions are normalized to lowercase with a leading dot, so
+  `%{"docx" => ...}` and `%{".DOCX" => ...}` both register `".docx"`.
+
+      config :arcana, file_parsers: %{".docx" => {MyApp.DocxParser, []}}
+
+  Mapping an extension to `false` disables it: nothing parses it, not the
+  built-in route and not the `:fallback_parser`. Such entries come back
+  as `nil`.
+
+      config :arcana, file_parsers: %{".pdf" => false}
+
+  """
+  def file_parsers do
+    get_env(:file_parsers, %{})
+    |> Map.new(fn {extension, value} ->
+      {normalize_extension(extension), parse_file_parser_config(value)}
+    end)
+  end
+
+  @doc """
+  Returns the configured fallback parser as `{module, opts}`, or `nil`.
+
+  Consulted for any extension without a native or registered parser:
+
+      config :arcana, fallback_parser: {MyApp.ExtractionService, []}
+
+  `nil` and `false` both mean "no fallback".
+  """
+  def fallback_parser do
+    get_env(:fallback_parser) |> parse_file_parser_config()
+  end
+
+  @doc false
+  def parse_file_parser_config(value) do
+    parse_pluggable(value, name: "file parser", allow_nil?: true)
+  end
+
+  @doc false
+  def normalize_extension(extension) do
+    extension = extension |> to_string() |> String.downcase()
+
+    if String.starts_with?(extension, "."), do: extension, else: "." <> extension
   end
 
   @doc false
