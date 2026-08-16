@@ -496,7 +496,11 @@ defmodule Arcana.Graph do
             )
           end
 
-        entity_count = map_size(entity_id_map)
+        # Distinct ids, not keys: a store may key one row under several
+        # names (the Ecto store keys every raw spelling as well as the
+        # normalized one, see its persist_entities/3), and this number is
+        # what the documents and maintenance UIs show as "entities".
+        entity_count = entity_id_map |> Map.values() |> Enum.uniq() |> length()
         result = {:ok, %{entity_count: entity_count, relationship_count: total_relationships}}
         {result, %{entity_count: entity_count, relationship_count: total_relationships}}
       end

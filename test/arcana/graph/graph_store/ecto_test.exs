@@ -2,7 +2,7 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
   use Arcana.DataCase, async: true
 
   alias Arcana.{Chunk, Collection, Document}
-  alias Arcana.Graph.{Entity, EntityMention, Relationship}
+  alias Arcana.Graph.{Entity, EntityMention, EntityName, Relationship}
   alias Arcana.Graph.GraphStore.Ecto, as: EctoStore
 
   defp create_collection(name \\ "test-collection") do
@@ -47,6 +47,21 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
     Repo.aggregate(from(e in Entity, where: e.collection_id == ^collection.id), :count)
   end
 
+  # One count per entity row in the collection, sorted, so a row left with
+  # no mentions shows up as a 0 instead of being averaged away.
+  defp mention_counts(collection) do
+    Repo.all(
+      from(e in Entity,
+        left_join: m in EntityMention,
+        on: m.entity_id == e.id,
+        where: e.collection_id == ^collection.id,
+        group_by: e.id,
+        select: count(m.id)
+      )
+    )
+    |> Enum.sort()
+  end
+
   defp create_mention(entity, chunk) do
     %EntityMention{}
     |> EntityMention.changeset(%{
@@ -67,10 +82,15 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
 
       {:ok, id_map} = EctoStore.persist_entities(collection.id, entities, repo: Repo)
 
-      # id map is keyed by the normalized name
-      assert map_size(id_map) == 2
+      # The map is keyed both ways: {:raw, name} resolves a name to the row
+      # Postgres actually put it in, the bare normalized key is the
+      # cross-call fallback. See persist_entities/3.
       assert Map.has_key?(id_map, "alice")
       assert Map.has_key?(id_map, "bob")
+      assert Map.has_key?(id_map, {:raw, "Alice"})
+      assert Map.has_key?(id_map, {:raw, "Bob"})
+      assert id_map[{:raw, "Alice"}] == id_map["alice"]
+      assert id_map |> Map.values() |> Enum.uniq() |> length() == 2
 
       # Verify entities exist in DB
       assert Repo.get_by(Entity, name: "Alice", collection_id: collection.id)
@@ -87,7 +107,8 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
 
       {:ok, id_map} = EctoStore.persist_entities(collection.id, entities, repo: Repo)
 
-      assert map_size(id_map) == 1
+      assert id_map |> Map.values() |> Enum.uniq() |> length() == 1
+      assert count_entities(collection) == 1
     end
 
     test "returns existing entity ids on upsert" do
@@ -210,6 +231,93 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       end
 
       assert count_entities(one_chunk) == count_entities(two_chunks)
+    end
+
+    # The other half of the same constraint. Letting Postgres decide means
+    # two spellings that share an Elixir key can land on two rows, so the
+    # returned map has to reach BOTH of them. Keying it on the Elixir key
+    # alone made the second upsert overwrite the first: every mention went
+    # to the second row, the first was left orphaned, and searching for
+    # the first spelling found a row with no chunks behind it.
+    #
+    # U+0130 is only the representative pair here because it diverges by
+    # Unicode's own SpecialCasing rules rather than by glibc version, which
+    # makes it the one pair that behaves the same on every Postgres build.
+    # The fix keys raw names, so it covers the whole open-ended set.
+    test "keeps every row reachable when two spellings share an Elixir key" do
+      collection = create_collection()
+      chunk = collection |> create_document() |> create_chunk()
+      names = ["İstanbul", "i" <> <<0x307::utf8>> <> "stanbul"]
+
+      # Precondition: one Elixir key, two Postgres keys.
+      assert names |> Enum.map(&EntityName.normalize/1) |> Enum.uniq() |> length() == 1
+
+      {:ok, id_map} =
+        EctoStore.persist_entities(
+          collection.id,
+          Enum.map(names, &%{name: &1, type: "place"}),
+          repo: Repo
+        )
+
+      assert count_entities(collection) == 2
+
+      :ok =
+        EctoStore.persist_mentions(
+          Enum.map(names, &%{entity_name: &1, chunk_id: chunk.id}),
+          id_map,
+          repo: Repo
+        )
+
+      # No row is left without mentions...
+      assert mention_counts(collection) == [1, 1]
+
+      # ...and every spelling still finds its chunk.
+      for name <- names do
+        assert [%{chunk_id: found}] = EctoStore.search([name], [collection.id], repo: Repo)
+        assert found == chunk.id
+      end
+    end
+
+    test "resolves relationship endpoints to the row each raw name landed in" do
+      collection = create_collection()
+      decomposed = "i" <> <<0x307::utf8>> <> "stanbul"
+      names = ["İstanbul", decomposed]
+
+      {:ok, id_map} =
+        EctoStore.persist_entities(
+          collection.id,
+          Enum.map(names, &%{name: &1, type: "place"}),
+          repo: Repo
+        )
+
+      :ok =
+        EctoStore.persist_relationships(
+          [%{source: "İstanbul", target: decomposed, type: "spelled_as"}],
+          id_map,
+          repo: Repo
+        )
+
+      assert [rel] = Repo.all(Relationship)
+      refute rel.source_id == rel.target_id
+      assert Repo.get(Entity, rel.source_id).name == "İstanbul"
+      assert Repo.get(Entity, rel.target_id).name == decomposed
+    end
+
+    test "still resolves names the call never persisted through the normalized key" do
+      collection = create_collection()
+      existing = create_entity(collection, "Alice", "person")
+      chunk = collection |> create_document() |> create_chunk()
+
+      # A map an earlier chunk (or a caller) built: normalized keys only.
+      :ok =
+        EctoStore.persist_mentions(
+          [%{entity_name: "ALICE", chunk_id: chunk.id}],
+          %{"alice" => existing.id},
+          repo: Repo
+        )
+
+      assert Repo.aggregate(from(m in EntityMention, where: m.entity_id == ^existing.id), :count) ==
+               1
     end
 
     test "inserts entity with metadata" do
@@ -436,6 +544,24 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
         Arcana.Graph.build_and_persist([chunk], collection, Repo, entity_extractor: extractor)
 
       refute advisory_lock_free?(collection.id)
+    end
+  end
+
+  describe "build_and_persist/4 reporting" do
+    # entity_count is the number of entity rows the build touched, and the
+    # Ecto store's id map holds more than one key per row (see
+    # persist_entities/3), so counting keys would inflate it into the
+    # documents and maintenance UIs.
+    test "counts entity rows, not id-map keys" do
+      collection = create_collection("counted")
+      chunk = collection |> create_document() |> create_chunk()
+      extractor = fn _text, _opts -> {:ok, [%{name: "Alice", type: "person"}]} end
+
+      {:ok, result} =
+        Arcana.Graph.build_and_persist([chunk], collection, Repo, entity_extractor: extractor)
+
+      assert result.entity_count == 1
+      assert result.entity_count == count_entities(collection)
     end
   end
 

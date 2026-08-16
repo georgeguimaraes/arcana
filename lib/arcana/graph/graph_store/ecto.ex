@@ -55,9 +55,22 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     # graph. Identical raw names always share a Postgres key, so deduping
     # on the raw name can't decide anything Postgres wouldn't.
     #
-    # The key still gates the reject and keys the returned map, which
-    # persist_mentions/3 and persist_relationships/3 look names up in.
-    # Both engines agree on which names normalize to empty.
+    # The key still gates the reject. Both engines agree on which names
+    # normalize to empty.
+    #
+    # The returned map is keyed BOTH ways, because those same two spellings
+    # produce two rows and one Elixir key. `{:raw, name}` is the exact key:
+    # Postgres decided which row that raw name went to, so it is the only
+    # one that can tell the rows apart. Keying on the Elixir key alone let
+    # the second upsert overwrite the first, and lookup_entity_id/2 then
+    # sent every mention and every relationship endpoint to the second row
+    # while the first sat orphaned and unreachable from search/3.
+    #
+    # The bare normalized key stays as the fallback for names this call
+    # never persisted — an earlier chunk's entity reached through the map
+    # Arcana.Graph merges across chunks, or a map a caller built itself.
+    # First spelling wins it (`put_new`), matching what the map held before
+    # the raw keys existed.
     entity_id_map =
       entities
       |> Enum.map(fn entity -> {EntityName.normalize(entity.name), entity} end)
@@ -65,7 +78,10 @@ defmodule Arcana.Graph.GraphStore.Ecto do
       |> Enum.uniq_by(fn {_key, entity} -> entity.name end)
       |> Enum.reduce(%{}, fn {key, entity}, id_map ->
         entity_record = upsert_entity(entity, collection_id, repo)
-        Map.put(id_map, key, entity_record.id)
+
+        id_map
+        |> Map.put({:raw, entity.name}, entity_record.id)
+        |> Map.put_new(key, entity_record.id)
       end)
 
     {:ok, entity_id_map}
@@ -77,8 +93,8 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
     relationships
     |> Enum.each(fn rel ->
-      source_id = Map.get(entity_id_map, EntityName.normalize(rel.source))
-      target_id = Map.get(entity_id_map, EntityName.normalize(rel.target))
+      source_id = lookup_entity_id(entity_id_map, rel.source)
+      target_id = lookup_entity_id(entity_id_map, rel.target)
 
       if source_id && target_id && rel.type && rel.type != "" do
         %Relationship{}
@@ -103,7 +119,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
     mentions
     |> Enum.each(fn mention ->
-      entity_id = Map.get(entity_id_map, EntityName.normalize(mention.entity_name))
+      entity_id = lookup_entity_id(entity_id_map, mention.entity_name)
 
       if entity_id do
         %EntityMention{}
@@ -646,6 +662,15 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   end
 
   # === Private Helpers ===
+
+  # Raw name first: persist_entities/3 keyed it off what Postgres did with
+  # that exact spelling, and two spellings sharing a normalized key can
+  # still be two rows. The normalized key second, for names this call never
+  # persisted — see the comment in persist_entities/3.
+  defp lookup_entity_id(entity_id_map, name) do
+    Map.get(entity_id_map, {:raw, name}) ||
+      Map.get(entity_id_map, EntityName.normalize(name))
+  end
 
   defp upsert_entity(entity, collection_id, repo) do
     # Match on the normalized name so stored variants ("Delivery" vs
