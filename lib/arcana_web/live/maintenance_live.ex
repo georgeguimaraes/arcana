@@ -9,6 +9,8 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     """
     use Phoenix.LiveView
 
+    alias Arcana.Graph.CommunitySummarizer
+
     import Ecto.Query
     import ArcanaWeb.DashboardComponents
 
@@ -68,7 +70,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp count_unsummarized_communities(repo) do
       repo.one(
         from(c in Arcana.Graph.Community,
-          where: is_nil(c.summary) or c.summary == "" or c.dirty,
+          where: is_nil(c.summary) or c.dirty or c.change_count >= ^regeneration_threshold(),
           where: ^summarizable_levels(),
           select: count(c.id)
         )
@@ -76,6 +78,11 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     rescue
       _ -> 0
     end
+
+    # Same predicate CommunitySummarizer.needs_regeneration?/2 applies, so the
+    # hint counts exactly what pressing the button would process. An empty
+    # string summary is NOT counted: the summarizer skips it too.
+    defp regeneration_threshold, do: CommunitySummarizer.default_threshold()
 
     defp summarizable_levels do
       case Arcana.Graph.summary_levels() do
@@ -536,7 +543,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     @impl true
     def render(assigns) do
       ~H"""
-      <.dashboard_layout stats={@stats} current_tab={:maintenance} prefix={@prefix}>
+      <.dashboard_layout flash={@flash} stats={@stats} current_tab={:maintenance} prefix={@prefix}>
         <div class="arcana-maintenance">
           <h2>Maintenance</h2>
           <p class="arcana-tab-description">

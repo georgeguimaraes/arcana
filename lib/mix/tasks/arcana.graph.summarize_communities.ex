@@ -141,9 +141,29 @@ defmodule Mix.Tasks.Arcana.Graph.SummarizeCommunities do
   defp parse_levels("all"), do: :all
 
   defp parse_levels(levels) do
-    levels
-    |> String.split(",", trim: true)
-    |> Enum.map(&String.to_integer(String.trim(&1)))
+    case String.split(levels, ",", trim: true) do
+      [] ->
+        Mix.raise(
+          ~s(--levels needs at least one level, e.g. --levels 0, --levels 0,1 or --levels all)
+        )
+
+      values ->
+        Enum.map(values, &parse_level!/1)
+    end
+  end
+
+  # String.to_integer/1 would raise a bare ArgumentError with a stack trace
+  # that never mentions the flag the operator actually got wrong.
+  defp parse_level!(value) do
+    case value |> String.trim() |> Integer.parse() do
+      {level, ""} when level >= 0 ->
+        level
+
+      _ ->
+        Mix.raise(
+          ~s(--levels expects non-negative integers or "all", got: #{inspect(String.trim(value))})
+        )
+    end
   end
 
   defp format_levels(:all), do: "all"

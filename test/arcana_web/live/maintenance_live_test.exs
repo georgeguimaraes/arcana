@@ -5,6 +5,7 @@ defmodule ArcanaWeb.MaintenanceLiveTest do
 
   alias Arcana.Collection
   alias Arcana.Graph.Community
+  alias Arcana.Graph.CommunitySummarizer
 
   describe "Maintenance page" do
     test "mounts successfully", %{conn: conn} do
@@ -89,6 +90,27 @@ defmodule ArcanaWeb.MaintenanceLiveTest do
       put_arcana_env(:llm, fn _prompt, _context, _opts -> {:ok, "summary"} end)
       insert_community(collection, %{entity_ids: [], summary: nil, dirty: true})
       insert_community(collection, %{entity_ids: [], summary: "done", dirty: false})
+
+      {:ok, view, _html} = live(conn, "/arcana/maintenance")
+
+      assert has_element?(view, ".arcana-summarize-hint", "1 communities need summarizing")
+    end
+
+    test "the hint counts a clean community past the change threshold", %{
+      conn: conn,
+      collection: collection
+    } do
+      put_arcana_env(:llm, fn _prompt, _context, _opts -> {:ok, "summary"} end)
+
+      # Clean and already summarized, but past the change threshold, so
+      # CommunitySummarizer.needs_regeneration?/2 says yes and a summarize run
+      # would process it. The hint used to miss this case entirely.
+      insert_community(collection, %{
+        entity_ids: [],
+        summary: "stale",
+        dirty: false,
+        change_count: CommunitySummarizer.default_threshold()
+      })
 
       {:ok, view, _html} = live(conn, "/arcana/maintenance")
 

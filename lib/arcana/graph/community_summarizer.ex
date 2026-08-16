@@ -124,6 +124,14 @@ defmodule Arcana.Graph.CommunitySummarizer do
   end
 
   @doc """
+  The change-count threshold above which a clean summary is regenerated.
+
+  Exposed so callers that predict what a summarize run will process (the
+  dashboard's hint, for one) can apply the same rule.
+  """
+  def default_threshold, do: @default_threshold
+
+  @doc """
   Checks if a community needs its summary regenerated.
 
   ## Regeneration Triggers

@@ -339,7 +339,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     @impl true
     def render(assigns) do
       ~H"""
-      <.dashboard_layout stats={@stats} current_tab={:documents} prefix={@prefix}>
+      <.dashboard_layout flash={@flash} stats={@stats} current_tab={:documents} prefix={@prefix}>
         <div class="arcana-documents">
           <%= if @viewing_document do %>
             <.document_detail

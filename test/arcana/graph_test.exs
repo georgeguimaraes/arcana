@@ -29,6 +29,14 @@ defmodule Arcana.GraphTest do
     test "rejects anything else" do
       assert_raise ArgumentError, fn -> Graph.normalize_levels("0") end
     end
+
+    test "rejects negative levels, which could never match a row" do
+      # Community.changeset/2 only permits levels >= 0, so a negative
+      # selection silently finds nothing rather than erroring.
+      assert_raise ArgumentError, ~r/non-negative/, fn -> Graph.normalize_levels(-1) end
+      assert_raise ArgumentError, ~r/non-negative/, fn -> Graph.normalize_levels([0, -2]) end
+      assert_raise ArgumentError, ~r/non-negative/, fn -> Graph.normalize_levels(-3..-1) end
+    end
   end
 
   describe "enabled?/0" do

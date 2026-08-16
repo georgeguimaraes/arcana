@@ -196,12 +196,12 @@ defmodule Arcana.Graph do
   """
   def normalize_levels(nil), do: [0]
   def normalize_levels(:all), do: :all
-  def normalize_levels(level) when is_integer(level), do: [level]
-  def normalize_levels(first..last//step), do: Enum.to_list(first..last//step)
+  def normalize_levels(level) when is_integer(level), do: validate_levels!([level])
+  def normalize_levels(first..last//step), do: validate_levels!(Enum.to_list(first..last//step))
 
   def normalize_levels(levels) when is_list(levels) do
     if Enum.all?(levels, &is_integer/1) do
-      levels
+      validate_levels!(levels)
     else
       raise ArgumentError, "community summary levels must be integers, got: #{inspect(levels)}"
     end
@@ -211,6 +211,20 @@ defmodule Arcana.Graph do
     raise ArgumentError,
           "invalid community summary level: #{inspect(other)} " <>
             "(expected an integer, a list, a range or :all)"
+  end
+
+  # Community.changeset/2 only accepts levels >= 0, so a negative selection
+  # can never match a row: ask/2 and the summarizer would just quietly find
+  # nothing.
+  defp validate_levels!(levels) do
+    case Enum.reject(levels, &(&1 >= 0)) do
+      [] ->
+        levels
+
+      negative ->
+        raise ArgumentError,
+              "community summary levels must be non-negative, got: #{inspect(negative)}"
+    end
   end
 
   @doc """

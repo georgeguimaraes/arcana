@@ -101,7 +101,7 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
     Mix.shell().info("Graph config: #{format_info(info)}")
 
     Mix.shell().info(
-      "Leiden: resolution=#{resolved[:resolution]}, objective=#{resolved[:objective]}, " <>
+      "Detection: resolution=#{resolved[:resolution]}, objective=#{resolved[:objective]}, " <>
         "iterations=#{resolved[:iterations]}, seed=#{resolved[:seed]}, " <>
         "min_size=#{resolved[:min_size]}, max_level=#{resolved[:max_level]}"
     )
