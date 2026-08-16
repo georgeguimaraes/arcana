@@ -26,7 +26,10 @@ defmodule Mix.Tasks.InstallerBranchesTest do
     binary_part(source, offset + length, byte_size(source) - offset - length)
   end
 
-  # Imported or auto-imported: present in the branch without a local def.
+  # Deliberately partial: the names these two fallback branches actually
+  # use, not an exhaustive Kernel listing. A branch that starts calling
+  # div/2 or max/2 will fail here and want a line adding - which is the
+  # cheap half of catching a genuinely missing helper.
   defp known_names do
     MapSet.new(~w(
       def defp defmodule defmacro do end fn case cond if unless with for

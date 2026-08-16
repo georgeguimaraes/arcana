@@ -1,14 +1,18 @@
 # The versioned-migration tests run real DDL, so they use a database of
 # their own. Configured here rather than in config/test.exs because Mix
 # warns about config for an app that isn't a dependency.
-Application.put_env(:arcana_migration_test, Arcana.MigrationRepo,
-  username: System.get_env("POSTGRES_USER", "postgres"),
-  password: System.get_env("POSTGRES_PASSWORD", "postgres"),
-  hostname: System.get_env("POSTGRES_HOST", "localhost"),
-  port: String.to_integer(System.get_env("POSTGRES_PORT", "5433")),
-  database: "arcana_migration_test",
-  pool_size: 2,
-  types: Arcana.PostgrexTypes
+#
+# The connection is taken from TestRepo's rather than re-read from the same
+# env vars, so pointing CI at a different Postgres moves both. Only the
+# database and the pool differ: no sandbox, because these tests run DDL
+# that a sandbox transaction would roll back under the assertions.
+Application.put_env(
+  :arcana_migration_test,
+  Arcana.MigrationRepo,
+  :arcana
+  |> Application.get_env(Arcana.TestRepo)
+  |> Keyword.take([:username, :password, :hostname, :port, :types])
+  |> Keyword.merge(database: "arcana_migration_test", pool_size: 2)
 )
 
 {:ok, _} = Arcana.TestRepo.start_link()

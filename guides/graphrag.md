@@ -158,6 +158,18 @@ Pass `:prefix` to keep Arcana's tables in a schema of their own, and
 def up, do: Arcana.Graph.Migration.up(prefix: "tenant_a")
 ```
 
+The graph tables foreign-key `arcana_chunks` and `arcana_collections`, so
+the core migration has to go into the **same** schema. Installing the graph
+into a prefix while the core tables sit in the default schema points those
+references at tables that don't exist there, and the migration fails:
+
+```elixir
+def up do
+  Arcana.Migration.up(prefix: "tenant_a")
+  Arcana.Graph.Migration.up(prefix: "tenant_a")
+end
+```
+
 
 ## Configuration
 

@@ -19,19 +19,25 @@ defmodule Arcana.MigrationTest do
     {:ok, pid} = Repo.start_link()
 
     on_exit(fn ->
-      # Stopping a supervisor that is already on its way down exits :normal,
-      # which ExUnit reports as a failed callback and invalidates the file.
+      # By the time on_exit runs the repo supervisor is often already on its
+      # way down, and Supervisor.stop then exits. The reason nests
+      # differently depending on how far along it got - two attempts at
+      # matching the shape both passed locally and failed on CI - and none
+      # of it is actionable: the suite is over either way, and a callback
+      # that exits invalidates every test in the file. So wait for the
+      # process to actually be gone and let the exit itself pass.
+      ref = Process.monitor(pid)
+
       try do
         Supervisor.stop(pid, :normal, 5_000)
       catch
-        # Already on its way down. GenServer.stop/3 wraps the reason as
-        # {reason, {GenServer, :stop, args}}, so the bare atoms alone never
-        # match. A {:timeout, _} is a real teardown failure and still
-        # surfaces, which is the point of not catching everything.
-        :exit, :normal -> :ok
-        :exit, :noproc -> :ok
-        :exit, {:normal, _} -> :ok
-        :exit, {:noproc, _} -> :ok
+        :exit, _ -> :ok
+      end
+
+      receive do
+        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+      after
+        5_000 -> :ok
       end
     end)
 
@@ -52,40 +58,22 @@ defmodule Arcana.MigrationTest do
     :ok
   end
 
-  defp migrate(module, opts \\ []) do
-    # Ecto.Migration's DSL needs a migration process; run/8 gives us one.
-    Ecto.Migrator.up(Repo, System.unique_integer([:positive]), wrapper_module(module, opts),
-      log: false
-    )
-  end
+  defp migrate(module, opts \\ []), do: run(module, :up, opts)
+  defp migrate_down(module, opts), do: run(module, :down, opts)
 
-  defp wrapper_module(module, opts) do
+  # Ecto.Migration's DSL only works inside a running migration, and the
+  # Migrator runs it in its own process, so the call is inlined into a
+  # generated module rather than passed as a closure. Both directions go
+  # through Migrator.up/4: `down` here means "the thing this migration
+  # does is call Arcana.Migration.down/1", not a rollback of it.
+  defp run(module, direction, opts) do
     name = :"Elixir.MigTest#{System.unique_integer([:positive])}"
 
     body =
       quote do
         use Ecto.Migration
 
-        def up, do: unquote(module).up(unquote(Macro.escape(opts)))
-        def down, do: unquote(module).down()
-      end
-
-    Module.create(name, body, Macro.Env.location(__ENV__))
-    name
-  end
-
-  # Ecto.Migration's DSL only works inside a running migration, and the
-  # Migrator runs it in its own process, so the call is inlined into the
-  # generated module rather than passed as a closure.
-  defp migrate_down(module, opts) do
-    name = :"Elixir.MigDown#{System.unique_integer([:positive])}"
-
-    body =
-      quote do
-        use Ecto.Migration
-
-        def up, do: unquote(module).down(unquote(Macro.escape(opts)))
-        def down, do: :ok
+        def up, do: unquote(module).unquote(direction)(unquote(Macro.escape(opts)))
       end
 
     Module.create(name, body, Macro.Env.location(__ENV__))
