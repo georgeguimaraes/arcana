@@ -44,6 +44,16 @@ config :arcana,
     {:ok, normalized}
   end
 
+# Its own database: the migration tests create and drop Arcana's tables.
+config :arcana_migration_test, Arcana.MigrationRepo,
+  username: System.get_env("POSTGRES_USER", "postgres"),
+  password: System.get_env("POSTGRES_PASSWORD", "postgres"),
+  hostname: System.get_env("POSTGRES_HOST", "localhost"),
+  port: String.to_integer(System.get_env("POSTGRES_PORT", "5433")),
+  database: "arcana_migration_test",
+  pool_size: 2,
+  types: Arcana.PostgrexTypes
+
 config :arcana, Arcana.TestRepo,
   username: System.get_env("POSTGRES_USER", "postgres"),
   password: System.get_env("POSTGRES_PASSWORD", "postgres"),
