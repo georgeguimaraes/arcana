@@ -132,6 +132,17 @@ defmodule Arcana.MaintenanceCommunitiesTest do
       assert membership(collection) == [entities |> Enum.map(& &1.id) |> Enum.sort()]
     end
 
+    test "configured_detector/0 reports the detector that will actually run" do
+      # The detect_communities mix task guards on this rather than assuming
+      # Leiden, so a custom detector doesn't have to drag in leidenfold.
+      put_arcana_env(:graph, community_detector: {StubDetector, []})
+      assert {StubDetector, _opts} = Maintenance.configured_detector()
+    end
+
+    test "configured_detector/0 falls back to the built-in Leiden detector" do
+      assert {Arcana.Graph.CommunityDetector.Leiden, _opts} = Maintenance.configured_detector()
+    end
+
     test "a seed from config makes membership reproducible across runs", %{
       collection: collection
     } do

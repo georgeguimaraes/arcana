@@ -811,7 +811,14 @@ defmodule Arcana.Maintenance do
     end
   end
 
-  defp configured_detector do
+  @doc """
+  The community detector this install would use.
+
+  Returns `{module, opts}`, a 3-arity function, or `nil`. Public so callers
+  can check the dependency the configured detector actually needs, rather
+  than assuming the built-in one.
+  """
+  def configured_detector do
     case fetch_graph_config(:community_detector) do
       {:ok, value} -> Arcana.Config.parse_community_detector_config(value)
       :error -> {Arcana.Graph.CommunityDetector.Leiden, []}

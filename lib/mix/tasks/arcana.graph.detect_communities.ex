@@ -88,13 +88,7 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
 
     repo = Arcana.MixHelpers.repo!()
 
-    # Check leidenfold is available
-    unless Code.ensure_loaded?(Leidenfold) do
-      Mix.raise("""
-      Community detection requires the leidenfold package.
-      Add {:leidenfold, "~> 0.2"} to your dependencies.
-      """)
-    end
+    check_detector_available!()
 
     # Show current graph info
     info = Arcana.Maintenance.graph_info()
@@ -158,6 +152,32 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
 
       # Legacy: simple index/total progress
       current, total when is_integer(current) and is_integer(total) ->
+        :ok
+    end
+  end
+
+  # Only the built-in detector needs leidenfold. A configured custom detector
+  # has its own dependencies, so demanding leidenfold would refuse to run a
+  # setup that never touches it.
+  defp check_detector_available! do
+    case Arcana.Maintenance.configured_detector() do
+      {Arcana.Graph.CommunityDetector.Leiden, _opts} ->
+        unless Code.ensure_loaded?(Leidenfold) do
+          Mix.raise("""
+          Community detection requires the leidenfold package.
+          Add {:leidenfold, "~> 0.2"} to your dependencies.
+          """)
+        end
+
+      {module, _opts} ->
+        unless Code.ensure_loaded?(module) do
+          Mix.raise("""
+          The configured community_detector #{inspect(module)} is not available.
+          Check `config :arcana, graph: [community_detector: ...]`.
+          """)
+        end
+
+      _fun_or_nil ->
         :ok
     end
   end
