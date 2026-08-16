@@ -39,8 +39,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - name: Install cmake (for hnswlib)
-        run: sudo apt-get update && sudo apt-get install -y cmake
+      - name: Install cmake (for hnswlib) and poppler (for PDF tests)
+        run: sudo apt-get update && sudo apt-get install -y cmake poppler-utils
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
         with:
@@ -90,4 +90,7 @@ jobs:
         env:
           MIX_ENV: test
           POSTGRES_PORT: "5432"
-        run: mix test
+        # :pdf_support is excluded by default in test_helper.exs because it
+        # needs pdftotext; poppler-utils is installed above, so run it here.
+        # The remaining excluded tags need model downloads or network.
+        run: mix test --include pdf_support

@@ -55,14 +55,21 @@ defmodule Arcana.Chunker.Default do
 
     text
     |> TextChunker.split(text_chunker_opts)
-    |> Enum.map(& &1.text)
-    |> Enum.reject(&blank?/1)
+    |> Enum.reject(&blank?(&1.text))
     |> Enum.with_index()
-    |> Enum.map(fn {text, index} ->
+    |> Enum.map(fn {chunk, index} ->
       %{
-        text: text,
+        text: chunk.text,
         chunk_index: index,
-        token_count: estimate_tokens(text)
+        token_count: estimate_tokens(chunk.text),
+        # Byte offsets into the source text, carried through to chunk
+        # metadata so citations can point back at the original document.
+        # chunk_index is renumbered after blanks are dropped, so offsets
+        # are the only reliable position key.
+        metadata: %{
+          "start_byte" => chunk.start_byte,
+          "end_byte" => chunk.end_byte
+        }
       }
     end)
   end

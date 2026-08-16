@@ -51,10 +51,11 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp load_data(socket) do
       repo = socket.assigns.repo
-      collections = fetch_collections(repo)
+      allowed = socket.assigns.allowed_collections
+      collections = fetch_collections(repo, allowed)
 
       socket
-      |> assign(stats: load_stats(repo))
+      |> assign(stats: load_stats(repo, allowed))
       |> assign(collections: Enum.map(collections, & &1.name))
       |> assign(collections_for_assign: collections)
       |> assign(orphaned_stats: count_orphaned_graph_data(repo))
@@ -83,10 +84,31 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       end
     end
 
-    defp fetch_collections(repo) do
-      repo.all(from(c in Arcana.Collection, select: %{id: c.id, name: c.name}, order_by: c.name))
+    defp fetch_collections(repo, allowed) do
+      query = from(c in Arcana.Collection, select: %{id: c.id, name: c.name}, order_by: c.name)
+
+      query =
+        case allowed do
+          :all -> query
+          names when is_list(names) -> where(query, [c], c.name in ^names)
+        end
+
+      repo.all(query)
     rescue
       _ -> []
+    end
+
+    # Maintenance actions take a collection selection where nil means "all
+    # collections". Restricted dashboards must never run a global action, so
+    # nil (and any name outside the allowed set) is rejected.
+    defp validate_maintenance_collection(socket, collection) do
+      allowed = socket.assigns.allowed_collections
+
+      cond do
+        allowed == :all -> {:ok, collection}
+        is_binary(collection) and collection in allowed -> {:ok, collection}
+        true -> :error
+      end
     end
 
     defp count_orphaned_graph_data(repo) do
@@ -127,56 +149,34 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     @impl true
     def handle_event("select_reembed_collection", %{"collection" => collection}, socket) do
       collection = if collection == "", do: nil, else: collection
-      {:noreply, assign(socket, reembed_collection: collection)}
+
+      case validate_maintenance_collection(socket, collection) do
+        {:ok, collection} -> {:noreply, assign(socket, reembed_collection: collection)}
+        :error -> {:noreply, socket}
+      end
     end
 
     def handle_event("reembed", _params, socket) do
-      repo = socket.assigns.repo
-      collection = socket.assigns.reembed_collection
-      parent = self()
-
-      socket = assign(socket, reembed_running: true, reembed_progress: %{current: 0, total: 0})
-
-      ArcanaWeb.TaskSupervisor.start_child(fn ->
-        progress_fn = fn current, total ->
-          send(parent, {:reembed_progress, current, total})
-        end
-
-        opts = [batch_size: 50, progress: progress_fn]
-        opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
-        result = Arcana.Maintenance.reembed(repo, opts)
-        send(parent, {:reembed_complete, result})
-      end)
-
-      {:noreply, socket}
+      case validate_maintenance_collection(socket, socket.assigns.reembed_collection) do
+        {:ok, collection} -> {:noreply, start_reembed(socket, collection)}
+        :error -> {:noreply, put_flash(socket, :error, "Select an allowed collection first")}
+      end
     end
 
     def handle_event("select_rebuild_collection", %{"collection" => collection}, socket) do
       collection = if collection == "", do: nil, else: collection
-      {:noreply, assign(socket, rebuild_graph_collection: collection)}
+
+      case validate_maintenance_collection(socket, collection) do
+        {:ok, collection} -> {:noreply, assign(socket, rebuild_graph_collection: collection)}
+        :error -> {:noreply, socket}
+      end
     end
 
     def handle_event("rebuild_graph", _params, socket) do
-      repo = socket.assigns.repo
-      collection = socket.assigns.rebuild_graph_collection
-      parent = self()
-
-      socket =
-        assign(socket,
-          rebuild_graph_running: true,
-          rebuild_graph_progress: %{current: 0, total: 0}
-        )
-
-      ArcanaWeb.TaskSupervisor.start_child(fn ->
-        progress_fn = progress_sender(parent, :rebuild_graph_progress)
-
-        opts = [progress: progress_fn]
-        opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
-        result = Arcana.Maintenance.rebuild_graph(repo, opts)
-        send(parent, {:rebuild_graph_complete, result})
-      end)
-
-      {:noreply, socket}
+      case validate_maintenance_collection(socket, socket.assigns.rebuild_graph_collection) do
+        {:ok, collection} -> {:noreply, start_rebuild_graph(socket, collection)}
+        :error -> {:noreply, put_flash(socket, :error, "Select an allowed collection first")}
+      end
     end
 
     def handle_event(
@@ -185,30 +185,24 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           socket
         ) do
       collection = if collection == "", do: nil, else: collection
-      {:noreply, assign(socket, detect_communities_collection: collection)}
+
+      case validate_maintenance_collection(socket, collection) do
+        {:ok, collection} ->
+          {:noreply, assign(socket, detect_communities_collection: collection)}
+
+        :error ->
+          {:noreply, socket}
+      end
     end
 
     def handle_event("detect_communities", _params, socket) do
-      repo = socket.assigns.repo
-      collection = socket.assigns.detect_communities_collection
-      parent = self()
-
-      socket =
-        assign(socket,
-          detect_communities_running: true,
-          detect_communities_progress: %{current: 0, total: 0}
-        )
-
-      ArcanaWeb.TaskSupervisor.start_child(fn ->
-        progress_fn = progress_sender(parent, :detect_communities_progress)
-
-        opts = [progress: progress_fn]
-        opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
-        result = Arcana.Maintenance.detect_communities(repo, opts)
-        send(parent, {:detect_communities_complete, result})
-      end)
-
-      {:noreply, socket}
+      case validate_maintenance_collection(
+             socket,
+             socket.assigns.detect_communities_collection
+           ) do
+        {:ok, collection} -> {:noreply, start_detect_communities(socket, collection)}
+        :error -> {:noreply, put_flash(socket, :error, "Select an allowed collection first")}
+      end
     end
 
     def handle_event(
@@ -234,45 +228,136 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       {:noreply, assign(socket, assign_orphans_collection: collection)}
     end
 
+    # Orphaned graph data belongs to no collection, so assigning or deleting
+    # it is inherently a cross-collection operation: restricted dashboards
+    # can't run it at all.
     def handle_event("assign_orphans", _params, socket) do
       repo = socket.assigns.repo
       collection_name = socket.assigns.assign_orphans_collection
 
-      if collection_name do
-        collection =
-          Enum.find(socket.assigns.collections_for_assign, &(&1.name == collection_name))
-
-        if collection do
-          assign_orphaned_to_collection(repo, collection.id)
-
-          socket =
-            socket
-            |> load_data()
-            |> put_flash(:info, "Assigned orphaned graph data to #{collection_name}")
-
+      cond do
+        socket.assigns.allowed_collections != :all ->
           {:noreply, socket}
-        else
-          {:noreply, put_flash(socket, :error, "Collection not found")}
-        end
-      else
-        {:noreply, put_flash(socket, :error, "Please select a collection")}
+
+        is_nil(collection_name) ->
+          {:noreply, put_flash(socket, :error, "Please select a collection")}
+
+        true ->
+          assign_orphans_to_named_collection(socket, repo, collection_name)
       end
     end
 
     def handle_event("delete_orphans", _params, socket) do
+      if socket.assigns.allowed_collections == :all do
+        repo = socket.assigns.repo
+        {entities_deleted, relationships_deleted} = delete_orphaned_graph_data(repo)
+
+        socket =
+          socket
+          |> load_data()
+          |> put_flash(
+            :info,
+            "Deleted #{entities_deleted} orphaned entities and #{relationships_deleted} orphaned relationships"
+          )
+
+        {:noreply, socket}
+      else
+        {:noreply, socket}
+      end
+    end
+
+    defp assign_orphans_to_named_collection(socket, repo, collection_name) do
+      collection =
+        Enum.find(socket.assigns.collections_for_assign, &(&1.name == collection_name))
+
+      if collection do
+        assign_orphaned_to_collection(repo, collection.id)
+
+        socket =
+          socket
+          |> load_data()
+          |> put_flash(:info, "Assigned orphaned graph data to #{collection_name}")
+
+        {:noreply, socket}
+      else
+        {:noreply, put_flash(socket, :error, "Collection not found")}
+      end
+    end
+
+    defp start_reembed(socket, collection) do
       repo = socket.assigns.repo
-      {entities_deleted, relationships_deleted} = delete_orphaned_graph_data(repo)
+      parent = self()
+
+      socket = assign(socket, reembed_running: true, reembed_progress: %{current: 0, total: 0})
+
+      ArcanaWeb.TaskSupervisor.start_child(fn ->
+        progress_fn = fn current, total ->
+          send(parent, {:reembed_progress, current, total})
+        end
+
+        opts = maintenance_collection_opts([batch_size: 50, progress: progress_fn], collection)
+        result = Arcana.Maintenance.reembed(repo, opts)
+        send(parent, {:reembed_complete, result})
+      end)
+
+      socket
+    end
+
+    defp start_rebuild_graph(socket, collection) do
+      repo = socket.assigns.repo
+      parent = self()
 
       socket =
-        socket
-        |> load_data()
-        |> put_flash(
-          :info,
-          "Deleted #{entities_deleted} orphaned entities and #{relationships_deleted} orphaned relationships"
+        assign(socket,
+          rebuild_graph_running: true,
+          rebuild_graph_progress: %{current: 0, total: 0}
         )
 
-      {:noreply, socket}
+      ArcanaWeb.TaskSupervisor.start_child(fn ->
+        progress_fn = progress_sender(parent, :rebuild_graph_progress)
+
+        opts = maintenance_collection_opts([progress: progress_fn], collection)
+        result = Arcana.Maintenance.rebuild_graph(repo, opts)
+        send(parent, {:rebuild_graph_complete, result})
+      end)
+
+      socket
     end
+
+    defp start_detect_communities(socket, collection) do
+      repo = socket.assigns.repo
+      parent = self()
+
+      socket =
+        assign(socket,
+          detect_communities_running: true,
+          detect_communities_progress: %{current: 0, total: 0}
+        )
+
+      ArcanaWeb.TaskSupervisor.start_child(fn ->
+        progress_fn = progress_sender(parent, :detect_communities_progress)
+
+        opts = maintenance_collection_opts([progress: progress_fn], collection)
+        result = Arcana.Maintenance.detect_communities(repo, opts)
+        send(parent, {:detect_communities_complete, result})
+      end)
+
+      socket
+    end
+
+    # A collection name with no row resolves to "no filter", which silently
+    # turns a per-collection action into a global one: re-embedding every
+    # document in the database, rebuilding every graph. Strict resolution
+    # turns that into {:error, {:unknown_collection, name}}, which the
+    # completion handlers already render as a flash. The name can go missing
+    # on any dashboard (never ingested yet, or deleted from another tab), so
+    # this holds for restricted and unrestricted mounts alike. nil is the
+    # explicit "all collections" choice and stays unstrict — restricted
+    # dashboards never get that far (see validate_maintenance_collection/2).
+    defp maintenance_collection_opts(opts, nil), do: opts
+
+    defp maintenance_collection_opts(opts, collection) when is_binary(collection),
+      do: Keyword.merge(opts, collection: collection, strict_collections: true)
 
     defp start_summarize_communities(socket) do
       repo = socket.assigns.repo
@@ -503,7 +588,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
                   name="collection"
                   style="padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem; background: white; min-width: 160px;"
                 >
-                  <option value="">All Collections</option>
+                  <%= if @allowed_collections == :all do %>
+                    <option value="">All Collections</option>
+                  <% end %>
                   <%= for collection <- @collections do %>
                     <option value={collection} selected={@reembed_collection == collection}>
                       <%= collection %>
@@ -574,7 +661,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
                   name="collection"
                   style="padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem; background: white; min-width: 160px;"
                 >
-                  <option value="">All Collections</option>
+                  <%= if @allowed_collections == :all do %>
+                    <option value="">All Collections</option>
+                  <% end %>
                   <%= for collection <- @collections do %>
                     <option value={collection} selected={@rebuild_graph_collection == collection}>
                       <%= collection %>
@@ -620,7 +709,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
                   name="collection"
                   style="padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem; background: white; min-width: 160px;"
                 >
-                  <option value="">All Collections</option>
+                  <%= if @allowed_collections == :all do %>
+                    <option value="">All Collections</option>
+                  <% end %>
                   <%= for collection <- @collections do %>
                     <option value={collection} selected={@detect_communities_collection == collection}>
                       <%= collection %>
@@ -711,7 +802,8 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
             <% end %>
           </div>
 
-          <%= if @orphaned_stats.entities > 0 or @orphaned_stats.relationships > 0 do %>
+          <%= if @allowed_collections == :all and
+                (@orphaned_stats.entities > 0 or @orphaned_stats.relationships > 0) do %>
             <div class="arcana-maintenance-section arcana-orphan-section">
               <h3>Orphaned Graph Data</h3>
               <p style="color: #6b7280; margin-bottom: 1rem; font-size: 0.875rem;">

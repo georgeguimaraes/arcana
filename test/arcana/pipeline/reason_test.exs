@@ -4,6 +4,66 @@ defmodule Arcana.Pipeline.ReasonTest do
   alias Arcana.Pipeline
   alias Arcana.Pipeline.Context
 
+  # Asks for one follow-up search, then accepts. Anything that isn't the
+  # sufficiency prompt gets a throwaway answer.
+  defp insufficient_then_sufficient_llm do
+    call_count = :counters.new(1, [:atomics])
+
+    fn prompt ->
+      count = :counters.get(call_count, 1)
+      :counters.add(call_count, 1, 1)
+
+      cond do
+        count == 0 and prompt =~ "sufficient" ->
+          {:ok,
+           ~s({"sufficient": false, "missing": "concurrency model", "follow_up_query": "Elixir concurrency actors"})}
+
+        prompt =~ "sufficient" ->
+          {:ok, ~s({"sufficient": true, "reasoning": "Now has concurrency info"})}
+
+        true ->
+          {:ok, "response"}
+      end
+    end
+  end
+
+  # Says "insufficient" once per follow-up query, in order, then accepts.
+  # The queries have to differ: reason/2 stops as soon as a follow-up
+  # repeats one that queries_tried already holds.
+  defp insufficient_llm(follow_ups) do
+    call_count = :counters.new(1, [:atomics])
+
+    fn prompt ->
+      if prompt =~ "sufficient" do
+        index = :counters.get(call_count, 1)
+        :counters.add(call_count, 1, 1)
+
+        case Enum.at(follow_ups, index) do
+          nil ->
+            {:ok, ~s({"sufficient": true, "reasoning": "good enough"})}
+
+          query ->
+            {:ok,
+             JSON.encode!(%{
+               "sufficient" => false,
+               "missing" => "more detail",
+               "follow_up_query" => query
+             })}
+        end
+      else
+        {:ok, "response"}
+      end
+    end
+  end
+
+  defp searched_collections(acc \\ []) do
+    receive do
+      {:searched_collection, collection} -> searched_collections([collection | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
   describe "reason/2" do
     test "accepts results when LLM says sufficient" do
       llm = fn prompt ->
@@ -232,6 +292,103 @@ defmodule Arcana.Pipeline.ReasonTest do
       ctx = Pipeline.reason(ctx)
 
       assert MapSet.member?(ctx.queries_tried, "my question")
+    end
+
+    # A caller that scopes retrieval by handing search/2 a tenant searcher
+    # would silently get the default (unscoped) searcher back for the
+    # follow-up searches if reason/2 didn't inherit it, which hands the
+    # caller chunks from outside the tenant.
+    test "inherits the searcher from search/2 without repeating the option" do
+      test_pid = self()
+
+      searcher = fn question, _collection, _opts ->
+        send(test_pid, {:searched, question})
+        {:ok, [%{id: "1", text: "scoped chunk", score: 0.9}]}
+      end
+
+      ctx =
+        "How does Elixir handle concurrency?"
+        |> Pipeline.new(repo: Arcana.TestRepo, llm: insufficient_then_sufficient_llm())
+        |> Pipeline.search(searcher: searcher, collection: "inherit-searcher-test")
+        |> Pipeline.reason()
+
+      assert ctx.reason_iterations == 1
+      assert_received {:searched, "How does Elixir handle concurrency?"}
+      assert_received {:searched, "Elixir concurrency actors"}
+    end
+
+    test "an explicit searcher on reason/2 beats the inherited one" do
+      test_pid = self()
+
+      search_searcher = fn _question, _collection, _opts ->
+        {:ok, [%{id: "1", text: "from search", score: 0.9}]}
+      end
+
+      reason_searcher = fn question, _collection, _opts ->
+        send(test_pid, {:reason_searched, question})
+        {:ok, [%{id: "2", text: "from reason", score: 0.9}]}
+      end
+
+      ctx =
+        "How does Elixir handle concurrency?"
+        |> Pipeline.new(repo: Arcana.TestRepo, llm: insufficient_then_sufficient_llm())
+        |> Pipeline.search(searcher: search_searcher, collection: "explicit-searcher-test")
+        |> Pipeline.reason(searcher: reason_searcher)
+
+      assert ctx.reason_iterations == 1
+      assert_received {:reason_searched, "Elixir concurrency actors"}
+    end
+
+    # search/2 resolved ["tenant-a"], so every follow-up has to stay there.
+    # Before search/2 recorded its collections, the first follow-up rode
+    # hd(ctx.results).collection and the second — after merge_results
+    # dropped the dry result — fell through to "default". That reads as a
+    # narrow scope but isn't: strict_collections defaults to false, so an
+    # unknown name resolves to no collection filter at all, i.e. the whole
+    # corpus for a caller that named one tenant.
+    test "follow-up searches stay in the collections search/2 resolved" do
+      test_pid = self()
+
+      searcher = fn _question, collection, _opts ->
+        send(test_pid, {:searched_collection, collection})
+        {:ok, []}
+      end
+
+      llm = insufficient_llm(["tenant policy details", "tenant policy exceptions"])
+
+      ctx =
+        "What is the tenant policy?"
+        |> Pipeline.new(repo: Arcana.TestRepo, llm: llm)
+        |> Pipeline.search(searcher: searcher, collections: ["tenant-a"])
+        |> Pipeline.reason()
+
+      assert ctx.reason_iterations == 2
+      assert searched_collections() == ["tenant-a", "tenant-a", "tenant-a"]
+    end
+
+    # Same leak against a real repo and the default searcher: an empty
+    # collection makes every follow-up run dry, which used to hand the last
+    # one an unscoped search over the whole corpus.
+    test "follow-up searches never return chunks outside the caller's collection" do
+      {:ok, _} = Arcana.Collection.get_or_create("probe-tenant-a", Arcana.TestRepo)
+
+      other_tenant_text = "Zorblax quantum flux capacitor blueprint"
+
+      {:ok, _} =
+        Arcana.ingest(other_tenant_text, repo: Arcana.TestRepo, collection: "probe-tenant-b")
+
+      llm = insufficient_llm(["wumpus grommet sprocket", other_tenant_text])
+
+      ctx =
+        "What is the Zorblax blueprint?"
+        |> Pipeline.new(repo: Arcana.TestRepo, llm: llm, threshold: 0.1)
+        |> Pipeline.search(collections: ["probe-tenant-a"])
+        |> Pipeline.reason()
+
+      assert Enum.all?(ctx.results, &(&1.collection == "probe-tenant-a"))
+
+      chunks = Enum.flat_map(ctx.results, & &1.chunks)
+      refute Enum.any?(chunks, &(&1.text =~ "Zorblax"))
     end
 
     test "skips reasoning when skip_retrieval is true" do

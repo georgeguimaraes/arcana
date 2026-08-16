@@ -282,12 +282,18 @@ defmodule Arcana.Maintenance do
       Enum.each(chunks, fn chunk ->
         {:ok, embedding} = Embedder.embed(embedder, chunk.text, intent: :document)
 
+        # Same metadata a fresh ingest would store (byte offsets and any
+        # extra keys the chunker reports), so recovered documents aren't
+        # the only ones in the corpus missing it. Page numbers are the
+        # exception: they come from the parser at ingest time and aren't
+        # persisted anywhere, so they can't be rebuilt from the document.
         %Chunk{}
         |> Chunk.changeset(%{
           text: chunk.text,
           embedding: embedding,
           chunk_index: chunk.chunk_index,
           token_count: chunk.token_count,
+          metadata: Chunker.metadata_for(chunk),
           document_id: doc.id
         })
         |> repo.insert!()

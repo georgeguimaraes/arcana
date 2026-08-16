@@ -264,6 +264,104 @@ defmodule Arcana.Config do
     opts[key] || get_env(key)
   end
 
+  @repo_unset :__arcana_repo_unset__
+
+  @repo_config_shapes """
+  Configure the repo with:
+
+      config :arcana, repo: MyApp.Repo
+
+  or with the per-repo shape:
+
+      config :arcana, MyApp.Repo, priv: "priv/my_repo"
+  """
+
+  @doc """
+  Resolves the Ecto repo configured for Arcana's mix tasks.
+
+  Accepts either configuration shape:
+
+      # Explicit repo key
+      config :arcana, repo: MyApp.Repo
+
+      # Per-repo configuration (e.g. custom priv directory)
+      config :arcana, MyApp.Repo, priv: "priv/my_repo"
+
+  When only the per-repo shape is present and exactly one repo is
+  configured, that repo is used (with a note printed to stderr). Raises
+  `ArgumentError` when no repo can be resolved, or when several per-repo
+  entries exist without an explicit `:repo` key to disambiguate.
+
+  `repo: nil` means "not set" and falls through to the per-repo scan.
+  `repo: false` is an explicit "no repo", so it raises the same "no Ecto
+  repo configured" error instead of quietly picking a per-repo entry.
+
+  Called without arguments, the `:repo` key is read through `get_env/2` so
+  process-scoped overrides installed via `install_env_reader/1` are honored.
+  Pass an explicit env keyword list to resolve against it directly.
+  """
+  def repo!(env \\ nil)
+
+  def repo!(nil) do
+    # The `:repo` read goes through get_env/2 so test overrides shadow it.
+    # A sentinel default separates "unset" from a configured `nil`/`false`.
+    # The per-repo fallback has to enumerate keys, which the reader seam
+    # can't express (it resolves one key at a time), so it reads the raw
+    # app env.
+    case get_env(:repo, @repo_unset) do
+      false -> raise_repo_disabled()
+      repo when repo in [@repo_unset, nil] -> repo_from_module_keys(all_env())
+      repo -> repo
+    end
+  end
+
+  def repo!(env) when is_list(env) do
+    case Keyword.fetch(env, :repo) do
+      {:ok, false} -> raise_repo_disabled()
+      {:ok, nil} -> repo_from_module_keys(env)
+      {:ok, repo} -> repo
+      :error -> repo_from_module_keys(env)
+    end
+  end
+
+  defp all_env, do: Application.get_all_env(:arcana)
+
+  defp raise_repo_disabled do
+    raise ArgumentError,
+          "no Ecto repo configured for :arcana: `repo: false` disables repo " <>
+            "resolution.\n\n" <> @repo_config_shapes
+  end
+
+  defp repo_from_module_keys(env) do
+    env
+    |> Keyword.keys()
+    |> Enum.filter(&ecto_repo_key?/1)
+    |> case do
+      [repo] ->
+        IO.puts(
+          :stderr,
+          "Arcana: using #{inspect(repo)} from `config :arcana, #{inspect(repo)}, ...`. " <>
+            "Set `config :arcana, repo: #{inspect(repo)}` to make this explicit."
+        )
+
+        repo
+
+      [] ->
+        raise ArgumentError, "no Ecto repo configured for :arcana.\n\n" <> @repo_config_shapes
+
+      repos ->
+        raise ArgumentError,
+              "several Ecto repos configured for :arcana " <>
+                "(#{Enum.map_join(repos, ", ", &inspect/1)}) and no `:repo` key to " <>
+                "disambiguate.\n\n" <> @repo_config_shapes
+    end
+  end
+
+  defp ecto_repo_key?(key) do
+    is_atom(key) and String.starts_with?(Atom.to_string(key), "Elixir.") and
+      Code.ensure_loaded?(key) and function_exported?(key, :__adapter__, 0)
+  end
+
   @doc """
   Merges global keyword-list config under `app_key` with per-call opts.
 
@@ -343,11 +441,17 @@ defmodule Arcana.Config do
   defp custom_function_result(fun, nil), do: {fun, []}
   defp custom_function_result(fun, module), do: {module, [fun: fun]}
 
-  defp plain_module?(value), do: is_atom(value) and not is_nil(value)
+  # `true`/`false` are atoms but never module names: letting them through
+  # here produced `function false.parse/2` at call time instead of a
+  # config error (or, for components that accept it, a disabled component).
+  defp plain_module?(value), do: is_atom(value) and not is_boolean(value) and not is_nil(value)
 
+  # The head has to pass the same test a bare module does: `{false, opts}`
+  # and `{nil, opts}` look like a {module, opts} pair but land on
+  # `function false.parse/2` at call time, exactly like bare `false` did.
   defp module_opts_tuple?(value) do
     is_tuple(value) and tuple_size(value) == 2 and
-      is_atom(elem(value, 0)) and is_list(elem(value, 1))
+      plain_module?(elem(value, 0)) and is_list(elem(value, 1))
   end
 
   @doc false
@@ -388,6 +492,54 @@ defmodule Arcana.Config do
       name: "pdf_parser",
       shortcuts: %{poppler: Arcana.FileParser.PDF.Poppler}
     )
+  end
+
+  @doc """
+  Returns the configured file parsers as a map of extension to
+  `{module, opts}`.
+
+  Extensions are normalized to lowercase with a leading dot, so
+  `%{"docx" => ...}` and `%{".DOCX" => ...}` both register `".docx"`.
+
+      config :arcana, file_parsers: %{".docx" => {MyApp.DocxParser, []}}
+
+  Mapping an extension to `false` disables it: nothing parses it, not the
+  built-in route and not the `:fallback_parser`. Such entries come back
+  as `nil`.
+
+      config :arcana, file_parsers: %{".pdf" => false}
+
+  """
+  def file_parsers do
+    get_env(:file_parsers, %{})
+    |> Map.new(fn {extension, value} ->
+      {normalize_extension(extension), parse_file_parser_config(value)}
+    end)
+  end
+
+  @doc """
+  Returns the configured fallback parser as `{module, opts}`, or `nil`.
+
+  Consulted for any extension without a native or registered parser:
+
+      config :arcana, fallback_parser: {MyApp.ExtractionService, []}
+
+  `nil` and `false` both mean "no fallback".
+  """
+  def fallback_parser do
+    get_env(:fallback_parser) |> parse_file_parser_config()
+  end
+
+  @doc false
+  def parse_file_parser_config(value) do
+    parse_pluggable(value, name: "file parser", allow_nil?: true)
+  end
+
+  @doc false
+  def normalize_extension(extension) do
+    extension = extension |> to_string() |> String.downcase()
+
+    if String.starts_with?(extension, "."), do: extension, else: "." <> extension
   end
 
   @doc false

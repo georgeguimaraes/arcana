@@ -40,6 +40,10 @@ defmodule Arcana.Graph do
           rrf_k: 60,               # Ranking constant (higher = less weight to top ranks)
           rrf_pool_multiplier: 2,  # Over-fetch multiplier before RRF combine
 
+          # Query-time graph traversal
+          query_depth: 0,          # Hops to expand matched entities (0 = direct mentions only)
+          query_depth_decay: 0.5,  # Score decay per hop for chunks reached via traversal
+
           # Community summaries in ask pipeline
           community_summary_limit: 5,  # Max summaries injected as background context
           community_summary_level: 0,  # Level(s) to pull summaries from: integer, list, range or :all
@@ -127,6 +131,8 @@ defmodule Arcana.Graph do
     min_size: 1,
     rrf_k: 60,
     rrf_pool_multiplier: 2,
+    query_depth: 0,
+    query_depth_decay: 0.5,
     community_summary_limit: 5,
     community_summary_level: 0,
     summary_max_entities: 50,
@@ -220,6 +226,116 @@ defmodule Arcana.Graph do
   def enabled? do
     config().enabled
   end
+
+  @doc """
+  Resolves the query-time graph traversal depth from per-call opts and
+  global config.
+
+  Reads `:graph_depth` from `opts` first, then falls back to
+  `config :arcana, graph: [query_depth: n]` (default 0). Raises
+  `ArgumentError` on anything other than a non-negative integer.
+  """
+  def query_depth(opts) do
+    depth =
+      case Keyword.fetch(opts, :graph_depth) do
+        # `false` disables traversal, matching the `reranker: false` idiom
+        {:ok, false} -> 0
+        {:ok, value} -> value
+        :error -> config()[:query_depth] || 0
+      end
+
+    unless is_integer(depth) and depth >= 0 do
+      raise ArgumentError,
+            "graph_depth must be a non-negative integer, got: #{inspect(depth)}"
+    end
+
+    depth
+  end
+
+  @doc """
+  Expands entity ids through the relationships table for `depth` hops.
+
+  Walks `arcana_graph_relationships` breadth-first (both directions) from
+  the given entity ids, returning a map of hop distance to the entity ids
+  first discovered at that hop: `%{0 => direct_ids, 1 => neighbors, ...}`.
+  Each entity appears once, at its minimal hop distance.
+
+  `collection_ids` follows the usual scoping semantics: `nil` is unscoped,
+  a list restricts discovered neighbors to those collections, and an empty
+  list matches nothing (no neighbors are pulled in).
+
+  ## Options
+
+    * `:repo` - Ecto repo (required)
+
+  """
+  def expand_entity_ids(entity_ids, depth, collection_ids, opts)
+
+  def expand_entity_ids([], _depth, _collection_ids, _opts), do: %{}
+
+  def expand_entity_ids(entity_ids, 0, _collection_ids, _opts),
+    do: %{0 => Enum.uniq(entity_ids)}
+
+  def expand_entity_ids(entity_ids, depth, collection_ids, opts)
+      when is_integer(depth) and depth > 0 do
+    repo = Keyword.fetch!(opts, :repo)
+    frontier = Enum.uniq(entity_ids)
+
+    do_expand(frontier, MapSet.new(frontier), %{0 => frontier}, 1, depth, collection_ids, repo)
+  end
+
+  defp do_expand(frontier, visited, acc, hop, depth, collection_ids, repo)
+
+  defp do_expand(_frontier, _visited, acc, hop, depth, _collection_ids, _repo)
+       when hop > depth,
+       do: acc
+
+  defp do_expand(frontier, visited, acc, hop, depth, collection_ids, repo) do
+    neighbors =
+      frontier
+      |> neighbor_entity_ids(collection_ids, repo)
+      |> Enum.reject(&MapSet.member?(visited, &1))
+
+    case neighbors do
+      [] ->
+        acc
+
+      ids ->
+        visited = MapSet.union(visited, MapSet.new(ids))
+        do_expand(ids, visited, Map.put(acc, hop, ids), hop + 1, depth, collection_ids, repo)
+    end
+  end
+
+  # One query per hop: joining both endpoints carries each neighbor's
+  # collection along, so scoping needs no second round trip.
+  defp neighbor_entity_ids(frontier, collection_ids, repo) do
+    import Ecto.Query
+
+    repo.all(
+      from(r in Arcana.Graph.Relationship,
+        join: s in Arcana.Graph.Entity,
+        on: s.id == r.source_id,
+        join: t in Arcana.Graph.Entity,
+        on: t.id == r.target_id,
+        where: r.source_id in ^frontier or r.target_id in ^frontier,
+        select: {r.source_id, s.collection_id, r.target_id, t.collection_id}
+      )
+    )
+    |> Enum.flat_map(fn {source, source_collection, target, target_collection} ->
+      [{source, source_collection}, {target, target_collection}]
+    end)
+    |> Enum.filter(fn {_id, collection_id} -> in_scope?(collection_id, collection_ids) end)
+    |> Enum.map(fn {id, _collection_id} -> id end)
+    |> Enum.uniq()
+  end
+
+  # nil means unscoped; a list scopes traversal, and an empty list
+  # expands nothing (same semantics as collection filters elsewhere).
+  defp in_scope?(_collection_id, nil), do: true
+  defp in_scope?(collection_id, collection_ids), do: collection_id in collection_ids
+
+  # nil means unscoped; a list scopes the expansion, and an empty list must
+  # match nothing (`in []` compiles to false) — never fall back to global.
 
   @doc """
   Builds graph data from document chunks.

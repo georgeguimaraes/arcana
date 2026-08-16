@@ -18,7 +18,7 @@ defmodule Arcana.Graph.Entity do
     field(:name, :string)
     field(:type, :string)
     field(:description, :string)
-    field(:embedding, Pgvector.Ecto.Vector)
+    field(:embedding, Arcana.Ecto.Vector)
     field(:metadata, :map, default: %{})
 
     belongs_to(:chunk, Chunk)

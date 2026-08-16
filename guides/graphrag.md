@@ -26,6 +26,61 @@ When `graph: true` is enabled:
 - **Ingest** extracts entities (people, organizations, etc.) and relationships from each chunk
 - **Search** finds entities in your query, traverses the graph, and combines results with vector search using Reciprocal Rank Fusion (RRF)
 
+## Traversal Depth at Query Time
+
+By default, graph-enhanced search retrieves only chunks that directly mention
+the entities matched from your query. The `graph_depth` option expands matched
+entities through the relationships table for N hops before fetching chunks, so
+a query matching entity A can also retrieve chunks about A's neighbors:
+
+```elixir
+# Direct mentions only (default)
+{:ok, results} = Arcana.search("Who leads OpenAI?", repo: MyApp.Repo, graph: true)
+
+# Also retrieve chunks mentioning one-hop neighbors of matched entities
+{:ok, results} = Arcana.search("Who leads OpenAI?",
+  repo: MyApp.Repo,
+  graph: true,
+  graph_depth: 1
+)
+
+# Works for ask/2 too: expands retrieval AND includes relationships from
+# matched entities to their neighbors in the prompt context
+{:ok, answer, context} = Arcana.ask("What applies to the thing covered by X?",
+  repo: MyApp.Repo,
+  llm: "openai:gpt-4o-mini",
+  graph: true,
+  graph_depth: 1
+)
+```
+
+Chunks reached through traversal are down-weighted per hop: a chunk's graph
+score is `mentions * 0.1 * query_depth_decay^hop` (decay 0.5 by default), so a
+neighbor chunk always scores below an equally-mentioned direct chunk. It does
+not rank below *every* direct chunk — a hop-1 chunk mentioning a neighbor
+three times (`3 * 0.1 * 0.5 = 0.15`) still outscores a direct chunk mentioned
+once (`0.1`). Lower `query_depth_decay` if you want traversal to weigh less.
+
+Expansion respects collection scoping (entities from other collections are
+never pulled in) and honors `:source_id`.
+
+Set a global default and tune the decay in config (per-call `graph_depth`
+wins):
+
+```elixir
+config :arcana,
+  graph: [
+    enabled: true,
+    query_depth: 1,        # hops to expand matched entities (default: 0)
+    query_depth_decay: 0.5 # score decay per hop for traversed chunks
+  ]
+```
+
+Depths of 1-2 are usually enough; each hop widens retrieval and costs one
+extra query. Note this is different from the `depth:` option of the in-memory
+`Arcana.Graph.search/traverse` API further down this guide — `graph_depth` is
+the option for the `Arcana.search/2` and `Arcana.ask/2` query path.
+
 ## Installation
 
 GraphRAG requires additional database tables. Install them separately:

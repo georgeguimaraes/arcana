@@ -86,11 +86,7 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
 
     resolved = Arcana.Maintenance.detection_opts(cli_opts)
 
-    repo = Application.get_env(:arcana, :repo)
-
-    unless repo do
-      Mix.raise("No repo configured. Set config :arcana, repo: YourApp.Repo")
-    end
+    repo = Arcana.MixHelpers.repo!()
 
     # Check leidenfold is available
     unless Code.ensure_loaded?(Leidenfold) do
