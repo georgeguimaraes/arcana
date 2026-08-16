@@ -6,7 +6,10 @@ defmodule Arcana.Ingest do
   GraphRAG entity/relationship extraction.
   """
 
+  require Logger
+
   alias Arcana.{Chunk, Chunker, Collection, Document, Embedder, Parser}
+  alias Arcana.Graph.GraphStore
 
   @doc """
   Ingests text content, creating a document with embedded chunks.
@@ -42,12 +45,9 @@ defmodule Arcana.Ingest do
   """
   def ingest(text, opts) when is_binary(text) do
     repo = require_repo!(opts)
+    validate_replace_opts!(opts)
     source_id = Keyword.get(opts, :source_id)
     metadata = Keyword.get(opts, :metadata, %{})
-
-    if Keyword.get(opts, :replace, false) and (is_nil(source_id) or source_id == "") do
-      raise ArgumentError, "replace: true requires a :source_id document identity"
-    end
 
     {collection_name, collection_description} =
       parse_collection_opt(Keyword.get(opts, :collection, "default"))
@@ -80,7 +80,7 @@ defmodule Arcana.Ingest do
 
           case result do
             {:ok, chunk_records} ->
-              finalize_ingest(document, chunk_records, collection, repo, opts)
+              finalize_with_telemetry(document, chunk_records, collection, repo, opts)
 
             {:error, reason} ->
               {{:error, reason}, %{error: reason}}
@@ -109,6 +109,10 @@ defmodule Arcana.Ingest do
     * `:chunk_size` - Maximum chunk size in characters (default: 1024)
     * `:chunk_overlap` - Overlap between chunks (default: 200)
     * `:collection` - Collection name to organize the document (default: "default")
+    * `:graph` - Enable GraphRAG extraction (default: from config)
+    * `:replace` - When true, atomically replaces any prior document with the
+      same `(collection, source_id)` once the new ingest completes. Requires
+      `:source_id`. See "Replacing documents" in `ingest/2`.
 
   ## Chunk metadata
 
@@ -189,18 +193,74 @@ defmodule Arcana.Ingest do
 
   defp require_repo!(opts), do: Arcana.Config.require_repo!(opts)
 
+  defp finalize_with_telemetry(document, chunk_records, collection, repo, opts) do
+    case finalize_ingest(document, chunk_records, collection, repo, opts) do
+      {:ok, document} ->
+        {{:ok, document}, %{document: document, chunk_count: length(chunk_records)}}
+
+      {:error, reason} ->
+        {{:error, reason}, %{error: reason}}
+    end
+  end
+
   defp finalize_ingest(document, chunk_records, collection, repo, opts) do
-    maybe_build_graph(chunk_records, collection, repo, opts)
+    build_graph_or_fail_document(document, chunk_records, collection, repo, opts)
 
     if Keyword.get(opts, :replace, false) do
-      finalize_replace(document, chunk_records, repo)
+      with {:ok, document} <- finalize_replace(document, chunk_records, repo) do
+        sweep_graph_orphans(document.collection_id, repo, opts)
+        {:ok, document}
+      end
     else
-      {:ok, document} =
-        document
-        |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
-        |> repo.update()
+      document
+      |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
+      |> repo.update()
+    end
+  end
 
-      {{:ok, document}, %{document: document, chunk_count: length(chunk_records)}}
+  # A graph build blows up on failure (extraction errors that come back as
+  # {:error, reason} are swallowed per chunk, store failures and anything
+  # the extractor raises are not). Mark the document :failed before it
+  # escapes, the way the embedding path does, so a crashed build can't
+  # leave a document stuck in :processing with chunks attached.
+  # The already-persisted graph data of earlier chunks stays put — see
+  # Arcana.Graph.build_and_persist/4, no caller treats a failed build as
+  # having left the graph untouched.
+  #
+  # `catch` rather than `rescue`: an extractor or store is just as free to
+  # throw or exit (a GenServer.call timeout exits) as to raise, and each
+  # strands the document the same way. Arcana.Graph turns the extractors'
+  # in-task failures back into caller-side ones so they reach here at all.
+  defp build_graph_or_fail_document(document, chunk_records, collection, repo, opts) do
+    maybe_build_graph(chunk_records, collection, repo, opts)
+  catch
+    kind, reason ->
+      stacktrace = __STACKTRACE__
+
+      document
+      |> Document.changeset(%{status: :failed})
+      |> repo.update()
+
+      :erlang.raise(kind, reason, stacktrace)
+  end
+
+  # The replaced predecessors' chunks cascade away with them, which can
+  # strand zero-mention entities; sweep them like Arcana.delete/2 does.
+  # Unlike delete/2 a failed sweep doesn't fail the call: the new document
+  # is already committed, and returning an error here would push the
+  # caller into redoing the whole (LLM-priced) ingest over a cleanup
+  # problem. Log it and leave the orphans for the next sweep.
+  defp sweep_graph_orphans(collection_id, repo, opts) do
+    case GraphStore.maybe_sweep_orphans(collection_id, repo, opts) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Arcana: graph orphan sweep failed for collection #{collection_id}: #{inspect(reason)}"
+        )
+
+        :ok
     end
   end
 
@@ -212,42 +272,33 @@ defmodule Arcana.Ingest do
   # around chunking/embedding. A run whose document was already deleted by a
   # faster concurrent replace loses cleanly.
   defp finalize_replace(document, chunk_records, repo) do
-    result =
-      repo.transaction(fn ->
-        repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
-          "arcana:replace:#{document.collection_id}:#{document.source_id}"
-        ])
+    repo.transaction(fn ->
+      repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+        "arcana:replace:#{document.collection_id}:#{document.source_id}"
+      ])
 
-        if repo.get(Document, document.id) do
-          import Ecto.Query, only: [from: 2]
+      if repo.get(Document, document.id) do
+        import Ecto.Query, only: [from: 2]
 
-          repo.delete_all(
-            from(d in Document,
-              where:
-                d.collection_id == ^document.collection_id and
-                  d.source_id == ^document.source_id and
-                  d.id != ^document.id
-            )
+        repo.delete_all(
+          from(d in Document,
+            where:
+              d.collection_id == ^document.collection_id and
+                d.source_id == ^document.source_id and
+                d.id != ^document.id
           )
+        )
 
-          {:ok, document} =
-            document
-            |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
-            |> repo.update()
-
+        {:ok, document} =
           document
-        else
-          repo.rollback(:replaced_by_concurrent_ingest)
-        end
-      end)
+          |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
+          |> repo.update()
 
-    case result do
-      {:ok, document} ->
-        {{:ok, document}, %{document: document, chunk_count: length(chunk_records)}}
-
-      {:error, :replaced_by_concurrent_ingest} ->
-        {{:error, :replaced_by_concurrent_ingest}, %{error: :replaced_by_concurrent_ingest}}
-    end
+        document
+      else
+        repo.rollback(:replaced_by_concurrent_ingest)
+      end
+    end)
   end
 
   defp maybe_build_graph(chunk_records, collection, repo, opts) do
@@ -292,6 +343,7 @@ defmodule Arcana.Ingest do
 
   defp ingest_with_file_attrs(text, opts) do
     repo = require_repo!(opts)
+    validate_replace_opts!(opts)
     source_id = Keyword.get(opts, :source_id)
     metadata = Keyword.get(opts, :metadata, %{})
     file_path = Keyword.get(opts, :file_path)
@@ -300,20 +352,22 @@ defmodule Arcana.Ingest do
     chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap, :format, :size_unit])
     chunker_config = Arcana.Config.resolve_chunker(opts)
 
+    attrs = %{
+      source_id: source_id,
+      metadata: metadata,
+      file_path: file_path,
+      content_type: content_type,
+      chunk_opts: chunk_opts,
+      chunker_config: chunker_config,
+      pages: Keyword.get(opts, :parse_meta, %{})[:pages]
+    }
+
     with {:ok, collection} <- resolve_collection(collection_name, nil, repo, opts) do
-      do_ingest_with_file_attrs(text, collection, repo, %{
-        source_id: source_id,
-        metadata: metadata,
-        file_path: file_path,
-        content_type: content_type,
-        chunk_opts: chunk_opts,
-        chunker_config: chunker_config,
-        pages: Keyword.get(opts, :parse_meta, %{})[:pages]
-      })
+      do_ingest_with_file_attrs(text, collection, repo, attrs, opts)
     end
   end
 
-  defp do_ingest_with_file_attrs(text, collection, repo, attrs) do
+  defp do_ingest_with_file_attrs(text, collection, repo, attrs, opts) do
     {:ok, document} =
       %Document{}
       |> Document.changeset(%{
@@ -332,19 +386,16 @@ defmodule Arcana.Ingest do
       |> Chunker.chunk(text, attrs.chunk_opts)
       |> attach_pages(attrs.pages)
 
-    result = embed_and_store_chunks(chunks, document, repo)
+    with {:ok, chunk_records} <- embed_and_store_chunks(chunks, document, repo) do
+      finalize_ingest(document, chunk_records, collection, repo, opts)
+    end
+  end
 
-    case result do
-      {:ok, chunk_records} ->
-        {:ok, document} =
-          document
-          |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
-          |> repo.update()
+  defp validate_replace_opts!(opts) do
+    source_id = Keyword.get(opts, :source_id)
 
-        {:ok, document}
-
-      {:error, reason} ->
-        {:error, reason}
+    if Keyword.get(opts, :replace, false) and (is_nil(source_id) or source_id == "") do
+      raise ArgumentError, "replace: true requires a :source_id document identity"
     end
   end
 

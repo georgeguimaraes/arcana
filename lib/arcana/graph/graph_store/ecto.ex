@@ -8,8 +8,41 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
   @behaviour Arcana.Graph.GraphStore
 
-  alias Arcana.Graph.{Community, Entity, EntityMention, Relationship}
+  alias Arcana.Graph.{Community, Entity, EntityMention, EntityName, Relationship}
   import Ecto.Query
+
+  # Postgres-side spelling of EntityName.normalize/1, so upserts and
+  # lookups match name variants already stored with different
+  # casing/underscores.
+  #
+  # Every comparison normalizes BOTH sides through this SQL rather than
+  # comparing an Elixir-computed key against a SQL-computed one: an entity
+  # that fails to match itself re-inserts its own name and trips the
+  # (name, collection_id) unique index. That keeps the upsert side
+  # self-consistent whatever the name carries, but the read path compares a
+  # stored name against one an extractor just emitted, so the fold itself
+  # still has to be right.
+  #
+  # Hence the spelled-out whitespace class. Postgres' `\s` follows the
+  # database ctype, which does NOT classify NBSP as space — the one
+  # character every HTML/PDF-derived name arrives with — so `btrim` (which
+  # only strips U+0020) left it in the key and made the stored row
+  # unreachable. The class below is the Unicode White_Space set, matching
+  # EntityName.normalize/1 character for character.
+  #
+  # Case folding still differs from Elixir's on an open-ended set of
+  # codepoints that depends on the database host's libc (56 of them on
+  # PG 16.15/glibc, only U+0130 of which is fixed by Unicode itself), and
+  # neither side normalizes NFC/NFD. Both are documented in
+  # Arcana.Graph.EntityName; persist_entities/3 keys the raw name so a
+  # disagreeing pair still reaches its own row.
+  @whitespace_class "[\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]+"
+  @normalize_template "btrim(regexp_replace(regexp_replace(lower(EXPR), '[_-]+', ' ', 'g'), '#{@whitespace_class}', ' ', 'g'))"
+  @normalize_name_sql String.replace(@normalize_template, "EXPR", "?")
+  @normalized_names_match_sql @normalize_name_sql <>
+                                " = ANY(SELECT " <>
+                                String.replace(@normalize_template, "EXPR", "n") <>
+                                " FROM unnest(?::text[]) AS n)"
 
   # === Storage Callbacks ===
 
@@ -17,21 +50,42 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   def persist_entities(collection_id, entities, opts) do
     repo = Keyword.fetch!(opts, :repo)
 
-    # Deduplicate by name
-    unique_entities =
-      entities
-      |> Enum.reduce(%{}, fn entity, acc ->
-        Map.put_new(acc, entity.name, entity)
-      end)
-      |> Map.values()
-
-    # Upsert each entity and build name -> id mapping
+    # Skip the repeat upserts within this call, then let Postgres decide
+    # which rows exist. Deduping on the ELIXIR key would decide it here
+    # instead: two spellings that share an Elixir key but not a Postgres
+    # one ("İstanbul" and its decomposed form) would collapse when they
+    # arrived in the same chunk and stay apart when they arrived in
+    # different ones — same document, different :chunk_size, different
+    # graph. Identical raw names always share a Postgres key, so deduping
+    # on the raw name can't decide anything Postgres wouldn't.
+    #
+    # The key still gates the reject. Both engines agree on which names
+    # normalize to empty.
+    #
+    # The returned map is keyed BOTH ways, because those same two spellings
+    # produce two rows and one Elixir key. `{:raw, name}` is the exact key:
+    # Postgres decided which row that raw name went to, so it is the only
+    # one that can tell the rows apart. Keying on the Elixir key alone let
+    # the second upsert overwrite the first, and lookup_entity_id/2 then
+    # sent every mention and every relationship endpoint to the second row
+    # while the first sat orphaned and unreachable from search/3.
+    #
+    # The bare normalized key stays as the fallback for names this call
+    # never persisted — an earlier chunk's entity reached through the map
+    # Arcana.Graph merges across chunks, or a map a caller built itself.
+    # First spelling wins it (`put_new`), matching what the map held before
+    # the raw keys existed.
     entity_id_map =
-      unique_entities
-      |> Enum.reject(fn e -> is_nil(e.name) or e.name == "" end)
-      |> Enum.reduce(%{}, fn entity, id_map ->
+      entities
+      |> Enum.map(fn entity -> {EntityName.normalize(entity.name), entity} end)
+      |> Enum.reject(fn {key, _entity} -> is_nil(key) or key == "" end)
+      |> Enum.uniq_by(fn {_key, entity} -> entity.name end)
+      |> Enum.reduce(%{}, fn {key, entity}, id_map ->
         entity_record = upsert_entity(entity, collection_id, repo)
-        Map.put(id_map, entity.name, entity_record.id)
+
+        id_map
+        |> Map.put({:raw, entity.name}, entity_record.id)
+        |> Map.put_new(key, entity_record.id)
       end)
 
     {:ok, entity_id_map}
@@ -43,8 +97,8 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
     relationships
     |> Enum.each(fn rel ->
-      source_id = Map.get(entity_id_map, rel.source)
-      target_id = Map.get(entity_id_map, rel.target)
+      source_id = lookup_entity_id(entity_id_map, rel.source)
+      target_id = lookup_entity_id(entity_id_map, rel.target)
 
       if source_id && target_id && rel.type && rel.type != "" do
         %Relationship{}
@@ -69,7 +123,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
     mentions
     |> Enum.each(fn mention ->
-      entity_id = Map.get(entity_id_map, mention.entity_name)
+      entity_id = lookup_entity_id(entity_id_map, mention.entity_name)
 
       if entity_id do
         %EntityMention{}
@@ -79,7 +133,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
           span_start: mention[:span_start],
           span_end: mention[:span_end]
         })
-        |> repo.insert!()
+        |> repo.insert!(on_conflict: :nothing)
       end
     end)
 
@@ -232,6 +286,96 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     repo.delete_all(from(c in Community, where: c.collection_id == ^collection_id))
 
     :ok
+  end
+
+  @doc """
+  Runs `fun` inside a transaction holding the collection's advisory lock.
+
+  Uses `pg_advisory_xact_lock/1` keyed on the collection, the same idiom
+  `Arcana.Ingest` uses for the replace swap. Both the entity/mention
+  persist path and `sweep_orphans/2` take it, so a sweep can never land
+  between an entity insert and its mention insert.
+
+  Keep the wrapped work to DB writes: the lock blocks every concurrent
+  graph write for the collection until the transaction commits.
+  """
+  @impl true
+  def with_write_lock(collection_id, opts, fun) when is_function(fun, 0) do
+    repo = Keyword.fetch!(opts, :repo)
+
+    {:ok, result} =
+      repo.transaction(fn ->
+        repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+          "arcana:graph:#{collection_id}"
+        ])
+
+        fun.()
+      end)
+
+    result
+  end
+
+  @doc """
+  Deletes entities in the collection that have no remaining mentions.
+
+  Runs under the collection's write lock (see `with_write_lock/3`) so it
+  cannot delete an entity a concurrent build has inserted but not yet
+  mentioned. Relationships cascade via FK; communities overlapping the
+  deleted entities are marked dirty.
+  """
+  @impl true
+  def sweep_orphans(collection_id, opts) do
+    repo = Keyword.fetch!(opts, :repo)
+
+    with_write_lock(collection_id, opts, fn ->
+      orphaned_ids =
+        repo.all(
+          from(e in Entity,
+            left_join: m in EntityMention,
+            on: m.entity_id == e.id,
+            where: e.collection_id == ^collection_id,
+            group_by: e.id,
+            having: count(m.id) == 0,
+            select: e.id
+          )
+        )
+
+      if orphaned_ids != [] do
+        # Relationships cascade via FK on source_id/target_id
+        repo.delete_all(from(e in Entity, where: e.id in ^orphaned_ids))
+        mark_overlapping_communities_dirty(collection_id, orphaned_ids, repo)
+      end
+
+      :ok
+    end)
+  end
+
+  # Also drops the swept ids from entity_ids: the community stays dirty
+  # until the next summarize pass, but until then its entity_count would
+  # otherwise keep counting entities that no longer exist.
+  defp mark_overlapping_communities_dirty(collection_id, entity_ids, repo) do
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    repo.update_all(
+      from(c in Community,
+        where:
+          c.collection_id == ^collection_id and
+            fragment("? && ?", c.entity_ids, type(^entity_ids, {:array, Ecto.UUID})),
+        update: [
+          set: [
+            dirty: true,
+            updated_at: ^now,
+            entity_ids:
+              fragment(
+                "ARRAY(SELECT x FROM unnest(?) AS x WHERE NOT (x = ANY(?)))",
+                c.entity_ids,
+                type(^entity_ids, {:array, Ecto.UUID})
+              )
+          ]
+        ]
+      ),
+      []
+    )
   end
 
   # === Detail Query Callbacks ===
@@ -523,11 +667,38 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
   # === Private Helpers ===
 
+  # Raw name first: persist_entities/3 keyed it off what Postgres did with
+  # that exact spelling, and two spellings sharing a normalized key can
+  # still be two rows. The normalized key second, for names this call never
+  # persisted — see the comment in persist_entities/3.
+  defp lookup_entity_id(entity_id_map, name) do
+    Map.get(entity_id_map, {:raw, name}) ||
+      Map.get(entity_id_map, EntityName.normalize(name))
+  end
+
   defp upsert_entity(entity, collection_id, repo) do
+    # Match on the normalized name so stored variants ("Delivery" vs
+    # "delivery") upsert into one row. Both sides go through the SQL
+    # normalization (see @normalize_template): comparing against an
+    # Elixir-computed key makes an entity miss itself whenever the two
+    # engines disagree, and the re-insert then hits the unique index.
+    # Legacy data may already hold several variants, so take the oldest
+    # instead of expecting one.
+    #
+    # The select-then-insert is only safe because callers hold the
+    # collection's write lock (see with_write_lock/3); without it two
+    # concurrent builds could both miss and insert competing variants.
+    # There is no unique index on the normalized expression precisely
+    # because legacy rows may already violate it.
     existing =
       repo.one(
         from(e in Entity,
-          where: e.name == ^entity.name and e.collection_id == ^collection_id
+          where:
+            e.collection_id == ^collection_id and
+              fragment(@normalize_name_sql, e.name) ==
+                fragment(@normalize_name_sql, type(^entity.name, :string)),
+          order_by: [asc: e.inserted_at],
+          limit: 1
         )
       )
 
@@ -561,7 +732,21 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   defp find_entity_ids([], _collection_ids, _repo), do: []
 
   defp find_entity_ids(entity_names, collection_ids, repo) do
-    query = from(e in Entity, where: e.name in ^entity_names, select: e.id)
+    # Match normalized names, not raw ones: the write side collapses
+    # variants onto one row that keeps its first-seen display name, so a
+    # stored "Two_Year_Limited_Warranty" is unreachable from the "two year
+    # limited warranty" a query-time extractor emits. Both sides normalize
+    # through the same SQL for the reasons in @normalize_template.
+    query =
+      from(e in Entity,
+        where:
+          fragment(
+            @normalized_names_match_sql,
+            e.name,
+            type(^entity_names, {:array, :string})
+          ),
+        select: e.id
+      )
 
     query =
       if is_list(collection_ids),

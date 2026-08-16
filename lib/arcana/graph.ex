@@ -457,6 +457,11 @@ defmodule Arcana.Graph do
     concurrency = Keyword.get(opts, :concurrency, @default_concurrency)
     total_chunks = length(chunk_records)
 
+    # Carry a per-call :graph_store through to persistence, so a build and
+    # the sweep that follows it (Arcana.delete/2, replace ingest) always
+    # hit the same backend instead of one going to the configured default.
+    store_opts = opts |> Keyword.take([:graph_store]) |> Keyword.put(:repo, repo)
+
     :telemetry.span(
       [:arcana, :graph, :build],
       %{chunk_count: total_chunks, collection: collection_name},
@@ -470,7 +475,7 @@ defmodule Arcana.Graph do
             process_chunks_concurrently(
               chunk_records,
               collection_id,
-              repo,
+              store_opts,
               progress_fn,
               total_chunks,
               concurrency,
@@ -483,7 +488,7 @@ defmodule Arcana.Graph do
             process_chunks_concurrently(
               chunk_records,
               collection_id,
-              repo,
+              store_opts,
               progress_fn,
               total_chunks,
               concurrency,
@@ -491,7 +496,11 @@ defmodule Arcana.Graph do
             )
           end
 
-        entity_count = map_size(entity_id_map)
+        # Distinct ids, not keys: a store may key one row under several
+        # names (the Ecto store keys every raw spelling as well as the
+        # normalized one, see its persist_entities/3), and this number is
+        # what the documents and maintenance UIs show as "entities".
+        entity_count = entity_id_map |> Map.values() |> Enum.uniq() |> length()
         result = {:ok, %{entity_count: entity_count, relationship_count: total_relationships}}
         {result, %{entity_count: entity_count, relationship_count: total_relationships}}
       end
@@ -501,7 +510,7 @@ defmodule Arcana.Graph do
   defp process_chunks_concurrently(
          chunks,
          collection_id,
-         repo,
+         store_opts,
          progress_fn,
          total_chunks,
          concurrency,
@@ -513,32 +522,89 @@ defmodule Arcana.Graph do
     |> Enum.with_index(1)
     |> Task.async_stream(
       fn {chunk, index} ->
-        # Extract in parallel (the slow LLM part)
-        {entities, mentions, relationships} = extract_fn.(chunk)
-        {index, entities, mentions, relationships}
+        # Extract in parallel (the slow LLM part).
+        #
+        # Catch here, inside the task, and carry the failure back as a
+        # value. Task.async_stream links: an extractor that raises, throws
+        # or exits would otherwise kill this task, and the link exit signal
+        # would take the caller down with it — signals aren't catchable, so
+        # neither the rescue nor a catch in Arcana.Ingest would run and the
+        # document would be stranded at :processing. The reducer re-raises
+        # the original kind/reason/stacktrace in the caller instead, where
+        # it unwinds through the code that marks the document :failed.
+        #
+        # A task killed from the outside (:kill) is still unrecoverable
+        # here; nothing short of an unlinked task covers that.
+        try do
+          {entities, mentions, relationships} = extract_fn.(chunk)
+          {:extracted, index, entities, mentions, relationships}
+        catch
+          kind, reason -> {:extract_failed, kind, reason, __STACKTRACE__}
+        end
       end,
       max_concurrency: concurrency,
       timeout: :infinity,
       ordered: true
     )
-    |> Enum.reduce({%{}, 0}, fn {:ok, {index, entities, mentions, relationships}},
-                                {entity_id_map, rel_count} ->
-      # Embed entity descriptions for GraphRAG-style entity search
-      entities = maybe_embed_entities(entities)
+    |> Enum.reduce({%{}, 0}, fn
+      {:ok, {:extract_failed, kind, reason, stacktrace}}, _acc ->
+        # Before persisting anything for this chunk, so a failed extraction
+        # leaves no half-written chunk behind.
+        :erlang.raise(kind, reason, stacktrace)
 
-      # Persist sequentially (fast DB operations)
-      {:ok, new_entity_ids} =
-        GraphStore.persist_entities(collection_id, entities, repo: repo)
+      {:ok, {:extracted, index, entities, mentions, relationships}}, {entity_id_map, rel_count} ->
+        # Embed entity descriptions for GraphRAG-style entity search.
+        # Stays outside the write lock: it can hit a model, and the lock is
+        # for DB writes only.
+        entities = maybe_embed_entities(entities)
+
+        merged_entity_id_map =
+          persist_chunk_graph(
+            collection_id,
+            entities,
+            mentions,
+            relationships,
+            entity_id_map,
+            store_opts
+          )
+
+        # Report progress
+        progress_fn.(index, total_chunks)
+
+        {merged_entity_id_map, rel_count + length(relationships)}
+    end)
+  end
+
+  # Entities, their mentions and their relationships land together under
+  # the collection's write lock, so a concurrent sweep_orphans can't run
+  # between the entity insert and the mention insert and delete an entity
+  # that is about to be referenced.
+  #
+  # Atomicity here is store-dependent (see GraphStore.with_write_lock/3).
+  # The :ecto backend holds the lock inside a transaction, so a failure
+  # anywhere in the trio rolls the whole chunk back. The :memory backend
+  # and custom stores that skip the optional callback just run the trio,
+  # so a failure mid-trio leaves that chunk's graph data half-persisted;
+  # the raise then aborts the build. Nothing downstream cleans that up,
+  # and no caller of build_and_persist/4 treats a failed build as having
+  # left the graph untouched.
+  defp persist_chunk_graph(
+         collection_id,
+         entities,
+         mentions,
+         relationships,
+         entity_id_map,
+         store_opts
+       ) do
+    GraphStore.with_write_lock(collection_id, store_opts, fn ->
+      {:ok, new_entity_ids} = GraphStore.persist_entities(collection_id, entities, store_opts)
 
       merged_entity_id_map = Map.merge(entity_id_map, new_entity_ids)
 
-      :ok = GraphStore.persist_mentions(mentions, merged_entity_id_map, repo: repo)
-      :ok = GraphStore.persist_relationships(relationships, merged_entity_id_map, repo: repo)
+      :ok = GraphStore.persist_mentions(mentions, merged_entity_id_map, store_opts)
+      :ok = GraphStore.persist_relationships(relationships, merged_entity_id_map, store_opts)
 
-      # Report progress
-      progress_fn.(index, total_chunks)
-
-      {merged_entity_id_map, rel_count + length(relationships)}
+      merged_entity_id_map
     end)
   end
 

@@ -112,6 +112,72 @@ defmodule Arcana.Graph.GraphStore do
   @callback delete_by_collection(binary(), opts :: keyword()) ::
               :ok | {:error, term()}
 
+  @doc """
+  Sweeps orphaned graph data in a collection.
+
+  Deletes entities in the collection that have no remaining mentions
+  (their relationships cascade away), and marks communities whose
+  `entity_ids` overlap the deleted entities as dirty so the next
+  summarize pass regenerates them.
+
+  Intended to run after document deletion or replacement, scoped to the
+  affected collection.
+
+  Optional. A store that doesn't implement it simply doesn't sweep:
+  `Arcana.delete/2` and the `replace: true` ingest still succeed, and the
+  collection may keep entities with zero mentions — which is exactly how
+  both paths behaved before this callback existed.
+
+  ## Serialization
+
+  A sweep must not interleave with a graph build for the same collection:
+  a build inserts an entity before its mentions, so a sweep landing in
+  that window would delete an entity that is about to be referenced.
+
+  The `:ecto` backend serializes both sides through `with_write_lock/3`
+  (a transaction-scoped Postgres advisory lock keyed on the collection).
+  The `:memory` backend serializes individual calls through its GenServer
+  but leaves the window between the entity and mention calls open, which
+  is fine for a test backend. Custom backends get the full guarantee only
+  if they implement `with_write_lock/3`.
+  """
+  @callback sweep_orphans(binary(), opts :: keyword()) ::
+              :ok | {:error, term()}
+
+  # === Locking Callbacks ===
+
+  @doc """
+  Runs `fun` while holding the collection's graph write lock.
+
+  Optional. Backends that can serialize concurrent graph writes implement
+  this so `sweep_orphans/2` and the entity/mention persist path cannot
+  interleave. Backends that don't implement it simply run `fun`.
+
+  The lock is meant to cover DB writes only, never extraction, so callers
+  keep the wrapped work short.
+
+  ## Guarantees
+
+  The contract is mutual exclusion per collection, nothing more.
+  Atomicity is best-effort and store-dependent: callers must not assume
+  that a failure inside `fun` rolls back the writes it already made.
+
+  The `:ecto` backend does give both, because it takes the advisory lock
+  inside a transaction. The `:memory` backend implements neither (it
+  falls through to running `fun`), so a mid-`fun` failure leaves partial
+  graph data behind, which is fine for a test backend.
+
+  A custom store that wants the full guarantee has to do what the `:ecto`
+  backend does: hold a per-collection exclusive lock *and* run `fun`
+  inside a transaction that rolls back on failure, releasing the lock
+  when the transaction ends. Doing only one of the two is worse than
+  doing neither, since it reads as if both were covered.
+  """
+  @callback with_write_lock(binary(), opts :: keyword(), (-> result)) :: result
+            when result: term()
+
+  @optional_callbacks with_write_lock: 3, sweep_orphans: 2
+
   # === Detail Query Callbacks ===
 
   @doc """
@@ -368,6 +434,63 @@ defmodule Arcana.Graph.GraphStore do
   end
 
   @doc """
+  Sweeps orphaned graph data in a collection using the configured backend.
+  """
+  def sweep_orphans(collection_id, opts \\ []) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+
+    :telemetry.span(
+      [:arcana, :graph_store, :sweep_orphans],
+      %{collection_id: collection_id},
+      fn ->
+        result = dispatch(:sweep_orphans, backend, [collection_id], backend_opts, opts)
+        {result, %{backend: backend}}
+      end
+    )
+  end
+
+  @doc """
+  Sweeps orphaned graph data when the graph is enabled for this call.
+
+  Shared by `Arcana.delete/2` and the `replace: true` ingest path: both
+  drop documents whose chunks cascade away, which can strand zero-mention
+  entities. Returns `:ok` when there is nothing to sweep (no collection,
+  or the graph is disabled), otherwise the backend's result.
+  """
+  def maybe_sweep_orphans(collection_id, repo, opts) do
+    if collection_id && Arcana.Config.graph_enabled?(opts) do
+      sweep_orphans(collection_id, Keyword.put(opts, :repo, repo))
+    else
+      :ok
+    end
+  end
+
+  @doc """
+  Runs `fun` holding the collection's graph write lock on the configured backend.
+
+  Backends that don't implement `c:with_write_lock/3` just run `fun`, with
+  no locking and no rollback. See `c:with_write_lock/3` for what each
+  backend actually guarantees.
+  """
+  def with_write_lock(collection_id, opts, fun) when is_function(fun, 0) do
+    {backend, backend_opts, opts} = extract_backend(opts)
+    lock(backend, collection_id, Keyword.merge(backend_opts, opts), fun)
+  end
+
+  defp lock(:ecto, collection_id, opts, fun),
+    do: __MODULE__.Ecto.with_write_lock(collection_id, opts, fun)
+
+  defp lock(:memory, _collection_id, _opts, fun), do: fun.()
+
+  defp lock(module, collection_id, opts, fun) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :with_write_lock, 3) do
+      module.with_write_lock(collection_id, opts, fun)
+    else
+      fun.()
+    end
+  end
+
+  @doc """
   Gets a single entity by ID using the configured backend.
   """
   def get_entity(entity_id, opts \\ []) do
@@ -507,6 +630,11 @@ defmodule Arcana.Graph.GraphStore do
     __MODULE__.Ecto.delete_by_collection(collection_id, opts)
   end
 
+  defp dispatch(:sweep_orphans, :ecto, [collection_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Ecto.sweep_orphans(collection_id, opts)
+  end
+
   defp dispatch(:get_entity, :ecto, [entity_id], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     __MODULE__.Ecto.get_entity(entity_id, opts)
@@ -615,6 +743,11 @@ defmodule Arcana.Graph.GraphStore do
     __MODULE__.Memory.delete_by_collection(collection_id, opts)
   end
 
+  defp dispatch(:sweep_orphans, :memory, [collection_id], backend_opts, opts) do
+    opts = Keyword.merge(backend_opts, opts)
+    __MODULE__.Memory.sweep_orphans(collection_id, opts)
+  end
+
   defp dispatch(:get_entity, :memory, [entity_id], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     __MODULE__.Memory.get_entity(entity_id, opts)
@@ -721,6 +854,17 @@ defmodule Arcana.Graph.GraphStore do
   defp dispatch(:delete_by_collection, module, [collection_id], backend_opts, opts) do
     opts = Keyword.merge(backend_opts, opts)
     module.delete_by_collection(collection_id, opts)
+  end
+
+  # sweep_orphans/2 is optional, like with_write_lock/3: a store written
+  # against the behaviour before the callback existed keeps working, and
+  # skipping the sweep is what those callers already did.
+  defp dispatch(:sweep_orphans, module, [collection_id], backend_opts, opts) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :sweep_orphans, 2) do
+      module.sweep_orphans(collection_id, Keyword.merge(backend_opts, opts))
+    else
+      :ok
+    end
   end
 
   defp dispatch(:get_entity, module, [entity_id], backend_opts, opts) do

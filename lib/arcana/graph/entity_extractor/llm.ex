@@ -104,7 +104,12 @@ defmodule Arcana.Graph.EntityExtractor.LLM do
     1. Identify all significant named entities in the text
     2. Classify each entity into one of the types listed above
     3. Use "other" for entities that don't fit the categories
-    4. Include a brief description if the text provides context
+    4. Write entity names in lowercase with spaces between words - never
+       underscores or hyphens (e.g., "two year limited warranty", not
+       "Two_Year_Limited_Warranty"). Keep proper nouns capitalized as usual
+       (e.g., "Sam Altman", "OpenAI"). Always reuse the exact same name for
+       repeated mentions of the same entity
+    5. Include a brief description if the text provides context
 
     ## Type definitions:
     - person: Individual people, including names with titles (e.g., "Sam Altman", "Dr. Jane Smith", "CEO John Doe")
@@ -123,9 +128,16 @@ defmodule Arcana.Graph.EntityExtractor.LLM do
 
     ## Output format:
     Return a JSON array of entity objects. Each object should have:
-    - "name": The entity name (required)
+    - "name": The entity name, written per instruction 4 (required)
     - "type": One of the types listed above (required)
     - "description": Brief description from context (optional)
+
+    ```json
+    [
+      {"name": "Sam Altman", "type": "person", "description": "Brief context"},
+      {"name": "two year limited warranty", "type": "concept", "description": "Brief context"}
+    ]
+    ```
 
     Return only the JSON array, no other text.
     """
