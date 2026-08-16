@@ -249,24 +249,33 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   def delete_by_chunks(chunk_ids, opts) when is_list(chunk_ids) do
     repo = Keyword.fetch!(opts, :repo)
 
-    # Which collections these chunks belong to, read before the mentions go:
-    # afterwards there is nothing left to join through. Sweeping only these
-    # keeps a delete in one tenant off every other tenant's entities.
-    collection_ids = collections_for_chunks(chunk_ids, repo)
+    # The entities come back from the delete itself rather than from a read
+    # before it. Reading first leaves a window: a concurrent build can add a
+    # mention after the read, the delete takes it anyway, and its collection
+    # never makes the sweep list, so the new entity is orphaned. Taking a
+    # lock instead doesn't close that - the collection can't be locked until
+    # it has been discovered. RETURNING has no window at all, and a mention
+    # committed after the delete simply isn't deleted.
+    {_count, entity_ids} =
+      repo.delete_all(
+        from(m in EntityMention, where: m.chunk_id in ^chunk_ids, select: m.entity_id)
+      )
 
-    repo.delete_all(from(m in EntityMention, where: m.chunk_id in ^chunk_ids))
+    # Only the collections these chunks touched: a delete in one tenant must
+    # not sweep another tenant's entities.
+    collection_ids = collections_for_entities(entity_ids, repo)
 
     Enum.each(collection_ids, &sweep_orphans(&1, opts))
 
     :ok
   end
 
-  defp collections_for_chunks(chunk_ids, repo) do
+  defp collections_for_entities([], _repo), do: []
+
+  defp collections_for_entities(entity_ids, repo) do
     repo.all(
-      from(m in EntityMention,
-        join: e in Entity,
-        on: e.id == m.entity_id,
-        where: m.chunk_id in ^chunk_ids and not is_nil(e.collection_id),
+      from(e in Entity,
+        where: e.id in ^Enum.uniq(entity_ids) and not is_nil(e.collection_id),
         select: e.collection_id,
         distinct: true
       )

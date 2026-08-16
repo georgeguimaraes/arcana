@@ -362,4 +362,61 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       assert comm2.entity_ids == [id_map["kept"]]
     end
   end
+
+  describe "delete_by_chunks/2" do
+    test "sweeps orphans and dirties their communities, like the Ecto store",
+         %{pid: pid} do
+      {:ok, id_map} =
+        Memory.persist_entities(
+          "col-1",
+          [%{name: "Orphan", type: "concept"}, %{name: "Kept", type: "concept"}],
+          pid: pid
+        )
+
+      {:ok, other} =
+        Memory.persist_entities("col-2", [%{name: "Elsewhere", type: "concept"}], pid: pid)
+
+      :ok =
+        Memory.persist_mentions(
+          [
+            %{entity_name: "Orphan", chunk_id: "doomed-chunk"},
+            %{entity_name: "Kept", chunk_id: "surviving-chunk"}
+          ],
+          id_map,
+          pid: pid
+        )
+
+      :ok =
+        Memory.persist_mentions(
+          [%{entity_name: "Elsewhere", chunk_id: "other-chunk"}],
+          other,
+          pid: pid
+        )
+
+      :ok =
+        Memory.persist_communities(
+          "col-1",
+          [
+            %{id: "comm-1", level: 0, summary: "s", entity_ids: [id_map["orphan"]], dirty: false},
+            %{id: "comm-2", level: 0, summary: "s", entity_ids: [id_map["kept"]], dirty: false}
+          ],
+          pid: pid
+        )
+
+      :ok = Memory.delete_by_chunks(["doomed-chunk"], pid: pid)
+
+      assert [%{name: "Kept"}] = Memory.find_entities("col-1", pid: pid)
+      assert [%{name: "Elsewhere"}] = Memory.find_entities("col-2", pid: pid)
+
+      # The community that held the orphan has to be re-summarized. Dropping
+      # the entity without saying so leaves a summary describing something
+      # the graph no longer contains.
+      {:ok, comm1} = Memory.get_community("comm-1", pid: pid)
+      {:ok, comm2} = Memory.get_community("comm-2", pid: pid)
+      assert comm1.dirty
+      assert comm1.entity_ids == []
+      refute comm2.dirty
+      assert comm2.entity_ids == [id_map["kept"]]
+    end
+  end
 end

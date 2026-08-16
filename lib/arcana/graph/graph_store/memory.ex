@@ -352,12 +352,6 @@ defmodule Arcana.Graph.GraphStore.Memory do
     new_mentions =
       Enum.reject(state.mentions, fn m -> MapSet.member?(chunk_id_set, m.chunk_id) end)
 
-    # Find entity IDs that still have mentions
-    entities_with_mentions =
-      new_mentions
-      |> Enum.map(& &1.entity_id)
-      |> MapSet.new()
-
     # Only the collections these chunks touched: a delete in one tenant must
     # not sweep another tenant's entities, which is what the Ecto store does.
     affected =
@@ -372,39 +366,18 @@ defmodule Arcana.Graph.GraphStore.Memory do
         Enum.any?(entities, &MapSet.member?(affected, &1.id))
       end)
       |> Enum.map(fn {cid, _entities} -> cid end)
-      |> MapSet.new()
 
-    new_entities =
-      state.entities
-      |> Enum.map(fn {collection_id, entities} ->
-        if MapSet.member?(affected_collections, collection_id) do
-          {collection_id,
-           Enum.filter(entities, fn e -> MapSet.member?(entities_with_mentions, e.id) end)}
-        else
-          {collection_id, entities}
-        end
-      end)
-      |> Map.new()
-
-    # Get remaining entity IDs
-    remaining_entity_ids =
-      new_entities
-      |> Enum.flat_map(fn {_cid, ents} -> Enum.map(ents, & &1.id) end)
-      |> MapSet.new()
-
-    # Remove relationships referencing deleted entities
-    new_relationships =
-      Enum.filter(state.relationships, fn r ->
-        MapSet.member?(remaining_entity_ids, r.source_id) and
-          MapSet.member?(remaining_entity_ids, r.target_id)
-      end)
-
-    new_state = %{
-      state
-      | mentions: new_mentions,
-        entities: new_entities,
-        relationships: new_relationships
-    }
+    # Sweeping through the same helper the sweep_orphans call uses, rather
+    # than inline: the inline version dropped the orphans but never marked
+    # the communities holding them dirty, so the two backends disagreed
+    # about the same delete and stale summaries survived until the next
+    # full summarize pass.
+    new_state =
+      Enum.reduce(
+        affected_collections,
+        %{state | mentions: new_mentions},
+        &sweep_collection(&2, &1)
+      )
 
     {:reply, :ok, new_state}
   end
@@ -448,6 +421,14 @@ defmodule Arcana.Graph.GraphStore.Memory do
 
   @impl GenServer
   def handle_call({:sweep_orphans, collection_id}, _from, state) do
+    {:reply, :ok, sweep_collection(state, collection_id)}
+  end
+
+  # Drops entities in the collection that no mention points at any more,
+  # along with their relationships, and marks every community that held one
+  # dirty so it gets re-summarized. Shared with the delete_by_chunks path,
+  # which sweeps each collection its chunks touched.
+  defp sweep_collection(state, collection_id) do
     mentioned_ids = MapSet.new(state.mentions, & &1.entity_id)
 
     {kept, orphaned} =
@@ -470,14 +451,12 @@ defmodule Arcana.Graph.GraphStore.Memory do
         &mark_overlapping_dirty(&1, orphaned_ids)
       )
 
-    new_state = %{
+    %{
       state
       | entities: Map.put(state.entities, collection_id, kept),
         relationships: new_relationships,
         communities: new_communities
     }
-
-    {:reply, :ok, new_state}
   end
 
   @impl GenServer
