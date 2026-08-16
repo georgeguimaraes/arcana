@@ -58,6 +58,11 @@ defmodule Arcana.IngestBinaryTest do
     Repo.all(from(c in Chunk, where: c.document_id == ^document.id, order_by: c.chunk_index))
   end
 
+  defp page_for_offset(byte) do
+    page = Enum.find(PagedFixtureParser.pages(), &(byte >= &1.start and byte < &1.end))
+    page.number
+  end
+
   describe "ingest_binary/2" do
     test "ingests bytes, recording the filename as provenance" do
       content = "Some notes typed straight into memory, never written to disk."
@@ -365,6 +370,62 @@ defmodule Arcana.IngestBinaryTest do
       assert chunk.metadata["start_byte"] == nil
       refute Map.has_key?(chunk.metadata, "page_start")
       refute Map.has_key?(chunk.metadata, "page_end")
+    end
+
+    test "colliding atom and string offsets derive pages from the one that is stored" do
+      [page_one, _page_two, page_three] = PagedFixtureParser.pages()
+
+      put_arcana_env(:chunker, fn text, _opts ->
+        [
+          %{
+            text: text,
+            chunk_index: 0,
+            token_count: 5,
+            metadata: %{
+              :start_byte => page_one.start,
+              :end_byte => page_one.end,
+              "start_byte" => page_three.start,
+              "end_byte" => page_three.end
+            }
+          }
+        ]
+      end)
+
+      assert {:ok, document} =
+               Arcana.ingest_binary("ignored", filename: "doc.paged", repo: Repo)
+
+      assert [chunk] = chunks_of(document)
+
+      # The two keys sit on different pages, so reading the wrong one shows
+      assert page_for_offset(page_one.start) != page_for_offset(page_three.start)
+
+      # Chunker.metadata_for/1 stringifies both keys into one slot, so only
+      # one of the two survives. Pages have to follow whichever that is,
+      # not whichever a second implementation happens to reach first.
+      assert chunk.metadata["page_start"] == page_for_offset(chunk.metadata["start_byte"])
+    end
+
+    test "offsets in a keyword-list :metadata get pages instead of crashing" do
+      [_page_one, page_two, _page_three] = PagedFixtureParser.pages()
+
+      put_arcana_env(:chunker, fn text, _opts ->
+        [
+          %{
+            text: binary_part(text, page_two.start, page_two.end - page_two.start),
+            chunk_index: 0,
+            token_count: 5,
+            metadata: [start_byte: page_two.start, end_byte: page_two.end]
+          }
+        ]
+      end)
+
+      assert {:ok, document} =
+               Arcana.ingest_binary("ignored", filename: "doc.paged", repo: Repo)
+
+      assert [chunk] = chunks_of(document)
+      assert chunk.metadata["start_byte"] == page_two.start
+      assert chunk.metadata["page_start"] == 2
+      assert chunk.metadata["page_end"] == 2
     end
 
     test "parsers without page metadata leave chunks page-free" do

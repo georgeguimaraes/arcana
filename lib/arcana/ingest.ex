@@ -356,11 +356,19 @@ defmodule Arcana.Ingest do
   #
   # No pages, or a chunker that doesn't report offsets, leaves chunks
   # untouched rather than guessing.
+  # Offsets are read straight out of `Arcana.Chunker.metadata_for/1` — the
+  # very map that gets stored — instead of re-deriving the chunker's key
+  # shape here. `Arcana.Chunker` accepts them under `:metadata` or as
+  # top-level extras, with atom or string keys, and declared entries win
+  # over extras; going through metadata_for/1 makes those rules agree by
+  # construction rather than by two implementations staying in step.
+  # Deriving pages from anything else would cite an offset nobody can see
+  # in the stored chunk.
   defp attach_pages(chunks, pages) when is_list(pages) and pages != [] do
     Enum.map(chunks, fn chunk ->
-      metadata = Map.get(chunk, :metadata) || %{}
+      stored = Chunker.metadata_for(chunk)
 
-      case {chunk_offset(chunk, metadata, :start_byte), chunk_offset(chunk, metadata, :end_byte)} do
+      case {stored["start_byte"], stored["end_byte"]} do
         {start_byte, end_byte} when is_integer(start_byte) and is_integer(end_byte) ->
           last_byte = max(end_byte - 1, start_byte)
 
@@ -369,7 +377,7 @@ defmodule Arcana.Ingest do
             "page_end" => page_at(pages, last_byte)
           }
 
-          Map.put(chunk, :metadata, Map.merge(metadata, page_metadata))
+          Map.put(chunk, :metadata, Map.merge(declared_metadata(chunk), page_metadata))
 
         _ ->
           chunk
@@ -379,32 +387,13 @@ defmodule Arcana.Ingest do
 
   defp attach_pages(chunks, _pages), do: chunks
 
-  # Keys are only stringified at insert time (see `Arcana.Chunker.metadata_for/1`), so
-  # this runs against whatever shape the chunker used. `Arcana.Chunker`
-  # accepts offsets under `:metadata` or as top-level extras, with atom or
-  # string keys; reading just one shape drops pages silently for every
-  # chunker but the built-in one. Precedence mirrors metadata_for/1
-  # exactly: a declared :metadata entry wins over a top-level extra
-  # because it is *present*, not because it is truthy. Falling through on
-  # a nil or false value would read an offset that never reaches storage.
-  defp chunk_offset(chunk, metadata, key) do
-    case fetch_either(metadata, key) do
-      {:ok, value} -> value
-      :error -> fetch_or_nil(chunk, key)
-    end
-  end
-
-  defp fetch_or_nil(map, key) do
-    case fetch_either(map, key) do
-      {:ok, value} -> value
-      :error -> nil
-    end
-  end
-
-  defp fetch_either(map, key) do
-    case Map.fetch(map, key) do
-      {:ok, value} -> {:ok, value}
-      :error -> Map.fetch(map, to_string(key))
+  # metadata_for/1 takes a keyword list under `:metadata` in stride
+  # (`Map.new/1` accepts one), so merging the pages back in has to too.
+  defp declared_metadata(chunk) do
+    case Map.get(chunk, :metadata) do
+      nil -> %{}
+      map when is_map(map) -> map
+      list when is_list(list) -> Map.new(list)
     end
   end
 
