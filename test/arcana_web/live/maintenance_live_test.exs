@@ -49,9 +49,9 @@ defmodule ArcanaWeb.MaintenanceLiveTest do
     end
 
     # The dashboard's maintenance actions run in a supervised task, so the
-    # result lands in the LiveView asynchronously. Poll observable state, not
-    # flash text: the dashboard sets flash messages but never renders them, so
-    # a flash-based wait can only ever time out.
+    # result lands in the LiveView asynchronously. Poll observable state
+    # rather than the flash: a flash is one render away from being replaced,
+    # and the state is what the assertion is actually about.
     defp wait_until(fun, attempts \\ 100) do
       cond do
         fun.() ->

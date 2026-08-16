@@ -61,22 +61,35 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       |> assign(collections: Enum.map(collections, & &1.name))
       |> assign(collections_for_assign: collections)
       |> assign(orphaned_stats: count_orphaned_graph_data(repo))
-      |> assign(unsummarized_communities: count_unsummarized_communities(repo))
+      |> assign(unsummarized_communities: count_unsummarized_communities(repo, allowed))
     end
 
     # Communities the summarizer would pick up: without a summary they're
     # invisible to `ask(graph: true)`, dirty ones carry a stale summary.
     # Scoped to the levels that get summarized, so the hint can reach zero.
-    defp count_unsummarized_communities(repo) do
-      repo.one(
+    defp count_unsummarized_communities(repo, allowed) do
+      query =
         from(c in Arcana.Graph.Community,
           where: is_nil(c.summary) or c.dirty or c.change_count >= ^regeneration_threshold(),
           where: ^summarizable_levels(),
           select: count(c.id)
         )
-      ) || 0
+
+      repo.one(scope_communities(query, allowed)) || 0
     rescue
       _ -> 0
+    end
+
+    # A restricted dashboard must not be told about other tenants' work, the
+    # same way load_stats/2 and fetch_collections/2 are scoped.
+    defp scope_communities(query, :all), do: query
+
+    defp scope_communities(query, allowed) when is_list(allowed) do
+      from(c in query,
+        join: col in Arcana.Collection,
+        on: col.id == c.collection_id,
+        where: col.name in ^allowed
+      )
     end
 
     # Same predicate CommunitySummarizer.needs_regeneration?/2 applies, so the
@@ -218,12 +231,25 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           socket
         ) do
       collection = if collection == "", do: nil, else: collection
-      {:noreply, assign(socket, summarize_communities_collection: collection)}
+
+      case validate_maintenance_collection(socket, collection) do
+        {:ok, collection} ->
+          {:noreply, assign(socket, summarize_communities_collection: collection)}
+
+        :error ->
+          {:noreply, socket}
+      end
     end
 
     def handle_event("summarize_communities", _params, socket) do
       if socket.assigns.llm_configured? do
-        {:noreply, start_summarize_communities(socket)}
+        case validate_maintenance_collection(
+               socket,
+               socket.assigns.summarize_communities_collection
+             ) do
+          {:ok, collection} -> {:noreply, start_summarize_communities(socket, collection)}
+          :error -> {:noreply, put_flash(socket, :error, "Select an allowed collection first")}
+        end
       else
         {:noreply,
          put_flash(socket, :error, "No LLM configured. Set :arcana, :llm in your config.")}
@@ -375,16 +401,14 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       kind, reason -> {:error, Exception.format_banner(kind, reason)}
     end
 
-    defp start_summarize_communities(socket) do
+    defp start_summarize_communities(socket, collection) do
       repo = socket.assigns.repo
-      collection = socket.assigns.summarize_communities_collection
       parent = self()
 
       ArcanaWeb.TaskSupervisor.start_child(fn ->
         progress_fn = progress_sender(parent, :summarize_communities_progress)
 
-        opts = [progress: progress_fn]
-        opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
+        opts = maintenance_collection_opts([progress: progress_fn], collection)
 
         result = safely(fn -> Arcana.Maintenance.summarize_communities(repo, opts) end)
 

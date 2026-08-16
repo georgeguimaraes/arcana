@@ -5,6 +5,17 @@ defmodule Arcana.MaintenanceCommunitiesTest do
   alias Arcana.Graph.{Community, Entity, Relationship}
   alias Arcana.Maintenance
 
+  defmodule TwoLevelDetector do
+    @moduledoc false
+    @behaviour Arcana.Graph.CommunityDetector
+
+    @impl true
+    def detect(entities, _relationships, _opts) do
+      ids = Enum.map(entities, & &1.id)
+      {:ok, [%{level: 0, entity_ids: ids}, %{level: 1, entity_ids: ids}]}
+    end
+  end
+
   defmodule StubDetector do
     @moduledoc false
     @behaviour Arcana.Graph.CommunityDetector
@@ -130,6 +141,32 @@ defmodule Arcana.MaintenanceCommunitiesTest do
 
       # The stub lumps every entity into one community; Leiden would not.
       assert membership(collection) == [entities |> Enum.map(& &1.id) |> Enum.sort()]
+    end
+
+    test "summary reuse keys on level, so two levels sharing a membership don't swap", %{
+      collection: collection
+    } do
+      # Keyed on membership alone, these two collapse to one key and whichever
+      # row Postgres returned last wins - nondeterministically.
+      put_arcana_env(:graph, community_detector: {TwoLevelDetector, []})
+
+      assert {:ok, _} = Maintenance.detect_communities(Repo, collection: collection.name)
+
+      for community <- Repo.all(Community) do
+        community
+        |> Community.changeset(%{summary: "level #{community.level} summary", dirty: false})
+        |> Repo.update!()
+      end
+
+      assert {:ok, _} = Maintenance.detect_communities(Repo, collection: collection.name)
+
+      after_rerun =
+        Community
+        |> Repo.all()
+        |> Map.new(&{&1.level, &1.summary})
+
+      assert after_rerun[0] == "level 0 summary"
+      assert after_rerun[1] == "level 1 summary"
     end
 
     test "configured_detector/0 reports the detector that will actually run" do

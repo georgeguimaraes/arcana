@@ -918,16 +918,20 @@ defmodule Arcana.Maintenance do
     end
   end
 
-  # Detection is delete-all + reinsert, so without this every rebuild
-  # would recreate each community with a nil summary and dirty: true and
-  # the next summarize pass would pay one LLM call per row, even for
-  # memberships that didn't change. Keyed on the sorted entity-id set
-  # because the community rows themselves are recreated with new ids.
+  # Detection is delete-all + reinsert, so without this every rebuild would
+  # recreate each community with a nil summary, leaving `ask(graph: true)`
+  # with no community context at all until the next summarize pass ran.
+  #
+  # Keyed on level AND the sorted entity-id set: the rows are recreated with
+  # new ids, and keying on membership alone collapses two levels that happen
+  # to share a membership (routine when a level-0 community doesn't merge
+  # upward), so whichever row Postgres returned last would win.
   defp snapshot_communities(collection_id, repo) do
     repo.all(
       from(c in Arcana.Graph.Community,
         where: c.collection_id == ^collection_id,
         select: %{
+          level: c.level,
           entity_ids: c.entity_ids,
           summary: c.summary,
           dirty: c.dirty,
@@ -936,16 +940,27 @@ defmodule Arcana.Maintenance do
       )
     )
     |> Map.new(fn community ->
-      {Enum.sort(community.entity_ids || []), Map.delete(community, :entity_ids)}
+      {snapshot_key(community.level, community.entity_ids),
+       Map.drop(community, [:level, :entity_ids])}
     end)
   end
 
-  # Carries the previous summary and change tracking over verbatim: a
-  # clean community stays clean, one that was already awaiting a refresh
-  # stays dirty, and genuinely new memberships keep the schema defaults
-  # (nil summary, dirty) so the summarizer picks them up.
+  defp snapshot_key(level, entity_ids), do: {level, entity_ids |> List.wrap() |> Enum.sort()}
+
+  # Carries the previous summary and change tracking over verbatim: a clean
+  # community stays clean, one already awaiting a refresh stays dirty, and
+  # genuinely new memberships keep the schema defaults so the summarizer
+  # picks them up.
+  #
+  # Known limitation: a summary is generated from the community's
+  # relationships as well as its entities, and ingesting another document
+  # adds relationships without moving anyone between communities. Membership
+  # is not a proxy for content, so a summary can stay clean while the graph
+  # underneath it moves on. `change_count` has no writers, so its threshold
+  # cannot rescue that either - use `summarize_communities(force: true)` to
+  # refresh deliberately.
   defp carry_over_summary(community, previous) do
-    key = community |> Map.get(:entity_ids) |> List.wrap() |> Enum.sort()
+    key = snapshot_key(Map.get(community, :level), Map.get(community, :entity_ids))
 
     case Map.fetch(previous, key) do
       {:ok, tracking} -> Map.merge(community, tracking)
