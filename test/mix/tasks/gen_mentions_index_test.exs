@@ -28,6 +28,8 @@ defmodule Mix.Tasks.Arcana.Graph.Gen.MentionsIndexTest do
 
   setup_all do
     Application.put_env(@otp_app, CustomPrivRepo, priv: "priv/mentions_index_custom_priv")
+
+    on_exit(fn -> Application.delete_env(@otp_app, CustomPrivRepo) end)
     :ok
   end
 

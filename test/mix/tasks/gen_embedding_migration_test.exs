@@ -28,6 +28,8 @@ defmodule Mix.Tasks.Arcana.Gen.EmbeddingMigrationTest do
 
   setup_all do
     Application.put_env(@otp_app, CustomPrivRepo, priv: "priv/embedding_migration_custom_priv")
+
+    on_exit(fn -> Application.delete_env(@otp_app, CustomPrivRepo) end)
     :ok
   end
 

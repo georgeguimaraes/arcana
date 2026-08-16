@@ -18,6 +18,8 @@ defmodule Mix.Tasks.Arcana.Graph.InstallTest do
       priv: "priv/graph_install_custom_priv"
     )
 
+    on_exit(fn -> Application.delete_env(:arcana_graph_install_test, CustomPrivRepo) end)
+
     :ok
   end
 

@@ -358,6 +358,8 @@ defmodule Mix.Tasks.Arcana.InstallTest do
   # migration silently never runs. See Arcana.MixHelpers.migrations_path/1.
   setup_all do
     Application.put_env(:arcana_install_test, CustomPrivRepo, priv: "priv/install_custom_priv")
+
+    on_exit(fn -> Application.delete_env(:arcana_install_test, CustomPrivRepo) end)
     :ok
   end
 
