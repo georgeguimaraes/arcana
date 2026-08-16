@@ -3,8 +3,11 @@ name: Run Tests
 on:
   push:
     branches: ["main"]
+  # Every PR, whatever it targets. Filtering on ["main"] meant a PR stacked
+  # on another PR's branch never ran the suite at all - it still reported
+  # all checks green, because the only ones that ran were the title
+  # validator and the review bot.
   pull_request:
-    branches: ["main"]
   workflow_dispatch:
 
 permissions:
