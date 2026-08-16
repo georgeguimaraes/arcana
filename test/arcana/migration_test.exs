@@ -80,6 +80,20 @@ defmodule Arcana.MigrationTest do
     Ecto.Migrator.up(Repo, System.unique_integer([:positive]), name, log: false)
   end
 
+  # 'n' = SET NULL (what :nilify_all produces), 'r' = RESTRICT.
+  defp collection_fk_rule do
+    %{rows: [[rule]]} =
+      SQL.query!(
+        Repo,
+        "SELECT confdeltype FROM pg_constraint " <>
+          "WHERE conname = 'arcana_documents_collection_id_fkey' " <>
+          "AND conrelid = 'arcana_documents'::regclass AND contype = 'f'",
+        []
+      )
+
+    rule
+  end
+
   defp columns(table) do
     %{rows: rows} =
       SQL.query!(
@@ -170,6 +184,74 @@ defmodule Arcana.MigrationTest do
         SQL.query!(Repo, "SELECT question FROM arcana_evaluation_test_cases", [])
 
       assert question == "kept?", "adoption must not drop existing rows"
+    end
+
+    test "converges the collection FK an old installer left as SET NULL" do
+      # Every installer template shipped before the versioned migrations
+      # emitted on_delete: :nilify_all here, so deleting a collection
+      # detached its documents instead of refusing. Adoption has to swap the
+      # rule, or the same delete behaves differently on an old database than
+      # on a fresh one.
+      SQL.query!(Repo, "CREATE EXTENSION IF NOT EXISTS vector", [])
+
+      SQL.query!(
+        Repo,
+        """
+        CREATE TABLE arcana_collections (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          name varchar(255) NOT NULL,
+          description text,
+          inserted_at timestamp(0) NOT NULL DEFAULT now(),
+          updated_at timestamp(0) NOT NULL DEFAULT now()
+        )
+        """,
+        []
+      )
+
+      SQL.query!(
+        Repo,
+        """
+        CREATE TABLE arcana_documents (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          content text,
+          content_type varchar(255) DEFAULT 'text/plain',
+          source_id varchar(255),
+          file_path varchar(255),
+          metadata jsonb DEFAULT '{}',
+          status varchar(255) DEFAULT 'pending',
+          error text,
+          chunk_count integer DEFAULT 0,
+          collection_id uuid REFERENCES arcana_collections(id) ON DELETE SET NULL,
+          inserted_at timestamp(0) NOT NULL DEFAULT now(),
+          updated_at timestamp(0) NOT NULL DEFAULT now()
+        )
+        """,
+        []
+      )
+
+      assert collection_fk_rule() == "n", "precondition: the old rule is SET NULL"
+
+      SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('tenant')", [])
+
+      SQL.query!(
+        Repo,
+        "INSERT INTO arcana_documents (content, collection_id) " <>
+          "SELECT 'kept', id FROM arcana_collections",
+        []
+      )
+
+      migrate(Arcana.Migration)
+
+      assert collection_fk_rule() == "r",
+             "adoption must swap the collection FK to RESTRICT"
+
+      # And it actually bites: the delete is refused rather than detaching.
+      assert_raise Postgrex.Error, fn ->
+        SQL.query!(Repo, "DELETE FROM arcana_collections", [])
+      end
+
+      %{rows: [[content]]} = SQL.query!(Repo, "SELECT content FROM arcana_documents", [])
+      assert content == "kept", "converging the constraint must not touch rows"
     end
 
     test "refuses to run against a database a newer release migrated" do

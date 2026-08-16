@@ -233,9 +233,9 @@ defmodule Arcana.Migration do
 
       add(
         :collection_id,
-        # :restrict, not :nilify_all. The installer template said otherwise,
-        # but every migrated database has :restrict and the dashboard relies
-        # on a delete failing rather than silently orphaning documents.
+        # :restrict so deleting a collection that still has documents fails
+        # loudly. Every database installed before this module has
+        # :nilify_all instead - see converge_v1/1, which swaps it.
         references(:arcana_collections,
           type: :binary_id,
           on_delete: :restrict,
@@ -344,13 +344,51 @@ defmodule Arcana.Migration do
     # The vector extension stays: other tables in the database may use it.
   end
 
-  # Columns added by Arcana releases after the table itself shipped. An
-  # existing install skips the create above, so these have to be applied on
-  # their own or the schema reads a column the database lacks.
+  # Columns and constraints added by Arcana releases after the table itself
+  # shipped. An existing install skips the create above, so these have to be
+  # applied on their own or the schema reads a column the database lacks.
   defp converge_v1(prefix) do
     execute(
       "ALTER TABLE #{qualify("arcana_evaluation_test_cases", prefix)} " <>
         "ADD COLUMN IF NOT EXISTS reference_answer text"
     )
+
+    converge_collection_fk(prefix)
+  end
+
+  # Every installer template shipped before this module emitted
+  # `on_delete: :nilify_all` on documents.collection_id, so deleting a
+  # collection quietly detached its documents instead of refusing. They kept
+  # their chunks and stayed searchable while belonging to nothing, and the
+  # dashboard had no way to tell you it had happened.
+  #
+  # A fresh install gets :restrict from the create above. Without this an
+  # adopted database keeps the old rule forever and the same delete behaves
+  # differently depending on when the database was first installed.
+  #
+  # The name is Ecto's default for this reference and is what every template
+  # produced; a hand-renamed constraint is left alone rather than guessed at.
+  defp converge_collection_fk(prefix) do
+    documents = qualify("arcana_documents", prefix)
+    collections = qualify("arcana_collections", prefix)
+
+    execute("""
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'arcana_documents_collection_id_fkey'
+          AND conrelid = '#{documents}'::regclass
+          AND confdeltype <> 'r'
+      ) THEN
+        ALTER TABLE #{documents}
+          DROP CONSTRAINT arcana_documents_collection_id_fkey;
+        ALTER TABLE #{documents}
+          ADD CONSTRAINT arcana_documents_collection_id_fkey
+          FOREIGN KEY (collection_id) REFERENCES #{collections}(id)
+          ON DELETE RESTRICT;
+      END IF;
+    END $$;
+    """)
   end
 end

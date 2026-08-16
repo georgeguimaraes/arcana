@@ -13,7 +13,7 @@ search returns one shape in every mode, and the library no longer drags a
 machine-learning toolchain into apps that bring their own embedder.
 
 This is a major version. Read "Backwards incompatible changes" before
-upgrading: ten things break, and how you install and upgrade the schema
+upgrading: eleven things break, and how you install and upgrade the schema
 changes for everyone.
 
 ### Enhancements
@@ -84,6 +84,7 @@ changes for everyone.
   * [ArcanaWeb.Router] The `on_mount` hook is renamed `ArcanaWeb.Router.Prefix` to `ArcanaWeb.Router.Scope`. Apps that named it in their own `on_mount` list must update it
   * [Arcana.Collection] `resolve_ids/2` returns `{:ok, nil} | {:ok, [uuid]} | {:error, {:unknown_collection, name}}` instead of `nil | [uuid]`
   * [Arcana.Migration] **Every install must run one migration to adopt versioned migrations.** Arcana's DDL used to live in the installer templates, with a separate mix task per later change; it now lives in `Arcana.Migration` and `Arcana.Graph.Migration`, which record a version per install. Write a migration calling `Arcana.Migration.up()` (and `Arcana.Graph.Migration.up()` if you use GraphRAG) and run it. Version 1 converges an existing database: it creates only what is absent and adds only what a later release introduced, so it drops nothing and re-runs nothing. It also applies both changes that shipped as standalone upgrade tasks, the entity-mention unique index and `communities.summary_fingerprint`, so those tasks are gone
+  * [Arcana.Migration] **Deleting a collection that still has documents now fails instead of detaching them.** Every installer template shipped before versioned migrations emitted `on_delete: :nilify_all` on `arcana_documents.collection_id`, so deleting a collection silently set its documents' `collection_id` to `NULL`: they kept their chunks and stayed searchable while belonging to no collection, with nothing to tell you it had happened. Version 1 swaps the constraint to `ON DELETE RESTRICT`, so the delete is refused while documents remain. Delete the documents first, or reassign them. The dashboard explains the refusal rather than erroring
   * [Arcana.FileParser.PDF.Poppler] `parse/2` returns `{:ok, text, meta}` instead of `{:ok, text}`, where `meta` carries page byte ranges. A custom parser that delegates straight to it and matches `{:ok, text}` now raises a `MatchError`. Callers going through `Arcana.FileParser.PDF.parse/3` or `Arcana.Parser.parse/1` are unaffected: both still normalize to a two-tuple
   * [mix] `bumblebee` and `req_llm` are no longer pulled in transitively. Apps using the default local embedder must add `{:bumblebee, "~> 0.6"}` and a backend such as `{:exla, "~> 0.10"}`; apps passing model strings such as `"openai:gpt-4o-mini"` as the LLM, or using `Arcana.Loop`, must add `{:req_llm, "~> 1.2"}`. Both raise a message naming the missing dependency
   * [Arcana.TaskSupervisor] The supervisor now registers its process under `ArcanaWeb.TaskSupervisor`. Calling `Task.Supervisor.start_child(Arcana.TaskSupervisor, fun)` by the old registered name fails. The deprecated module still delegates `child_spec/1` and `start_child/1`, so only passing the module as a registered name to `Task.Supervisor` directly breaks
