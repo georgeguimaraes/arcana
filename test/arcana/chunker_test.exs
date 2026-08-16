@@ -114,4 +114,45 @@ defmodule Arcana.ChunkerTest do
       assert length(token_chunks) < length(char_chunks)
     end
   end
+
+  describe "source offsets" do
+    test "every chunk carries byte offsets that slice back to its text" do
+      text =
+        Enum.map_join(1..40, "\n\n", fn i ->
+          "Paragraph #{i} with enough words to make the chunker split things up."
+        end)
+
+      chunks = Chunker.chunk(text, chunk_size: 60, chunk_overlap: 10)
+
+      assert length(chunks) > 1
+
+      for chunk <- chunks do
+        start_byte = chunk.metadata["start_byte"]
+        end_byte = chunk.metadata["end_byte"]
+
+        assert is_integer(start_byte) and is_integer(end_byte)
+        assert binary_part(text, start_byte, end_byte - start_byte) == chunk.text
+      end
+    end
+
+    test "offsets stay correct when the same text repeats" do
+      # A naive scan for chunk text would mislocate these; the offsets
+      # come from the splitter itself
+      paragraph = "The very same paragraph repeated verbatim several times over."
+      text = Enum.map_join(1..12, "\n\n", fn _ -> paragraph end)
+
+      chunks = Chunker.chunk(text, chunk_size: 40, chunk_overlap: 5)
+
+      offsets = Enum.map(chunks, & &1.metadata["start_byte"])
+
+      assert offsets == Enum.sort(offsets)
+      assert length(Enum.uniq(offsets)) == length(offsets)
+
+      for chunk <- chunks do
+        start_byte = chunk.metadata["start_byte"]
+        end_byte = chunk.metadata["end_byte"]
+        assert binary_part(text, start_byte, end_byte - start_byte) == chunk.text
+      end
+    end
+  end
 end

@@ -70,6 +70,12 @@ defmodule Arcana do
   """
   defdelegate ingest_file(path, opts), to: Arcana.Ingest
 
+  @doc """
+  Ingests in-memory bytes, routing on the required `:filename` option's
+  extension. See `Arcana.Ingest.ingest_binary/2` for options.
+  """
+  defdelegate ingest_binary(binary, opts), to: Arcana.Ingest
+
   # === Search ===
 
   @doc """
