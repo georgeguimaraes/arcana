@@ -124,6 +124,47 @@ defmodule Arcana.Graph.CommunitySummarizer do
   end
 
   @doc """
+  Digest of the entities and relationships a summary was generated from.
+
+  Membership alone can't answer "is this summary still accurate?": a summary
+  is written from relationship text too, and ingesting another document adds
+  relationships without moving anyone between communities. Storing this
+  alongside the summary is what makes the question answerable later.
+
+  Covers the fields a summarizer is given: entity name, type and
+  description, and relationship type and description. The built-in prompt
+  only renders names and types, so a description edit can cost one redundant
+  call - deliberate, since a custom summarizer is free to read descriptions,
+  and over-refreshing is the safe direction. It never goes the other way.
+  """
+  def content_fingerprint(entities, relationships) do
+    entity_part =
+      entities
+      |> Enum.map(&{&1.id, &1.name, &1.type, Map.get(&1, :description)})
+      |> Enum.sort()
+
+    relationship_part =
+      relationships
+      |> Enum.map(&{&1.source_id, &1.target_id, Map.get(&1, :type), Map.get(&1, :description)})
+      |> Enum.sort()
+
+    digest =
+      [entity_part, relationship_part]
+      |> Enum.map_join("\u0000", &inspect(&1, limit: :infinity, printable_limit: :infinity))
+      |> then(&:crypto.hash(:sha256, &1))
+
+    Base.encode16(digest, case: :lower)
+  end
+
+  @doc """
+  The change-count threshold above which a clean summary is regenerated.
+
+  Exposed so callers that predict what a summarize run will process (the
+  dashboard's hint, for one) can apply the same rule.
+  """
+  def default_threshold, do: @default_threshold
+
+  @doc """
   Checks if a community needs its summary regenerated.
 
   ## Regeneration Triggers
@@ -131,6 +172,9 @@ defmodule Arcana.Graph.CommunitySummarizer do
     - `dirty: true` - Community was modified since last summary
     - `change_count >= threshold` - Many changes accumulated
     - `summary: nil` - No summary exists yet
+    - `summary_fingerprint: nil` - Summary predates fingerprinting, so there
+      is no way to tell whether it still matches the graph. It regenerates
+      once, the run records a fingerprint, and it settles from then on
 
   ## Options
 
@@ -145,6 +189,10 @@ defmodule Arcana.Graph.CommunitySummarizer do
     cond do
       Map.get(community, :dirty, false) -> true
       is_nil(Map.get(community, :summary)) -> true
+      # Written before fingerprints existed, so there is no way to tell
+      # whether it still matches the graph. Regenerate once; the run stores
+      # a fingerprint and it settles from then on.
+      is_nil(Map.get(community, :summary_fingerprint)) -> true
       Map.get(community, :change_count, 0) >= threshold -> true
       true -> false
     end

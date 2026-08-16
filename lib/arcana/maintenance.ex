@@ -16,7 +16,7 @@ defmodule Arcana.Maintenance do
   """
 
   alias Arcana.{Chunk, Chunker, Collection, Document, Embedder}
-  alias Arcana.Graph.{EntityMention, GraphStore}
+  alias Arcana.Graph.{CommunitySummarizer, EntityMention, GraphStore}
   alias Ecto.Adapters.SQL
 
   import Ecto.Query
@@ -694,8 +694,30 @@ defmodule Arcana.Maintenance do
 
     * `:collection` - Filter to a specific collection by name (default: all collections)
     * `:resolution` - Community detection resolution (default: 1.0)
-    * `:max_level` - Maximum hierarchy levels (default: 3)
+    * `:objective` - Quality function (default: `:cpm`)
+    * `:iterations` - Optimization iterations (default: 2)
+    * `:seed` - Random seed; `0` lets the algorithm randomize (default: 0)
+    * `:min_size` - Minimum community size to keep (default: 1)
+    * `:max_level` - Maximum hierarchy levels (default: 1, from `:community_levels`)
     * `:progress` - Function to call with progress updates `fn current, total -> :ok end`
+
+  ## Configuration
+
+  Every detection knob can also be set globally, and the detector itself
+  is pluggable:
+
+      config :arcana, :graph,
+        community_detector: :leiden,
+        resolution: 1.0,
+        objective: :cpm,
+        iterations: 2,
+        seed: 42,
+        min_size: 1,
+        community_levels: 3
+
+  Knobs resolve in this order, later wins: library defaults, then
+  `config :arcana, :graph`, then options carried by the configured
+  `community_detector` tuple, then the per-call options above.
 
   ## Examples
 
@@ -708,17 +730,13 @@ defmodule Arcana.Maintenance do
       # With custom resolution
       Arcana.Maintenance.detect_communities(MyApp.Repo, resolution: 0.5)
 
+      # Reproducible membership
+      Arcana.Maintenance.detect_communities(MyApp.Repo, seed: 42)
+
   """
   def detect_communities(repo, opts \\ []) do
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
     collection_filter = Keyword.get(opts, :collection)
-    graph_config = Arcana.Graph.config()
-    resolution = Keyword.get(opts, :resolution, graph_config[:resolution] || 1.0)
-    objective = Keyword.get(opts, :objective, :cpm)
-    iterations = Keyword.get(opts, :iterations, 2)
-    seed = Keyword.get(opts, :seed, 0)
-    min_size = Keyword.get(opts, :min_size, graph_config[:min_size] || 1)
-    max_level = Keyword.get(opts, :max_level, graph_config[:community_levels] || 1)
 
     strict? = Arcana.Config.strict_collections?(opts)
 
@@ -727,17 +745,7 @@ defmodule Arcana.Maintenance do
         {:ok, %{collections: 0, communities: 0}}
       else
         total_collections = length(collections)
-
-        detector_opts = [
-          resolution: resolution,
-          objective: objective,
-          iterations: iterations,
-          seed: seed,
-          min_size: min_size,
-          max_level: max_level
-        ]
-
-        detector_module = Arcana.Graph.CommunityDetector.Leiden
+        detector = resolve_detector(opts)
 
         results =
           collections
@@ -747,8 +755,7 @@ defmodule Arcana.Maintenance do
               detect_communities_for_collection(
                 collection,
                 repo,
-                detector_module,
-                detector_opts,
+                detector,
                 progress_fn
               )
 
@@ -773,11 +780,84 @@ defmodule Arcana.Maintenance do
     end
   end
 
+  @detection_keys [:resolution, :objective, :iterations, :seed, :min_size, :max_level]
+  @detection_defaults [
+    resolution: 1.0,
+    objective: :cpm,
+    iterations: 2,
+    seed: 0,
+    min_size: 1,
+    max_level: 1
+  ]
+
+  @doc false
+  # Resolved detection knobs, for callers that want to report what a
+  # detection run will actually use (the detect_communities mix task).
+  def detection_opts(opts \\ []) do
+    case resolve_detector(opts) do
+      {_module, detector_opts} -> detector_opts
+      _detector -> resolve_detection_opts(opts, [])
+    end
+  end
+
+  # Builds the detector from `config :arcana, :graph` plus per-call opts.
+  # Precedence, later wins: library defaults, graph config knobs, opts on
+  # the configured detector tuple, per-call opts.
+  defp resolve_detector(opts) do
+    case configured_detector() do
+      nil -> nil
+      fun when is_function(fun, 3) -> fun
+      {module, mod_opts} -> {module, resolve_detection_opts(opts, mod_opts)}
+    end
+  end
+
+  @doc """
+  The community detector this install would use.
+
+  Returns `{module, opts}`, a 3-arity function, or `nil`. Public so callers
+  can check the dependency the configured detector actually needs, rather
+  than assuming the built-in one.
+  """
+  def configured_detector do
+    case fetch_graph_config(:community_detector) do
+      {:ok, value} -> Arcana.Config.parse_community_detector_config(value)
+      :error -> {Arcana.Graph.CommunityDetector.Leiden, []}
+    end
+  end
+
+  defp fetch_graph_config(key) do
+    case Arcana.Config.get_env(:graph, []) do
+      graph_opts when is_list(graph_opts) -> Keyword.fetch(graph_opts, key)
+      %{} = graph_opts -> Map.fetch(graph_opts, key)
+      _other -> :error
+    end
+  end
+
+  defp resolve_detection_opts(opts, mod_opts) do
+    @detection_defaults
+    |> Keyword.merge(graph_detection_opts())
+    |> Keyword.merge(mod_opts)
+    |> Keyword.merge(Keyword.take(opts, @detection_keys))
+  end
+
+  defp graph_detection_opts do
+    graph_config = Arcana.Graph.config()
+
+    [
+      resolution: graph_config[:resolution],
+      objective: graph_config[:objective],
+      iterations: graph_config[:iterations],
+      seed: graph_config[:seed],
+      min_size: graph_config[:min_size],
+      max_level: graph_config[:max_level] || graph_config[:community_levels]
+    ]
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
   defp detect_communities_for_collection(
          collection,
          repo,
-         detector_module,
-         detector_opts,
+         detector,
          progress_fn
        ) do
     alias Arcana.Graph.{CommunityDetector, Entity, Relationship}
@@ -789,12 +869,15 @@ defmodule Arcana.Maintenance do
       _ -> :ok
     end
 
-    # Fetch entities and relationships for this collection
+    # Fetch entities and relationships for this collection. The order is
+    # pinned: detectors index nodes by position, so a stable seed only
+    # yields stable membership when the input order is stable too.
     entities =
       repo.all(
         from(e in Entity,
           where: e.collection_id == ^collection.id,
-          select: %{id: e.id, name: e.name, type: e.type}
+          order_by: e.id,
+          select: %{id: e.id, name: e.name, type: e.type, description: e.description}
         )
       )
 
@@ -804,22 +887,30 @@ defmodule Arcana.Maintenance do
           join: e in Entity,
           on: r.source_id == e.id,
           where: e.collection_id == ^collection.id,
-          select: %{source_id: r.source_id, target_id: r.target_id, strength: r.strength}
+          order_by: r.id,
+          select: %{
+            source_id: r.source_id,
+            target_id: r.target_id,
+            strength: r.strength,
+            type: r.type,
+            description: r.description
+          }
         )
       )
 
     if entities == [] do
       %{communities: 0, entities: 0, relationships: 0}
     else
-      # Clear existing communities for this collection
+      # Clear existing communities for this collection, keeping what we
+      # know about each membership so unchanged ones don't get re-summarized
+      previous = snapshot_communities(collection.id, repo)
       repo.delete_all(from(c in Arcana.Graph.Community, where: c.collection_id == ^collection.id))
-
-      # Run community detection with configured detector
-      detector = {detector_module, detector_opts}
 
       case CommunityDetector.detect(detector, entities, relationships) do
         {:ok, communities} ->
           # Persist communities
+          current = current_fingerprints(communities, entities, relationships)
+          communities = Enum.map(communities, &carry_over_summary(&1, previous, current))
           :ok = GraphStore.persist_communities(collection.id, communities, repo: repo)
 
           %{
@@ -832,6 +923,89 @@ defmodule Arcana.Maintenance do
           %{communities: 0, entities: length(entities), relationships: length(relationships)}
       end
     end
+  end
+
+  # Detection is delete-all + reinsert, so without this every rebuild would
+  # recreate each community with a nil summary, leaving `ask(graph: true)`
+  # with no community context at all until the next summarize pass ran.
+  #
+  # Keyed on level AND the sorted entity-id set: the rows are recreated with
+  # new ids, and keying on membership alone collapses two levels that happen
+  # to share a membership (routine when a level-0 community doesn't merge
+  # upward), so whichever row Postgres returned last would win.
+  defp snapshot_communities(collection_id, repo) do
+    repo.all(
+      from(c in Arcana.Graph.Community,
+        where: c.collection_id == ^collection_id,
+        select: %{
+          level: c.level,
+          entity_ids: c.entity_ids,
+          summary: c.summary,
+          dirty: c.dirty,
+          change_count: c.change_count,
+          summary_fingerprint: c.summary_fingerprint
+        }
+      )
+    )
+    |> Map.new(fn community ->
+      {snapshot_key(community.level, community.entity_ids),
+       Map.drop(community, [:level, :entity_ids])}
+    end)
+  end
+
+  defp snapshot_key(level, entity_ids), do: {level, entity_ids |> List.wrap() |> Enum.sort()}
+
+  # Carries the previous summary over, and decides whether it is still
+  # accurate by comparing the fingerprint recorded when it was written
+  # against the content as it stands now.
+  #
+  # Membership alone cannot answer that: a summary is generated from the
+  # community's relationships too, so ingesting another document into an
+  # existing collection changes what the summary should say without moving
+  # anyone between communities. Matching fingerprints carry the tracking
+  # verbatim and skip an LLM call; anything else keeps the text readable but
+  # flags it for refresh. A summary written before fingerprints existed has
+  # none, so it refreshes once and then settles.
+  defp carry_over_summary(community, previous, current) do
+    key = snapshot_key(Map.get(community, :level), Map.get(community, :entity_ids))
+
+    with {:ok, tracking} <- Map.fetch(previous, key),
+         fingerprint when is_binary(fingerprint) <- Map.get(current, key) do
+      carried = Map.merge(community, tracking)
+
+      if tracking.summary_fingerprint == fingerprint do
+        carried
+      else
+        %{carried | dirty: true} |> Map.put(:summary_fingerprint, fingerprint)
+      end
+    else
+      _ -> community
+    end
+  end
+
+  # One pass over the collection's relationships, grouped by endpoint, so
+  # this stays linear in the graph rather than per-community.
+  defp current_fingerprints(communities, entities, relationships) do
+    entities_by_id = Map.new(entities, &{&1.id, &1})
+
+    by_source =
+      Enum.group_by(relationships, & &1.source_id)
+
+    Map.new(communities, fn community ->
+      ids = community |> Map.get(:entity_ids) |> List.wrap()
+      members = MapSet.new(ids)
+
+      member_entities =
+        ids |> Enum.map(&Map.get(entities_by_id, &1)) |> Enum.reject(&is_nil/1)
+
+      member_relationships =
+        ids
+        |> Enum.flat_map(&Map.get(by_source, &1, []))
+        |> Enum.filter(&MapSet.member?(members, &1.target_id))
+
+      {snapshot_key(Map.get(community, :level), ids),
+       CommunitySummarizer.content_fingerprint(member_entities, member_relationships)}
+    end)
   end
 
   @doc """
@@ -847,6 +1021,10 @@ defmodule Arcana.Maintenance do
     - `:force` - Regenerate all summaries even if not dirty (default: false)
     - `:concurrency` - Number of parallel summarization tasks (default: 1)
     - `:llm` - LLM function for summarization (uses config if not provided)
+    - `:levels` - Hierarchy levels to summarize: an integer, a list, a range
+      or `:all`. Defaults to `config :arcana, :graph, community_summary_level`,
+      the levels `Arcana.ask/2` actually reads, so detection can generate a
+      deeper hierarchy without paying an LLM call per unread level.
 
   ## Returns
 
@@ -862,6 +1040,9 @@ defmodule Arcana.Maintenance do
 
       # Summarize a specific collection
       Maintenance.summarize_communities(repo, collection: "my-docs")
+
+      # Summarize every hierarchy level, not just the readable ones
+      Maintenance.summarize_communities(repo, levels: :all)
 
   """
   def summarize_communities(repo, opts \\ []) do
@@ -879,6 +1060,7 @@ defmodule Arcana.Maintenance do
         opts: opts,
         force: force,
         concurrency: concurrency,
+        levels: summary_levels(opts),
         progress_fn: progress_fn
       })
     end
@@ -889,23 +1071,15 @@ defmodule Arcana.Maintenance do
   end
 
   defp summarize_fetched_collections(collections, repo, config) do
-    %{opts: opts, force: force, concurrency: concurrency, progress_fn: progress_fn} = config
-    llm = resolve_summarizer_llm!(opts)
+    %{opts: opts, progress_fn: progress_fn} = config
+    ctx = Map.put(config, :llm, resolve_summarizer_llm!(opts))
     total_collections = length(collections)
 
     results =
       collections
       |> Enum.with_index(1)
       |> Enum.map(fn {collection, index} ->
-        result =
-          summarize_communities_for_collection(
-            collection,
-            repo,
-            llm,
-            force,
-            concurrency,
-            progress_fn
-          )
+        result = summarize_communities_for_collection(collection, repo, ctx)
 
         try do
           progress_fn.(:collection_complete, %{
@@ -942,15 +1116,10 @@ defmodule Arcana.Maintenance do
     end
   end
 
-  defp summarize_communities_for_collection(
-         collection,
-         repo,
-         llm,
-         force,
-         concurrency,
-         progress_fn
-       ) do
+  defp summarize_communities_for_collection(collection, repo, ctx) do
     alias Arcana.Graph.{Community, CommunitySummarizer, Entity, Relationship}
+
+    %{llm: llm, force: force, concurrency: concurrency, progress_fn: progress_fn} = ctx
 
     # Report start
     try do
@@ -959,11 +1128,13 @@ defmodule Arcana.Maintenance do
       _ -> :ok
     end
 
-    # Fetch communities for this collection
+    # Fetch the communities a query path can actually read: summarizing a
+    # level nothing reads costs one LLM call per row for nothing.
     communities =
       repo.all(
         from(c in Community,
           where: c.collection_id == ^collection.id,
+          where: ^level_filter(ctx.levels),
           select: c
         )
       )
@@ -1005,6 +1176,18 @@ defmodule Arcana.Maintenance do
     end
   end
 
+  # Levels to summarize: per-call `:levels` wins, otherwise the levels
+  # `ask/2` reads (`community_summary_level`), so the two can't drift.
+  defp summary_levels(opts) do
+    case Keyword.fetch(opts, :levels) do
+      {:ok, levels} -> Arcana.Graph.normalize_levels(levels)
+      :error -> Arcana.Graph.summary_levels()
+    end
+  end
+
+  defp level_filter(:all), do: dynamic([c], not is_nil(c.level))
+  defp level_filter(levels), do: dynamic([c], c.level in ^levels)
+
   defp summarize_single_community(community, repo, llm) do
     alias Arcana.Graph.{Community, CommunitySummarizer, Entity, Relationship}
 
@@ -1040,12 +1223,14 @@ defmodule Arcana.Maintenance do
     # Generate summary
     case CommunitySummarizer.summarize(entities, relationships, llm: llm) do
       {:ok, summary} ->
-        # Update community with summary
+        # Record what the summary was generated from, so a later rebuild can
+        # tell an unchanged community from one whose graph moved on.
         community
         |> Community.changeset(%{
           summary: summary,
           dirty: false,
-          change_count: 0
+          change_count: 0,
+          summary_fingerprint: CommunitySummarizer.content_fingerprint(entities, relationships)
         })
         |> repo.update()
 

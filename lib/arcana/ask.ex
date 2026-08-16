@@ -99,7 +99,7 @@ defmodule Arcana.Ask do
 
   defp ask_with_context(question, context, opts, llm) do
     graph_context = maybe_fetch_graph_context(question, opts)
-    prompt_fn = Keyword.get(opts, :prompt, &default_ask_prompt/2)
+    prompt_fn = Keyword.get(opts, :prompt, &default_ask_prompt/3)
 
     llm_opts = [
       system_prompt:
@@ -123,9 +123,6 @@ defmodule Arcana.Ask do
 
     {result, stop_metadata}
   end
-
-  defp default_ask_prompt(question, context),
-    do: default_ask_prompt(question, context, %{})
 
   defp default_ask_prompt(_question, context, graph_context) when is_map(graph_context) do
     context_text =
@@ -218,7 +215,7 @@ defmodule Arcana.Ask do
     graph_config = Arcana.Graph.config()
     entity_limit = graph_config[:context_entity_limit] || 10
     rel_limit = graph_config[:context_relationship_limit] || 20
-    summary_level = graph_config[:community_summary_level] || 0
+    summary_levels = Arcana.Graph.summary_levels(graph_config)
     summary_limit = graph_config[:community_summary_limit] || 5
     threshold = graph_config[:entity_embedding_threshold] || 0.3
 
@@ -262,13 +259,19 @@ defmodule Arcana.Ask do
 
       relationships = fetch_relationships(expanded_ids, entity_ids, graph_depth, rel_limit, repo)
 
+      level_filter =
+        case summary_levels do
+          :all -> dynamic([c], not is_nil(c.level))
+          levels -> dynamic([c], c.level in ^levels)
+        end
+
       community_summaries =
         repo.all(
           from(c in Community,
             where:
               fragment("? && ?", c.entity_ids, ^entity_ids_to_binary(entity_ids)) and
-                not is_nil(c.summary) and c.summary != "" and
-                c.level == ^summary_level,
+                not is_nil(c.summary) and c.summary != "",
+            where: ^level_filter,
             select: c.summary,
             limit: ^summary_limit
           )

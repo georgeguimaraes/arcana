@@ -97,13 +97,23 @@ defmodule Arcana.Graph.CommunitySummarizerTest do
 
   describe "needs_regeneration?/2" do
     test "returns true when change_count exceeds threshold" do
-      community = %{change_count: 10, dirty: false, summary: "Existing summary"}
+      community = %{
+        change_count: 10,
+        dirty: false,
+        summary: "Existing summary",
+        summary_fingerprint: "abc123"
+      }
 
       assert CommunitySummarizer.needs_regeneration?(community, threshold: 5)
     end
 
     test "returns false when change_count below threshold" do
-      community = %{change_count: 3, dirty: false, summary: "Existing summary"}
+      community = %{
+        change_count: 3,
+        dirty: false,
+        summary: "Existing summary",
+        summary_fingerprint: "abc123"
+      }
 
       refute CommunitySummarizer.needs_regeneration?(community, threshold: 5)
     end
@@ -121,16 +131,33 @@ defmodule Arcana.Graph.CommunitySummarizerTest do
     end
 
     test "returns false when summary exists and not dirty" do
-      community = %{change_count: 2, dirty: false, summary: "Existing summary"}
+      community = %{
+        change_count: 2,
+        dirty: false,
+        summary: "Existing summary",
+        summary_fingerprint: "abc123"
+      }
 
       refute CommunitySummarizer.needs_regeneration?(community, threshold: 5)
     end
 
     test "uses default threshold of 10" do
-      community = %{change_count: 8, dirty: false, summary: "Exists"}
+      community = %{
+        change_count: 8,
+        dirty: false,
+        summary: "Exists",
+        summary_fingerprint: "abc123"
+      }
+
       refute CommunitySummarizer.needs_regeneration?(community)
 
-      community = %{change_count: 12, dirty: false, summary: "Exists"}
+      community = %{
+        change_count: 12,
+        dirty: false,
+        summary: "Exists",
+        summary_fingerprint: "abc123"
+      }
+
       assert CommunitySummarizer.needs_regeneration?(community)
     end
   end

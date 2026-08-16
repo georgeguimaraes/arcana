@@ -106,6 +106,21 @@ children = [
 
 ## Upgrading
 
+### Community summary fingerprint
+
+Community detection deletes and recreates every community row, so a summary is carried over to the membership it belonged to. Membership alone can't say whether that summary is still accurate: a summary is written from the community's relationships too, and ingesting another document adds relationships without moving anyone between communities.
+
+`arcana_graph_communities.summary_fingerprint` records what each summary was generated from, so a rebuild can tell an unchanged community from one whose graph moved on. `Arcana.Graph.Community` reads the column, so an install without it fails on any community query.
+
+New installs get it from `mix arcana.graph.install`. Everyone else:
+
+```bash
+mix arcana.graph.gen.summary_fingerprint
+mix ecto.migrate
+```
+
+Summaries written before the column existed have no fingerprint, so they can't be verified. They regenerate once on the next `mix arcana.graph.summarize_communities` run, record a fingerprint, and settle from then on.
+
 ### Entity mention unique index
 
 Graph tables installed before the entity mention unique index existed pick up one mention row per (entity, chunk) on every ingest, so re-ingesting the same document keeps inflating mention counts and the scores derived from them. The graph store writes mentions with `on_conflict: :nothing`, which does nothing at all without the index.
@@ -147,10 +162,31 @@ GraphRAG is disabled by default. Enable it globally:
 config :arcana,
   graph: [
     enabled: true,
-    community_levels: 5,
+    community_levels: 1,
     resolution: 1.0
   ]
 ```
+
+Community detection reads all of its knobs from this block: `resolution`,
+`min_size`, `community_levels` (the hierarchy ceiling, default `1`), plus `objective`,
+`iterations` and `seed`. Pin a non-zero `seed` when you want community
+membership to be reproducible across runs (`0` lets the algorithm
+randomize):
+
+```elixir
+config :arcana,
+  graph: [
+    enabled: true,
+    community_detector: :leiden,
+    seed: 42,
+    objective: :cpm,
+    iterations: 2
+  ]
+```
+
+Options passed to `Arcana.Maintenance.detect_communities/2` override the
+config, and options carried by a `community_detector: {Module, opts}`
+tuple override the generic knobs above.
 
 Or enable per-call:
 
@@ -738,6 +774,23 @@ mix arcana.graph.summarize_communities --concurrency 4
 
 # Quiet mode (less output)
 mix arcana.graph.summarize_communities --quiet
+
+# Every hierarchy level, not just the ones ask reads
+mix arcana.graph.summarize_communities --levels all
+```
+
+Summarization only covers the levels `ask` reads, which is
+`community_summary_level` (default `0`). Detection can generate a deeper
+hierarchy with `community_levels`, but summarizing a level nothing queries
+costs one LLM call per community for nothing. The key accepts an integer, a
+list, a range or `:all`, and both sides read it:
+
+```elixir
+config :arcana,
+  graph: [
+    community_levels: 3,          # generate three levels
+    community_summary_level: 0..1 # summarize and read the first two
+  ]
 ```
 
 Requires an LLM to be configured. All standard `:llm` config formats are supported:

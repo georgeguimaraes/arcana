@@ -15,6 +15,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     attr(:stats, :map, required: true)
     attr(:current_tab, :atom, required: true)
     attr(:prefix, :string, default: "/arcana")
+    # Every dashboard action reports through put_flash. Without this the
+    # messages were set and never shown, so a failed re-embed or a missing
+    # LLM looked like nothing happening at all.
+    attr(:flash, :map, default: %{})
     slot(:inner_block, required: true)
 
     def dashboard_layout(assigns) do
@@ -60,9 +64,29 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         </nav>
 
         <div class="arcana-content">
+          <.flash_messages flash={@flash} />
           <%= render_slot(@inner_block) %>
         </div>
       </div>
+      """
+    end
+
+    attr(:flash, :map, required: true)
+
+    defp flash_messages(assigns) do
+      ~H"""
+      <%= for {kind, style} <- [{"info", "background: #ecfdf5; border-color: #10b981; color: #065f46;"},
+                                {"error", "background: #fef2f2; border-color: #ef4444; color: #991b1b;"}] do %>
+        <%= if Phoenix.Flash.get(@flash, String.to_existing_atom(kind)) do %>
+          <p
+            class={"arcana-flash arcana-flash-" <> kind}
+            role="alert"
+            style={"padding: 0.75rem 1rem; margin-bottom: 1rem; border: 1px solid; border-radius: 0.375rem; font-size: 0.875rem; " <> style}
+          >
+            <%= Phoenix.Flash.get(@flash, String.to_existing_atom(kind)) %>
+          </p>
+        <% end %>
+      <% end %>
       """
     end
 

@@ -31,7 +31,7 @@ if Code.ensure_loaded?(Igniter) do
         config :arcana,
           graph: [
             enabled: true,
-            community_levels: 5,
+            community_levels: 1,
             resolution: 1.0
           ]
 
@@ -91,7 +91,7 @@ if Code.ensure_loaded?(Igniter) do
           config :arcana,
             graph: [
               enabled: true,
-              community_levels: 5,
+              community_levels: 1,
               resolution: 1.0
             ]
 
@@ -187,6 +187,7 @@ if Code.ensure_loaded?(Igniter) do
             add :entity_ids, {:array, :binary_id}, default: []
             add :dirty, :boolean, default: true
             add :change_count, :integer, default: 0
+            add :summary_fingerprint, :string
             add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :delete_all)
 
             timestamps()
@@ -313,6 +314,7 @@ else
           add :entity_ids, {:array, :binary_id}, default: []
           add :dirty, :boolean, default: true
           add :change_count, :integer, default: 0
+          add :summary_fingerprint, :string
           add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :delete_all)
 
           timestamps()
@@ -372,7 +374,7 @@ else
           config :arcana,
             graph: [
               enabled: true,
-              community_levels: 5,
+              community_levels: 1,
               resolution: 1.0
             ]
 

@@ -133,6 +133,29 @@ defmodule Mix.Tasks.Arcana.Graph.InstallTest do
     path
   end
 
+  test "every generated communities table declares the columns the schema reads" do
+    # There are two table definitions in this task, one per installer path,
+    # and only the Igniter one got summary_fingerprint the first time. A
+    # missing column means GraphRAG blows up against its own schema.
+    source = File.read!("lib/mix/tasks/arcana.graph.install.ex")
+
+    definitions =
+      source
+      |> String.split("create table(:arcana_graph_communities")
+      |> Enum.drop(1)
+
+    assert length(definitions) >= 2, "expected an Igniter and a non-Igniter template"
+
+    for {definition, index} <- Enum.with_index(definitions) do
+      body = definition |> String.split("timestamps()") |> hd()
+
+      for column <- ~w(summary entity_ids dirty change_count summary_fingerprint) do
+        assert body =~ ":#{column}",
+               "communities table ##{index} is missing #{column}"
+      end
+    end
+  end
+
   defp migration_content(igniter) do
     source =
       igniter.rewrite

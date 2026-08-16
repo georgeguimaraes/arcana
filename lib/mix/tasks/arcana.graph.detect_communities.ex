@@ -72,35 +72,32 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
 
     quiet = Keyword.get(opts, :quiet, false)
     collection = Keyword.get(opts, :collection)
-    objective = Keyword.get(opts, :objective, "cpm") |> String.to_atom()
-    iterations = Keyword.get(opts, :iterations, 2)
-    seed = Keyword.get(opts, :seed, 0)
 
     # Start the host application (which will start the repo)
     Mix.Task.run("app.start")
 
-    # Read from graph config, allow CLI overrides
-    graph_config = Arcana.Graph.config()
-    resolution = Keyword.get(opts, :resolution, graph_config[:resolution] || 1.0)
-    min_size = Keyword.get(opts, :min_size, graph_config[:min_size] || 1)
-    max_level = Keyword.get(opts, :max_level, graph_config[:community_levels] || 1)
+    # Only forward the flags the user actually passed: anything else is
+    # resolved from `config :arcana, :graph` by Maintenance, so CLI
+    # defaults can't shadow configured knobs.
+    cli_opts =
+      opts
+      |> Keyword.take([:resolution, :objective, :iterations, :seed, :min_size, :max_level])
+      |> Keyword.replace_lazy(:objective, &String.to_atom/1)
+
+    resolved = Arcana.Maintenance.detection_opts(cli_opts)
 
     repo = Arcana.MixHelpers.repo!()
 
-    # Check leidenfold is available
-    unless Code.ensure_loaded?(Leidenfold) do
-      Mix.raise("""
-      Community detection requires the leidenfold package.
-      Add {:leidenfold, "~> 0.2"} to your dependencies.
-      """)
-    end
+    check_detector_available!()
 
     # Show current graph info
     info = Arcana.Maintenance.graph_info()
     Mix.shell().info("Graph config: #{format_info(info)}")
 
     Mix.shell().info(
-      "Leiden: resolution=#{resolution}, objective=#{objective}, min_size=#{min_size}, max_level=#{max_level}"
+      "Detection: resolution=#{resolved[:resolution]}, objective=#{resolved[:objective]}, " <>
+        "iterations=#{resolved[:iterations]}, seed=#{resolved[:seed]}, " <>
+        "min_size=#{resolved[:min_size]}, max_level=#{resolved[:max_level]}"
     )
 
     # Build progress callback
@@ -114,15 +111,7 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
     scope = if collection, do: "collection '#{collection}'", else: "all collections"
     Mix.shell().info("Detecting communities for #{scope}...\n")
 
-    detect_opts = [
-      progress: progress_fn,
-      resolution: resolution,
-      objective: objective,
-      iterations: iterations,
-      seed: seed,
-      min_size: min_size,
-      max_level: max_level
-    ]
+    detect_opts = Keyword.put(cli_opts, :progress, progress_fn)
 
     detect_opts =
       if collection, do: Keyword.put(detect_opts, :collection, collection), else: detect_opts
@@ -163,6 +152,32 @@ defmodule Mix.Tasks.Arcana.Graph.DetectCommunities do
 
       # Legacy: simple index/total progress
       current, total when is_integer(current) and is_integer(total) ->
+        :ok
+    end
+  end
+
+  # Only the built-in detector needs leidenfold. A configured custom detector
+  # has its own dependencies, so demanding leidenfold would refuse to run a
+  # setup that never touches it.
+  defp check_detector_available! do
+    case Arcana.Maintenance.configured_detector() do
+      {Arcana.Graph.CommunityDetector.Leiden, _opts} ->
+        unless Code.ensure_loaded?(Leidenfold) do
+          Mix.raise("""
+          Community detection requires the leidenfold package.
+          Add {:leidenfold, "~> 0.2"} to your dependencies.
+          """)
+        end
+
+      {module, _opts} ->
+        unless Code.ensure_loaded?(module) do
+          Mix.raise("""
+          The configured community_detector #{inspect(module)} is not available.
+          Check `config :arcana, graph: [community_detector: ...]`.
+          """)
+        end
+
+      _fun_or_nil ->
         :ok
     end
   end

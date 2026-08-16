@@ -9,8 +9,33 @@ defmodule Arcana.GraphTest do
 
       assert is_map(config)
       assert config.enabled == false
-      assert config.community_levels == 5
+      assert config.community_levels == 1
       assert config.resolution == 1.0
+    end
+  end
+
+  describe "summary_levels/1" do
+    test "defaults to the single level ask reads" do
+      assert Graph.summary_levels() == [0]
+    end
+
+    test "accepts an integer, a list, a range or :all" do
+      assert Graph.normalize_levels(2) == [2]
+      assert Graph.normalize_levels([0, 2]) == [0, 2]
+      assert Graph.normalize_levels(0..2) == [0, 1, 2]
+      assert Graph.normalize_levels(:all) == :all
+    end
+
+    test "rejects anything else" do
+      assert_raise ArgumentError, fn -> Graph.normalize_levels("0") end
+    end
+
+    test "rejects negative levels, which could never match a row" do
+      # Community.changeset/2 only permits levels >= 0, so a negative
+      # selection silently finds nothing rather than erroring.
+      assert_raise ArgumentError, ~r/non-negative/, fn -> Graph.normalize_levels(-1) end
+      assert_raise ArgumentError, ~r/non-negative/, fn -> Graph.normalize_levels([0, -2]) end
+      assert_raise ArgumentError, ~r/non-negative/, fn -> Graph.normalize_levels(-3..-1) end
     end
   end
 

@@ -22,6 +22,10 @@ defmodule Arcana.Graph.Community do
     field(:entity_ids, {:array, :binary_id}, default: [])
     field(:dirty, :boolean, default: true)
     field(:change_count, :integer, default: 0)
+    # Digest of the entities and relationships the stored summary was
+    # generated from. Detection recreates community rows, so this is what
+    # tells a carried-over summary apart from a still-accurate one.
+    field(:summary_fingerprint, :string)
 
     belongs_to(:collection, Collection)
 
@@ -29,7 +33,15 @@ defmodule Arcana.Graph.Community do
   end
 
   @required_fields [:level]
-  @optional_fields [:description, :summary, :entity_ids, :dirty, :change_count, :collection_id]
+  @optional_fields [
+    :description,
+    :summary,
+    :entity_ids,
+    :dirty,
+    :change_count,
+    :collection_id,
+    :summary_fingerprint
+  ]
 
   def changeset(community, attrs) do
     community

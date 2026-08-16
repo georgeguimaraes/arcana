@@ -665,7 +665,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     @impl true
     def render(assigns) do
       ~H"""
-      <.dashboard_layout stats={@stats} current_tab={:graph} prefix={@prefix}>
+      <.dashboard_layout flash={@flash} stats={@stats} current_tab={:graph} prefix={@prefix}>
         <div class="arcana-graph">
           <h2>Graph</h2>
           <p class="arcana-tab-description">

@@ -6,12 +6,27 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
 
   alias Arcana.Collection
   alias Arcana.Evaluation
+  alias Arcana.Graph.Community
   alias Arcana.Graph.{Community, Entity, Relationship}
 
   # These tests exercise the /scoped dashboard from the test router, whose
   # :collections MFA reads the allowed list from the conn's session. Each
   # test seeds its own restriction via init_test_session, so the suite
   # stays async-safe.
+
+  defp insert_dirty_community(collection_name) do
+    {:ok, collection} = Collection.get_or_create(collection_name, Repo)
+
+    %Community{}
+    |> Community.changeset(%{
+      level: 0,
+      collection_id: collection.id,
+      entity_ids: [],
+      summary: nil,
+      dirty: true
+    })
+    |> Repo.insert!()
+  end
 
   defp restrict(conn, allowed) do
     Plug.Test.init_test_session(conn, allowed_collections: allowed)
@@ -788,6 +803,50 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       # globally, so the progress UI never appears
       html = render_click(view, "reembed", %{})
       refute html =~ "Re-embedding..."
+    end
+
+    test "summarize refuses to run globally on a restricted dashboard", %{conn: conn} do
+      # The other three actions were gated; summarize was added later and
+      # wasn't, so an unscoped run summarized every tenant's communities.
+      put_arcana_env(:llm, fn _p, _c, _o -> {:ok, "a summary"} end)
+      mine = insert_dirty_community("tenant-a")
+      theirs = insert_dirty_community("other")
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/maintenance")
+
+      render_click(view, "summarize_communities", %{})
+      Process.sleep(300)
+
+      assert is_nil(Repo.get!(Community, theirs.id).summary),
+             "summarized a collection the host never allowed"
+
+      assert is_nil(Repo.get!(Community, mine.id).summary),
+             "ran globally instead of refusing with no collection selected"
+    end
+
+    test "a forged summarize selection outside the allowed set does not stick", %{conn: conn} do
+      put_arcana_env(:llm, fn _p, _c, _o -> {:ok, "a summary"} end)
+      theirs = insert_dirty_community("other")
+      {:ok, _} = Collection.get_or_create("tenant-a", Repo)
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/maintenance")
+
+      render_change(view, "select_summarize_communities_collection", %{"collection" => "other"})
+      render_click(view, "summarize_communities", %{})
+      Process.sleep(300)
+
+      assert is_nil(Repo.get!(Community, theirs.id).summary),
+             "a forged collection name reached the summarizer"
+    end
+
+    test "the summarize hint counts only allowed collections", %{conn: conn} do
+      put_arcana_env(:llm, fn _p, _c, _o -> {:ok, "a summary"} end)
+      insert_dirty_community("tenant-a")
+      insert_dirty_community("other")
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/maintenance")
+
+      assert has_element?(view, ".arcana-summarize-hint", "1 communities need summarizing")
     end
 
     test "a forged selection outside the allowed set does not stick", %{conn: conn} do

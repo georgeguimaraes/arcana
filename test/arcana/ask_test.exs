@@ -109,9 +109,17 @@ defmodule Arcana.AskTest do
       collection = Repo.one!(from(c in Arcana.Collection, where: c.name == "ask-test"))
       chunk = Repo.one!(from(c in Arcana.Chunk, where: c.document_id == ^doc.id, limit: 1))
 
+      {:ok, embedding} =
+        Arcana.Embedder.embed(Arcana.Config.embedder(), "Daleks", intent: :document)
+
       entity =
         %Entity{}
-        |> Entity.changeset(%{name: "Daleks", type: "species", collection_id: collection.id})
+        |> Entity.changeset(%{
+          name: "Daleks",
+          type: "species",
+          collection_id: collection.id,
+          embedding: embedding
+        })
         |> Repo.insert!()
 
       %EntityMention{}
@@ -131,11 +139,11 @@ defmodule Arcana.AskTest do
       %{entity: entity, collection: collection}
     end
 
-    test "injects community summaries into prompt when graph enabled", %{llm: _llm} do
+    test "injects community summaries into the default prompt when graph enabled" do
       received = :ets.new(:received, [:set, :public])
 
-      capturing_llm = fn prompt, _context, _opts ->
-        :ets.insert(received, {:prompt, prompt})
+      capturing_llm = fn _prompt, _context, opts ->
+        :ets.insert(received, {:system_prompt, opts[:system_prompt]})
         {:ok, "answer"}
       end
 
@@ -147,8 +155,89 @@ defmodule Arcana.AskTest do
           graph: true
         )
 
-      [{:prompt, _prompt}] = :ets.lookup(received, :prompt)
+      [{:system_prompt, system_prompt}] = :ets.lookup(received, :system_prompt)
       :ets.delete(received)
+
+      assert system_prompt =~ "Background knowledge:"
+      assert system_prompt =~ "greatest enemies"
+    end
+  end
+
+  describe "ask/2 community summary levels" do
+    setup %{doc: doc} do
+      collection = Repo.one!(from(c in Arcana.Collection, where: c.name == "ask-test"))
+      chunk = Repo.one!(from(c in Arcana.Chunk, where: c.document_id == ^doc.id, limit: 1))
+
+      {:ok, embedding} =
+        Arcana.Embedder.embed(Arcana.Config.embedder(), "Daleks", intent: :document)
+
+      entity =
+        %Entity{}
+        |> Entity.changeset(%{
+          name: "Daleks",
+          type: "species",
+          collection_id: collection.id,
+          embedding: embedding
+        })
+        |> Repo.insert!()
+
+      %EntityMention{}
+      |> EntityMention.changeset(%{entity_id: entity.id, chunk_id: chunk.id})
+      |> Repo.insert!()
+
+      for {level, summary} <- [{0, "LEVEL-ZERO-SUMMARY"}, {1, "LEVEL-ONE-SUMMARY"}] do
+        %Community{}
+        |> Community.changeset(%{
+          level: level,
+          entity_ids: [entity.id],
+          collection_id: collection.id,
+          summary: summary,
+          dirty: false
+        })
+        |> Repo.insert!()
+      end
+
+      :ok
+    end
+
+    defp graph_context do
+      received = :ets.new(:received, [:set, :public])
+
+      capturing_prompt = fn _question, _context, graph_context ->
+        :ets.insert(received, {:graph_context, graph_context})
+        "System prompt"
+      end
+
+      {:ok, _, _} =
+        Arcana.ask("Who are the Daleks?",
+          repo: Repo,
+          llm: fn _prompt, _context, _opts -> {:ok, "answer"} end,
+          collection: "ask-test",
+          graph: true,
+          prompt: capturing_prompt
+        )
+
+      [{:graph_context, graph_context}] = :ets.lookup(received, :graph_context)
+      :ets.delete(received)
+      graph_context
+    end
+
+    test "reads only the configured level by default" do
+      assert %{community_summaries: summaries} = graph_context()
+      assert summaries == ["LEVEL-ZERO-SUMMARY"]
+    end
+
+    test "reads every level named by community_summary_level" do
+      put_arcana_env(:graph, community_summary_level: 0..1)
+
+      assert %{community_summaries: summaries} = graph_context()
+      assert Enum.sort(summaries) == ["LEVEL-ONE-SUMMARY", "LEVEL-ZERO-SUMMARY"]
+    end
+
+    test "levels the config doesn't name stay out of the context" do
+      put_arcana_env(:graph, community_summary_level: 1)
+
+      assert %{community_summaries: ["LEVEL-ONE-SUMMARY"]} = graph_context()
     end
   end
 
