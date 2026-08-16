@@ -424,41 +424,6 @@ defmodule Arcana.Graph.GraphStore.Memory do
     {:reply, :ok, sweep_collection(state, collection_id)}
   end
 
-  # Drops entities in the collection that no mention points at any more,
-  # along with their relationships, and marks every community that held one
-  # dirty so it gets re-summarized. Shared with the delete_by_chunks path,
-  # which sweeps each collection its chunks touched.
-  defp sweep_collection(state, collection_id) do
-    mentioned_ids = MapSet.new(state.mentions, & &1.entity_id)
-
-    {kept, orphaned} =
-      state.entities
-      |> Map.get(collection_id, [])
-      |> Enum.split_with(fn e -> MapSet.member?(mentioned_ids, e.id) end)
-
-    orphaned_ids = MapSet.new(orphaned, & &1.id)
-
-    new_relationships =
-      Enum.reject(state.relationships, fn r ->
-        MapSet.member?(orphaned_ids, r.source_id) or MapSet.member?(orphaned_ids, r.target_id)
-      end)
-
-    new_communities =
-      Map.update(
-        state.communities,
-        collection_id,
-        [],
-        &mark_overlapping_dirty(&1, orphaned_ids)
-      )
-
-    %{
-      state
-      | entities: Map.put(state.entities, collection_id, kept),
-        relationships: new_relationships,
-        communities: new_communities
-    }
-  end
-
   @impl GenServer
   def handle_call({:get_entity, entity_id}, _from, state) do
     entity =
@@ -751,6 +716,41 @@ defmodule Arcana.Graph.GraphStore.Memory do
   # Drops the swept ids from entity_ids too, so entity_count stops
   # counting entities that no longer exist, and bumps updated_at the way
   # the Ecto backend does.
+  # Drops entities in the collection that no mention points at any more,
+  # along with their relationships, and marks every community that held one
+  # dirty so it gets re-summarized. Shared with the delete_by_chunks path,
+  # which sweeps each collection its chunks touched.
+  defp sweep_collection(state, collection_id) do
+    mentioned_ids = MapSet.new(state.mentions, & &1.entity_id)
+
+    {kept, orphaned} =
+      state.entities
+      |> Map.get(collection_id, [])
+      |> Enum.split_with(fn e -> MapSet.member?(mentioned_ids, e.id) end)
+
+    orphaned_ids = MapSet.new(orphaned, & &1.id)
+
+    new_relationships =
+      Enum.reject(state.relationships, fn r ->
+        MapSet.member?(orphaned_ids, r.source_id) or MapSet.member?(orphaned_ids, r.target_id)
+      end)
+
+    new_communities =
+      Map.update(
+        state.communities,
+        collection_id,
+        [],
+        &mark_overlapping_dirty(&1, orphaned_ids)
+      )
+
+    %{
+      state
+      | entities: Map.put(state.entities, collection_id, kept),
+        relationships: new_relationships,
+        communities: new_communities
+    }
+  end
+
   defp mark_overlapping_dirty(communities, orphaned_ids) do
     now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 

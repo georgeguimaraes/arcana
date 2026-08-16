@@ -266,6 +266,33 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     collection_ids = collections_for_entities(entity_ids, repo)
 
     Enum.each(collection_ids, &sweep_orphans(&1, opts))
+    sweep_uncollected(entity_ids, repo)
+
+    :ok
+  end
+
+  # An entity with no collection has no collection to sweep, so the
+  # per-collection pass above can never reach it. The global sweep this
+  # replaced did, and dropping that silently would leak those rows forever.
+  # Removing them can't cross a tenant boundary, because belonging to no
+  # collection is what makes them unreachable in the first place. Nothing
+  # in-tree creates one - persist_entities/3 always carries a collection -
+  # so this is here for custom graph stores and hand-written rows.
+  defp sweep_uncollected([], _repo), do: :ok
+
+  defp sweep_uncollected(entity_ids, repo) do
+    mentioned = from(m in EntityMention, select: m.entity_id)
+
+    # Relationships cascade via the FK on source_id/target_id, and a
+    # community is always scoped to a collection, so there is nothing else
+    # pointing at these.
+    repo.delete_all(
+      from(e in Entity,
+        where:
+          e.id in ^Enum.uniq(entity_ids) and is_nil(e.collection_id) and
+            e.id not in subquery(mentioned)
+      )
+    )
 
     :ok
   end

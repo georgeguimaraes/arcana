@@ -115,6 +115,47 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       assert Repo.get(Entity, entity.id), "still mentioned by another chunk"
     end
 
+    test "sweeps an orphan that belongs to no collection" do
+      # The global sweep this replaced covered collection-less entities.
+      # A per-collection sweep structurally cannot, so they need their own
+      # pass or they leak forever.
+      collection = create_collection("dbc-nullcoll-#{System.unique_integer([:positive])}")
+      chunk = collection |> create_document() |> create_chunk()
+
+      uncollected =
+        %Entity{}
+        |> Entity.changeset(%{name: "Stray", type: "person"})
+        |> Repo.insert!()
+
+      assert is_nil(uncollected.collection_id), "precondition: no collection"
+
+      create_mention(uncollected, chunk)
+
+      assert :ok = EctoStore.delete_by_chunks([chunk.id], repo: Repo)
+
+      refute Repo.get(Entity, uncollected.id),
+             "a collection-less entity with no mentions left has to go too"
+    end
+
+    test "keeps a collection-less entity that is still mentioned" do
+      collection = create_collection("dbc-nullkeep-#{System.unique_integer([:positive])}")
+      document = create_document(collection)
+      deleted = create_chunk(document, "goes away")
+      kept = create_chunk(document, "stays")
+
+      uncollected =
+        %Entity{}
+        |> Entity.changeset(%{name: "StrayKept", type: "person"})
+        |> Repo.insert!()
+
+      create_mention(uncollected, deleted)
+      create_mention(uncollected, kept)
+
+      assert :ok = EctoStore.delete_by_chunks([deleted.id], repo: Repo)
+
+      assert Repo.get(Entity, uncollected.id), "still mentioned by another chunk"
+    end
+
     test "an empty list touches nothing" do
       collection = create_collection("dbc-empty-#{System.unique_integer([:positive])}")
       chunk = collection |> create_document() |> create_chunk()
