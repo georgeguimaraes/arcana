@@ -241,6 +241,90 @@ defmodule Arcana.AskTest do
     end
   end
 
+  describe "ask/2 community summary ordering" do
+    setup %{doc: doc} do
+      collection = Repo.one!(from(c in Arcana.Collection, where: c.name == "ask-test"))
+      chunk = Repo.one!(from(c in Arcana.Chunk, where: c.document_id == ^doc.id, limit: 1))
+
+      {:ok, embedding} =
+        Arcana.Embedder.embed(Arcana.Config.embedder(), "Daleks", intent: :document)
+
+      entities =
+        for name <- ~w(Daleks Skaro Davros) do
+          entity =
+            %Entity{}
+            |> Entity.changeset(%{
+              name: name,
+              type: "thing",
+              collection_id: collection.id,
+              embedding: embedding
+            })
+            |> Repo.insert!()
+
+          %EntityMention{}
+          |> EntityMention.changeset(%{entity_id: entity.id, chunk_id: chunk.id})
+          |> Repo.insert!()
+
+          entity
+        end
+
+      ids = Enum.map(entities, & &1.id)
+
+      community = fn summary, entity_ids ->
+        %Community{}
+        |> Community.changeset(%{
+          level: 0,
+          entity_ids: entity_ids,
+          collection_id: collection.id,
+          summary: summary,
+          dirty: false
+        })
+        |> Repo.insert!()
+      end
+
+      # The issue's shape: one community holds all three matched entities,
+      # several hold one each, and a hub holds one matched entity plus a
+      # crowd of unrelated ones.
+      #
+      # ON-TOPIC is inserted LAST on purpose. Without an ORDER BY, Postgres
+      # returns these in physical order on a table this small, so the best
+      # community sits past the LIMIT and gets cut - which is the failure
+      # the issue reports, made deterministic instead of luck.
+      community.("PERIPHERAL-1", [Enum.at(ids, 0)])
+      community.("PERIPHERAL-2", [Enum.at(ids, 1)])
+
+      hub_padding = for _ <- 1..40, do: Ecto.UUID.generate()
+      community.("HUB", [Enum.at(ids, 2) | hub_padding])
+
+      community.("ON-TOPIC", ids)
+
+      :ok
+    end
+
+    test "the most overlapping community survives the limit" do
+      # Two slots, four eligible communities. Without an ORDER BY the cut is
+      # arbitrary and the only community covering every matched entity can
+      # lose its place to one sharing a single peripheral entity.
+      put_arcana_env(:graph, community_summary_limit: 2)
+
+      assert %{community_summaries: summaries} = graph_context()
+
+      assert length(summaries) == 2
+      assert hd(summaries) == "ON-TOPIC", "the best-overlapping community must come first"
+    end
+
+    test "a hub community loses ties to a tighter one" do
+      # HUB and the peripherals each overlap one matched entity, but HUB
+      # generalises over 41 entities, so it is the least useful of them.
+      put_arcana_env(:graph, community_summary_limit: 3)
+
+      assert %{community_summaries: summaries} = graph_context()
+
+      refute "HUB" in summaries,
+             "a hub community should lose a tie to a tighter one of equal overlap"
+    end
+  end
+
   describe "ask/2 with graph_depth" do
     setup do
       collection =
