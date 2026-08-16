@@ -13,8 +13,11 @@ defmodule Arcana.Chunker.Default do
     * `:size_unit` - How to measure size: `:characters` or `:tokens` (default: :tokens)
     * `:chars_per_token` - Characters assumed per token when `size_unit` is
       `:tokens` (default: 4)
-    * `:max_chunk_chars` - Hard ceiling on a chunk's character length. A chunk
-      longer than this is split rather than emitted (default: none)
+    * `:max_chunk_chars` - Ceiling on a chunk's length in bytes. A chunk over
+      it is split rather than emitted (default: none). Splits land on
+      grapheme boundaries, so a single grapheme longer than the budget - a
+      ZWJ emoji sequence runs to 25 bytes - is emitted whole rather than
+      cut into invalid UTF-8. Any budget worth setting is far above that
 
   ## Sizing by tokens is an estimate, not a guarantee
 
