@@ -3,6 +3,14 @@ defmodule Mix.Tasks.Arcana.InstallTest do
 
   import Igniter.Test
 
+  # Hangs off its own otp_app, not :arcana: Arcana.Config.repo!/1 raises
+  # when it finds more than one repo key in the :arcana app env, so
+  # registering a second Ecto repo there would break whichever async test
+  # happens to be scanning at the time.
+  defmodule CustomPrivRepo do
+    use Ecto.Repo, otp_app: :arcana_install_test, adapter: Ecto.Adapters.Postgres
+  end
+
   @define_call """
   Postgrex.Types.define(
     Test.MyTypes,
@@ -341,5 +349,55 @@ defmodule Mix.Tasks.Arcana.InstallTest do
   # of that glob so the installer is the only thing that ever reads it.
   defp add_file_after_setup(igniter, path, content) do
     Igniter.assign(igniter, :test_files, Map.put(igniter.assigns.test_files, path, content))
+  end
+
+  # The migration has to land where `mix ecto.migrate` reads it: priv/ plus
+  # the underscore of the repo's LAST module segment, or its configured
+  # :priv. Underscoring the whole module name put MyApp.Repo's migration in
+  # priv/my_app_repo/migrations, where ecto never looks — nothing pending,
+  # migration silently never runs. See Arcana.MixHelpers.migrations_path/1.
+  setup_all do
+    Application.put_env(:arcana_install_test, CustomPrivRepo, priv: "priv/install_custom_priv")
+    :ok
+  end
+
+  describe "migration path" do
+    test "generates under the repo's ecto migrations directory" do
+      igniter =
+        test_project()
+        |> Igniter.compose_task("arcana.install", ["--no-dashboard", "--repo", "Test.Repo"])
+
+      assert Path.dirname(migration_path(igniter)) == "priv/repo/migrations"
+    end
+
+    test "honors a repo with a configured :priv" do
+      expected =
+        CustomPrivRepo
+        |> Mix.EctoSQL.source_repo_priv()
+        |> Path.relative_to_cwd()
+        |> Path.join("migrations")
+
+      assert expected == "priv/install_custom_priv/migrations"
+
+      igniter =
+        test_project()
+        |> Igniter.compose_task("arcana.install", [
+          "--no-dashboard",
+          "--repo",
+          inspect(CustomPrivRepo)
+        ])
+
+      assert Path.dirname(migration_path(igniter)) == expected
+    end
+  end
+
+  defp migration_path(igniter) do
+    paths =
+      igniter.rewrite.sources
+      |> Map.keys()
+      |> Enum.filter(&String.ends_with?(&1, "_create_arcana_tables.exs"))
+
+    assert [path] = paths
+    path
   end
 end

@@ -62,6 +62,11 @@ if Code.ensure_loaded?(Igniter) do
 
     @impl Igniter.Mix.Task
     def igniter(igniter) do
+      # Igniter's own run/1 wrapper runs "compile", not "app.config", so
+      # config/runtime.exs is still unread here and a repo that configures
+      # its :priv there would be invisible to migrations_path/1.
+      Mix.Task.run("app.config")
+
       opts = igniter.args.options
       app_name = Igniter.Project.Application.app_name(igniter)
       app_module = app_name |> to_string() |> Macro.camelize()
@@ -120,14 +125,7 @@ if Code.ensure_loaded?(Igniter) do
     end
 
     defp create_migration(igniter, repo_module) do
-      repo_underscore =
-        repo_module
-        |> Module.split()
-        |> Enum.join(".")
-        |> Macro.underscore()
-        |> String.replace("/", "_")
-
-      migrations_path = Path.join(["priv", repo_underscore, "migrations"])
+      migrations_path = Arcana.MixHelpers.migrations_path(repo_module)
       timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
       filename = "#{timestamp}_create_arcana_tables.exs"
       path = Path.join(migrations_path, filename)
@@ -856,10 +854,13 @@ else
     def run(args) do
       {opts, _, _} = OptionParser.parse(args, strict: [repo: :string])
 
-      repo = opts[:repo] || infer_repo()
-      repo_underscore = Macro.underscore(repo) |> String.replace("/", "_")
+      # Load the host app's config so the repo's `:priv`, if it has one, is
+      # visible to Arcana.MixHelpers.migrations_path/1.
+      Mix.Task.run("app.config")
 
-      migrations_path = Path.join(["priv", repo_underscore, "migrations"])
+      repo = opts[:repo] || infer_repo()
+
+      migrations_path = Arcana.MixHelpers.migrations_path(repo)
       File.mkdir_p!(migrations_path)
 
       timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
