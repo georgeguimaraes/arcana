@@ -24,10 +24,14 @@ defmodule Arcana.MigrationTest do
       try do
         Supervisor.stop(pid, :normal, 5_000)
       catch
-        # Already on its way down. A :timeout or anything else is a real
-        # teardown failure and should stay visible.
+        # Already on its way down. GenServer.stop/3 wraps the reason as
+        # {reason, {GenServer, :stop, args}}, so the bare atoms alone never
+        # match. A {:timeout, _} is a real teardown failure and still
+        # surfaces, which is the point of not catching everything.
         :exit, :normal -> :ok
         :exit, :noproc -> :ok
+        :exit, {:normal, _} -> :ok
+        :exit, {:noproc, _} -> :ok
       end
     end)
 
