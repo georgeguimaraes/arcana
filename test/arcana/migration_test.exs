@@ -17,7 +17,17 @@ defmodule Arcana.MigrationTest do
     # which would wreck the shared one every other suite depends on.
     _ = Postgres.storage_up(Repo.config())
     {:ok, pid} = Repo.start_link()
-    on_exit(fn -> if Process.alive?(pid), do: Supervisor.stop(pid) end)
+
+    on_exit(fn ->
+      # Stopping a supervisor that is already on its way down exits :normal,
+      # which ExUnit reports as a failed callback and invalidates the file.
+      try do
+        Supervisor.stop(pid, :normal, 5_000)
+      catch
+        :exit, _ -> :ok
+      end
+    end)
+
     :ok
   end
 
