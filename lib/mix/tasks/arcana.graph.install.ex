@@ -58,6 +58,12 @@ if Code.ensure_loaded?(Igniter) do
 
     @impl Igniter.Mix.Task
     def igniter(igniter) do
+      # Igniter's own run/1 wrapper runs "compile", not "app.config", so
+      # config/runtime.exs is still unread when we get here. Without this
+      # the repo's `:priv` is only visible when detect_dimensions! happens
+      # to load it, which --dimensions skips.
+      Mix.Task.run("app.config")
+
       opts = igniter.args.options
       app_name = Igniter.Project.Application.app_name(igniter)
       app_module = app_name |> to_string() |> Macro.camelize()
