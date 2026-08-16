@@ -198,9 +198,27 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           {:noreply, assign(socket, confirm_delete_collection: nil)}
 
         collection ->
-          repo.delete!(collection)
-          {:noreply, socket |> assign(confirm_delete_collection: nil) |> load_data()}
+          {:noreply, delete_collection(socket, repo, collection)}
       end
+    end
+
+    # documents.collection_id is ON DELETE RESTRICT, so a collection that
+    # still has documents can't be deleted. That is the safe behaviour -
+    # the alternative silently orphans them - but it arrives as a
+    # constraint error, and letting it escape crashes the page instead of
+    # explaining itself.
+    defp delete_collection(socket, repo, collection) do
+      repo.delete!(collection)
+      socket |> assign(confirm_delete_collection: nil) |> load_data()
+    rescue
+      Ecto.ConstraintError ->
+        socket
+        |> assign(confirm_delete_collection: nil)
+        |> put_flash(
+          :error,
+          "\"#{collection.name}\" still has documents. Delete them first, " <>
+            "then delete the collection."
+        )
     end
 
     # Restricted dashboards can edit a description but never rename. Only

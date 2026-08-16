@@ -13,6 +13,25 @@ mix ecto.migrate
 
 This adds the dependency, creates migrations, configures your repo, and sets up the dashboard route.
 
+The generated migration delegates to Arcana rather than spelling out DDL, so
+upgrading later is another migration calling `up/1` again:
+
+```elixir
+defmodule MyApp.Repo.Migrations.AddArcana do
+  use Ecto.Migration
+
+  def up, do: Arcana.Migration.up()
+
+  def down, do: Arcana.Migration.down()
+end
+```
+
+`up/1` takes `:dimensions` when your embedder isn't 384-dimensional, and
+`:prefix` to install into a Postgres schema of its own. Installs predating
+versioned migrations converge by running it: version 1 creates only what is
+absent and adds only what a later release introduced, without dropping
+anything.
+
 **Without Igniter:**
 
 ```elixir

@@ -78,6 +78,22 @@ defmodule ArcanaWeb.CollectionsLiveTest do
       assert Repo.get(Arcana.Collection, collection.id) == nil
     end
 
+    test "deleting a collection that still has documents explains itself", %{conn: conn} do
+      # documents.collection_id is ON DELETE RESTRICT, so this delete raises
+      # in the database. Unrescued that takes the whole page down.
+      {:ok, _doc} = Arcana.ingest("Content", repo: Repo, collection: "still-full")
+      collection = Repo.get_by(Arcana.Collection, name: "still-full")
+
+      {:ok, view, _html} = live(conn, "/arcana/collections")
+
+      view |> element("#delete-collection-#{collection.id}") |> render_click()
+      html = view |> element("#confirm-delete") |> render_click()
+
+      assert html =~ "still has documents"
+      assert has_element?(view, "#collection-still-full")
+      assert Repo.get(Arcana.Collection, collection.id)
+    end
+
     test "shows document and chunk counts", %{conn: conn} do
       {:ok, _doc} = Arcana.ingest("Content", repo: Repo, collection: "with-docs")
 
