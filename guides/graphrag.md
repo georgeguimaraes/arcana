@@ -106,6 +106,21 @@ children = [
 
 ## Upgrading
 
+### Community summary fingerprint
+
+Community detection deletes and recreates every community row, so a summary is carried over to the membership it belonged to. Membership alone can't say whether that summary is still accurate: a summary is written from the community's relationships too, and ingesting another document adds relationships without moving anyone between communities.
+
+`arcana_graph_communities.summary_fingerprint` records what each summary was generated from, so a rebuild can tell an unchanged community from one whose graph moved on. `Arcana.Graph.Community` reads the column, so an install without it fails on any community query.
+
+New installs get it from `mix arcana.graph.install`. Everyone else:
+
+```bash
+mix arcana.graph.gen.summary_fingerprint
+mix ecto.migrate
+```
+
+Summaries written before the column existed have no fingerprint, so they can't be verified. They regenerate once on the next `mix arcana.graph.summarize_communities` run, record a fingerprint, and settle from then on.
+
 ### Entity mention unique index
 
 Graph tables installed before the entity mention unique index existed pick up one mention row per (entity, chunk) on every ingest, so re-ingesting the same document keeps inflating mention counts and the scores derived from them. The graph store writes mentions with `on_conflict: :nothing`, which does nothing at all without the index.

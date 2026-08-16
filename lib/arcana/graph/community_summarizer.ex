@@ -131,8 +131,11 @@ defmodule Arcana.Graph.CommunitySummarizer do
   relationships without moving anyone between communities. Storing this
   alongside the summary is what makes the question answerable later.
 
-  Covers exactly the fields handed to the LLM, so a description edit counts
-  and an unrelated column does not.
+  Covers the fields a summarizer is given: entity name, type and
+  description, and relationship type and description. The built-in prompt
+  only renders names and types, so a description edit can cost one redundant
+  call - deliberate, since a custom summarizer is free to read descriptions,
+  and over-refreshing is the safe direction. It never goes the other way.
   """
   def content_fingerprint(entities, relationships) do
     entity_part =
