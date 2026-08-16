@@ -358,12 +358,31 @@ defmodule Arcana.Graph.GraphStore.Memory do
       |> Enum.map(& &1.entity_id)
       |> MapSet.new()
 
-    # Remove orphaned entities (entities with no remaining mentions)
+    # Only the collections these chunks touched: a delete in one tenant must
+    # not sweep another tenant's entities, which is what the Ecto store does.
+    affected =
+      state.mentions
+      |> Enum.filter(&MapSet.member?(chunk_id_set, &1.chunk_id))
+      |> Enum.map(& &1.entity_id)
+      |> MapSet.new()
+
+    affected_collections =
+      state.entities
+      |> Enum.filter(fn {_cid, entities} ->
+        Enum.any?(entities, &MapSet.member?(affected, &1.id))
+      end)
+      |> Enum.map(fn {cid, _entities} -> cid end)
+      |> MapSet.new()
+
     new_entities =
       state.entities
       |> Enum.map(fn {collection_id, entities} ->
-        filtered = Enum.filter(entities, fn e -> MapSet.member?(entities_with_mentions, e.id) end)
-        {collection_id, filtered}
+        if MapSet.member?(affected_collections, collection_id) do
+          {collection_id,
+           Enum.filter(entities, fn e -> MapSet.member?(entities_with_mentions, e.id) end)}
+        else
+          {collection_id, entities}
+        end
       end)
       |> Map.new()
 

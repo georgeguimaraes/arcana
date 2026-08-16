@@ -97,8 +97,14 @@ defmodule Arcana.Graph.GraphStore do
   @doc """
   Deletes all graph data for the given chunk IDs.
 
-  Removes mentions referencing these chunks, and cleans up orphaned entities
-  (entities with no remaining mentions).
+  Removes mentions referencing these chunks, then sweeps entities the
+  deletion orphaned. The sweep is scoped to the collections those chunks
+  belonged to, so deleting in one tenant leaves every other tenant's graph
+  alone.
+
+  Prefer `Arcana.delete/2`, which removes the document and its chunks and
+  sweeps in one step. Reach for this only when you are deleting chunks
+  yourself.
   """
   @callback delete_by_chunks(chunk_ids :: [binary()], opts :: keyword()) ::
               :ok | {:error, term()}
@@ -402,7 +408,14 @@ defmodule Arcana.Graph.GraphStore do
   end
 
   @doc """
-  Deletes graph data for the given chunk IDs using the configured backend.
+  Deletes all graph data for the given chunk IDs.
+
+  The orphan sweep is scoped to the collections the chunks belonged to. It
+  used to run across every collection in the database, which made this
+  impossible to call safely in a multi-tenant app.
+
+  `Arcana.delete/2` is usually what you want: it removes the document, its
+  chunks and their graph data together.
   """
   def delete_by_chunks(chunk_ids, opts \\ []) do
     {backend, backend_opts, opts} = extract_backend(opts)

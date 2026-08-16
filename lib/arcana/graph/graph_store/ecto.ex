@@ -244,21 +244,33 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   # === Deletion Callbacks ===
 
   @impl true
+  def delete_by_chunks([], _opts), do: :ok
+
   def delete_by_chunks(chunk_ids, opts) when is_list(chunk_ids) do
     repo = Keyword.fetch!(opts, :repo)
 
-    if chunk_ids == [] do
-      :ok
-    else
-      # Delete mentions for these chunks
-      {_count, _} =
-        repo.delete_all(from(m in EntityMention, where: m.chunk_id in ^chunk_ids))
+    # Which collections these chunks belong to, read before the mentions go:
+    # afterwards there is nothing left to join through. Sweeping only these
+    # keeps a delete in one tenant off every other tenant's entities.
+    collection_ids = collections_for_chunks(chunk_ids, repo)
 
-      # Find and delete orphaned entities (entities with no remaining mentions)
-      delete_orphaned_entities(repo)
+    repo.delete_all(from(m in EntityMention, where: m.chunk_id in ^chunk_ids))
 
-      :ok
-    end
+    Enum.each(collection_ids, &sweep_orphans(&1, opts))
+
+    :ok
+  end
+
+  defp collections_for_chunks(chunk_ids, repo) do
+    repo.all(
+      from(m in EntityMention,
+        join: e in Entity,
+        on: e.id == m.entity_id,
+        where: m.chunk_id in ^chunk_ids and not is_nil(e.collection_id),
+        select: e.collection_id,
+        distinct: true
+      )
+    )
   end
 
   @impl true
@@ -829,34 +841,6 @@ defmodule Arcana.Graph.GraphStore.Ecto do
         )
       )
     end
-  end
-
-  defp delete_orphaned_entities(repo) do
-    # Find entities with no mentions
-    orphaned_ids =
-      repo.all(
-        from(e in Entity,
-          left_join: m in EntityMention,
-          on: m.entity_id == e.id,
-          group_by: e.id,
-          having: count(m.id) == 0,
-          select: e.id
-        )
-      )
-
-    if orphaned_ids != [] do
-      # Delete relationships involving orphaned entities
-      repo.delete_all(
-        from(r in Relationship,
-          where: r.source_id in ^orphaned_ids or r.target_id in ^orphaned_ids
-        )
-      )
-
-      # Delete the orphaned entities
-      repo.delete_all(from(e in Entity, where: e.id in ^orphaned_ids))
-    end
-
-    :ok
   end
 
   defp maybe_filter_by_collection(query, nil), do: query

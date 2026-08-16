@@ -71,6 +71,62 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
     |> Repo.insert!()
   end
 
+  describe "delete_by_chunks/2" do
+    test "sweeps orphans only in the collections those chunks belonged to" do
+      # The sweep used to run across every collection in the database, so a
+      # delete in one tenant could remove another tenant's entities.
+      mine = create_collection("dbc-mine-#{System.unique_integer([:positive])}")
+      theirs = create_collection("dbc-theirs-#{System.unique_integer([:positive])}")
+
+      my_chunk = mine |> create_document() |> create_chunk()
+      their_chunk = theirs |> create_document() |> create_chunk()
+
+      my_entity = create_entity(mine, "Mine")
+      their_entity = create_entity(theirs, "Theirs")
+
+      create_mention(my_entity, my_chunk)
+      create_mention(their_entity, their_chunk)
+
+      # An orphan in the other collection: nothing references it, so a global
+      # sweep would take it even though its chunks were never touched.
+      their_orphan = create_entity(theirs, "TheirOrphan")
+
+      assert :ok = EctoStore.delete_by_chunks([my_chunk.id], repo: Repo)
+
+      refute Repo.get(Entity, my_entity.id), "the orphan in the target collection should go"
+      assert Repo.get(Entity, their_entity.id), "another collection's entity must survive"
+
+      assert Repo.get(Entity, their_orphan.id),
+             "another collection's orphan is not this delete's business"
+    end
+
+    test "keeps an entity that still has mentions elsewhere" do
+      collection = create_collection("dbc-keep-#{System.unique_integer([:positive])}")
+      document = create_document(collection)
+      deleted = create_chunk(document, "goes away")
+      kept = create_chunk(document, "stays")
+
+      entity = create_entity(collection, "Shared")
+      create_mention(entity, deleted)
+      create_mention(entity, kept)
+
+      assert :ok = EctoStore.delete_by_chunks([deleted.id], repo: Repo)
+
+      assert Repo.get(Entity, entity.id), "still mentioned by another chunk"
+    end
+
+    test "an empty list touches nothing" do
+      collection = create_collection("dbc-empty-#{System.unique_integer([:positive])}")
+      chunk = collection |> create_document() |> create_chunk()
+      entity = create_entity(collection, "Untouched")
+      create_mention(entity, chunk)
+
+      assert :ok = EctoStore.delete_by_chunks([], repo: Repo)
+
+      assert Repo.get(Entity, entity.id)
+    end
+  end
+
   describe "persist_entities/3" do
     test "inserts new entities and returns id map" do
       collection = create_collection()
