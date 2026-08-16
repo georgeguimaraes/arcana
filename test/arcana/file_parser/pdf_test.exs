@@ -31,6 +31,20 @@ defmodule Arcana.FileParser.PDFTest do
       parser = {Poppler, []}
       refute PDF.supports_binary?(parser)
     end
+
+    test "loads the module before asking, so an unloaded parser isn't misreported" do
+      # A module exports nothing until it is loaded, and nothing guarantees
+      # a configured parser has been touched before this is called.
+      module = Arcana.Test.UnloadedBinaryParser
+
+      :code.purge(module)
+      :code.delete(module)
+      :code.purge(module)
+
+      refute :erlang.module_loaded(module)
+
+      assert PDF.supports_binary?({module, []})
+    end
   end
 
   defp fixture_path(filename) do

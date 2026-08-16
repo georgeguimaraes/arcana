@@ -97,12 +97,10 @@ defmodule Arcana.FileParser.PDF do
   parsing binary content directly.
   """
   def supports_binary?({module, _opts}) when is_atom(module) do
-    # Check if the module explicitly declares binary support
-    # Default to false for safety
-    if function_exported?(module, :supports_binary?, 0) do
-      module.supports_binary?()
-    else
-      false
-    end
+    # Load the module first: one that hasn't been loaded yet exports
+    # nothing, so skipping this reports false for a parser that does
+    # support binaries. Everything else defaults to false for safety.
+    Code.ensure_loaded(module)
+    function_exported?(module, :supports_binary?, 0) and module.supports_binary?()
   end
 end
