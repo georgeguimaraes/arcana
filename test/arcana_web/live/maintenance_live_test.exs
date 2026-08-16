@@ -48,22 +48,22 @@ defmodule ArcanaWeb.MaintenanceLiveTest do
     end
 
     # The dashboard's maintenance actions run in a supervised task, so the
-    # result lands in the LiveView asynchronously.
-    defp wait_for(view, expected, attempts \\ 100) do
-      html = render(view)
-
+    # result lands in the LiveView asynchronously. Poll observable state, not
+    # flash text: the dashboard sets flash messages but never renders them, so
+    # a flash-based wait can only ever time out.
+    defp wait_until(fun, attempts \\ 100) do
       cond do
-        html =~ expected ->
+        fun.() ->
           true
 
         attempts == 0 ->
-          flunk("timed out waiting for #{inspect(expected)}")
+          flunk("timed out waiting for the condition to hold")
 
         true ->
-          # Process.sleep/1 returns :ok, so `sleep || recurse` short-circuits
-          # and never retries. Keep these as statements.
+          # Process.sleep/1 returns :ok, so `sleep || recurse` would
+          # short-circuit and never retry. Keep these as statements.
           Process.sleep(20)
-          wait_for(view, expected, attempts - 1)
+          wait_until(fun, attempts - 1)
       end
     end
 
@@ -106,13 +106,7 @@ defmodule ArcanaWeb.MaintenanceLiveTest do
 
       render_click(view, "summarize_communities")
 
-      # The count matters: the flash reads "Summarized N communities", so a
-      # bare "Summarized" also matches a run that summarized nothing. That
-      # made a no-op run sail past this line and fail on the hint below,
-      # pointing at the wrong thing.
-      assert wait_for(view, "Summarized 1 communities")
-
-      refute has_element?(view, ".arcana-summarize-hint")
+      assert wait_until(fn -> not has_element?(view, ".arcana-summarize-hint") end)
       assert Repo.get!(Community, community.id).summary == "a summary"
     end
 
@@ -123,7 +117,9 @@ defmodule ArcanaWeb.MaintenanceLiveTest do
 
       render_click(view, "detect_communities")
 
-      assert wait_for(view, "Detected")
+      assert wait_until(fn -> not (render(view) =~ "Detecting communities...") end)
+      assert Process.alive?(view.pid)
+      assert render(view) =~ "Detect Communities"
     end
 
     test "disables the action with a hint when no LLM is configured", %{conn: conn} do
