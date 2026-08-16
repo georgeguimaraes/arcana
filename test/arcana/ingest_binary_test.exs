@@ -91,9 +91,21 @@ defmodule Arcana.IngestBinaryTest do
                Arcana.ingest_binary("raw-bytes", filename: "report.docx", repo: Repo)
     end
 
-    test "PDF bytes report binary_unsupported: poppler shells out to a real file" do
-      assert {:error, {:binary_unsupported, Arcana.FileParser.PDF.Poppler}} =
-               Arcana.ingest_binary("%PDF-1.4 whatever", filename: "manual.pdf", repo: Repo)
+    test "PDF bytes are refused: poppler shells out to a real file" do
+      # Poppler is path-only, so binary_unsupported is the answer wherever
+      # pdftotext is installed. Without it the parser is unavailable too,
+      # and unavailability wins in parse_binary/3 — so the suite has to
+      # accept both rather than requiring poppler to run at all.
+      case Arcana.ingest_binary("%PDF-1.4 whatever", filename: "manual.pdf", repo: Repo) do
+        {:error, {:binary_unsupported, Arcana.FileParser.PDF.Poppler}} ->
+          assert Parser.pdf_support_available?()
+
+        {:error, :poppler_not_available} ->
+          refute Parser.pdf_support_available?()
+
+        other ->
+          flunk("Unexpected result: #{inspect(other)}")
+      end
     end
 
     test "unknown extensions are unsupported" do

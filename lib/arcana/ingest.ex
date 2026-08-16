@@ -161,6 +161,10 @@ defmodule Arcana.Ingest do
   shells out to `pdftotext` and needs a real file, so ingesting PDF bytes
   returns `{:error, {:binary_unsupported, Arcana.FileParser.PDF.Poppler}}`
   — write them to a temp file and use `ingest_file/2` instead.
+
+  A parser that is *also* unavailable reports that instead, since a retry
+  through `ingest_file/2` would fail just the same: with `pdftotext`
+  missing, PDF bytes come back as `{:error, :poppler_not_available}`.
   """
   def ingest_binary(binary, opts) when is_binary(binary) do
     filename =

@@ -33,7 +33,9 @@ defmodule Arcana.FileParser do
 
         # Optional: accept binary content, enabling `Arcana.ingest_binary/2`
         # for this format (default: false, path only). Path-only parsers
-        # make ingest_binary/2 return {:error, {:binary_unsupported, mod}}.
+        # make ingest_binary/2 return {:error, {:binary_unsupported, mod}},
+        # unless they are unavailable too — then unavailability is what
+        # gets reported, since a path retry would fail just the same.
         @impl true
         def supports_binary?, do: true
 
