@@ -106,52 +106,58 @@ children = [
 
 ## Upgrading
 
-### Community summary fingerprint
-
-Community detection deletes and recreates every community row, so a summary is carried over to the membership it belonged to. Membership alone can't say whether that summary is still accurate: a summary is written from the community's relationships too, and ingesting another document adds relationships without moving anyone between communities.
-
-`arcana_graph_communities.summary_fingerprint` records what each summary was generated from, so a rebuild can tell an unchanged community from one whose graph moved on. `Arcana.Graph.Community` reads the column, so an install without it fails on any community query.
-
-New installs get it from `mix arcana.graph.install`. Everyone else:
-
-```bash
-mix arcana.graph.gen.summary_fingerprint
-mix ecto.migrate
-```
-
-Summaries written before the column existed have no fingerprint, so they can't be verified. They regenerate once on the next `mix arcana.graph.summarize_communities` run, record a fingerprint, and settle from then on.
-
-### Entity mention unique index
-
-Graph tables installed before the entity mention unique index existed pick up one mention row per (entity, chunk) on every ingest, so re-ingesting the same document keeps inflating mention counts and the scores derived from them. The graph store writes mentions with `on_conflict: :nothing`, which does nothing at all without the index.
-
-New installs get the index from `mix arcana.graph.install`. Everyone else generates the upgrade migration:
-
-```bash
-mix arcana.graph.gen.mentions_index
-mix ecto.migrate
-```
-
-The migration deletes the duplicates accumulated so far, keeping the oldest row of each pair, then creates the index. To write it by hand instead:
+Arcana owns its schema and tracks a version per install, so upgrading is one
+migration that delegates rather than DDL you write yourself:
 
 ```elixir
-def up do
-  execute("""
-  DELETE FROM arcana_graph_entity_mentions m
-  USING arcana_graph_entity_mentions kept
-  WHERE m.entity_id = kept.entity_id
-    AND m.chunk_id = kept.chunk_id
-    AND (m.inserted_at > kept.inserted_at
-         OR (m.inserted_at = kept.inserted_at AND m.ctid > kept.ctid))
-  """)
+defmodule MyApp.Repo.Migrations.UpgradeArcanaGraph do
+  use Ecto.Migration
 
-  create unique_index(:arcana_graph_entity_mentions, [:entity_id, :chunk_id])
-end
+  def up, do: Arcana.Graph.Migration.up()
 
-def down do
-  drop unique_index(:arcana_graph_entity_mentions, [:entity_id, :chunk_id])
+  def down, do: Arcana.Graph.Migration.down()
 end
 ```
+
+```bash
+mix ecto.migrate
+```
+
+`up/1` applies every version step between what your database has and the
+target, and does nothing when you are already current. Check where an
+install stands with:
+
+```elixir
+Arcana.Graph.Migration.recorded_version(MyApp.Repo)
+Arcana.Graph.Migration.current_version()
+```
+
+### Coming from a hand-written install
+
+Installs predating versioned migrations have graph tables and no recorded
+version. Version 1 is written to converge them: it creates only what is
+absent and adds only what a later release introduced, so it never drops
+anything or re-runs DDL you already have. Two changes that shipped as
+standalone upgrade tasks are folded into it, and running v1 applies both:
+
+- the unique index on `arcana_graph_entity_mentions (entity_id, chunk_id)`,
+  without which the `on_conflict: :nothing` the graph store writes with is a
+  silent no-op and mention rows accumulate on every ingest. Duplicates
+  already collected are deleted first, keeping the oldest row per pair
+- `arcana_graph_communities.summary_fingerprint`, which records what each
+  summary was generated from so a rebuild can tell an unchanged community
+  from one whose graph moved on. Summaries written before it have no
+  fingerprint, so they regenerate once on the next summarize run and settle
+
+### Installing into a Postgres schema
+
+Pass `:prefix` to keep Arcana's tables in a schema of their own, and
+`create_schema: false` if you manage the schema yourself:
+
+```elixir
+def up, do: Arcana.Graph.Migration.up(prefix: "tenant_a")
+```
+
 
 ## Configuration
 

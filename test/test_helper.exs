@@ -1,3 +1,16 @@
+# The versioned-migration tests run real DDL, so they use a database of
+# their own. Configured here rather than in config/test.exs because Mix
+# warns about config for an app that isn't a dependency.
+Application.put_env(:arcana_migration_test, Arcana.MigrationRepo,
+  username: System.get_env("POSTGRES_USER", "postgres"),
+  password: System.get_env("POSTGRES_PASSWORD", "postgres"),
+  hostname: System.get_env("POSTGRES_HOST", "localhost"),
+  port: String.to_integer(System.get_env("POSTGRES_PORT", "5433")),
+  database: "arcana_migration_test",
+  pool_size: 2,
+  types: Arcana.PostgrexTypes
+)
+
 {:ok, _} = Arcana.TestRepo.start_link()
 
 # Vacuum the database before starting sandbox mode to clear dead tuples from prior runs

@@ -44,7 +44,7 @@ defmodule Mix.Tasks.Arcana.Graph.InstallTest do
       test_project()
       |> Igniter.compose_task("arcana.graph.install", [])
 
-    assert migration_content(igniter) =~ ":embedding, :vector, size: 1024"
+    assert migration_content(igniter) =~ "Arcana.Graph.Migration.up(dimensions: 1024)"
   end
 
   test "detects dimensions from the default (function) embedder config" do
@@ -54,7 +54,7 @@ defmodule Mix.Tasks.Arcana.Graph.InstallTest do
       test_project()
       |> Igniter.compose_task("arcana.graph.install", [])
 
-    assert migration_content(igniter) =~ ":embedding, :vector, size: 384"
+    assert migration_content(igniter) =~ "Arcana.Graph.Migration.up(dimensions: 384)"
   end
 
   test "--dimensions overrides detection" do
@@ -64,7 +64,7 @@ defmodule Mix.Tasks.Arcana.Graph.InstallTest do
       test_project()
       |> Igniter.compose_task("arcana.graph.install", ["--dimensions", "512"])
 
-    assert migration_content(igniter) =~ ":embedding, :vector, size: 512"
+    assert migration_content(igniter) =~ "Arcana.Graph.Migration.up(dimensions: 512)"
   end
 
   test "rejects a non-positive --dimensions instead of generating vector(0)" do
@@ -120,49 +120,41 @@ defmodule Mix.Tasks.Arcana.Graph.InstallTest do
       ])
 
     assert Path.dirname(migration_path(igniter)) == expected
-    assert migration_content(igniter) =~ ":embedding, :vector, size: 512"
+    assert migration_content(igniter) =~ "Arcana.Graph.Migration.up(dimensions: 512)"
   end
 
   defp migration_path(igniter) do
     paths =
       igniter.rewrite.sources
       |> Map.keys()
-      |> Enum.filter(&String.ends_with?(&1, "_create_arcana_graph_tables.exs"))
+      |> Enum.filter(&String.ends_with?(&1, "_add_arcana_graph.exs"))
 
     assert [path] = paths
     path
   end
 
-  test "every generated communities table declares the columns the schema reads" do
-    # There are two table definitions in this task, one per installer path,
-    # and only the Igniter one got summary_fingerprint the first time. A
-    # missing column means GraphRAG blows up against its own schema.
-    source = File.read!("lib/mix/tasks/arcana.graph.install.ex")
+  test "the generated migration delegates instead of carrying DDL" do
+    igniter =
+      test_project()
+      |> Igniter.compose_task("arcana.graph.install", ["--dimensions", "512"])
 
-    definitions =
-      source
-      |> String.split("create table(:arcana_graph_communities")
-      |> Enum.drop(1)
+    content = migration_content(igniter)
 
-    assert length(definitions) >= 2, "expected an Igniter and a non-Igniter template"
+    assert content =~ "Arcana.Graph.Migration.up(dimensions: 512)"
+    assert content =~ "Arcana.Graph.Migration.down()"
 
-    for {definition, index} <- Enum.with_index(definitions) do
-      body = definition |> String.split("timestamps()") |> hd()
-
-      for column <- ~w(summary entity_ids dirty change_count summary_fingerprint) do
-        assert body =~ ":#{column}",
-               "communities table ##{index} is missing #{column}"
-      end
-    end
+    # No table definitions to drift out of sync with the schema, which is
+    # what let reference_answer and summary_fingerprint go missing.
+    refute content =~ "create table("
   end
 
   defp migration_content(igniter) do
     source =
       igniter.rewrite
       |> Rewrite.sources()
-      |> Enum.find(&String.contains?(&1.path, "create_arcana_graph_tables"))
+      |> Enum.find(&String.contains?(&1.path, "add_arcana_graph"))
 
-    assert source, "expected a create_arcana_graph_tables migration to be created"
+    assert source, "expected an add_arcana_graph migration to be created"
     Rewrite.Source.get(source, :content)
   end
 end

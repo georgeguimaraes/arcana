@@ -116,103 +116,25 @@ if Code.ensure_loaded?(Igniter) do
     defp create_migration(igniter, repo_module, dimensions) do
       migrations_path = Arcana.MixHelpers.migrations_path(repo_module)
       timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
-      filename = "#{timestamp}_create_arcana_graph_tables.exs"
+      filename = "#{timestamp}_add_arcana_graph.exs"
       path = Path.join(migrations_path, filename)
 
-      migration_content = """
-      defmodule #{inspect(repo_module)}.Migrations.CreateArcanaGraphTables do
+      Igniter.create_new_file(igniter, path, migration_contents(repo_module, dimensions))
+    end
+
+    # Delegates rather than spelling out DDL: Arcana owns one definition of
+    # the graph schema and its version history. The detected dimensions are
+    # passed through because the entity embedding column depends on them.
+    defp migration_contents(repo_module, dimensions) do
+      """
+      defmodule #{inspect(repo_module)}.Migrations.AddArcanaGraph do
         use Ecto.Migration
 
-        def up do
-          create table(:arcana_graph_entities, primary_key: false) do
-            add :id, :binary_id, primary_key: true
-            add :name, :string, null: false
-            add :type, :string, null: false
-            add :description, :text
-            add :embedding, :vector, size: #{dimensions}
-            add :metadata, :map, default: %{}
-            add :chunk_id, references(:arcana_chunks, type: :binary_id, on_delete: :nilify_all)
-            add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :delete_all)
+        def up, do: Arcana.Graph.Migration.up(dimensions: #{dimensions})
 
-            timestamps()
-          end
-
-          create unique_index(:arcana_graph_entities, [:name, :collection_id])
-          create index(:arcana_graph_entities, [:collection_id])
-          create index(:arcana_graph_entities, [:type])
-
-          # HNSW index for entity embedding similarity search
-          execute \"\"\"
-          CREATE INDEX arcana_graph_entities_embedding_idx ON arcana_graph_entities
-          USING hnsw (embedding vector_cosine_ops)
-          WHERE embedding IS NOT NULL
-          \"\"\"
-
-          create table(:arcana_graph_entity_mentions, primary_key: false) do
-            add :id, :binary_id, primary_key: true
-            add :span_start, :integer
-            add :span_end, :integer
-            add :context, :text
-            add :entity_id, references(:arcana_graph_entities, type: :binary_id, on_delete: :delete_all), null: false
-            add :chunk_id, references(:arcana_chunks, type: :binary_id, on_delete: :delete_all), null: false
-
-            timestamps()
-          end
-
-          create index(:arcana_graph_entity_mentions, [:entity_id])
-          create index(:arcana_graph_entity_mentions, [:chunk_id])
-          create unique_index(:arcana_graph_entity_mentions, [:entity_id, :chunk_id])
-
-          create table(:arcana_graph_relationships, primary_key: false) do
-            add :id, :binary_id, primary_key: true
-            add :type, :string, null: false
-            add :description, :text
-            add :strength, :integer
-            add :metadata, :map, default: %{}
-            add :source_id, references(:arcana_graph_entities, type: :binary_id, on_delete: :delete_all), null: false
-            add :target_id, references(:arcana_graph_entities, type: :binary_id, on_delete: :delete_all), null: false
-
-            timestamps()
-          end
-
-          create index(:arcana_graph_relationships, [:source_id])
-          create index(:arcana_graph_relationships, [:target_id])
-          create index(:arcana_graph_relationships, [:type])
-
-          create table(:arcana_graph_communities, primary_key: false) do
-            add :id, :binary_id, primary_key: true
-            add :level, :integer, null: false
-            add :description, :text
-            add :summary, :text
-            add :entity_ids, {:array, :binary_id}, default: []
-            add :dirty, :boolean, default: true
-            add :change_count, :integer, default: 0
-            add :summary_fingerprint, :string
-            add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :delete_all)
-
-            timestamps()
-          end
-
-          create index(:arcana_graph_communities, [:collection_id])
-          create index(:arcana_graph_communities, [:level])
-
-          # GIN index for entity_ids array overlap queries (used in ask pipeline)
-          execute \"\"\"
-          CREATE INDEX arcana_graph_communities_entity_ids_idx ON arcana_graph_communities
-          USING gin (entity_ids)
-          \"\"\"
-        end
-
-        def down do
-          drop table(:arcana_graph_communities)
-          drop table(:arcana_graph_relationships)
-          drop table(:arcana_graph_entity_mentions)
-          drop table(:arcana_graph_entities)
-        end
+        def down, do: Arcana.Graph.Migration.down()
       end
       """
-
-      Igniter.create_new_file(igniter, path, migration_content)
     end
   end
 else
@@ -246,99 +168,6 @@ else
 
     import Mix.Generator
 
-    @migration_template """
-    defmodule <%= @repo %>.Migrations.CreateArcanaGraphTables do
-      use Ecto.Migration
-
-      def up do
-        create table(:arcana_graph_entities, primary_key: false) do
-          add :id, :binary_id, primary_key: true
-          add :name, :string, null: false
-          add :type, :string, null: false
-          add :description, :text
-          add :embedding, :vector, size: <%= @dimensions %>
-          add :metadata, :map, default: %{}
-          add :chunk_id, references(:arcana_chunks, type: :binary_id, on_delete: :nilify_all)
-          add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :delete_all)
-
-          timestamps()
-        end
-
-        create unique_index(:arcana_graph_entities, [:name, :collection_id])
-        create index(:arcana_graph_entities, [:collection_id])
-        create index(:arcana_graph_entities, [:type])
-
-        # HNSW index for entity embedding similarity search
-        execute \"\"\"
-        CREATE INDEX arcana_graph_entities_embedding_idx ON arcana_graph_entities
-        USING hnsw (embedding vector_cosine_ops)
-        WHERE embedding IS NOT NULL
-        \"\"\"
-
-        create table(:arcana_graph_entity_mentions, primary_key: false) do
-          add :id, :binary_id, primary_key: true
-          add :span_start, :integer
-          add :span_end, :integer
-          add :context, :text
-          add :entity_id, references(:arcana_graph_entities, type: :binary_id, on_delete: :delete_all), null: false
-          add :chunk_id, references(:arcana_chunks, type: :binary_id, on_delete: :delete_all), null: false
-
-          timestamps()
-        end
-
-        create index(:arcana_graph_entity_mentions, [:entity_id])
-        create index(:arcana_graph_entity_mentions, [:chunk_id])
-        create unique_index(:arcana_graph_entity_mentions, [:entity_id, :chunk_id])
-
-        create table(:arcana_graph_relationships, primary_key: false) do
-          add :id, :binary_id, primary_key: true
-          add :type, :string, null: false
-          add :description, :text
-          add :strength, :integer
-          add :metadata, :map, default: %{}
-          add :source_id, references(:arcana_graph_entities, type: :binary_id, on_delete: :delete_all), null: false
-          add :target_id, references(:arcana_graph_entities, type: :binary_id, on_delete: :delete_all), null: false
-
-          timestamps()
-        end
-
-        create index(:arcana_graph_relationships, [:source_id])
-        create index(:arcana_graph_relationships, [:target_id])
-        create index(:arcana_graph_relationships, [:type])
-
-        create table(:arcana_graph_communities, primary_key: false) do
-          add :id, :binary_id, primary_key: true
-          add :level, :integer, null: false
-          add :description, :text
-          add :summary, :text
-          add :entity_ids, {:array, :binary_id}, default: []
-          add :dirty, :boolean, default: true
-          add :change_count, :integer, default: 0
-          add :summary_fingerprint, :string
-          add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :delete_all)
-
-          timestamps()
-        end
-
-        create index(:arcana_graph_communities, [:collection_id])
-        create index(:arcana_graph_communities, [:level])
-
-        # GIN index for entity_ids array overlap queries (used in ask pipeline)
-        execute \"\"\"
-        CREATE INDEX arcana_graph_communities_entity_ids_idx ON arcana_graph_communities
-        USING gin (entity_ids)
-        \"\"\"
-      end
-
-      def down do
-        drop table(:arcana_graph_communities)
-        drop table(:arcana_graph_relationships)
-        drop table(:arcana_graph_entity_mentions)
-        drop table(:arcana_graph_entities)
-      end
-    end
-    """
-
     @impl Mix.Task
     def run(args) do
       {opts, _, _} = OptionParser.parse(args, strict: [repo: :string, dimensions: :integer])
@@ -354,11 +183,11 @@ else
       File.mkdir_p!(migrations_path)
 
       timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
-      filename = "#{timestamp}_create_arcana_graph_tables.exs"
+      filename = "#{timestamp}_add_arcana_graph.exs"
       path = Path.join(migrations_path, filename)
 
       content =
-        EEx.eval_string(@migration_template, assigns: [repo: repo, dimensions: dimensions])
+        migration_contents(Module.concat([repo]), dimensions)
 
       create_file(path, content)
 

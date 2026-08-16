@@ -397,7 +397,7 @@ defmodule Mix.Tasks.Arcana.InstallTest do
     paths =
       igniter.rewrite.sources
       |> Map.keys()
-      |> Enum.filter(&String.ends_with?(&1, "_create_arcana_tables.exs"))
+      |> Enum.filter(&String.ends_with?(&1, "_add_arcana.exs"))
 
     assert [path] = paths
     path

@@ -19,8 +19,12 @@ defmodule Arcana.Migration do
 
     * `:version` - target version (defaults to the latest)
     * `:dimensions` - embedding dimensions for `arcana_chunks.embedding`
-      (defaults to #{384}). Must match `Arcana.Embedder.dimensions/1` for the
-      embedder you run, or storing a chunk fails.
+      (defaults to 384). Must match `Arcana.Embedder.dimensions/1` for the
+      embedder you run, or storing a chunk fails
+    * `:prefix` - Postgres schema to install into (defaults to the
+      connection's current schema)
+    * `:create_schema` - whether to create `:prefix` when it is missing
+      (defaults to `true`, ignored without a prefix)
 
   ## Adoption
 
@@ -52,11 +56,13 @@ defmodule Arcana.Migration do
     target = Keyword.get(opts, :version, @current_version)
     validate_target!(target)
 
-    current = recorded_version(repo())
+    prefix = Keyword.get(opts, :prefix)
+    current = recorded_version(repo(), prefix: prefix)
 
     if current < target do
+      maybe_create_schema(prefix, opts)
       for version <- (current + 1)..target//1, do: change(version, :up, opts)
-      record_version(target)
+      record_version(target, prefix)
     end
 
     :ok
@@ -69,11 +75,12 @@ defmodule Arcana.Migration do
   """
   def down(opts \\ []) do
     target = Keyword.get(opts, :version, 0)
-    current = recorded_version(repo())
+    prefix = Keyword.get(opts, :prefix)
+    current = recorded_version(repo(), prefix: prefix)
 
     if current > target do
       for version <- current..(target + 1)//-1, do: change(version, :down, opts)
-      record_version(target)
+      record_version(target, prefix)
     end
 
     :ok
@@ -89,17 +96,19 @@ defmodule Arcana.Migration do
   installed.
 
   Pass a repo when calling this outside a migration; inside one it defaults
-  to the migration's own repo.
+  to the migration's own repo. Pass `:prefix` to read a version recorded in
+  a Postgres schema other than the current one.
   """
-  def recorded_version(repo \\ nil) do
+  def recorded_version(repo \\ nil, opts \\ []) do
     repo = repo || repo()
+    prefix = Keyword.get(opts, :prefix)
 
     %{rows: [[comment]]} =
       repo.query!(
         "SELECT obj_description(c.oid) FROM pg_class c " <>
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
-          "WHERE c.relname = $1 AND n.nspname = current_schema()",
-        [@version_table]
+          "WHERE c.relname = $1 AND n.nspname = COALESCE($2, current_schema())",
+        [@version_table, prefix]
       )
 
     parse_version(comment)
@@ -117,13 +126,26 @@ defmodule Arcana.Migration do
     end
   end
 
-  defp record_version(0) do
-    # Everything is gone, so there is nothing left to comment on.
-    :ok
+  # Everything is gone, so there is nothing left to comment on.
+  defp record_version(0, _prefix), do: :ok
+
+  defp record_version(version, prefix) do
+    execute("COMMENT ON TABLE #{qualify(@version_table, prefix)} IS 'arcana:#{version}'")
   end
 
-  defp record_version(version) do
-    execute("COMMENT ON TABLE #{@version_table} IS 'arcana:#{version}'")
+  # Raw SQL gets none of Ecto's prefix handling, so anything that doesn't go
+  # through table/2 or index/3 has to be qualified by hand.
+  defp qualify(name, nil), do: ~s("#{name}")
+  defp qualify(name, prefix), do: ~s("#{prefix}"."#{name}")
+
+  defp maybe_create_schema(nil, _opts), do: :ok
+
+  defp maybe_create_schema(prefix, opts) do
+    if Keyword.get(opts, :create_schema, true) do
+      execute(~s(CREATE SCHEMA IF NOT EXISTS "#{prefix}"))
+    end
+
+    :ok
   end
 
   defp validate_target!(target) when is_integer(target) and target >= 1 do
@@ -147,10 +169,11 @@ defmodule Arcana.Migration do
 
   defp change(1, :up, opts) do
     dimensions = Keyword.get(opts, :dimensions, @default_dimensions)
+    prefix = Keyword.get(opts, :prefix)
 
     execute("CREATE EXTENSION IF NOT EXISTS vector")
 
-    create_if_not_exists table(:arcana_collections, primary_key: false) do
+    create_if_not_exists table(:arcana_collections, primary_key: false, prefix: prefix) do
       add(:id, :binary_id, primary_key: true)
       add(:name, :string, null: false)
       add(:description, :text)
@@ -158,9 +181,9 @@ defmodule Arcana.Migration do
       timestamps()
     end
 
-    create_if_not_exists(unique_index(:arcana_collections, [:name]))
+    create_if_not_exists(unique_index(:arcana_collections, [:name], prefix: prefix))
 
-    create_if_not_exists table(:arcana_documents, primary_key: false) do
+    create_if_not_exists table(:arcana_documents, primary_key: false, prefix: prefix) do
       add(:id, :binary_id, primary_key: true)
       add(:content, :text)
       add(:content_type, :string, default: "text/plain")
@@ -173,58 +196,87 @@ defmodule Arcana.Migration do
 
       add(
         :collection_id,
-        references(:arcana_collections, type: :binary_id, on_delete: :nilify_all)
+        references(:arcana_collections,
+          type: :binary_id,
+          on_delete: :nilify_all,
+          prefix: prefix
+        )
       )
 
       timestamps()
     end
 
-    create_if_not_exists table(:arcana_chunks, primary_key: false) do
+    create_if_not_exists table(:arcana_chunks, primary_key: false, prefix: prefix) do
       add(:id, :binary_id, primary_key: true)
       add(:text, :text, null: false)
       add(:embedding, :vector, size: dimensions, null: false)
       add(:chunk_index, :integer, default: 0)
       add(:token_count, :integer)
       add(:metadata, :map, default: %{})
-      add(:document_id, references(:arcana_documents, type: :binary_id, on_delete: :delete_all))
+
+      add(
+        :document_id,
+        references(:arcana_documents, type: :binary_id, on_delete: :delete_all, prefix: prefix)
+      )
 
       timestamps()
     end
 
-    create_if_not_exists(index(:arcana_chunks, [:document_id]))
-    create_if_not_exists(index(:arcana_documents, [:source_id]))
-    create_if_not_exists(index(:arcana_documents, [:collection_id]))
+    create_if_not_exists(index(:arcana_chunks, [:document_id], prefix: prefix))
+    create_if_not_exists(index(:arcana_documents, [:source_id], prefix: prefix))
+    create_if_not_exists(index(:arcana_documents, [:collection_id], prefix: prefix))
 
     execute("""
-    CREATE INDEX IF NOT EXISTS arcana_chunks_embedding_idx ON arcana_chunks
+    CREATE INDEX IF NOT EXISTS arcana_chunks_embedding_idx
+    ON #{qualify("arcana_chunks", prefix)}
     USING hnsw (embedding vector_cosine_ops)
     """)
 
-    create_if_not_exists table(:arcana_evaluation_test_cases, primary_key: false) do
+    create_if_not_exists table(:arcana_evaluation_test_cases,
+                           primary_key: false,
+                           prefix: prefix
+                         ) do
       add(:id, :uuid, primary_key: true, default: fragment("gen_random_uuid()"))
       add(:question, :text, null: false)
       add(:source, :string, null: false, default: "synthetic")
       add(:reference_answer, :text)
-      add(:source_chunk_id, references(:arcana_chunks, type: :uuid, on_delete: :nilify_all))
+
+      add(
+        :source_chunk_id,
+        references(:arcana_chunks, type: :uuid, on_delete: :nilify_all, prefix: prefix)
+      )
 
       timestamps()
     end
 
-    create_if_not_exists table(:arcana_evaluation_test_case_chunks, primary_key: false) do
+    create_if_not_exists table(:arcana_evaluation_test_case_chunks,
+                           primary_key: false,
+                           prefix: prefix
+                         ) do
       add(
         :test_case_id,
-        references(:arcana_evaluation_test_cases, type: :uuid, on_delete: :delete_all),
+        references(:arcana_evaluation_test_cases,
+          type: :uuid,
+          on_delete: :delete_all,
+          prefix: prefix
+        ),
         null: false
       )
 
-      add(:chunk_id, references(:arcana_chunks, type: :uuid, on_delete: :delete_all), null: false)
+      add(
+        :chunk_id,
+        references(:arcana_chunks, type: :uuid, on_delete: :delete_all, prefix: prefix),
+        null: false
+      )
     end
 
     create_if_not_exists(
-      unique_index(:arcana_evaluation_test_case_chunks, [:test_case_id, :chunk_id])
+      unique_index(:arcana_evaluation_test_case_chunks, [:test_case_id, :chunk_id],
+        prefix: prefix
+      )
     )
 
-    create_if_not_exists table(:arcana_evaluation_runs, primary_key: false) do
+    create_if_not_exists table(:arcana_evaluation_runs, primary_key: false, prefix: prefix) do
       add(:id, :uuid, primary_key: true, default: fragment("gen_random_uuid()"))
       add(:status, :string, null: false, default: "running")
       add(:metrics, :map, default: %{})
@@ -235,23 +287,30 @@ defmodule Arcana.Migration do
       timestamps()
     end
 
-    create_if_not_exists(index(:arcana_evaluation_runs, [:inserted_at]))
+    create_if_not_exists(index(:arcana_evaluation_runs, [:inserted_at], prefix: prefix))
 
-    # Columns added by Arcana releases after the table itself shipped. An
-    # existing install skips the create above, so these have to be applied
-    # on their own or the schema reads a column the database lacks.
-    execute(
-      "ALTER TABLE arcana_evaluation_test_cases ADD COLUMN IF NOT EXISTS reference_answer text"
-    )
+    converge_v1(prefix)
   end
 
-  defp change(1, :down, _opts) do
-    drop_if_exists(table(:arcana_evaluation_runs))
-    drop_if_exists(table(:arcana_evaluation_test_case_chunks))
-    drop_if_exists(table(:arcana_evaluation_test_cases))
-    drop_if_exists(table(:arcana_chunks))
-    drop_if_exists(table(:arcana_documents))
-    drop_if_exists(table(:arcana_collections))
+  defp change(1, :down, opts) do
+    prefix = Keyword.get(opts, :prefix)
+
+    drop_if_exists(table(:arcana_evaluation_runs, prefix: prefix))
+    drop_if_exists(table(:arcana_evaluation_test_case_chunks, prefix: prefix))
+    drop_if_exists(table(:arcana_evaluation_test_cases, prefix: prefix))
+    drop_if_exists(table(:arcana_chunks, prefix: prefix))
+    drop_if_exists(table(:arcana_documents, prefix: prefix))
+    drop_if_exists(table(:arcana_collections, prefix: prefix))
     # The vector extension stays: other tables in the database may use it.
+  end
+
+  # Columns added by Arcana releases after the table itself shipped. An
+  # existing install skips the create above, so these have to be applied on
+  # their own or the schema reads a column the database lacks.
+  defp converge_v1(prefix) do
+    execute(
+      "ALTER TABLE #{qualify("arcana_evaluation_test_cases", prefix)} " <>
+        "ADD COLUMN IF NOT EXISTS reference_answer text"
+    )
   end
 end

@@ -156,6 +156,57 @@ defmodule Arcana.MigrationTest do
     end
   end
 
+  describe "prefix" do
+    test "installs into a Postgres schema and leaves the default one alone" do
+      SQL.query!(Repo, ~s(DROP SCHEMA IF EXISTS "tenant_a" CASCADE), [])
+      on_exit(fn -> SQL.query!(Repo, ~s(DROP SCHEMA IF EXISTS "tenant_a" CASCADE), []) end)
+
+      migrate(Arcana.Migration, prefix: "tenant_a")
+
+      assert Arcana.Migration.recorded_version(Repo, prefix: "tenant_a") ==
+               Arcana.Migration.current_version()
+
+      # The default schema must be untouched: a prefixed install is a
+      # separate tenant, not a second copy of the same one.
+      assert Arcana.Migration.recorded_version(Repo) == 0
+      assert columns("arcana_documents") == MapSet.new()
+
+      %{rows: [[count]]} =
+        SQL.query!(
+          Repo,
+          "SELECT count(*) FROM information_schema.tables " <>
+            "WHERE table_schema = 'tenant_a' AND table_name = 'arcana_documents'",
+          []
+        )
+
+      assert count == 1
+    end
+
+    test "the graph stream honors the prefix too" do
+      SQL.query!(Repo, ~s(DROP SCHEMA IF EXISTS "tenant_b" CASCADE), [])
+      on_exit(fn -> SQL.query!(Repo, ~s(DROP SCHEMA IF EXISTS "tenant_b" CASCADE), []) end)
+
+      migrate(Arcana.Migration, prefix: "tenant_b")
+      migrate(Arcana.Graph.Migration, prefix: "tenant_b")
+
+      assert Arcana.Graph.Migration.recorded_version(Repo, prefix: "tenant_b") == 1
+      assert Arcana.Graph.Migration.recorded_version(Repo) == 0
+
+      # The raw SQL in converge_v1 has to be qualified as well, or it edits
+      # whatever table the search_path happens to resolve to.
+      %{rows: [[count]]} =
+        SQL.query!(
+          Repo,
+          "SELECT count(*) FROM information_schema.columns " <>
+            "WHERE table_schema = 'tenant_b' AND table_name = 'arcana_graph_communities' " <>
+            "AND column_name = 'summary_fingerprint'",
+          []
+        )
+
+      assert count == 1
+    end
+  end
+
   describe "Arcana.Graph.Migration" do
     setup do
       migrate(Arcana.Migration)
