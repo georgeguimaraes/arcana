@@ -58,6 +58,7 @@ defmodule Arcana.Migration do
 
     prefix = Keyword.get(opts, :prefix)
     current = recorded_version(repo(), prefix: prefix)
+    validate_recorded!(current)
 
     if current < target do
       maybe_create_schema(prefix, opts)
@@ -75,8 +76,11 @@ defmodule Arcana.Migration do
   """
   def down(opts \\ []) do
     target = Keyword.get(opts, :version, 0)
+    validate_rollback_target!(target)
+
     prefix = Keyword.get(opts, :prefix)
     current = recorded_version(repo(), prefix: prefix)
+    validate_recorded!(current)
 
     if current > target do
       for version <- current..(target + 1)//-1, do: change(version, :down, opts)
@@ -98,6 +102,10 @@ defmodule Arcana.Migration do
   Pass a repo when calling this outside a migration; inside one it defaults
   to the migration's own repo. Pass `:prefix` to read a version recorded in
   a Postgres schema other than the current one.
+
+  Both arguments default, so options must be given with a repo:
+  `recorded_version(MyApp.Repo, prefix: "tenant_a")`. A lone keyword list
+  would bind to the repo argument.
   """
   def recorded_version(repo \\ nil, opts \\ []) do
     repo = repo || repo()
@@ -113,8 +121,16 @@ defmodule Arcana.Migration do
 
     parse_version(comment)
   rescue
-    # No table, no version: this is a fresh install.
-    _ -> 0
+    # The table isn't there, which is what "never installed" looks like.
+    # Anything else - a bad connection, missing privileges - has to
+    # propagate, or down/1 would quietly decline to drop anything.
+    error in [Postgrex.Error] ->
+      if error.postgres[:code] in [:undefined_table, :invalid_schema_name],
+        do: 0,
+        else: reraise(error, __STACKTRACE__)
+
+    _ in [MatchError, DBConnection.EncodeError] ->
+      0
   end
 
   defp parse_version(nil), do: 0
@@ -135,14 +151,18 @@ defmodule Arcana.Migration do
 
   # Raw SQL gets none of Ecto's prefix handling, so anything that doesn't go
   # through table/2 or index/3 has to be qualified by hand.
-  defp qualify(name, nil), do: ~s("#{name}")
-  defp qualify(name, prefix), do: ~s("#{prefix}"."#{name}")
+  defp qualify(name, nil), do: quoted(name)
+  defp qualify(name, prefix), do: quoted(prefix) <> "." <> quoted(name)
+
+  # A double quote inside an identifier is escaped by doubling it. Prefixes
+  # can come from runtime config, so this is not only about odd names.
+  defp quoted(identifier), do: ~s("#{String.replace(identifier, ~s("), ~s(""))}")
 
   defp maybe_create_schema(nil, _opts), do: :ok
 
   defp maybe_create_schema(prefix, opts) do
     if Keyword.get(opts, :create_schema, true) do
-      execute(~s(CREATE SCHEMA IF NOT EXISTS "#{prefix}"))
+      execute("CREATE SCHEMA IF NOT EXISTS #{quoted(prefix)}")
     end
 
     :ok
@@ -160,6 +180,23 @@ defmodule Arcana.Migration do
 
   defp validate_target!(other) do
     raise ArgumentError, "version must be a positive integer, got: #{inspect(other)}"
+  end
+
+  defp validate_recorded!(current) when current > @current_version do
+    raise ArgumentError,
+          "this database is at version #{current}, which this release of Arcana does not " <>
+            "know about (latest is #{@current_version}). Upgrade the arcana dependency."
+  end
+
+  defp validate_recorded!(_current), do: :ok
+
+  defp validate_rollback_target!(target)
+       when is_integer(target) and target >= 0 and target <= @current_version,
+       do: :ok
+
+  defp validate_rollback_target!(other) do
+    raise ArgumentError,
+          "rollback target must be between 0 and #{@current_version}, got: #{inspect(other)}"
   end
 
   # === Version 1 ===
@@ -196,9 +233,12 @@ defmodule Arcana.Migration do
 
       add(
         :collection_id,
+        # :restrict, not :nilify_all. The installer template said otherwise,
+        # but every migrated database has :restrict and the dashboard relies
+        # on a delete failing rather than silently orphaning documents.
         references(:arcana_collections,
           type: :binary_id,
-          on_delete: :nilify_all,
+          on_delete: :restrict,
           prefix: prefix
         )
       )

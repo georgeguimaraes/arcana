@@ -765,5 +765,17 @@ else
           |> Kernel.<>(".Repo")
       end
     end
+
+    defp migration_contents(repo_module) do
+      """
+      defmodule #{inspect(repo_module)}.Migrations.AddArcana do
+        use Ecto.Migration
+
+        def up, do: Arcana.Migration.up()
+
+        def down, do: Arcana.Migration.down()
+      end
+      """
+    end
   end
 end

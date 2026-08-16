@@ -24,7 +24,10 @@ defmodule Arcana.MigrationTest do
       try do
         Supervisor.stop(pid, :normal, 5_000)
       catch
-        :exit, _ -> :ok
+        # Already on its way down. A :timeout or anything else is a real
+        # teardown failure and should stay visible.
+        :exit, :normal -> :ok
+        :exit, :noproc -> :ok
       end
     end)
 
@@ -65,6 +68,24 @@ defmodule Arcana.MigrationTest do
 
     Module.create(name, body, Macro.Env.location(__ENV__))
     name
+  end
+
+  # Ecto.Migration's DSL only works inside a running migration, and the
+  # Migrator runs it in its own process, so the call is inlined into the
+  # generated module rather than passed as a closure.
+  defp migrate_down(module, opts) do
+    name = :"Elixir.MigDown#{System.unique_integer([:positive])}"
+
+    body =
+      quote do
+        use Ecto.Migration
+
+        def up, do: unquote(module).down(unquote(Macro.escape(opts)))
+        def down, do: :ok
+      end
+
+    Module.create(name, body, Macro.Env.location(__ENV__))
+    Ecto.Migrator.up(Repo, System.unique_integer([:positive]), name, log: false)
   end
 
   defp columns(table) do
@@ -159,6 +180,29 @@ defmodule Arcana.MigrationTest do
       assert question == "kept?", "adoption must not drop existing rows"
     end
 
+    test "refuses to run against a database a newer release migrated" do
+      migrate(Arcana.Migration)
+
+      # An older Arcana meeting a newer schema must say so rather than
+      # returning :ok and leaving the caller to find out later.
+      SQL.query!(Repo, "COMMENT ON TABLE arcana_documents IS 'arcana:99'", [])
+
+      assert_raise ArgumentError, ~r/does not\s+know about/, fn ->
+        migrate(Arcana.Migration)
+      end
+    end
+
+    test "refuses a rollback target outside the supported range" do
+      migrate(Arcana.Migration)
+
+      assert_raise ArgumentError, ~r/rollback target/, fn ->
+        migrate_down(Arcana.Migration, version: -1)
+      end
+
+      # It refused before running anything, so the tables are still here.
+      assert table_exists?("arcana_documents")
+    end
+
     test "refuses a version this release doesn't know about" do
       assert_raise ArgumentError, ~r/newer than this release/, fn ->
         migrate(Arcana.Migration, version: 99)
@@ -190,6 +234,15 @@ defmodule Arcana.MigrationTest do
         )
 
       assert count == 1
+    end
+
+    test "a prefix containing a double quote is rejected before any SQL runs" do
+      # qualify/2 escapes identifiers, but Ecto refuses such a prefix first,
+      # so the raw-SQL path is never reached with one. Asserting the real
+      # behaviour rather than a scenario that cannot occur.
+      assert_raise ArgumentError, ~r/is not permitted/, fn ->
+        migrate(Arcana.Migration, prefix: ~s(ten"ant))
+      end
     end
 
     test "the graph stream honors the prefix too" do

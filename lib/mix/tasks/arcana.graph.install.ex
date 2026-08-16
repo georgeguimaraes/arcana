@@ -237,5 +237,17 @@ else
 
     defp resolve_dimensions(nil), do: Arcana.MixHelpers.detect_dimensions!()
     defp resolve_dimensions(given), do: Arcana.MixHelpers.validate_dimensions!(given)
+
+    defp migration_contents(repo_module, dimensions) do
+      """
+      defmodule #{inspect(repo_module)}.Migrations.AddArcanaGraph do
+        use Ecto.Migration
+
+        def up, do: Arcana.Graph.Migration.up(dimensions: #{dimensions})
+
+        def down, do: Arcana.Graph.Migration.down()
+      end
+      """
+    end
   end
 end
