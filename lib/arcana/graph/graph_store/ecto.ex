@@ -30,8 +30,12 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   # unreachable. The class below is the Unicode White_Space set, matching
   # EntityName.normalize/1 character for character.
   #
-  # Case folding still differs from Elixir's on U+0130, and neither side
-  # normalizes NFC/NFD. Both are documented in Arcana.Graph.EntityName.
+  # Case folding still differs from Elixir's on an open-ended set of
+  # codepoints that depends on the database host's libc (56 of them on
+  # PG 16.15/glibc, only U+0130 of which is fixed by Unicode itself), and
+  # neither side normalizes NFC/NFD. Both are documented in
+  # Arcana.Graph.EntityName; persist_entities/3 keys the raw name so a
+  # disagreeing pair still reaches its own row.
   @whitespace_class "[\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]+"
   @normalize_template "btrim(regexp_replace(regexp_replace(lower(EXPR), '[_-]+', ' ', 'g'), '#{@whitespace_class}', ' ', 'g'))"
   @normalize_name_sql String.replace(@normalize_template, "EXPR", "?")
