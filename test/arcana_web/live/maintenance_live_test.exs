@@ -53,9 +53,17 @@ defmodule ArcanaWeb.MaintenanceLiveTest do
       html = render(view)
 
       cond do
-        html =~ expected -> true
-        attempts == 0 -> flunk("timed out waiting for #{inspect(expected)}")
-        true -> Process.sleep(20) || wait_for(view, expected, attempts - 1)
+        html =~ expected ->
+          true
+
+        attempts == 0 ->
+          flunk("timed out waiting for #{inspect(expected)}")
+
+        true ->
+          # Process.sleep/1 returns :ok, so `sleep || recurse` short-circuits
+          # and never retries. Keep these as statements.
+          Process.sleep(20)
+          wait_for(view, expected, attempts - 1)
       end
     end
 

@@ -296,7 +296,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         end
 
         opts = maintenance_collection_opts([batch_size: 50, progress: progress_fn], collection)
-        result = Arcana.Maintenance.reembed(repo, opts)
+        result = safely(fn -> Arcana.Maintenance.reembed(repo, opts) end)
         send(parent, {:reembed_complete, result})
       end)
 
@@ -317,7 +317,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         progress_fn = progress_sender(parent, :rebuild_graph_progress)
 
         opts = maintenance_collection_opts([progress: progress_fn], collection)
-        result = Arcana.Maintenance.rebuild_graph(repo, opts)
+        result = safely(fn -> Arcana.Maintenance.rebuild_graph(repo, opts) end)
         send(parent, {:rebuild_graph_complete, result})
       end)
 
@@ -338,7 +338,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         progress_fn = progress_sender(parent, :detect_communities_progress)
 
         opts = maintenance_collection_opts([progress: progress_fn], collection)
-        result = Arcana.Maintenance.detect_communities(repo, opts)
+        result = safely(fn -> Arcana.Maintenance.detect_communities(repo, opts) end)
         send(parent, {:detect_communities_complete, result})
       end)
 
@@ -359,6 +359,15 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp maintenance_collection_opts(opts, collection) when is_binary(collection),
       do: Keyword.merge(opts, collection: collection, strict_collections: true)
 
+    # A task that dies sends no completion message, so the dashboard spins
+    # forever with no feedback. `rescue` alone is not enough here: a sandbox
+    # ownership failure, or any other exit, never reaches a rescue clause.
+    defp safely(fun) do
+      fun.()
+    catch
+      kind, reason -> {:error, Exception.format_banner(kind, reason)}
+    end
+
     defp start_summarize_communities(socket) do
       repo = socket.assigns.repo
       collection = socket.assigns.summarize_communities_collection
@@ -370,12 +379,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         opts = [progress: progress_fn]
         opts = if collection, do: Keyword.put(opts, :collection, collection), else: opts
 
-        result =
-          try do
-            Arcana.Maintenance.summarize_communities(repo, opts)
-          rescue
-            error -> {:error, Exception.message(error)}
-          end
+        result = safely(fn -> Arcana.Maintenance.summarize_communities(repo, opts) end)
 
         send(parent, {:summarize_communities_complete, result})
       end)
