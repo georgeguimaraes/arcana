@@ -13,7 +13,7 @@ search returns one shape in every mode, and the library no longer drags a
 machine-learning toolchain into apps that bring their own embedder.
 
 This is a major version. Read "Backwards incompatible changes" before
-upgrading: nine things break, and one of them is a migration existing
+upgrading: ten things break, and one of them is a migration existing
 GraphRAG installs have to run.
 
 ### Enhancements
@@ -24,6 +24,10 @@ GraphRAG installs have to run.
   * [Arcana.Search] Add opt-in `graph_depth`, expanding matched entities through the relationships table before fetching chunks, with per-hop score decay. Defaults to `0` (previous behavior)
   * [Arcana.LLM] Accept `{module, function}` as an LLM. Unlike a captured function it serializes into a release's `sys.config`, so it no longer has to be wired in `runtime.exs`. `Arcana.Loop`'s `:controller_llm` and `:answer_llm` do not accept this form and raise an `ArgumentError`
   * [Arcana.Config] `repo!/1` is public, and supports a per-repo config shape: `config :arcana, MyApp.Repo, priv: "priv/my_repo"`. With exactly one such entry it is selected automatically (with a note on stderr); with several it raises unless `:repo` says which
+  * [ArcanaWeb] The maintenance page gains a Summarize Communities action, with a hint counting what a run would process and a disabled state when no LLM is configured. Detection writes communities without summaries, and `ask(graph: true)` only injects the ones that have a summary, so detecting alone used to return no community context at all
+  * [Arcana.Graph] `community_summary_level` accepts a list, a range or `:all`, so a query can draw on several levels of the community hierarchy at once
+  * [Arcana.Maintenance] Add `configured_detector/0`, so callers can check the dependency the configured detector actually needs
+  * [Arcana.Graph.CommunitySummarizer] Add `default_threshold/0`, so callers can predict what a summarize run will regenerate
   * [Arcana.Graph.GraphStore] Add an optional `sweep_orphans/2` callback. Custom graph stores that do not implement it keep working unchanged
   * [mix] New options: `--previous-dimensions` on `arcana.gen.embedding_migration` and `--dimensions` on `arcana.graph.install`, for when detection can't reach a running repo
   * [mix arcana.graph.gen.mentions_index] New generator producing the migration that existing GraphRAG installs need (see "Backwards incompatible changes")
@@ -42,6 +46,16 @@ GraphRAG installs have to run.
   * [Arcana.Search] Named collections that resolve to nothing now match nothing on the graph path instead of widening to a global search, and under `strict_collections` an unknown name errors outright. Without strict mode the vector and keyword paths still fall back to searching unscoped for an unknown name, which is the historical behavior: multi-tenant setups should opt into strict mode
   * [Arcana.Search] `source_id` now scopes the graph path too. A source-scoped search used to leak chunks from other documents that happened to mention a matched entity, and `Arcana.ask/2` did the same for entities and relationships
   * [Arcana.Graph] Entity names are normalized on both sides of every comparison in Postgres, which lowercases, folds underscores and hyphens to spaces, and collapses runs of whitespace. `Two_Year_Limited_Warranty`, `two-year limited warranty` and `Two Year Limited Warranty` are now one entity rather than three. There is no Unicode normalization pass, so precomposed and decomposed forms still differ. Names no longer split into duplicate entities, or collide with themselves and abort an ingest. Dedup outcomes on existing graphs change accordingly
+  * [ArcanaWeb] Dashboard flash messages render. Every maintenance action reported through `put_flash` and nothing ever rendered it, so a failed re-embed, a missing LLM or an unknown collection looked like nothing happening at all
+  * [ArcanaWeb] A maintenance action whose task dies now reports the failure instead of leaving the page on a spinner forever. Three of the four actions had no error handling, and the fourth used `rescue`, which never sees an exit such as a lost database connection
+  * [ArcanaWeb] The summarize hint counts exactly what a run would process, applying the same rule as `CommunitySummarizer.needs_regeneration?/2` rather than diverging from it in both directions
+  * [Arcana.Maintenance] Community detection honors `seed`, `objective`, `iterations` and the other knobs from `config :arcana, :graph`, and honors `community_detector` instead of hardcoding Leiden. Entity and relationship fetches are ordered too: detectors index nodes by position, so a pinned seed only reproduces when the input order does
+  * [Arcana.Maintenance] Rebuilding communities carries summaries over to unchanged memberships instead of recreating every row with a nil summary, which had cost one LLM call per community on every rebuild
+  * [Arcana.Maintenance] Summarization only processes levels a query path actually reads, instead of paying per row on levels nothing consumes
+  * [Arcana.Ask] The default prompt receives the graph context `ask/2` fetches. It was arity 2, so entities, relationships and community summaries reached only callers who passed their own arity-3 prompt
+  * [Arcana.Graph] Reject a negative `community_summary_level`. `Community.changeset/2` only permits levels `>= 0`, so a negative selection silently matched nothing
+  * [mix arcana.graph.detect_communities] Only require `leidenfold` when the built-in detector will actually run. A configured custom detector had to install a Rust NIF it never calls, and a missing custom detector module is now named instead of blamed on leidenfold
+  * [mix arcana.graph.summarize_communities] Validate `--levels`: an empty value silently processed nothing, and a non-numeric one raised a bare `ArgumentError` that never mentioned the flag
   * [Arcana.Ecto.Vector] Compare vectors by encoded value, so re-storing a byte-identical embedding is a no-op instead of dirtying the changeset and churning the HNSW index on every ingest
   * [Arcana.Graph.CommunityDetector.Leiden] Stop storing duplicate partitions when the hierarchy converges before `max_level`, which had been multiplying summarization cost by the level count for no retrieval benefit
   * [ArcanaWeb] Dashboard CSS and navigation no longer 404 when the dashboard is mounted outside `/arcana`
@@ -60,6 +74,7 @@ GraphRAG installs have to run.
   * [Arcana.Search] `search/2` returns `%Arcana.SearchResult{}` structs rather than plain maps, with the same fields in every mode (`vector_score`/`keyword_score` are `nil` where they don't apply, and chunk metadata is carried with string keys). The same structs now come back from `Arcana.ask/2`'s context and from `Arcana.Pipeline` results. The struct implements `Access`, so `result[:text]` keeps working; code that pattern matches on a bare map, or relies on a key being absent, needs updating. Custom `Arcana.Reranker` and `Arcana.Searcher` implementations receive the structs too: the reranker callback is now `[Arcana.SearchResult.t() | map()]`
   * [Arcana.SearchResult] The struct is deliberately not derived for `Jason.Encoder`/`JSON.Encoder`, so `Jason.encode!(results)` raises `Protocol.UndefinedError` where v2.0.2 returned encodable plain maps. Encode `Map.from_struct/1`, or derive the protocol yourself
   * [Arcana] `Arcana.delete/2` can now return `{:error, {:sweep_failed, reason}}`. The document is still deleted in that case, so `:ok = Arcana.delete(...)` needs updating
+  * [Arcana.Graph] `community_levels` defaults to `1` (flat) instead of `5`. Four documented defaults disagreed and the most expensive won: on a 1444-entity graph that meant 1325 community rows where 265 were readable. Installs that relied on the deeper hierarchy, and the summarization cost that came with it, must set it explicitly
   * [ArcanaWeb.Router] The `on_mount` hook is renamed `ArcanaWeb.Router.Prefix` to `ArcanaWeb.Router.Scope`. Apps that named it in their own `on_mount` list must update it
   * [Arcana.Collection] `resolve_ids/2` returns `{:ok, nil} | {:ok, [uuid]} | {:error, {:unknown_collection, name}}` instead of `nil | [uuid]`
   * [mix arcana.graph.gen.mentions_index] **Existing GraphRAG installs must run this migration.** Installs predating the unique index on `arcana_graph_entity_mentions(entity_id, chunk_id)` accumulate one mention row per (entity, chunk) per ingest, because the `on_conflict: :nothing` the graph store writes with is a silent no-op without the index. The generated migration deletes the duplicates, then adds the index. New installs get it from `mix arcana.graph.install`
