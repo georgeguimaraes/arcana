@@ -2,7 +2,7 @@ defmodule Arcana.MaintenanceCommunitiesTest do
   use Arcana.DataCase, async: true
 
   alias Arcana.Collection
-  alias Arcana.Graph.{Community, Entity, Relationship}
+  alias Arcana.Graph.{Community, CommunitySummarizer, Entity, Relationship}
   alias Arcana.Maintenance
 
   defmodule TwoLevelDetector do
@@ -65,6 +65,39 @@ defmodule Arcana.MaintenanceCommunitiesTest do
     end
 
     %{collection: collection, entities: entities}
+  end
+
+  defp summarized_as_a_real_run_would(community, summary) do
+    entity_ids = community.entity_ids || []
+
+    entities =
+      Repo.all(
+        from(e in Entity,
+          where: e.id in ^entity_ids,
+          select: %{id: e.id, name: e.name, type: e.type, description: e.description}
+        )
+      )
+
+    relationships =
+      Repo.all(
+        from(r in Relationship,
+          where: r.source_id in ^entity_ids and r.target_id in ^entity_ids,
+          select: %{
+            source_id: r.source_id,
+            target_id: r.target_id,
+            type: r.type,
+            description: r.description
+          }
+        )
+      )
+
+    community
+    |> Community.changeset(%{
+      summary: summary,
+      dirty: false,
+      summary_fingerprint: CommunitySummarizer.content_fingerprint(entities, relationships)
+    })
+    |> Repo.update!()
   end
 
   defp communities(collection) do
@@ -205,12 +238,7 @@ defmodule Arcana.MaintenanceCommunitiesTest do
       assert length(before) > 1
 
       for community <- before do
-        community
-        |> Community.changeset(%{
-          summary: "summary of #{length(community.entity_ids)}",
-          dirty: false
-        })
-        |> Repo.update!()
+        summarized_as_a_real_run_would(community, "summary of #{length(community.entity_ids)}")
       end
 
       assert {:ok, _} =
@@ -250,12 +278,53 @@ defmodule Arcana.MaintenanceCommunitiesTest do
       assert reused.change_count == 3
     end
 
+    test "a relationship added between existing members invalidates the summary", %{
+      collection: collection,
+      entities: entities
+    } do
+      # The case membership can't see: ingesting another document adds
+      # relationships between entities that are already in the community, so
+      # the entity set is byte-identical while what the summary should say
+      # has changed. Without a recorded fingerprint this stayed clean forever.
+      assert {:ok, _} =
+               Maintenance.detect_communities(Repo, collection: collection.name, seed: 42)
+
+      for community <- communities(collection) do
+        summarized_as_a_real_run_would(community, "before the new edge")
+      end
+
+      [a, b | _] = entities
+
+      %Relationship{}
+      |> Relationship.changeset(%{
+        source_id: a.id,
+        target_id: b.id,
+        type: "newly-discovered",
+        strength: 1
+      })
+      |> Repo.insert!()
+
+      assert {:ok, _} =
+               Maintenance.detect_communities(Repo, collection: collection.name, seed: 42)
+
+      touched =
+        communities(collection)
+        |> Enum.filter(&(a.id in &1.entity_ids and b.id in &1.entity_ids))
+
+      assert touched != [], "expected a community holding both endpoints"
+
+      for community <- touched do
+        assert community.summary == "before the new edge", "the text should stay readable"
+        assert community.dirty, "a changed community must be queued for a refresh"
+      end
+    end
+
     test "new memberships come back dirty with no summary", %{collection: collection} do
       assert {:ok, _} =
                Maintenance.detect_communities(Repo, collection: collection.name, seed: 42)
 
       for community <- communities(collection) do
-        community |> Community.changeset(%{summary: "old", dirty: false}) |> Repo.update!()
+        summarized_as_a_real_run_would(community, "old")
       end
 
       %Entity{}

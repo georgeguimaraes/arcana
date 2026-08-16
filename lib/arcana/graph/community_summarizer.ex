@@ -124,6 +124,36 @@ defmodule Arcana.Graph.CommunitySummarizer do
   end
 
   @doc """
+  Digest of the entities and relationships a summary was generated from.
+
+  Membership alone can't answer "is this summary still accurate?": a summary
+  is written from relationship text too, and ingesting another document adds
+  relationships without moving anyone between communities. Storing this
+  alongside the summary is what makes the question answerable later.
+
+  Covers exactly the fields handed to the LLM, so a description edit counts
+  and an unrelated column does not.
+  """
+  def content_fingerprint(entities, relationships) do
+    entity_part =
+      entities
+      |> Enum.map(&{&1.id, &1.name, &1.type, Map.get(&1, :description)})
+      |> Enum.sort()
+
+    relationship_part =
+      relationships
+      |> Enum.map(&{&1.source_id, &1.target_id, Map.get(&1, :type), Map.get(&1, :description)})
+      |> Enum.sort()
+
+    digest =
+      [entity_part, relationship_part]
+      |> Enum.map_join("\u0000", &inspect(&1, limit: :infinity, printable_limit: :infinity))
+      |> then(&:crypto.hash(:sha256, &1))
+
+    Base.encode16(digest, case: :lower)
+  end
+
+  @doc """
   The change-count threshold above which a clean summary is regenerated.
 
   Exposed so callers that predict what a summarize run will process (the

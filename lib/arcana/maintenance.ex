@@ -16,7 +16,7 @@ defmodule Arcana.Maintenance do
   """
 
   alias Arcana.{Chunk, Chunker, Collection, Document, Embedder}
-  alias Arcana.Graph.{EntityMention, GraphStore}
+  alias Arcana.Graph.{CommunitySummarizer, EntityMention, GraphStore}
   alias Ecto.Adapters.SQL
 
   import Ecto.Query
@@ -877,7 +877,7 @@ defmodule Arcana.Maintenance do
         from(e in Entity,
           where: e.collection_id == ^collection.id,
           order_by: e.id,
-          select: %{id: e.id, name: e.name, type: e.type}
+          select: %{id: e.id, name: e.name, type: e.type, description: e.description}
         )
       )
 
@@ -888,7 +888,13 @@ defmodule Arcana.Maintenance do
           on: r.source_id == e.id,
           where: e.collection_id == ^collection.id,
           order_by: r.id,
-          select: %{source_id: r.source_id, target_id: r.target_id, strength: r.strength}
+          select: %{
+            source_id: r.source_id,
+            target_id: r.target_id,
+            strength: r.strength,
+            type: r.type,
+            description: r.description
+          }
         )
       )
 
@@ -903,7 +909,8 @@ defmodule Arcana.Maintenance do
       case CommunityDetector.detect(detector, entities, relationships) do
         {:ok, communities} ->
           # Persist communities
-          communities = Enum.map(communities, &carry_over_summary(&1, previous))
+          current = current_fingerprints(communities, entities, relationships)
+          communities = Enum.map(communities, &carry_over_summary(&1, previous, current))
           :ok = GraphStore.persist_communities(collection.id, communities, repo: repo)
 
           %{
@@ -935,7 +942,8 @@ defmodule Arcana.Maintenance do
           entity_ids: c.entity_ids,
           summary: c.summary,
           dirty: c.dirty,
-          change_count: c.change_count
+          change_count: c.change_count,
+          summary_fingerprint: c.summary_fingerprint
         }
       )
     )
@@ -947,25 +955,57 @@ defmodule Arcana.Maintenance do
 
   defp snapshot_key(level, entity_ids), do: {level, entity_ids |> List.wrap() |> Enum.sort()}
 
-  # Carries the previous summary and change tracking over verbatim: a clean
-  # community stays clean, one already awaiting a refresh stays dirty, and
-  # genuinely new memberships keep the schema defaults so the summarizer
-  # picks them up.
+  # Carries the previous summary over, and decides whether it is still
+  # accurate by comparing the fingerprint recorded when it was written
+  # against the content as it stands now.
   #
-  # Known limitation: a summary is generated from the community's
-  # relationships as well as its entities, and ingesting another document
-  # adds relationships without moving anyone between communities. Membership
-  # is not a proxy for content, so a summary can stay clean while the graph
-  # underneath it moves on. `change_count` has no writers, so its threshold
-  # cannot rescue that either - use `summarize_communities(force: true)` to
-  # refresh deliberately.
-  defp carry_over_summary(community, previous) do
+  # Membership alone cannot answer that: a summary is generated from the
+  # community's relationships too, so ingesting another document into an
+  # existing collection changes what the summary should say without moving
+  # anyone between communities. Matching fingerprints carry the tracking
+  # verbatim and skip an LLM call; anything else keeps the text readable but
+  # flags it for refresh. A summary written before fingerprints existed has
+  # none, so it refreshes once and then settles.
+  defp carry_over_summary(community, previous, current) do
     key = snapshot_key(Map.get(community, :level), Map.get(community, :entity_ids))
 
-    case Map.fetch(previous, key) do
-      {:ok, tracking} -> Map.merge(community, tracking)
-      :error -> community
+    with {:ok, tracking} <- Map.fetch(previous, key),
+         fingerprint when is_binary(fingerprint) <- Map.get(current, key) do
+      carried = Map.merge(community, tracking)
+
+      if tracking.summary_fingerprint == fingerprint do
+        carried
+      else
+        %{carried | dirty: true} |> Map.put(:summary_fingerprint, fingerprint)
+      end
+    else
+      _ -> community
     end
+  end
+
+  # One pass over the collection's relationships, grouped by endpoint, so
+  # this stays linear in the graph rather than per-community.
+  defp current_fingerprints(communities, entities, relationships) do
+    entities_by_id = Map.new(entities, &{&1.id, &1})
+
+    by_source =
+      Enum.group_by(relationships, & &1.source_id)
+
+    Map.new(communities, fn community ->
+      ids = community |> Map.get(:entity_ids) |> List.wrap()
+      members = MapSet.new(ids)
+
+      member_entities =
+        ids |> Enum.map(&Map.get(entities_by_id, &1)) |> Enum.reject(&is_nil/1)
+
+      member_relationships =
+        ids
+        |> Enum.flat_map(&Map.get(by_source, &1, []))
+        |> Enum.filter(&MapSet.member?(members, &1.target_id))
+
+      {snapshot_key(Map.get(community, :level), ids),
+       CommunitySummarizer.content_fingerprint(member_entities, member_relationships)}
+    end)
   end
 
   @doc """
@@ -1183,12 +1223,14 @@ defmodule Arcana.Maintenance do
     # Generate summary
     case CommunitySummarizer.summarize(entities, relationships, llm: llm) do
       {:ok, summary} ->
-        # Update community with summary
+        # Record what the summary was generated from, so a later rebuild can
+        # tell an unchanged community from one whose graph moved on.
         community
         |> Community.changeset(%{
           summary: summary,
           dirty: false,
-          change_count: 0
+          change_count: 0,
+          summary_fingerprint: CommunitySummarizer.content_fingerprint(entities, relationships)
         })
         |> repo.update()
 
