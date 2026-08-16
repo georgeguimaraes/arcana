@@ -344,6 +344,33 @@ defmodule Arcana.IngestBinaryTest do
       assert chunk.metadata["page_end"] == 3
     end
 
+    test "a falsy :metadata is absent, not a crash" do
+      # Chunker.metadata_for/1 reaches for `||`, so `false` is simply no
+      # declared metadata there. attach_pages/2 used to have no clause for
+      # it and took the whole ingest down its failure path instead.
+      [_page_one, _page_two, page_three] = PagedFixtureParser.pages()
+
+      put_arcana_env(:chunker, fn text, _opts ->
+        [
+          %{
+            text: binary_part(text, page_three.start, page_three.end - page_three.start),
+            chunk_index: 0,
+            token_count: 5,
+            start_byte: page_three.start,
+            end_byte: page_three.end,
+            metadata: false
+          }
+        ]
+      end)
+
+      assert {:ok, document} =
+               Arcana.ingest_binary("ignored", filename: "doc.paged", repo: Repo)
+
+      assert [chunk] = chunks_of(document)
+      assert chunk.metadata["page_start"] == 3
+      assert chunk.metadata["page_end"] == 3
+    end
+
     test "a declared nil offset wins over a top-level extra, matching what gets stored" do
       [_page_one, _page_two, page_three] = PagedFixtureParser.pages()
 

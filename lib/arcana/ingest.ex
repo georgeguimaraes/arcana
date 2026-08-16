@@ -389,9 +389,12 @@ defmodule Arcana.Ingest do
 
   # metadata_for/1 takes a keyword list under `:metadata` in stride
   # (`Map.new/1` accepts one), so merging the pages back in has to too.
+  # metadata_for/1 reaches for `||`, so a falsy :metadata is simply absent
+  # there. Raising here instead would put the whole ingest on its failure
+  # path over a key the storage side shrugs at.
   defp declared_metadata(chunk) do
     case Map.get(chunk, :metadata) do
-      nil -> %{}
+      falsy when falsy in [nil, false] -> %{}
       map when is_map(map) -> map
       list when is_list(list) -> Map.new(list)
     end

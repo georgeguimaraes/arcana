@@ -98,6 +98,30 @@ defmodule BarePageNumbersParser do
   def supports_binary?, do: true
 end
 
+defmodule ReversedPagesParser do
+  @moduledoc false
+  @behaviour Arcana.FileParser
+
+  @impl true
+  def parse(_input, _opts),
+    do: {:ok, "some text", %{pages: [%{number: 1, start: 40, end: 10}]}}
+
+  @impl true
+  def supports_binary?, do: true
+end
+
+defmodule NegativePagesParser do
+  @moduledoc false
+  @behaviour Arcana.FileParser
+
+  @impl true
+  def parse(_input, _opts),
+    do: {:ok, "some text", %{pages: [%{number: 1, start: -5, end: 20}]}}
+
+  @impl true
+  def supports_binary?, do: true
+end
+
 defmodule NotAParserAtAll do
   @moduledoc false
 end
@@ -410,6 +434,23 @@ defmodule Arcana.FileParserRegistryTest do
       put_arcana_env(:file_parsers, %{".docx" => BarePageNumbersParser})
 
       assert {:error, {:invalid_parser_metadata, BarePageNumbersParser, _meta}} =
+               Parser.parse_binary("raw", "doc.docx")
+    end
+
+    test "a page ending before it starts is rejected, not silently cited" do
+      # page_at/2 falls back rather than raising on a reversed range, so
+      # without the guard the chunk gets a citation pointing at text that
+      # isn't there - worse than an error, because it looks right.
+      put_arcana_env(:file_parsers, %{".docx" => ReversedPagesParser})
+
+      assert {:error, {:invalid_parser_metadata, ReversedPagesParser, _meta}} =
+               Parser.parse_binary("raw", "doc.docx")
+    end
+
+    test "a negative page start is rejected" do
+      put_arcana_env(:file_parsers, %{".docx" => NegativePagesParser})
+
+      assert {:error, {:invalid_parser_metadata, NegativePagesParser, _meta}} =
                Parser.parse_binary("raw", "doc.docx")
     end
 

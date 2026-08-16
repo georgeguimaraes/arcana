@@ -151,8 +151,12 @@ defmodule Arcana.FileParser do
   defp valid_pages?(pages) when is_list(pages), do: Enum.all?(pages, &valid_page?/1)
   defp valid_pages?(_pages), do: false
 
+  # A negative or reversed range is as malformed as a missing key, and it
+  # fails worse: page_at/2 would fall back rather than raise, so the chunk
+  # gets a page citation pointing somewhere the text isn't.
   defp valid_page?(%{number: _number, start: start_byte, end: end_byte})
-       when is_integer(start_byte) and is_integer(end_byte),
+       when is_integer(start_byte) and is_integer(end_byte) and
+              start_byte >= 0 and end_byte >= start_byte,
        do: true
 
   defp valid_page?(_page), do: false
