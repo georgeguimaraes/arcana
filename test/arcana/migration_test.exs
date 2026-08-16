@@ -329,6 +329,35 @@ defmodule Arcana.MigrationTest do
       assert count == 0, "the rolled-back CREATE SCHEMA should leave nothing behind"
     end
 
+    test "a prefix containing a single quote installs cleanly" do
+      # Postgres permits it, and Ecto's DDL doesn't reject it the way it
+      # rejects a double quote, so it reaches the raw SQL. Escaping an
+      # identifier is not the escaping a SQL string literal needs, so a
+      # catalog lookup built by interpolating the prefix into a quoted
+      # literal is malformed for exactly this name.
+      prefix = "ten'ant"
+
+      on_exit(fn -> SQL.query!(Repo, ~s(DROP SCHEMA IF EXISTS "ten'ant" CASCADE), []) end)
+
+      migrate(Arcana.Migration, prefix: prefix)
+
+      assert Arcana.Migration.recorded_version(Repo, prefix: prefix) ==
+               Arcana.Migration.current_version()
+
+      %{rows: [[rule]]} =
+        SQL.query!(
+          Repo,
+          "SELECT con.confdeltype FROM pg_constraint con " <>
+            "JOIN pg_class t ON t.oid = con.conrelid " <>
+            "JOIN pg_namespace n ON n.oid = t.relnamespace " <>
+            "WHERE t.relname = 'arcana_documents' AND n.nspname = $1 " <>
+            "AND con.contype = 'f'",
+          [prefix]
+        )
+
+      assert rule == "r", "the FK convergence has to reach a quote-bearing schema too"
+    end
+
     test "the graph stream honors the prefix too" do
       SQL.query!(Repo, ~s(DROP SCHEMA IF EXISTS "tenant_b" CASCADE), [])
       on_exit(fn -> SQL.query!(Repo, ~s(DROP SCHEMA IF EXISTS "tenant_b" CASCADE), []) end)

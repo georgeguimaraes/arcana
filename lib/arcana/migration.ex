@@ -372,23 +372,37 @@ defmodule Arcana.Migration do
     documents = qualify("arcana_documents", prefix)
     collections = qualify("arcana_collections", prefix)
 
-    execute("""
-    DO $$
-    BEGIN
-      IF EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'arcana_documents_collection_id_fkey'
-          AND conrelid = '#{documents}'::regclass
-          AND confdeltype <> 'r'
-      ) THEN
-        ALTER TABLE #{documents}
-          DROP CONSTRAINT arcana_documents_collection_id_fkey;
-        ALTER TABLE #{documents}
-          ADD CONSTRAINT arcana_documents_collection_id_fkey
-          FOREIGN KEY (collection_id) REFERENCES #{collections}(id)
-          ON DELETE RESTRICT;
-      END IF;
-    END $$;
-    """)
+    # The catalog lookup is parameterized rather than built by interpolating
+    # the prefix into a quoted SQL literal: `qualify/2` escapes an
+    # identifier, which is not the same escaping a string literal needs, and
+    # a prefix carrying a quote would produce malformed SQL. Same join
+    # `recorded_version/2` uses. Only the ALTERs interpolate, as identifiers.
+    execute(fn ->
+      %{rows: rows} =
+        repo().query!(
+          "SELECT con.confdeltype FROM pg_constraint con " <>
+            "JOIN pg_class t ON t.oid = con.conrelid " <>
+            "JOIN pg_namespace n ON n.oid = t.relnamespace " <>
+            "WHERE con.conname = 'arcana_documents_collection_id_fkey' " <>
+            "AND t.relname = 'arcana_documents' " <>
+            "AND n.nspname = COALESCE($1, current_schema())",
+          [prefix]
+        )
+
+      # 'r' is RESTRICT. Anything else is an old install to convert; no row
+      # at all means a hand-renamed constraint, which is left alone rather
+      # than guessed at.
+      if match?([[rule]] when rule != ~c"r" and rule != "r", rows) do
+        repo().query!(
+          "ALTER TABLE #{documents} DROP CONSTRAINT arcana_documents_collection_id_fkey"
+        )
+
+        repo().query!(
+          "ALTER TABLE #{documents} " <>
+            "ADD CONSTRAINT arcana_documents_collection_id_fkey " <>
+            "FOREIGN KEY (collection_id) REFERENCES #{collections}(id) ON DELETE RESTRICT"
+        )
+      end
+    end)
   end
 end
