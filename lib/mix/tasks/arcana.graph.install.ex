@@ -314,6 +314,7 @@ else
           add :entity_ids, {:array, :binary_id}, default: []
           add :dirty, :boolean, default: true
           add :change_count, :integer, default: 0
+          add :summary_fingerprint, :string
           add :collection_id, references(:arcana_collections, type: :binary_id, on_delete: :delete_all)
 
           timestamps()

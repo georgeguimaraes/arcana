@@ -89,7 +89,14 @@ defmodule ArcanaWeb.MaintenanceLiveTest do
     } do
       put_arcana_env(:llm, fn _prompt, _context, _opts -> {:ok, "summary"} end)
       insert_community(collection, %{entity_ids: [], summary: nil, dirty: true})
-      insert_community(collection, %{entity_ids: [], summary: "done", dirty: false})
+      # A real summarized community carries the fingerprint of what it was
+      # generated from; without one it can't be verified and counts again.
+      insert_community(collection, %{
+        entity_ids: [],
+        summary: "done",
+        dirty: false,
+        summary_fingerprint: "abc123"
+      })
 
       {:ok, view, _html} = live(conn, "/arcana/maintenance")
 

@@ -70,7 +70,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp count_unsummarized_communities(repo, allowed) do
       query =
         from(c in Arcana.Graph.Community,
-          where: is_nil(c.summary) or c.dirty or c.change_count >= ^regeneration_threshold(),
+          where:
+            is_nil(c.summary) or c.dirty or is_nil(c.summary_fingerprint) or
+              c.change_count >= ^regeneration_threshold(),
           where: ^summarizable_levels(),
           select: count(c.id)
         )

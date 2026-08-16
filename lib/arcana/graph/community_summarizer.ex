@@ -183,6 +183,10 @@ defmodule Arcana.Graph.CommunitySummarizer do
     cond do
       Map.get(community, :dirty, false) -> true
       is_nil(Map.get(community, :summary)) -> true
+      # Written before fingerprints existed, so there is no way to tell
+      # whether it still matches the graph. Regenerate once; the run stores
+      # a fingerprint and it settles from then on.
+      is_nil(Map.get(community, :summary_fingerprint)) -> true
       Map.get(community, :change_count, 0) >= threshold -> true
       true -> false
     end
