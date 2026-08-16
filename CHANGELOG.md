@@ -13,7 +13,7 @@ search returns one shape in every mode, and the library no longer drags a
 machine-learning toolchain into apps that bring their own embedder.
 
 This is a major version. Read "Backwards incompatible changes" before
-upgrading: ten things break, and one of them is a migration existing
+upgrading: eleven things break, and two of them are migrations existing
 GraphRAG installs have to run.
 
 ### Enhancements
@@ -31,6 +31,8 @@ GraphRAG installs have to run.
   * [Arcana.Graph.GraphStore] Add an optional `sweep_orphans/2` callback. Custom graph stores that do not implement it keep working unchanged
   * [mix] New options: `--previous-dimensions` on `arcana.gen.embedding_migration` and `--dimensions` on `arcana.graph.install`, for when detection can't reach a running repo
   * [mix arcana.graph.gen.mentions_index] New generator producing the migration that existing GraphRAG installs need (see "Backwards incompatible changes")
+  * [mix arcana.graph.gen.summary_fingerprint] New generator adding `summary_fingerprint` to communities, the second migration existing GraphRAG installs need (see "Backwards incompatible changes")
+  * [Arcana.Graph.CommunitySummarizer] Add `content_fingerprint/2`, the digest of the entities and relationships a summary was generated from
   * [ArcanaWeb.Router] `arcana_dashboard` now derives every link and asset URL from the real mount point, so mounting anywhere other than `/arcana` works
   * [mix] `bumblebee` and `req_llm` are optional dependencies. Apps bringing their own embedder and LLM no longer compile roughly 13 transitive packages, including the tokenizers Rust NIF
   * [ArcanaWeb] The dashboard is optional at compile time: arcana now compiles in apps without Phoenix
@@ -48,6 +50,9 @@ GraphRAG installs have to run.
   * [Arcana.Graph] Entity names are normalized on both sides of every comparison in Postgres, which lowercases, folds underscores and hyphens to spaces, and collapses runs of whitespace. `Two_Year_Limited_Warranty`, `two-year limited warranty` and `Two Year Limited Warranty` are now one entity rather than three. There is no Unicode normalization pass, so precomposed and decomposed forms still differ. Names no longer split into duplicate entities, or collide with themselves and abort an ingest. Dedup outcomes on existing graphs change accordingly
   * [ArcanaWeb] Dashboard flash messages render. Every maintenance action reported through `put_flash` and nothing ever rendered it, so a failed re-embed, a missing LLM or an unknown collection looked like nothing happening at all
   * [ArcanaWeb] A maintenance action whose task dies now reports the failure instead of leaving the page on a spinner forever. Three of the four actions had no error handling, and the fourth used `rescue`, which never sees an exit such as a lost database connection
+  * [ArcanaWeb] The Summarize Communities action honors host-provided collection scoping. It was added after the other three maintenance actions and skipped their validation, so on a restricted dashboard an unscoped run summarized every tenant's communities, a forged selection reached the summarizer, and the hint counted rows the host had no access to
+  * [Arcana.Maintenance] A carried-over community summary is queued for a refresh when the content behind it changed. Membership was standing in for content, but a summary is written from the community's relationships too, so ingesting another document added relationships without moving anyone between communities and the summary stayed clean forever. Communities now record what their summary was generated from and the rebuild compares it, so an unchanged community still skips the LLM call
+  * [Arcana.Maintenance] Summary reuse keys on level as well as membership. Two levels sharing an entity set collapsed to one key, so a level-0 community could come back holding the level-1 summary, decided by whichever row Postgres returned last
   * [ArcanaWeb] The summarize hint counts exactly what a run would process, applying the same rule as `CommunitySummarizer.needs_regeneration?/2` rather than diverging from it in both directions
   * [Arcana.Maintenance] Community detection honors `seed`, `objective`, `iterations` and the other knobs from `config :arcana, :graph`, and honors `community_detector` instead of hardcoding Leiden. Entity and relationship fetches are ordered too: detectors index nodes by position, so a pinned seed only reproduces when the input order does
   * [Arcana.Maintenance] Rebuilding communities carries summaries over to unchanged memberships instead of recreating every row with a nil summary, which had cost one LLM call per community on every rebuild
@@ -77,6 +82,7 @@ GraphRAG installs have to run.
   * [Arcana.Graph] `community_levels` defaults to `1` (flat) instead of `5`. Four documented defaults disagreed and the most expensive won: on a 1444-entity graph that meant 1325 community rows where 265 were readable. Installs that relied on the deeper hierarchy, and the summarization cost that came with it, must set it explicitly
   * [ArcanaWeb.Router] The `on_mount` hook is renamed `ArcanaWeb.Router.Prefix` to `ArcanaWeb.Router.Scope`. Apps that named it in their own `on_mount` list must update it
   * [Arcana.Collection] `resolve_ids/2` returns `{:ok, nil} | {:ok, [uuid]} | {:error, {:unknown_collection, name}}` instead of `nil | [uuid]`
+  * [mix arcana.graph.gen.summary_fingerprint] **Existing GraphRAG installs must run this migration.** It adds `summary_fingerprint` to `arcana_graph_communities`, which is how a rebuild tells a community whose graph moved on from one that genuinely didn't change. Summaries written before the column existed have no fingerprint, so they refresh once on the next summarize run and settle afterwards. New installs get it from `mix arcana.graph.install`
   * [mix arcana.graph.gen.mentions_index] **Existing GraphRAG installs must run this migration.** Installs predating the unique index on `arcana_graph_entity_mentions(entity_id, chunk_id)` accumulate one mention row per (entity, chunk) per ingest, because the `on_conflict: :nothing` the graph store writes with is a silent no-op without the index. The generated migration deletes the duplicates, then adds the index. New installs get it from `mix arcana.graph.install`
   * [Arcana.FileParser.PDF.Poppler] `parse/2` returns `{:ok, text, meta}` instead of `{:ok, text}`, where `meta` carries page byte ranges. A custom parser that delegates straight to it and matches `{:ok, text}` now raises a `MatchError`. Callers going through `Arcana.FileParser.PDF.parse/3` or `Arcana.Parser.parse/1` are unaffected: both still normalize to a two-tuple
   * [mix] `bumblebee` and `req_llm` are no longer pulled in transitively. Apps using the default local embedder must add `{:bumblebee, "~> 0.6"}` and a backend such as `{:exla, "~> 0.10"}`; apps passing model strings such as `"openai:gpt-4o-mini"` as the LLM, or using `Arcana.Loop`, must add `{:req_llm, "~> 1.2"}`. Both raise a message naming the missing dependency
