@@ -26,12 +26,35 @@ defmodule Mix.Tasks.InstallerBranchesTest do
     binary_part(source, offset + length, byte_size(source) - offset - length)
   end
 
+  # Imported or auto-imported: present in the branch without a local def.
+  defp known_names do
+    MapSet.new(~w(
+      def defp defmodule defmacro do end fn case cond if unless with for
+      quote unquote use import alias require raise throw try rescue catch
+      after else when in and or not
+      to_string inspect is_nil is_binary is_list is_map is_atom length
+      hd tl elem tuple_size map_size byte_size
+    ))
+    |> MapSet.union(imported_names())
+  end
+
+  # Imported explicitly by the fallback modules. Listed rather than parsed
+  # so a new import has to be looked at instead of silently widening what
+  # this test will accept.
+  defp imported_names do
+    # import Mix.Generator
+    MapSet.new(~w(create_file create_directory copy_file copy_template embed_text embed_template))
+  end
+
   test "the fallback branch defines every private helper it calls" do
     for path <- @installers do
       branch = fallback_branch(path)
 
+      # Unqualified calls only. A lookbehind for `.` keeps Mix.shell() and
+      # Calendar.strftime() out, which otherwise arrive as "shell" and
+      # "strftime" and look like missing local helpers.
       called =
-        ~r/(?<!defp )\b([a-z_][a-z0-9_]*)\(/
+        ~r/(?<![.\w:])([a-z_][a-z0-9_]*)\(/
         |> Regex.scan(branch)
         |> Enum.map(fn [_, name] -> name end)
         |> MapSet.new()
@@ -42,15 +65,16 @@ defmodule Mix.Tasks.InstallerBranchesTest do
         |> Enum.map(fn [_, name] -> name end)
         |> MapSet.new()
 
-      # Only the helpers this refactor introduced; everything else is either
-      # a stdlib call or defined elsewhere in the fallback module.
-      for helper <- ["migration_contents"] do
-        if MapSet.member?(called, helper) do
-          assert MapSet.member?(defined, helper),
-                 "#{path}: the fallback branch calls #{helper}/n but never defines it, " <>
-                   "so installing without Igniter fails to compile"
-        end
-      end
+      # Every unqualified call the branch makes and doesn't define itself.
+      # Module-qualified calls (Mix.raise, OptionParser.parse) never match
+      # the regex, and the kernel/stdlib names below come from elsewhere by
+      # definition.
+      missing = called |> MapSet.difference(defined) |> MapSet.difference(known_names())
+
+      assert MapSet.size(missing) == 0,
+             "#{path}: the fallback branch calls " <>
+               "#{inspect(Enum.sort(missing))} without defining it, so installing " <>
+               "without Igniter fails to compile"
     end
   end
 

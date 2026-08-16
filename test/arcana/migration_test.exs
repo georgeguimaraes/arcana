@@ -236,13 +236,23 @@ defmodule Arcana.MigrationTest do
       assert count == 1
     end
 
-    test "a prefix containing a double quote is rejected before any SQL runs" do
-      # qualify/2 escapes identifiers, but Ecto refuses such a prefix first,
-      # so the raw-SQL path is never reached with one. Asserting the real
-      # behaviour rather than a scenario that cannot occur.
+    test "a prefix containing a double quote is refused by Ecto's DDL" do
+      # The escaping in quoted/1 does run: maybe_create_schema/2 issues
+      # CREATE SCHEMA IF NOT EXISTS "ten""ant" through it before any table
+      # is built. Ecto then rejects the same prefix at table/2, and the
+      # migration transaction rolls the schema back, so nothing survives.
       assert_raise ArgumentError, ~r/is not permitted/, fn ->
         migrate(Arcana.Migration, prefix: ~s(ten"ant))
       end
+
+      %{rows: [[count]]} =
+        SQL.query!(
+          Repo,
+          "SELECT count(*) FROM information_schema.schemata WHERE schema_name = $1",
+          [~s(ten"ant)]
+        )
+
+      assert count == 0, "the rolled-back CREATE SCHEMA should leave nothing behind"
     end
 
     test "the graph stream honors the prefix too" do
