@@ -58,6 +58,12 @@ if Code.ensure_loaded?(Igniter) do
 
     @impl Igniter.Mix.Task
     def igniter(igniter) do
+      # Igniter's own run/1 wrapper runs "compile", not "app.config", so
+      # config/runtime.exs is still unread when we get here. Without this
+      # the repo's `:priv` is only visible when detect_dimensions! happens
+      # to load it, which --dimensions skips.
+      Mix.Task.run("app.config")
+
       opts = igniter.args.options
       app_name = Igniter.Project.Application.app_name(igniter)
       app_module = app_name |> to_string() |> Macro.camelize()
@@ -108,14 +114,7 @@ if Code.ensure_loaded?(Igniter) do
     defp resolve_dimensions(given), do: Arcana.MixHelpers.validate_dimensions!(given)
 
     defp create_migration(igniter, repo_module, dimensions) do
-      repo_underscore =
-        repo_module
-        |> Module.split()
-        |> Enum.join(".")
-        |> Macro.underscore()
-        |> String.replace("/", "_")
-
-      migrations_path = Path.join(["priv", repo_underscore, "migrations"])
+      migrations_path = Arcana.MixHelpers.migrations_path(repo_module)
       timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
       filename = "#{timestamp}_create_arcana_graph_tables.exs"
       path = Path.join(migrations_path, filename)
@@ -162,6 +161,7 @@ if Code.ensure_loaded?(Igniter) do
 
           create index(:arcana_graph_entity_mentions, [:entity_id])
           create index(:arcana_graph_entity_mentions, [:chunk_id])
+          create unique_index(:arcana_graph_entity_mentions, [:entity_id, :chunk_id])
 
           create table(:arcana_graph_relationships, primary_key: false) do
             add :id, :binary_id, primary_key: true
@@ -287,6 +287,7 @@ else
 
         create index(:arcana_graph_entity_mentions, [:entity_id])
         create index(:arcana_graph_entity_mentions, [:chunk_id])
+        create unique_index(:arcana_graph_entity_mentions, [:entity_id, :chunk_id])
 
         create table(:arcana_graph_relationships, primary_key: false) do
           add :id, :binary_id, primary_key: true
@@ -340,11 +341,14 @@ else
     def run(args) do
       {opts, _, _} = OptionParser.parse(args, strict: [repo: :string, dimensions: :integer])
 
+      # Load the host app's config so the repo's `:priv`, if it has one, is
+      # visible to Arcana.MixHelpers.migrations_path/1.
+      Mix.Task.run("app.config")
+
       repo = opts[:repo] || infer_repo()
-      repo_underscore = Macro.underscore(repo) |> String.replace("/", "_")
       dimensions = resolve_dimensions(opts[:dimensions])
 
-      migrations_path = Path.join(["priv", repo_underscore, "migrations"])
+      migrations_path = Arcana.MixHelpers.migrations_path(repo)
       File.mkdir_p!(migrations_path)
 
       timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")

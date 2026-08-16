@@ -17,11 +17,49 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       {:ok, id_map} =
         GraphStore.persist_entities(collection_id, entities, graph_store: {:memory, pid: pid})
 
-      assert Map.has_key?(id_map, "Test")
+      assert Map.has_key?(id_map, "test")
 
       found = GraphStore.find_entities(collection_id, graph_store: {:memory, pid: pid})
       assert length(found) == 1
       assert hd(found).name == "Test"
+    end
+  end
+
+  describe "persist_entities/3 name identity" do
+    # Whitespace has to fold the same way here as in the Ecto store's SQL,
+    # or the same document builds a different graph depending on the
+    # backend. Mirrors the pairs asserted in EctoTest.
+    for {label, first, second} <- [
+          {"trailing NBSP", "Delivery\u{a0}", "Delivery"},
+          {"mid-string NBSP", "Acme\u{a0}Corp", "Acme Corp"},
+          {"mid-string thin space", "Acme\u{2009}Corp", "Acme Corp"},
+          {"mid-string ideographic space", "Acme\u{3000}Corp", "Acme Corp"}
+        ] do
+      test "treats a #{label} as the same entity as a plain space", %{pid: pid} do
+        collection_id = "ws-#{unquote(label)}"
+
+        for name <- [unquote(first), unquote(second)] do
+          {:ok, _} =
+            Memory.persist_entities(collection_id, [%{name: name, type: "concept"}], pid: pid)
+        end
+
+        assert length(Memory.find_entities(collection_id, pid: pid)) == 1
+      end
+    end
+
+    # Known, documented divergence from the Ecto store: Elixir's
+    # String.downcase/1 decomposes U+0130 into "i" plus a combining dot,
+    # Postgres' lower() folds it to a bare "i". Neither backend applies
+    # canonical (NFC/NFD) normalization either. See Arcana.Graph.EntityName.
+    test "keeps a Turkish dotted capital I distinct, unlike the Ecto store", %{pid: pid} do
+      collection_id = "turkish-i"
+
+      for name <- ["İstanbul", "istanbul"] do
+        {:ok, _} =
+          Memory.persist_entities(collection_id, [%{name: name, type: "place"}], pid: pid)
+      end
+
+      assert length(Memory.find_entities(collection_id, pid: pid)) == 2
     end
   end
 
@@ -36,9 +74,10 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
 
       {:ok, id_map} = Memory.persist_entities(collection_id, entities, pid: pid)
 
+      # id map is keyed by the normalized name
       assert map_size(id_map) == 2
-      assert Map.has_key?(id_map, "Alice")
-      assert Map.has_key?(id_map, "Bob")
+      assert Map.has_key?(id_map, "alice")
+      assert Map.has_key?(id_map, "bob")
     end
 
     test "deduplicates entities by name", %{pid: pid} do
@@ -61,7 +100,31 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       {:ok, id_map1} = Memory.persist_entities(collection_id, entities, pid: pid)
       {:ok, id_map2} = Memory.persist_entities(collection_id, entities, pid: pid)
 
-      assert id_map1["Alice"] == id_map2["Alice"]
+      assert id_map1["alice"] == id_map2["alice"]
+    end
+
+    test "upserts name variants into the same entity", %{pid: pid} do
+      collection_id = "col-1"
+
+      {:ok, id_map1} =
+        Memory.persist_entities(
+          collection_id,
+          [%{name: "Two_Year_Limited_Warranty", type: "concept"}],
+          pid: pid
+        )
+
+      {:ok, id_map2} =
+        Memory.persist_entities(
+          collection_id,
+          [%{name: "two year limited warranty", type: "concept"}],
+          pid: pid
+        )
+
+      assert id_map1["two year limited warranty"] == id_map2["two year limited warranty"]
+
+      # First-seen display name is kept
+      assert [%{name: "Two_Year_Limited_Warranty"}] =
+               Memory.find_entities(collection_id, pid: pid)
     end
   end
 
@@ -138,6 +201,28 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       results = Memory.search(["Unknown"], nil, pid: pid)
       assert results == []
     end
+
+    test "matches stored name variants, not just the exact stored spelling", %{pid: pid} do
+      collection_id = "col-variants"
+
+      {:ok, id_map} =
+        Memory.persist_entities(
+          collection_id,
+          [%{name: "Two_Year_Limited_Warranty", type: "concept"}],
+          pid: pid
+        )
+
+      :ok =
+        Memory.persist_mentions(
+          [%{entity_name: "Two_Year_Limited_Warranty", chunk_id: "chunk-1"}],
+          id_map,
+          pid: pid
+        )
+
+      results = Memory.search(["two year limited warranty"], [collection_id], pid: pid)
+
+      assert [%{chunk_id: "chunk-1"}] = results
+    end
   end
 
   describe "find_entities/2" do
@@ -185,7 +270,7 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       :ok = Memory.persist_relationships(relationships, id_map, pid: pid)
 
       # From Alice, depth 1 should find Bob
-      alice_id = id_map["Alice"]
+      alice_id = id_map["alice"]
       related = Memory.find_related_entities(alice_id, 1, pid: pid)
       names = Enum.map(related, & &1.name)
 
@@ -220,6 +305,61 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       summaries = Enum.map(retrieved, & &1.summary)
       assert "A group of friends" in summaries
       assert "Work colleagues" in summaries
+    end
+  end
+
+  describe "sweep_orphans/2" do
+    test "removes zero-mention entities in the collection and dirties overlapping communities",
+         %{pid: pid} do
+      {:ok, id_map} =
+        Memory.persist_entities(
+          "col-1",
+          [%{name: "Orphan", type: "concept"}, %{name: "Kept", type: "concept"}],
+          pid: pid
+        )
+
+      {:ok, _} =
+        Memory.persist_entities("col-2", [%{name: "Elsewhere", type: "concept"}], pid: pid)
+
+      :ok =
+        Memory.persist_mentions([%{entity_name: "Kept", chunk_id: "chunk-1"}], id_map, pid: pid)
+
+      :ok =
+        Memory.persist_relationships(
+          [%{source: "Orphan", target: "Kept", type: "RELATED"}],
+          id_map,
+          pid: pid
+        )
+
+      :ok =
+        Memory.persist_communities(
+          "col-1",
+          [
+            %{id: "comm-1", level: 0, summary: "s", entity_ids: [id_map["orphan"]], dirty: false},
+            %{id: "comm-2", level: 0, summary: "s", entity_ids: [id_map["kept"]], dirty: false}
+          ],
+          pid: pid
+        )
+
+      :ok = Memory.sweep_orphans("col-1", pid: pid)
+
+      assert [%{name: "Kept"}] = Memory.find_entities("col-1", pid: pid)
+
+      # sweep is scoped: col-2's zero-mention entity survives
+      assert [%{name: "Elsewhere"}] = Memory.find_entities("col-2", pid: pid)
+
+      # relationship touching the orphan is gone
+      assert Memory.get_relationships(id_map["kept"], pid: pid) == []
+
+      {:ok, comm1} = Memory.get_community("comm-1", pid: pid)
+      {:ok, comm2} = Memory.get_community("comm-2", pid: pid)
+      assert comm1.dirty
+      refute comm2.dirty
+
+      # entity_count is derived from entity_ids, so the swept id has to go
+      # or the community over-reports until the next summarize
+      assert comm1.entity_ids == []
+      assert comm2.entity_ids == [id_map["kept"]]
     end
   end
 end

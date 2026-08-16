@@ -8,6 +8,12 @@ defmodule Arcana.Graph.GraphExtractor.LLMTest do
     fn _prompt -> {:ok, response} end
   end
 
+  # Pulls the fenced JSON example out of the prompt's output format section
+  defp example_json(prompt) do
+    [_, json] = Regex.run(~r/```json\n(.*?)```/s, prompt)
+    json
+  end
+
   describe "extract/2" do
     test "extracts entities and relationships from text" do
       llm =
@@ -189,6 +195,20 @@ defmodule Arcana.Graph.GraphExtractor.LLMTest do
 
       assert prompt =~ "relationships"
       assert prompt =~ "UPPER_SNAKE_CASE"
+    end
+
+    # The prompt shows the model an example response, so that example has to
+    # be output we'd actually keep: every relationship endpoint must name an
+    # entity in the same example, or parse_and_validate drops it and we're
+    # teaching the model a shape we discard.
+    test "the output format example round-trips without anything being dropped" do
+      example = LLM.build_prompt("Some text.") |> example_json()
+      decoded = JSON.decode!(example)
+
+      {:ok, result} = LLM.extract("Some text.", llm: mock_llm(example))
+
+      assert length(result.entities) == length(decoded["entities"])
+      assert length(result.relationships) == length(decoded["relationships"])
     end
   end
 end

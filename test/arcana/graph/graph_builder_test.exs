@@ -98,6 +98,41 @@ defmodule Arcana.Graph.GraphBuilderTest do
       assert length(openai_entities) == 1
     end
 
+    test "deduplicates cosmetic name variants of the same entity" do
+      chunks = [
+        %{id: "chunk_1", text: "warranty text"},
+        %{id: "chunk_2", text: "more warranty text"}
+      ]
+
+      call_count = :counters.new(1, [])
+
+      entity_extractor = fn _text, _opts ->
+        :counters.add(call_count, 1, 1)
+
+        case :counters.get(call_count, 1) do
+          1 -> {:ok, [%{name: "Two_Year_Limited_Warranty", type: "concept"}]}
+          _ -> {:ok, [%{name: "two year limited warranty", type: "concept"}]}
+        end
+      end
+
+      relationship_extractor = fn _text, _entities, _opts -> {:ok, []} end
+
+      {:ok, graph_data} =
+        GraphBuilder.build(chunks,
+          entity_extractor: entity_extractor,
+          relationship_extractor: relationship_extractor
+        )
+
+      # Variants collapse into one entity keeping the first-seen name
+      assert [entity] = graph_data.entities
+      assert entity.name == "Two_Year_Limited_Warranty"
+
+      # Both chunks' mentions resolve to that entity in the query graph
+      graph = GraphBuilder.to_query_graph(graph_data, chunks)
+      chunk_entity_ids = Enum.flat_map(graph.chunks, fn c -> c.entity_ids end)
+      assert chunk_entity_ids == [entity.id, entity.id]
+    end
+
     test "handles extraction errors gracefully" do
       entity_extractor = fn _text, _opts ->
         {:error, :extraction_failed}

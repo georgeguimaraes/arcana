@@ -104,6 +104,40 @@ children = [
 ]
 ```
 
+## Upgrading
+
+### Entity mention unique index
+
+Graph tables installed before the entity mention unique index existed pick up one mention row per (entity, chunk) on every ingest, so re-ingesting the same document keeps inflating mention counts and the scores derived from them. The graph store writes mentions with `on_conflict: :nothing`, which does nothing at all without the index.
+
+New installs get the index from `mix arcana.graph.install`. Everyone else generates the upgrade migration:
+
+```bash
+mix arcana.graph.gen.mentions_index
+mix ecto.migrate
+```
+
+The migration deletes the duplicates accumulated so far, keeping the oldest row of each pair, then creates the index. To write it by hand instead:
+
+```elixir
+def up do
+  execute("""
+  DELETE FROM arcana_graph_entity_mentions m
+  USING arcana_graph_entity_mentions kept
+  WHERE m.entity_id = kept.entity_id
+    AND m.chunk_id = kept.chunk_id
+    AND (m.inserted_at > kept.inserted_at
+         OR (m.inserted_at = kept.inserted_at AND m.ctid > kept.ctid))
+  """)
+
+  create unique_index(:arcana_graph_entity_mentions, [:entity_id, :chunk_id])
+end
+
+def down do
+  drop unique_index(:arcana_graph_entity_mentions, [:entity_id, :chunk_id])
+end
+```
+
 ## Configuration
 
 GraphRAG is disabled by default. Enable it globally:

@@ -125,10 +125,9 @@ defmodule Mix.Tasks.Arcana.Gen.EmbeddingMigration do
     timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
     filename = "#{timestamp}_update_embedding_dimensions.exs"
 
-    # Find the priv/repo/migrations directory
-    repo_config = Application.get_env(:arcana, repo) || []
-    priv_dir = Keyword.get(repo_config, :priv, "priv/repo")
-    migrations_dir = Path.join(priv_dir, "migrations")
+    # run/1 has already loaded the host app's config, so a repo that
+    # configures its own :priv is visible here.
+    migrations_dir = MixHelpers.migrations_path(repo)
 
     # Ensure the directory exists
     File.mkdir_p!(migrations_dir)

@@ -34,7 +34,7 @@ defmodule Arcana.Graph.GraphBuilder do
 
   """
 
-  alias Arcana.Graph.{GraphExtractor, GraphQuery}
+  alias Arcana.Graph.{EntityName, GraphExtractor, GraphQuery}
 
   @doc """
   Builds graph data from a list of chunks.
@@ -141,8 +141,8 @@ defmodule Arcana.Graph.GraphBuilder do
       graph_data.relationships
       |> Enum.map(fn rel ->
         %{
-          source_id: Map.get(entity_ids, rel.source),
-          target_id: Map.get(entity_ids, rel.target),
+          source_id: Map.get(entity_ids, EntityName.normalize(rel.source)),
+          target_id: Map.get(entity_ids, EntityName.normalize(rel.target)),
           type: rel.type
         }
       end)
@@ -157,7 +157,7 @@ defmodule Arcana.Graph.GraphBuilder do
 
         entity_ids_for_chunk =
           chunk_mentions
-          |> Enum.map(fn m -> Map.get(entity_ids, m.entity_name) end)
+          |> Enum.map(fn m -> Map.get(entity_ids, EntityName.normalize(m.entity_name)) end)
           |> Enum.reject(&is_nil/1)
 
         Map.put(chunk, :entity_ids, entity_ids_for_chunk)
@@ -220,19 +220,11 @@ defmodule Arcana.Graph.GraphBuilder do
     end
   end
 
+  # Dedup key is the normalized name so cosmetic variants of the same
+  # entity ("Two_Year_Limited_Warranty" vs "two year limited warranty")
+  # collapse into one node. The first-seen original is kept for display.
   defp deduplicate_entities(entities) do
-    entities
-    |> Enum.reduce(%{}, fn entity, acc ->
-      name = entity.name
-
-      if Map.has_key?(acc, name) do
-        # Keep existing, could merge descriptions here
-        acc
-      else
-        Map.put(acc, name, entity)
-      end
-    end)
-    |> Map.values()
+    Enum.uniq_by(entities, fn entity -> EntityName.normalize(entity.name) end)
   end
 
   defp assign_entity_ids(entities) do
@@ -245,7 +237,7 @@ defmodule Arcana.Graph.GraphBuilder do
   end
 
   defp build_entity_id_map(entities) do
-    Map.new(entities, fn e -> {e.name, e.id} end)
+    Map.new(entities, fn e -> {EntityName.normalize(e.name), e.id} end)
   end
 
   defp generate_id do

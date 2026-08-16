@@ -23,6 +23,8 @@ defmodule Arcana.Graph.GraphStore.Memory do
 
   @behaviour Arcana.Graph.GraphStore
 
+  alias Arcana.Graph.EntityName
+
   # === Client API ===
 
   @doc """
@@ -109,6 +111,12 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl Arcana.Graph.GraphStore
+  def sweep_orphans(collection_id, opts) do
+    server = get_server(opts)
+    GenServer.call(server, {:sweep_orphans, collection_id})
+  end
+
+  @impl Arcana.Graph.GraphStore
   def get_entity(entity_id, opts) do
     server = get_server(opts)
     GenServer.call(server, {:get_entity, entity_id})
@@ -172,22 +180,22 @@ defmodule Arcana.Graph.GraphStore.Memory do
 
   @impl GenServer
   def handle_call({:persist_entities, collection_id, entities}, _from, state) do
-    # Deduplicate by name
+    # Deduplicate on the normalized name (first-seen entity wins, keeping
+    # its original name for display)
     unique_entities =
       entities
-      |> Enum.reduce(%{}, fn entity, acc ->
-        Map.put_new(acc, entity.name, entity)
-      end)
-      |> Map.values()
+      |> Enum.map(fn entity -> {EntityName.normalize(entity.name), entity} end)
+      |> Enum.reject(fn {key, _entity} -> is_nil(key) or key == "" end)
+      |> Enum.uniq_by(fn {key, _entity} -> key end)
 
     # Get existing entities for this collection
     existing = Map.get(state.entities, collection_id, [])
-    existing_by_name = Map.new(existing, fn e -> {e.name, e} end)
+    existing_by_key = Map.new(existing, fn e -> {EntityName.normalize(e.name), e} end)
 
-    # Upsert and build id map
+    # Upsert and build normalized-name -> id map
     {new_entities, id_map} =
-      Enum.reduce(unique_entities, {existing, %{}}, fn entity, {ents, ids} ->
-        case Map.get(existing_by_name, entity.name) do
+      Enum.reduce(unique_entities, {existing, %{}}, fn {key, entity}, {ents, ids} ->
+        case Map.get(existing_by_key, key) do
           nil ->
             # Insert new entity
             new_entity =
@@ -196,11 +204,11 @@ defmodule Arcana.Graph.GraphStore.Memory do
                 collection_id: collection_id
               })
 
-            {[new_entity | ents], Map.put(ids, entity.name, new_entity.id)}
+            {[new_entity | ents], Map.put(ids, key, new_entity.id)}
 
           existing_entity ->
             # Return existing
-            {ents, Map.put(ids, entity.name, existing_entity.id)}
+            {ents, Map.put(ids, key, existing_entity.id)}
         end
       end)
 
@@ -212,14 +220,17 @@ defmodule Arcana.Graph.GraphStore.Memory do
   def handle_call({:persist_relationships, relationships, entity_id_map}, _from, state) do
     valid_relationships =
       relationships
-      |> Enum.filter(fn rel ->
-        Map.has_key?(entity_id_map, rel.source) and Map.has_key?(entity_id_map, rel.target)
-      end)
       |> Enum.map(fn rel ->
+        {EntityName.normalize(rel.source), EntityName.normalize(rel.target), rel}
+      end)
+      |> Enum.filter(fn {source_key, target_key, _rel} ->
+        Map.has_key?(entity_id_map, source_key) and Map.has_key?(entity_id_map, target_key)
+      end)
+      |> Enum.map(fn {source_key, target_key, rel} ->
         %{
           id: Ecto.UUID.generate(),
-          source_id: entity_id_map[rel.source],
-          target_id: entity_id_map[rel.target],
+          source_id: entity_id_map[source_key],
+          target_id: entity_id_map[target_key],
           type: rel.type,
           description: rel[:description],
           strength: rel[:strength]
@@ -232,18 +243,23 @@ defmodule Arcana.Graph.GraphStore.Memory do
 
   @impl GenServer
   def handle_call({:persist_mentions, mentions, entity_id_map}, _from, state) do
+    existing_pairs = MapSet.new(state.mentions, fn m -> {m.entity_id, m.chunk_id} end)
+
     valid_mentions =
       mentions
-      |> Enum.filter(fn m -> Map.has_key?(entity_id_map, m.entity_name) end)
-      |> Enum.map(fn m ->
+      |> Enum.map(fn m -> {EntityName.normalize(m.entity_name), m} end)
+      |> Enum.filter(fn {key, _m} -> Map.has_key?(entity_id_map, key) end)
+      |> Enum.map(fn {key, m} ->
         %{
           id: Ecto.UUID.generate(),
-          entity_id: entity_id_map[m.entity_name],
+          entity_id: entity_id_map[key],
           chunk_id: m.chunk_id,
           span_start: m[:span_start],
           span_end: m[:span_end]
         }
       end)
+      |> Enum.uniq_by(fn m -> {m.entity_id, m.chunk_id} end)
+      |> Enum.reject(fn m -> MapSet.member?(existing_pairs, {m.entity_id, m.chunk_id}) end)
 
     new_state = %{state | mentions: state.mentions ++ valid_mentions}
     {:reply, :ok, new_state}
@@ -251,12 +267,17 @@ defmodule Arcana.Graph.GraphStore.Memory do
 
   @impl GenServer
   def handle_call({:search, entity_names, collection_ids}, _from, state) do
-    # Find entity IDs matching names
+    # Match on the normalized name: persistence collapses variants onto
+    # one entity keeping its first-seen display name, so matching raw
+    # names here would miss a stored "Two_Year_Limited_Warranty" for a
+    # query that asks for "two year limited warranty".
+    wanted = MapSet.new(entity_names, &EntityName.normalize/1)
+
     entity_ids =
       state.entities
       |> filter_by_collections(collection_ids)
       |> Enum.flat_map(fn {_cid, entities} -> entities end)
-      |> Enum.filter(fn e -> e.name in entity_names end)
+      |> Enum.filter(fn e -> MapSet.member?(wanted, EntityName.normalize(e.name)) end)
       |> Enum.map(& &1.id)
       |> MapSet.new()
 
@@ -400,6 +421,40 @@ defmodule Arcana.Graph.GraphStore.Memory do
       | entities: new_entities,
         relationships: new_relationships,
         mentions: new_mentions,
+        communities: new_communities
+    }
+
+    {:reply, :ok, new_state}
+  end
+
+  @impl GenServer
+  def handle_call({:sweep_orphans, collection_id}, _from, state) do
+    mentioned_ids = MapSet.new(state.mentions, & &1.entity_id)
+
+    {kept, orphaned} =
+      state.entities
+      |> Map.get(collection_id, [])
+      |> Enum.split_with(fn e -> MapSet.member?(mentioned_ids, e.id) end)
+
+    orphaned_ids = MapSet.new(orphaned, & &1.id)
+
+    new_relationships =
+      Enum.reject(state.relationships, fn r ->
+        MapSet.member?(orphaned_ids, r.source_id) or MapSet.member?(orphaned_ids, r.target_id)
+      end)
+
+    new_communities =
+      Map.update(
+        state.communities,
+        collection_id,
+        [],
+        &mark_overlapping_dirty(&1, orphaned_ids)
+      )
+
+    new_state = %{
+      state
+      | entities: Map.put(state.entities, collection_id, kept),
+        relationships: new_relationships,
         communities: new_communities
     }
 
@@ -693,6 +748,26 @@ defmodule Arcana.Graph.GraphStore.Memory do
     new_visited = Enum.reduce(related_ids, visited, &MapSet.put(&2, &1))
 
     find_related_bfs(related_ids, new_visited, depth - 1, relationships)
+  end
+
+  # Drops the swept ids from entity_ids too, so entity_count stops
+  # counting entities that no longer exist, and bumps updated_at the way
+  # the Ecto backend does.
+  defp mark_overlapping_dirty(communities, orphaned_ids) do
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    Enum.map(communities, fn community ->
+      entity_ids = community.entity_ids || []
+
+      if Enum.any?(entity_ids, &MapSet.member?(orphaned_ids, &1)) do
+        community
+        |> Map.put(:dirty, true)
+        |> Map.put(:updated_at, now)
+        |> Map.put(:entity_ids, Enum.reject(entity_ids, &MapSet.member?(orphaned_ids, &1)))
+      else
+        community
+      end
+    end)
   end
 
   # Entity filters

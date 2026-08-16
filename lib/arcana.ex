@@ -30,6 +30,7 @@ defmodule Arcana do
   """
 
   alias Arcana.Document
+  alias Arcana.Graph.GraphStore
 
   # === Configuration ===
 
@@ -118,17 +119,41 @@ defmodule Arcana do
   @doc """
   Deletes a document and all its chunks.
 
+  When the graph is enabled, also sweeps the document's collection for
+  orphaned graph data: entities left with zero mentions are deleted and
+  communities that referenced them are marked dirty so the next
+  summarize pass regenerates them.
+
+  Returns `:ok`, `{:error, :not_found}`, or `{:error, {:sweep_failed,
+  reason}}` when the graph store fails to sweep. In the `:sweep_failed`
+  case the document and its chunks ARE deleted — only the orphan cleanup
+  failed, so the collection may hold entities with zero mentions until
+  the next sweep.
+
+  Sweeping is optional for custom graph stores: one that doesn't
+  implement `c:Arcana.Graph.GraphStore.sweep_orphans/2` returns `:ok` and
+  leaves the orphans alone.
+
   ## Options
 
     * `:repo` - The Ecto repo to use (required)
+    * `:graph` - Sweep orphaned graph data after deletion (default: from config)
 
   """
   def delete(document_id, opts) do
     repo = Arcana.Config.require_repo!(opts)
 
     case repo.get(Document, document_id) do
-      nil -> {:error, :not_found}
-      document -> repo.delete!(document) && :ok
+      nil ->
+        {:error, :not_found}
+
+      document ->
+        repo.delete!(document)
+
+        case GraphStore.maybe_sweep_orphans(document.collection_id, repo, opts) do
+          :ok -> :ok
+          {:error, reason} -> {:error, {:sweep_failed, reason}}
+        end
     end
   end
 end

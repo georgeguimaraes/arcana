@@ -86,9 +86,14 @@ defmodule Arcana.Graph.GraphExtractor.LLM do
     ## Instructions:
     1. Identify all significant named entities in the text
     2. Classify each entity into one of the types listed above (use "other" if none fit)
-    3. Identify meaningful relationships between the entities
-    4. Use relationship types in UPPER_SNAKE_CASE (e.g., WORKS_AT, FOUNDED, LEADS, LOCATED_IN)
-    5. Rate relationship strength from 1-10 based on how explicit and central it is
+    3. Write entity names in lowercase with spaces between words - never
+       underscores or hyphens (e.g., "two year limited warranty", not
+       "Two_Year_Limited_Warranty"). Keep proper nouns capitalized as usual
+       (e.g., "Sam Altman", "OpenAI"). Always reuse the exact same name for
+       repeated mentions of the same entity
+    4. Identify meaningful relationships between the entities
+    5. Use relationship types in UPPER_SNAKE_CASE (e.g., WORKS_AT, FOUNDED, LEADS, LOCATED_IN)
+    6. Rate relationship strength from 1-10 based on how explicit and central it is
 
     ## Type definitions:
     - person: Individual people (e.g., "Sam Altman", "Dr. Jane Smith")
@@ -110,10 +115,12 @@ defmodule Arcana.Graph.GraphExtractor.LLM do
     ```json
     {
       "entities": [
-        {"name": "Entity Name", "type": "type", "description": "Brief context"}
+        {"name": "Sam Altman", "type": "person", "description": "Brief context"},
+        {"name": "OpenAI", "type": "organization", "description": "Brief context"},
+        {"name": "two year limited warranty", "type": "concept", "description": "Brief context"}
       ],
       "relationships": [
-        {"source": "Source Entity", "target": "Target Entity", "type": "RELATIONSHIP_TYPE", "description": "Brief description", "strength": 8}
+        {"source": "Sam Altman", "target": "OpenAI", "type": "RELATIONSHIP_TYPE", "description": "Brief description", "strength": 8}
       ]
     }
     ```

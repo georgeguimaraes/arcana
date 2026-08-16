@@ -88,6 +88,55 @@ defmodule Arcana.IngestFileTest do
       assert {:error, :unsupported_format} =
                Arcana.ingest_file(path, repo: Arcana.TestRepo)
     end
+
+    test "builds the graph when graph: true" do
+      path = create_temp_file("Sam Altman leads OpenAI.", ".txt")
+
+      entity_extractor = fn _text, _opts ->
+        {:ok, [%{name: "OpenAI", type: "organization"}]}
+      end
+
+      assert {:ok, document} =
+               Arcana.ingest_file(path,
+                 repo: Arcana.TestRepo,
+                 graph: true,
+                 entity_extractor: entity_extractor,
+                 collection: "file-graph-test"
+               )
+
+      assert document.status == :completed
+
+      entities = Arcana.TestRepo.all(Arcana.Graph.Entity)
+      assert Enum.any?(entities, fn e -> e.name == "OpenAI" end)
+
+      mentions = Arcana.TestRepo.all(Arcana.Graph.EntityMention)
+      refute Enum.empty?(mentions)
+    end
+
+    test "replace: true requires a source_id" do
+      path = create_temp_file("content", ".txt")
+
+      assert_raise ArgumentError, ~r/requires a :source_id/, fn ->
+        Arcana.ingest_file(path, repo: Arcana.TestRepo, replace: true)
+      end
+    end
+
+    test "replace: true supersedes the prior document with the same source_id" do
+      old_path = create_temp_file("old file content", ".txt")
+      new_path = create_temp_file("new file content", ".txt")
+      opts = [repo: Arcana.TestRepo, source_id: "file-1", replace: true]
+
+      assert {:ok, old} = Arcana.ingest_file(old_path, opts)
+      assert {:ok, new} = Arcana.ingest_file(new_path, opts)
+
+      assert old.id != new.id
+      assert Arcana.TestRepo.get(Arcana.Document, old.id) == nil
+
+      assert [document] = Arcana.TestRepo.all(Arcana.Document)
+      assert document.id == new.id
+      assert document.content == "new file content"
+      assert document.status == :completed
+    end
   end
 
   # Helper functions
