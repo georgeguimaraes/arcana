@@ -74,6 +74,30 @@ defmodule KeywordMetaParser do
   def supports_binary?, do: true
 end
 
+defmodule StringKeyedPagesParser do
+  @moduledoc false
+  @behaviour Arcana.FileParser
+
+  @impl true
+  def parse(_input, _opts) do
+    {:ok, "some text", %{pages: [%{"number" => 1, "start" => 0, "end" => 9}]}}
+  end
+
+  @impl true
+  def supports_binary?, do: true
+end
+
+defmodule BarePageNumbersParser do
+  @moduledoc false
+  @behaviour Arcana.FileParser
+
+  @impl true
+  def parse(_input, _opts), do: {:ok, "some text", %{pages: [1, 2]}}
+
+  @impl true
+  def supports_binary?, do: true
+end
+
 defmodule NotAParserAtAll do
   @moduledoc false
 end
@@ -373,6 +397,33 @@ defmodule Arcana.FileParserRegistryTest do
 
       assert {:error, {:invalid_parser_metadata, KeywordMetaParser, [pages: []]}} =
                Parser.parse_binary("raw", "doc.docx")
+    end
+
+    test "string-keyed pages are rejected at the parser, not deep inside chunking" do
+      put_arcana_env(:file_parsers, %{".docx" => StringKeyedPagesParser})
+
+      assert {:error, {:invalid_parser_metadata, StringKeyedPagesParser, _meta}} =
+               Parser.parse_binary("raw", "doc.docx")
+    end
+
+    test "pages that aren't maps at all are rejected too" do
+      put_arcana_env(:file_parsers, %{".docx" => BarePageNumbersParser})
+
+      assert {:error, {:invalid_parser_metadata, BarePageNumbersParser, _meta}} =
+               Parser.parse_binary("raw", "doc.docx")
+    end
+
+    test "malformed pages leave no orphaned :processing document behind" do
+      # attach_pages/2 runs after the document row is inserted, so a raise
+      # from page_at/2 used to strand a half-ingested document.
+      put_arcana_env(:file_parsers, %{".docx" => StringKeyedPagesParser})
+
+      before = Repo.aggregate(Arcana.Document, :count)
+
+      assert {:error, {:invalid_parser_metadata, StringKeyedPagesParser, _meta}} =
+               Arcana.ingest_binary("raw", filename: "doc.docx", repo: Repo)
+
+      assert Repo.aggregate(Arcana.Document, :count) == before
     end
   end
 

@@ -90,6 +90,13 @@ defmodule Arcana.FileParser do
   Parsers predating positional metadata return `{:ok, text}`; those come
   back here as `{:ok, text, %{}}` so callers only handle one shape.
 
+  Metadata that isn't a map, or whose `:pages` aren't
+  `%{number: _, start: integer, end: integer}` maps, comes back as
+  `{:error, {:invalid_parser_metadata, module, meta}}`. Ingestion reads
+  those offsets long after the document row is inserted, so catching the
+  shape here is what keeps a misbehaving parser from raising out of
+  library internals and orphaning a `:processing` document.
+
   A parser reporting itself unavailable (`available?/0`) is never
   invoked: this returns `{:error, unavailable_reason(parser)}` instead.
   The check lives here rather than in a caller so that every route into
@@ -111,7 +118,11 @@ defmodule Arcana.FileParser do
         {:ok, text, %{}}
 
       {:ok, text, meta} when is_map(meta) ->
-        {:ok, text, meta}
+        if valid_pages?(Map.get(meta, :pages)) do
+          {:ok, text, meta}
+        else
+          {:error, {:invalid_parser_metadata, module, meta}}
+        end
 
       # Metadata is documented as a map (`%{pages: [...]}`); a keyword list
       # is the easy slip. Report it rather than raising CaseClauseError from
@@ -126,6 +137,25 @@ defmodule Arcana.FileParser do
         {:error, {:invalid_parser_return, module, other}}
     end
   end
+
+  # `:pages` is the one metadata key ingestion reads, and it reads it deep
+  # inside chunking — after the document row exists. String-keyed entries
+  # (`%{"start" => 0}`) or bare numbers (`[1, 2]`) raise KeyError/BadMapError
+  # from there, leaving a `:processing` document behind and naming no
+  # parser. Checking the shape here keeps a bad parser to an error tuple
+  # that says which module it was, before anything is written.
+  #
+  # Absent or empty pages are fine: those mean "this parser doesn't report
+  # positions", which is the documented default.
+  defp valid_pages?(nil), do: true
+  defp valid_pages?(pages) when is_list(pages), do: Enum.all?(pages, &valid_page?/1)
+  defp valid_pages?(_pages), do: false
+
+  defp valid_page?(%{number: _number, start: start_byte, end: end_byte})
+       when is_integer(start_byte) and is_integer(end_byte),
+       do: true
+
+  defp valid_page?(_page), do: false
 
   @doc """
   Whether a `{module, opts}` parser accepts binary content.
