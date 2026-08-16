@@ -4,6 +4,23 @@ defmodule Mix.Tasks.Arcana.Graph.InstallTest do
   import Arcana.ConfigCase
   import Igniter.Test
 
+  # Hangs off its own otp_app, not :arcana: Arcana.Config.repo!/1 raises
+  # when it finds more than one repo key in the :arcana app env, so
+  # registering a second Ecto repo there would break whichever async test
+  # happens to be scanning at the time. The :priv name is unique across the
+  # suite too, since these directories are shared state on disk.
+  defmodule CustomPrivRepo do
+    use Ecto.Repo, otp_app: :arcana_graph_install_test, adapter: Ecto.Adapters.Postgres
+  end
+
+  setup_all do
+    Application.put_env(:arcana_graph_install_test, CustomPrivRepo,
+      priv: "priv/graph_install_custom_priv"
+    )
+
+    :ok
+  end
+
   defmodule FakeEmbedder do
     @behaviour Arcana.Embedder
 
@@ -75,6 +92,33 @@ defmodule Mix.Tasks.Arcana.Graph.InstallTest do
       |> Igniter.compose_task("arcana.graph.install", [])
 
     assert Path.dirname(migration_path(igniter)) == "priv/repo/migrations"
+  end
+
+  # --dimensions returns from resolve_dimensions/1 immediately, so the app
+  # config that detect_dimensions! would otherwise have loaded on the way
+  # past is never loaded there — and Igniter's own run/1 wrapper runs
+  # "compile", not "app.config". A repo that configures its own :priv has
+  # to survive that combination.
+  test "honors a repo with a configured :priv even when --dimensions skips detection" do
+    expected =
+      CustomPrivRepo
+      |> Mix.EctoSQL.source_repo_priv()
+      |> Path.relative_to_cwd()
+      |> Path.join("migrations")
+
+    assert expected == "priv/graph_install_custom_priv/migrations"
+
+    igniter =
+      test_project()
+      |> Igniter.compose_task("arcana.graph.install", [
+        "--repo",
+        inspect(CustomPrivRepo),
+        "--dimensions",
+        "512"
+      ])
+
+    assert Path.dirname(migration_path(igniter)) == expected
+    assert migration_content(igniter) =~ ":embedding, :vector, size: 512"
   end
 
   defp migration_path(igniter) do
