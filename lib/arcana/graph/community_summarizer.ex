@@ -169,6 +169,9 @@ defmodule Arcana.Graph.CommunitySummarizer do
     - `dirty: true` - Community was modified since last summary
     - `change_count >= threshold` - Many changes accumulated
     - `summary: nil` - No summary exists yet
+    - `summary_fingerprint: nil` - Summary predates fingerprinting, so there
+      is no way to tell whether it still matches the graph. It regenerates
+      once, the run records a fingerprint, and it settles from then on
 
   ## Options
 
