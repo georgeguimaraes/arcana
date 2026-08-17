@@ -87,7 +87,16 @@ defmodule Arcana.Ingest do
     {collection_name, collection_description} =
       parse_collection_opt(Keyword.get(opts, :collection, "default"))
 
-    chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap, :format, :size_unit])
+    chunk_opts =
+      Keyword.take(opts, [
+        :chunk_size,
+        :chunk_overlap,
+        :format,
+        :size_unit,
+        :chars_per_token,
+        :max_chunk_chars
+      ])
+
     chunker_config = Arcana.Config.resolve_chunker(opts)
 
     start_metadata = %{
@@ -476,7 +485,17 @@ defmodule Arcana.Ingest do
     file_path = Keyword.get(opts, :file_path)
     content_type = Keyword.get(opts, :content_type, "text/plain")
     collection_name = Keyword.get(opts, :collection, "default")
-    chunk_opts = Keyword.take(opts, [:chunk_size, :chunk_overlap, :format, :size_unit])
+
+    chunk_opts =
+      Keyword.take(opts, [
+        :chunk_size,
+        :chunk_overlap,
+        :format,
+        :size_unit,
+        :chars_per_token,
+        :max_chunk_chars
+      ])
+
     chunker_config = Arcana.Config.resolve_chunker(opts)
 
     attrs = %{

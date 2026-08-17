@@ -155,4 +155,125 @@ defmodule Arcana.ChunkerTest do
       end
     end
   end
+
+  describe "token sizing" do
+    test "chars_per_token narrows the character budget for dense text" do
+      text = String.duplicate("a", 4000)
+
+      loose = Chunker.chunk(text, size_unit: :tokens, chunk_size: 100, chunk_overlap: 0)
+
+      dense =
+        Chunker.chunk(text,
+          size_unit: :tokens,
+          chunk_size: 100,
+          chunk_overlap: 0,
+          chars_per_token: 2
+        )
+
+      loose_max = loose |> Enum.map(&byte_size(&1.text)) |> Enum.max()
+      dense_max = dense |> Enum.map(&byte_size(&1.text)) |> Enum.max()
+
+      # 100 tokens is 400 characters at the default and 200 at 2, so a
+      # corpus known to be dense can be sized to stay inside the window.
+      assert dense_max < loose_max
+      assert dense_max <= 200
+    end
+
+    test "token_count follows chars_per_token" do
+      text = String.duplicate("x", 400)
+
+      [default] = Chunker.chunk(text, size_unit: :characters, chunk_size: 1000)
+
+      [dense] =
+        Chunker.chunk(text, size_unit: :characters, chunk_size: 1000, chars_per_token: 2)
+
+      assert default.token_count == 100
+      assert dense.token_count == 200
+    end
+  end
+
+  describe "max_chunk_chars" do
+    test "splits a chunk that would otherwise go out oversized" do
+      # text_chunker sizes by its own rules, so an unbroken run can come out
+      # longer than asked for. That is what reaches the embedder and gets a
+      # 413 back.
+      text = String.duplicate("a", 3000)
+
+      unbounded = Chunker.chunk(text, size_unit: :characters, chunk_size: 5000)
+      assert Enum.any?(unbounded, &(byte_size(&1.text) > 500))
+
+      capped =
+        Chunker.chunk(text, size_unit: :characters, chunk_size: 5000, max_chunk_chars: 500)
+
+      assert Enum.all?(capped, &(byte_size(&1.text) <= 500)),
+             "a chunk over the cap should be split, not emitted"
+    end
+
+    test "byte offsets still point at the source after a split" do
+      text = String.duplicate("abcdefghij", 200)
+
+      chunks =
+        Chunker.chunk(text, size_unit: :characters, chunk_size: 5000, max_chunk_chars: 300)
+
+      # Offsets feed citations, so a split must not leave them describing
+      # text that isn't there.
+      for chunk <- chunks do
+        start = chunk.metadata["start_byte"]
+        finish = chunk.metadata["end_byte"]
+
+        assert binary_part(text, start, finish - start) == chunk.text
+      end
+    end
+
+    test "never splits inside a multi-byte character" do
+      text = String.duplicate("héllo wörld ", 100)
+
+      chunks =
+        Chunker.chunk(text, size_unit: :characters, chunk_size: 5000, max_chunk_chars: 50)
+
+      for chunk <- chunks do
+        assert String.valid?(chunk.text), "split produced invalid UTF-8"
+        assert byte_size(chunk.text) <= 50
+      end
+    end
+  end
+
+  describe "option validation" do
+    # Both options feed arithmetic, so an invalid one used to surface as a
+    # Protocol.UndefinedError or as silently absurd output rather than as
+    # the name of the option that was wrong.
+    for {key, value} <- [
+          {:chars_per_token, 0},
+          {:chars_per_token, -1},
+          {:chars_per_token, :bogus},
+          {:chars_per_token, 4.0},
+          {:max_chunk_chars, 0},
+          {:max_chunk_chars, -5},
+          {:max_chunk_chars, "500"}
+        ] do
+      test "rejects #{key}: #{inspect(value)}" do
+        assert_raise ArgumentError, ~r/#{inspect(unquote(key))} must be a positive integer/, fn ->
+          Chunker.chunk("some text to split up here. ", [{unquote(key), unquote(value)}])
+        end
+      end
+    end
+
+    test "empty input still validates its options" do
+      # The empty-text clause used to return before the validators ran, so
+      # the documented ArgumentError depended on the input being non-empty.
+      assert_raise ArgumentError, ~r/:chars_per_token must be a positive integer/, fn ->
+        Chunker.chunk("", chars_per_token: 0)
+      end
+
+      assert_raise ArgumentError, ~r/:max_chunk_chars must be a positive integer/, fn ->
+        Chunker.chunk("", max_chunk_chars: -1)
+      end
+
+      assert Chunker.chunk("", max_chunk_chars: 500) == []
+    end
+
+    test "max_chunk_chars: nil is the documented default, not an error" do
+      assert [_ | _] = Chunker.chunk("some text to split up here. ", max_chunk_chars: nil)
+    end
+  end
 end
