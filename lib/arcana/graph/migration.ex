@@ -94,12 +94,57 @@ defmodule Arcana.Graph.Migration do
     current = recorded_version(repo(), prefix: prefix)
     validate_recorded!(current)
 
+    if current == 0, do: refuse_blind_rollback!(prefix)
+
     if current > target do
       for version <- current..(target + 1)//-1, do: change(version, :down, opts)
       record_version(target, prefix)
     end
 
     :ok
+  end
+
+  # Version 0 means "no marker found", which covers two different states:
+  # nothing is installed, or the tables are there and the marker isn't -
+  # either clobbered by a host comment, or never written because the install
+  # predates versioning. `arcana_graph_entities` existing tells them apart.
+  #
+  # Only the first is safe to answer by doing nothing. In the others the
+  # operator asked to remove tables that are really there, and silently
+  # dropping nothing is the failure this module's own rescue clause goes out
+  # of its way to avoid.
+  defp refuse_blind_rollback!(prefix) do
+    if version_table_exists?(prefix) do
+      raise """
+      Arcana.Graph.Migration.down/1 can't tell which version is applied.
+
+      #{qualify(@version_table, prefix)} exists, so Arcana is installed here, \
+      but its comment is not a recognised version marker. Either a host \
+      comment replaced it, or this install predates versioned migrations.
+
+      Rolling back blind could drop tables this release never created, so \
+      nothing was changed. Record the version that is actually applied and \
+      run the rollback again:
+
+          COMMENT ON TABLE #{qualify(@version_table, prefix)} IS 'arcana_graph:<n>';
+
+      See "Where the version is recorded" in Arcana.Graph.Migration for how this is stored.
+      """
+    end
+
+    :ok
+  end
+
+  defp version_table_exists?(prefix) do
+    %{rows: [[count]]} =
+      repo().query!(
+        "SELECT count(*) FROM pg_class c " <>
+          "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
+          "WHERE c.relname = $1 AND n.nspname = COALESCE($2, current_schema())",
+        [@version_table, prefix]
+      )
+
+    count > 0
   end
 
   @doc """

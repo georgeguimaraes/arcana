@@ -101,6 +101,18 @@ defmodule Arcana.MigrationTest do
     SQL.query!(Repo, "COMMENT ON TABLE arcana_documents IS '#{escaped}'", [])
   end
 
+  defp tables do
+    %{rows: rows} =
+      SQL.query!(
+        Repo,
+        "SELECT table_name FROM information_schema.tables " <>
+          "WHERE table_schema = current_schema()",
+        []
+      )
+
+    List.flatten(rows)
+  end
+
   defp columns(table) do
     %{rows: rows} =
       SQL.query!(
@@ -286,6 +298,46 @@ defmodule Arcana.MigrationTest do
       set_table_comment("  arcana:1\n")
 
       assert Arcana.Migration.recorded_version(Repo) == 1
+    end
+
+    test "down/1 refuses to roll back when the marker is gone but the tables aren't" do
+      migrate(Arcana.Migration)
+      assert Arcana.Migration.recorded_version(Repo) == 1
+
+      # What a host comment on the version table looks like afterwards.
+      set_table_comment("Documents ingested by our pipeline")
+      assert Arcana.Migration.recorded_version(Repo) == 0
+
+      assert_raise RuntimeError, ~r/can't tell which version is applied/, fn ->
+        migrate_down(Arcana.Migration, [])
+      end
+
+      # Refusing means refusing: the tables are still there.
+      assert "arcana_documents" in tables()
+      assert "arcana_chunks" in tables()
+    end
+
+    test "down/1 is a quiet no-op when nothing is installed" do
+      # No tables at all, which is the one case version 0 legitimately means
+      # "nothing to drop".
+      refute "arcana_documents" in tables()
+
+      assert :ok = migrate_down(Arcana.Migration, [])
+    end
+
+    test "restoring the marker makes the rollback work again" do
+      migrate(Arcana.Migration)
+      set_table_comment("clobbered by a schema-doc tool")
+
+      assert_raise RuntimeError, ~r/can't tell which version is applied/, fn ->
+        migrate_down(Arcana.Migration, [])
+      end
+
+      # The error tells the operator to do exactly this.
+      set_table_comment("arcana:1")
+
+      assert :ok = migrate_down(Arcana.Migration, [])
+      refute "arcana_documents" in tables()
     end
 
     test "refuses to run against a database a newer release migrated" do
