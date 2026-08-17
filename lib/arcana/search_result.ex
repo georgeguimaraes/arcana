@@ -21,9 +21,26 @@ defmodule Arcana.SearchResult do
     * `:metadata` - The chunk's stored metadata with string keys.
 
   The struct implements the `Access` behaviour for reads, so `result[:text]`
-  keeps working for code that used the previous plain maps. It is not
-  derived for `Jason.Encoder` or `JSON.Encoder`; encode `Map.from_struct/1`
-  if you need JSON.
+  keeps working for code that used the previous plain maps.
+
+  ## Serializing
+
+  Use `to_map/1`:
+
+      results |> Enum.map(&Arcana.SearchResult.to_map/1) |> JSON.encode!()
+
+  The struct is deliberately not derived for `Jason.Encoder` or
+  `JSON.Encoder`. Deriving would make the field set part of the wire
+  contract, so adding or renaming a field would break everyone serializing
+  results. `to_map/1` is the seam instead: it returns a shape this module
+  commits to, and lets fields be added without exposing them.
+
+  Two things not to do. `Map.from_struct/1` works today but makes the
+  private field set your contract, so a field added later that isn't
+  JSON-safe breaks you at encode time. And a `defimpl JSON.Encoder, for:
+  Arcana.SearchResult` in your own application is an orphan implementation
+  for a struct you don't own: it collides if Arcana ever ships one, and with
+  any other library that did the same.
   """
 
   @behaviour Access
@@ -51,6 +68,36 @@ defmodule Arcana.SearchResult do
           rerank_score: number() | nil,
           metadata: map()
         }
+
+  @doc """
+  The result as a plain map, for encoding, logging, or handing to a model.
+
+  Fields are listed explicitly rather than taken from the struct, so this
+  stays a contract: a field added to the struct later is not silently
+  exposed to everything that serializes a result, and the keys here can
+  outlive an internal rename.
+
+      iex> result = %Arcana.SearchResult{id: "abc", text: "hello", score: 0.9}
+      iex> map = Arcana.SearchResult.to_map(result)
+      iex> {map.id, map.text, map.score, map.metadata}
+      {"abc", "hello", 0.9, %{}}
+
+  `:metadata` is passed through as stored, with string keys.
+  """
+  @spec to_map(t()) :: map()
+  def to_map(%__MODULE__{} = result) do
+    %{
+      id: result.id,
+      text: result.text,
+      document_id: result.document_id,
+      chunk_index: result.chunk_index,
+      score: result.score,
+      vector_score: result.vector_score,
+      keyword_score: result.keyword_score,
+      rerank_score: result.rerank_score,
+      metadata: result.metadata
+    }
+  end
 
   @known_keys [:text, :chunk_index, :document_id, :vector_score, :keyword_score]
 
