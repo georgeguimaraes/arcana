@@ -18,27 +18,37 @@ defmodule ArcanaWeb.AsyncAssertions do
   @doc """
   Renders `view` until the markup contains `expected`, then returns it.
 
-  Fails with the last markup rendered if it never appears.
+  On a timeout the failure carries the markup that was actually rendered,
+  which is the thing you need to tell "never arrived" from "arrived in a
+  different shape".
   """
   def render_until(view, expected, attempts \\ @attempts) do
+    poll_render(view, expected, attempts, attempts)
+  end
+
+  defp poll_render(view, expected, remaining, total) do
     html = Phoenix.LiveViewTest.render(view)
 
     cond do
       html =~ expected ->
         html
 
-      attempts <= 0 ->
+      remaining <= 0 ->
         flunk("""
-        timed out after #{@attempts * @interval}ms waiting for the render to contain:
+        timed out after #{budget(total)} waiting for the render to contain:
 
             #{inspect(expected)}
+
+        last rendered markup:
+
+        #{html}
         """)
 
       true ->
         # Process.sleep/1 returns :ok, so `sleep || recurse` would
         # short-circuit and never retry. Keep these as statements.
         Process.sleep(@interval)
-        render_until(view, expected, attempts - 1)
+        poll_render(view, expected, remaining - 1, total)
     end
   end
 
@@ -49,16 +59,24 @@ defmodule ArcanaWeb.AsyncAssertions do
   work is expected to write.
   """
   def wait_until(fun, attempts \\ @attempts) do
+    poll_until(fun, attempts, attempts)
+  end
+
+  defp poll_until(fun, remaining, total) do
     cond do
       fun.() ->
         true
 
-      attempts <= 0 ->
-        flunk("timed out after #{@attempts * @interval}ms waiting for the condition to hold")
+      remaining <= 0 ->
+        flunk("timed out after #{budget(total)} waiting for the condition to hold")
 
       true ->
         Process.sleep(@interval)
-        wait_until(fun, attempts - 1)
+        poll_until(fun, remaining - 1, total)
     end
   end
+
+  # Reported from the attempts the caller actually asked for, not the
+  # default: by the time we flunk, the countdown is at zero.
+  defp budget(total), do: "#{total * @interval}ms"
 end
