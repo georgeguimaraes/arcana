@@ -7,7 +7,7 @@ defmodule Arcana.Migration do
       defmodule MyApp.Repo.Migrations.AddArcana do
         use Ecto.Migration
 
-        def up, do: Arcana.Migration.up()
+        def up, do: Arcana.Migration.up(dimensions: 384)
         def down, do: Arcana.Migration.down()
       end
 
@@ -18,9 +18,12 @@ defmodule Arcana.Migration do
   ## Options
 
     * `:version` - target version (defaults to the latest)
-    * `:dimensions` - embedding dimensions for `arcana_chunks.embedding`
-      (defaults to 384). Must match `Arcana.Embedder.dimensions/1` for the
-      embedder you run, or storing a chunk fails
+    * `:dimensions` - **required.** Embedding dimensions for
+      `arcana_chunks.embedding`. Must match `Arcana.Embedder.dimensions/1`
+      for the embedder you run, or storing a chunk fails. There is no
+      default: the column can't be resized without rebuilding every vector
+      in it, and a wrong guess stays invisible on a database that already
+      has the table. `mix arcana.install` detects it and writes it in
     * `:prefix` - Postgres schema to install into (defaults to the
       connection's current schema)
     * `:create_schema` - whether to create `:prefix` when it is missing
@@ -61,7 +64,6 @@ defmodule Arcana.Migration do
   use Ecto.Migration
 
   @current_version 1
-  @default_dimensions 384
 
   @version_table "arcana_documents"
 
@@ -75,6 +77,10 @@ defmodule Arcana.Migration do
     prefix = Keyword.get(opts, :prefix)
     current = recorded_version(repo(), prefix: prefix)
     validate_recorded!(current)
+
+    # Before the version comparison, so a wrong number is caught even when
+    # this database is already at the target and there is nothing to apply.
+    verify_embedding_dimensions!(require_dimensions!(opts), prefix)
 
     if current < target do
       maybe_create_schema(prefix, opts)
@@ -279,6 +285,89 @@ defmodule Arcana.Migration do
     :ok
   end
 
+  # Required rather than defaulted. A wrong dimension is baked into the
+  # column, and on a database that already has the table
+  # create_if_not_exists means it changes nothing - so a silent default was
+  # invisible in development and only surfaced when a fresh database was
+  # built, usually CI.
+  #
+  # This deliberately does not ask the configured embedder.
+  # `Arcana.Embedder.dimensions/1` falls back to embedding a probe string, so
+  # defaulting from it would let a migration load a model or call a remote
+  # service. `mix arcana.install` detects the number and writes it into the
+  # generated migration instead, where you can read it.
+  # `create_if_not_exists` leaves an existing table alone, so on a database
+  # that already has arcana_chunks a wrong :dimensions changes nothing and
+  # reports success. That is the case that stays invisible in development and
+  # only breaks when a fresh database is built. Comparing against the column
+  # that is actually there catches it where it was typed.
+  #
+  # Reads the catalog rather than the embedder, so it costs one query and
+  # doesn't drag a model load into the migration.
+  defp verify_embedding_dimensions!(requested, prefix) do
+    execute(fn ->
+      %{rows: rows} =
+        repo().query!(
+          "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a " <>
+            "JOIN pg_class c ON c.oid = a.attrelid " <>
+            "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
+            "WHERE c.relname = $1 AND a.attname = 'embedding' " <>
+            "AND a.attnum > 0 AND NOT a.attisdropped " <>
+            "AND n.nspname = COALESCE($2, current_schema())",
+          ["arcana_chunks", prefix]
+        )
+
+      with [[declared]] when is_binary(declared) <- rows,
+           [_, actual] <- Regex.run(~r/vector\((\d+)\)/, declared),
+           actual = String.to_integer(actual),
+           true <- actual != requested do
+        raise ArgumentError, """
+        Arcana.Migration.up/1 was given dimensions: #{requested}, but
+        arcana_chunks.embedding is already vector(#{actual}).
+
+        The column was not changed: create_if_not_exists leaves an existing
+        table alone, so the mismatch would have gone unnoticed until a fresh
+        database was built with #{requested} and this one kept #{actual}.
+
+        Pass dimensions: #{actual} to match this database, or if #{requested} is
+        the number you want, resize the column deliberately with
+        `mix arcana.gen.embedding_migration` and re-embed.
+        """
+      end
+    end)
+  end
+
+  defp require_dimensions!(opts) do
+    case Keyword.get(opts, :dimensions) do
+      value when is_integer(value) and value > 0 ->
+        value
+
+      nil ->
+        raise ArgumentError, """
+        Arcana.Migration.up/1 requires :dimensions.
+
+        It sizes arcana_chunks.embedding, and the column can't be resized later
+        without rebuilding every vector in it, so there is no safe default to
+        guess.
+
+        Pass the dimension your embedder produces:
+
+            Arcana.Migration.up(dimensions: 384)
+
+        To find it, ask your embedder outside the migration:
+
+            Arcana.Embedder.dimensions(Arcana.Config.embedder())
+
+        `mix arcana.install` detects it and writes it into the migration it
+        generates, so a generated install already has this filled in.
+        """
+
+      other ->
+        raise ArgumentError,
+              ":dimensions must be a positive integer, got: #{inspect(other)}"
+    end
+  end
+
   defp validate_target!(target) when is_integer(target) and target >= 1 do
     if target > @current_version do
       raise ArgumentError,
@@ -316,7 +405,7 @@ defmodule Arcana.Migration do
   # this, because installs predating this module adopt it by running v1.
 
   defp change(1, :up, opts) do
-    dimensions = Keyword.get(opts, :dimensions, @default_dimensions)
+    dimensions = require_dimensions!(opts)
     prefix = Keyword.get(opts, :prefix)
 
     execute("CREATE EXTENSION IF NOT EXISTS vector")

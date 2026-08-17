@@ -113,7 +113,7 @@ migration that delegates rather than DDL you write yourself:
 defmodule MyApp.Repo.Migrations.UpgradeArcanaGraph do
   use Ecto.Migration
 
-  def up, do: Arcana.Graph.Migration.up()
+  def up, do: Arcana.Graph.Migration.up(dimensions: 384)
 
   def down, do: Arcana.Graph.Migration.down()
 end
@@ -165,8 +165,8 @@ references at tables that don't exist there, and the migration fails:
 
 ```elixir
 def up do
-  Arcana.Migration.up(prefix: "tenant_a")
-  Arcana.Graph.Migration.up(prefix: "tenant_a")
+  Arcana.Migration.up(dimensions: 384, prefix: "tenant_a")
+  Arcana.Graph.Migration.up(dimensions: 384, prefix: "tenant_a")
 end
 ```
 
