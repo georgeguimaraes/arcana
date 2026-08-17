@@ -265,13 +265,33 @@ defmodule Arcana.Ask do
           levels -> dynamic([c], c.level in ^levels)
         end
 
+      matched_binary = entity_ids_to_binary(entity_ids)
+
+      # Without an ORDER BY, Postgres returns whichever overlapping
+      # communities it likes and the LIMIT cuts arbitrarily, so the single
+      # most relevant community can lose its slot to five that share one
+      # peripheral entity each.
+      #
+      # Overlap size descending puts the most on-topic first. Community size
+      # ascending breaks ties away from hub communities, which overlap
+      # almost any entity set and summarise too broadly to be useful.
       community_summaries =
         repo.all(
           from(c in Community,
             where:
-              fragment("? && ?", c.entity_ids, ^entity_ids_to_binary(entity_ids)) and
+              fragment("? && ?", c.entity_ids, ^matched_binary) and
                 not is_nil(c.summary) and c.summary != "",
             where: ^level_filter,
+            order_by: [
+              desc:
+                fragment(
+                  "cardinality(ARRAY(SELECT unnest(?) INTERSECT SELECT unnest(?::uuid[])))",
+                  c.entity_ids,
+                  ^matched_binary
+                ),
+              asc: fragment("cardinality(?)", c.entity_ids),
+              asc: c.id
+            ],
             select: c.summary,
             limit: ^summary_limit
           )
