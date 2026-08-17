@@ -716,6 +716,23 @@ defmodule Arcana.Graph.GraphStore.Memory do
   # Drops the swept ids from entity_ids too, so entity_count stops
   # counting entities that no longer exist, and bumps updated_at the way
   # the Ecto backend does.
+  defp mark_overlapping_dirty(communities, orphaned_ids) do
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    Enum.map(communities, fn community ->
+      entity_ids = community.entity_ids || []
+
+      if Enum.any?(entity_ids, &MapSet.member?(orphaned_ids, &1)) do
+        community
+        |> Map.put(:dirty, true)
+        |> Map.put(:updated_at, now)
+        |> Map.put(:entity_ids, Enum.reject(entity_ids, &MapSet.member?(orphaned_ids, &1)))
+      else
+        community
+      end
+    end)
+  end
+
   # Drops entities in the collection that no mention points at any more,
   # along with their relationships, and marks every community that held one
   # dirty so it gets re-summarized. Shared with the delete_by_chunks path,
@@ -749,23 +766,6 @@ defmodule Arcana.Graph.GraphStore.Memory do
         relationships: new_relationships,
         communities: new_communities
     }
-  end
-
-  defp mark_overlapping_dirty(communities, orphaned_ids) do
-    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-
-    Enum.map(communities, fn community ->
-      entity_ids = community.entity_ids || []
-
-      if Enum.any?(entity_ids, &MapSet.member?(orphaned_ids, &1)) do
-        community
-        |> Map.put(:dirty, true)
-        |> Map.put(:updated_at, now)
-        |> Map.put(:entity_ids, Enum.reject(entity_ids, &MapSet.member?(orphaned_ids, &1)))
-      else
-        community
-      end
-    end)
   end
 
   # Entity filters

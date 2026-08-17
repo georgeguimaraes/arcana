@@ -283,16 +283,22 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   defp sweep_uncollected(entity_ids, repo) do
     mentioned = from(m in EntityMention, select: m.entity_id)
 
-    # Relationships cascade via the FK on source_id/target_id, and a
-    # community is always scoped to a collection, so there is nothing else
-    # pointing at these.
-    repo.delete_all(
-      from(e in Entity,
-        where:
-          e.id in ^Enum.uniq(entity_ids) and is_nil(e.collection_id) and
-            e.id not in subquery(mentioned)
+    # Relationships cascade via the FK on source_id/target_id.
+    {_count, deleted} =
+      repo.delete_all(
+        from(e in Entity,
+          where:
+            e.id in ^Enum.uniq(entity_ids) and is_nil(e.collection_id) and
+              e.id not in subquery(mentioned),
+          select: e.id
+        )
       )
-    )
+
+    # A community is collection-less on the same terms its entities are, and
+    # it holds their ids in an array rather than through a foreign key, so
+    # nothing cascades. Left alone it would keep counting rows that are gone
+    # and keep serving a summary describing them.
+    mark_communities_dirty(dynamic([c], is_nil(c.collection_id)), deleted || [], repo)
 
     :ok
   end
@@ -402,13 +408,18 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   # until the next summarize pass, but until then its entity_count would
   # otherwise keep counting entities that no longer exist.
   defp mark_overlapping_communities_dirty(collection_id, entity_ids, repo) do
+    mark_communities_dirty(dynamic([c], c.collection_id == ^collection_id), entity_ids, repo)
+  end
+
+  defp mark_communities_dirty(_scope, [], _repo), do: :ok
+
+  defp mark_communities_dirty(scope, entity_ids, repo) do
     now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
     repo.update_all(
       from(c in Community,
-        where:
-          c.collection_id == ^collection_id and
-            fragment("? && ?", c.entity_ids, type(^entity_ids, {:array, Ecto.UUID})),
+        where: ^scope,
+        where: fragment("? && ?", c.entity_ids, type(^entity_ids, {:array, Ecto.UUID})),
         update: [
           set: [
             dirty: true,

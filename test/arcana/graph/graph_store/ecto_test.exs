@@ -2,7 +2,7 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
   use Arcana.DataCase, async: true
 
   alias Arcana.{Chunk, Collection, Document}
-  alias Arcana.Graph.{Entity, EntityMention, EntityName, Relationship}
+  alias Arcana.Graph.{Community, Entity, EntityMention, EntityName, Relationship}
   alias Arcana.Graph.GraphStore.Ecto, as: EctoStore
 
   defp create_collection(name \\ "test-collection") do
@@ -135,6 +135,46 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
 
       refute Repo.get(Entity, uncollected.id),
              "a collection-less entity with no mentions left has to go too"
+    end
+
+    test "dirties a collection-less community when its entity is swept" do
+      # Communities hold entity ids in an array, not through a foreign key,
+      # so nothing cascades. A collection-less one is reachable by neither
+      # the per-collection sweep nor a cascade, and would keep serving a
+      # summary describing an entity that no longer exists.
+      collection = create_collection("dbc-nullcomm-#{System.unique_integer([:positive])}")
+      chunk = collection |> create_document() |> create_chunk()
+
+      stray =
+        %Entity{}
+        |> Entity.changeset(%{name: "StrayCommunity", type: "person"})
+        |> Repo.insert!()
+
+      create_mention(stray, chunk)
+
+      community =
+        %Community{}
+        |> Community.changeset(%{
+          level: 0,
+          summary: "a summary about StrayCommunity",
+          summary_fingerprint: "abc123",
+          entity_ids: [stray.id],
+          dirty: false
+        })
+        |> Repo.insert!()
+
+      assert is_nil(community.collection_id), "precondition: no collection"
+
+      assert :ok = EctoStore.delete_by_chunks([chunk.id], repo: Repo)
+
+      refute Repo.get(Entity, stray.id)
+
+      reloaded = Repo.get!(Community, community.id)
+
+      assert reloaded.dirty, "the community has to be re-summarized"
+
+      assert reloaded.entity_ids == [],
+             "a swept id left in entity_ids keeps inflating entity_count"
     end
 
     test "keeps a collection-less entity that is still mentioned" do
