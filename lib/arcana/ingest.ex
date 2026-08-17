@@ -26,6 +26,38 @@ defmodule Arcana.Ingest do
     * `:replace` - When true, atomically replaces any prior document with the
       same `(collection, source_id)` once the new ingest completes. Requires
       `:source_id`. See "Replacing documents" below.
+    * `:on_chunk_error` - What a chunk that fails to embed does to the rest
+      of the document: `:abort` (default) or `:skip`. See "When a chunk
+      fails to embed" below.
+
+  ## When a chunk fails to embed
+
+  Every chunk is embedded before anything is written, so a failure never
+  leaves a partly-stored document behind.
+
+  With the default `:abort`, one rejected chunk fails the whole ingest and
+  writes nothing:
+
+      {:error, {:embedding_failed, %{chunk_index: 12, reason: reason}}}
+
+  The `chunk_index` is there so you can find the offending input instead of
+  guessing which of forty chunks the endpoint refused.
+
+  With `:skip`, the chunks that did embed are stored and the rest are
+  reported:
+
+      {:ok, document, %{skipped_chunks: 1, reasons: [...], failed: [%{chunk_index: 12, reason: ...}]}}
+
+  For retrieval, 39 of 40 chunks beats losing the document. The reason is
+  also written to `document.error`, so a partial ingest is still explicable
+  from the row alone. Skipped chunks leave a gap in `chunk_index` rather
+  than renumbering, since a chunk's `"start_byte"`/`"end_byte"` metadata is
+  what locates it in the source.
+
+  If *every* chunk fails, `:skip` returns
+  `{:error, {:all_chunks_failed, failures}}` and writes nothing: a document
+  with no chunks is invisible to search but still counts in listings, which
+  is the state this option exists to avoid.
 
   ## Replacing documents
 
@@ -42,6 +74,9 @@ defmodule Arcana.Ingest do
   same identity run concurrently, the first to complete wins and the other
   returns `{:error, :replaced_by_concurrent_ingest}` (or may fail while
   storing chunks whose document was already replaced).
+
+  A replacement that fails to embed leaves the predecessor untouched: the
+  swap only runs once the new document's chunks are all in hand.
   """
   def ingest(text, opts) when is_binary(text) do
     repo = require_repo!(opts)
@@ -64,27 +99,18 @@ defmodule Arcana.Ingest do
     :telemetry.span([:arcana, :ingest], start_metadata, fn ->
       case resolve_collection(collection_name, collection_description, repo, opts) do
         {:ok, collection} ->
-          {:ok, document} =
-            %Document{}
-            |> Document.changeset(%{
-              content: text,
-              source_id: source_id,
-              metadata: metadata,
-              status: :processing,
-              collection_id: collection.id
-            })
-            |> repo.insert()
+          doc_attrs = %{
+            content: text,
+            source_id: source_id,
+            metadata: metadata,
+            status: :processing,
+            collection_id: collection.id
+          }
 
-          chunks = Chunker.chunk(chunker_config, text, chunk_opts)
-          result = embed_and_store_chunks(chunks, document, repo)
-
-          case result do
-            {:ok, chunk_records} ->
-              finalize_with_telemetry(document, chunk_records, collection, repo, opts)
-
-            {:error, reason} ->
-              {{:error, reason}, %{error: reason}}
-          end
+          chunker_config
+          |> Chunker.chunk(text, chunk_opts)
+          |> embed_and_ingest(doc_attrs, collection, repo, opts)
+          |> with_telemetry()
 
         {:error, reason} ->
           {{:error, reason}, %{error: reason}}
@@ -113,6 +139,8 @@ defmodule Arcana.Ingest do
     * `:replace` - When true, atomically replaces any prior document with the
       same `(collection, source_id)` once the new ingest completes. Requires
       `:source_id`. See "Replacing documents" in `ingest/2`.
+    * `:on_chunk_error` - `:abort` (default) or `:skip`. See "When a chunk
+      fails to embed" in `ingest/2`.
 
   ## Chunk metadata
 
@@ -157,6 +185,12 @@ defmodule Arcana.Ingest do
     * `:chunk_size` - Maximum chunk size in characters (default: 1024)
     * `:chunk_overlap` - Overlap between chunks (default: 200)
     * `:collection` - Collection name to organize the document (default: "default")
+    * `:graph` - Enable GraphRAG extraction (default: from config)
+    * `:replace` - When true, atomically replaces any prior document with the
+      same `(collection, source_id)` once the new ingest completes. Requires
+      `:source_id`. See "Replacing documents" in `ingest/2`.
+    * `:on_chunk_error` - `:abort` (default) or `:skip`. See "When a chunk
+      fails to embed" in `ingest/2`.
 
   ## Parsers that need a path
 
@@ -193,15 +227,22 @@ defmodule Arcana.Ingest do
 
   defp require_repo!(opts), do: Arcana.Config.require_repo!(opts)
 
-  defp finalize_with_telemetry(document, chunk_records, collection, repo, opts) do
-    case finalize_ingest(document, chunk_records, collection, repo, opts) do
-      {:ok, document} ->
-        {{:ok, document}, %{document: document, chunk_count: length(chunk_records)}}
-
-      {:error, reason} ->
-        {{:error, reason}, %{error: reason}}
-    end
+  # :telemetry.span/3 wants {result, metadata}; the result itself is whatever
+  # embed_and_ingest/5 produced, including the skip report.
+  defp with_telemetry({:ok, document} = result) do
+    {result, %{document: document, chunk_count: document.chunk_count}}
   end
+
+  defp with_telemetry({:ok, document, report} = result) do
+    {result,
+     %{
+       document: document,
+       chunk_count: document.chunk_count,
+       skipped_chunks: report.skipped_chunks
+     }}
+  end
+
+  defp with_telemetry({:error, reason} = result), do: {result, %{error: reason}}
 
   defp finalize_ingest(document, chunk_records, collection, repo, opts) do
     build_graph_or_fail_document(document, chunk_records, collection, repo, opts)
@@ -307,18 +348,91 @@ defmodule Arcana.Ingest do
     end
   end
 
-  defp embed_and_store_chunks(chunks, document, repo) do
-    emb = Arcana.Config.embedder()
+  # Holding every embedding before writing costs memory proportional to the
+  # document: a 384-dim vector is about 6KB as a list, so a 900-chunk
+  # document peaks around 7MB. That is inherent to writing atomically -
+  # the embeddings all have to exist at once to go in one transaction - and
+  # is the trade for never leaving a half-stored document behind.
+  #
+  # Every chunk is embedded before anything is written. Storing as we went
+  # meant one rejected chunk left the document row and the chunks that came
+  # before it behind, and nothing filters retrieval by document status, so
+  # those chunks stayed searchable under a document marked :failed - a
+  # silently half-indexed document.
+  #
+  # The embedder is remote, so this deliberately does not run inside a
+  # transaction: that would hold a pool connection open across N HTTP calls.
+  # The writes come after, and they are the only thing wrapped.
+  # The one path both ingest/2 and the file/binary entry points take, so
+  # neither can drift from the other's failure behaviour.
+  defp embed_and_ingest(chunks, doc_attrs, collection, repo, opts) do
+    on_chunk_error = validate_chunk_error_opt!(opts)
+    {embedded, failed} = embed_chunks(chunks)
 
-    Enum.reduce_while(chunks, {:ok, []}, fn chunk, {:ok, acc} ->
-      embed_single_chunk(emb, chunk, document, repo, acc)
-    end)
+    case {on_chunk_error, embedded, failed} do
+      {_mode, _embedded, []} ->
+        commit(doc_attrs, embedded, collection, repo, opts, [])
+
+      {:abort, _embedded, [first | _]} ->
+        # Nothing was written, so there is nothing to clean up.
+        {:error, {:embedding_failed, first}}
+
+      {:skip, [], failed} ->
+        # Committing here would store exactly the zero-chunk document that
+        # makes a failed ingest invisible to search but present in listings.
+        {:error, {:all_chunks_failed, failed}}
+
+      {:skip, _embedded, failed} ->
+        commit(doc_attrs, embedded, collection, repo, opts, failed)
+    end
   end
 
-  defp embed_single_chunk(emb, chunk, document, repo, acc) do
-    case Embedder.embed(emb, chunk.text, intent: :document) do
-      {:ok, embedding} ->
-        chunk_record =
+  defp commit(doc_attrs, embedded, collection, repo, opts, failed) do
+    doc_attrs =
+      if failed == [],
+        do: doc_attrs,
+        else: Map.put(doc_attrs, :error, skip_summary(failed))
+
+    with {:ok, {document, chunk_records}} <- store_document(doc_attrs, embedded, repo),
+         {:ok, document} <- finalize_ingest(document, chunk_records, collection, repo, opts) do
+      if failed == [] do
+        {:ok, document}
+      else
+        {:ok, document,
+         %{skipped_chunks: length(failed), reasons: Enum.map(failed, & &1.reason), failed: failed}}
+      end
+    end
+  end
+
+  defp embed_chunks(chunks) do
+    emb = Arcana.Config.embedder()
+
+    {embedded, failed} =
+      chunks
+      |> Enum.map(fn chunk ->
+        {chunk, Embedder.embed(emb, chunk.text, intent: :document)}
+      end)
+      |> Enum.split_with(fn {_chunk, result} -> match?({:ok, _}, result) end)
+
+    {
+      Enum.map(embedded, fn {chunk, {:ok, embedding}} -> {chunk, embedding} end),
+      Enum.map(failed, fn {chunk, {:error, reason}} ->
+        %{chunk_index: chunk.chunk_index, reason: reason}
+      end)
+    }
+  end
+
+  # Inserts the document and its chunks together, so a failure here leaves
+  # no row rather than an empty document nothing will ever look at again.
+  defp store_document(doc_attrs, embedded, repo) do
+    repo.transaction(fn ->
+      document =
+        %Document{}
+        |> Document.changeset(doc_attrs)
+        |> repo.insert!()
+
+      chunk_records =
+        Enum.map(embedded, fn {chunk, embedding} ->
           %Chunk{}
           |> Chunk.changeset(%{
             text: chunk.text,
@@ -329,16 +443,29 @@ defmodule Arcana.Ingest do
             document_id: document.id
           })
           |> repo.insert!()
+        end)
 
-        {:cont, {:ok, [chunk_record | acc]}}
+      {document, chunk_records}
+    end)
+  end
 
-      {:error, reason} ->
-        document
-        |> Document.changeset(%{status: :failed})
-        |> repo.update()
+  defp validate_chunk_error_opt!(opts) do
+    case Keyword.get(opts, :on_chunk_error, :abort) do
+      mode when mode in [:abort, :skip] ->
+        mode
 
-        {:halt, {:error, {:embedding_failed, reason}}}
+      other ->
+        raise ArgumentError,
+              "on_chunk_error must be :abort or :skip, got: #{inspect(other)}"
     end
+  end
+
+  defp skip_summary(failed) do
+    detail =
+      failed
+      |> Enum.map_join(", ", fn %{chunk_index: i, reason: r} -> "#{i}: #{inspect(r)}" end)
+
+    "#{length(failed)} chunk(s) skipped during ingest (chunk_index: reason) - #{detail}"
   end
 
   defp ingest_with_file_attrs(text, opts) do
@@ -368,27 +495,20 @@ defmodule Arcana.Ingest do
   end
 
   defp do_ingest_with_file_attrs(text, collection, repo, attrs, opts) do
-    {:ok, document} =
-      %Document{}
-      |> Document.changeset(%{
-        content: text,
-        source_id: attrs.source_id,
-        metadata: attrs.metadata,
-        file_path: attrs.file_path,
-        content_type: attrs.content_type,
-        status: :processing,
-        collection_id: collection.id
-      })
-      |> repo.insert()
+    doc_attrs = %{
+      content: text,
+      source_id: attrs.source_id,
+      metadata: attrs.metadata,
+      file_path: attrs.file_path,
+      content_type: attrs.content_type,
+      status: :processing,
+      collection_id: collection.id
+    }
 
-    chunks =
-      attrs.chunker_config
-      |> Chunker.chunk(text, attrs.chunk_opts)
-      |> attach_pages(attrs.pages)
-
-    with {:ok, chunk_records} <- embed_and_store_chunks(chunks, document, repo) do
-      finalize_ingest(document, chunk_records, collection, repo, opts)
-    end
+    attrs.chunker_config
+    |> Chunker.chunk(text, attrs.chunk_opts)
+    |> attach_pages(attrs.pages)
+    |> embed_and_ingest(doc_attrs, collection, repo, opts)
   end
 
   defp validate_replace_opts!(opts) do
