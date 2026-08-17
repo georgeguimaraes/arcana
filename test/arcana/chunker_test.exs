@@ -258,6 +258,20 @@ defmodule Arcana.ChunkerTest do
       end
     end
 
+    test "empty input still validates its options" do
+      # The empty-text clause used to return before the validators ran, so
+      # the documented ArgumentError depended on the input being non-empty.
+      assert_raise ArgumentError, ~r/:chars_per_token must be a positive integer/, fn ->
+        Chunker.chunk("", chars_per_token: 0)
+      end
+
+      assert_raise ArgumentError, ~r/:max_chunk_chars must be a positive integer/, fn ->
+        Chunker.chunk("", max_chunk_chars: -1)
+      end
+
+      assert Chunker.chunk("", max_chunk_chars: 500) == []
+    end
+
     test "max_chunk_chars: nil is the documented default, not an error" do
       assert [_ | _] = Chunker.chunk("some text to split up here. ", max_chunk_chars: nil)
     end

@@ -64,7 +64,12 @@ defmodule Arcana.Chunker.Default do
   @impl true
   def chunk(text, opts \\ [])
 
-  def chunk("", _opts), do: []
+  # Options are checked before the empty-text shortcut, so a bad value is
+  # reported whatever the input happens to be.
+  def chunk("", opts) do
+    _ = sizing_opts(opts)
+    []
+  end
 
   def chunk(text, opts) do
     chunk_size = Keyword.get(opts, :chunk_size, @default_chunk_size)
@@ -72,17 +77,7 @@ defmodule Arcana.Chunker.Default do
     format = Keyword.get(opts, :format, @default_format)
     size_unit = Keyword.get(opts, :size_unit, @default_size_unit)
 
-    chars_per_token =
-      validate_positive!(
-        :chars_per_token,
-        Keyword.get(opts, :chars_per_token, @default_chars_per_token)
-      )
-
-    max_chunk_chars =
-      case Keyword.get(opts, :max_chunk_chars) do
-        nil -> nil
-        value -> validate_positive!(:max_chunk_chars, value)
-      end
+    {chars_per_token, max_chunk_chars} = sizing_opts(opts)
 
     # Convert token-based sizes to character-based for text_chunker
     # (text_chunker's merge logic doesn't use get_chunk_size properly)
@@ -118,6 +113,22 @@ defmodule Arcana.Chunker.Default do
         }
       }
     end)
+  end
+
+  defp sizing_opts(opts) do
+    chars_per_token =
+      validate_positive!(
+        :chars_per_token,
+        Keyword.get(opts, :chars_per_token, @default_chars_per_token)
+      )
+
+    max_chunk_chars =
+      case Keyword.get(opts, :max_chunk_chars) do
+        nil -> nil
+        value -> validate_positive!(:max_chunk_chars, value)
+      end
+
+    {chars_per_token, max_chunk_chars}
   end
 
   defp blank?(nil), do: true
