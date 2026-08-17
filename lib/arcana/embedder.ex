@@ -101,8 +101,21 @@ defmodule Arcana.Embedder do
   """
   def embed({module, opts}, text, call_opts \\ []) when is_atom(module) do
     merged_opts = Keyword.merge(opts, call_opts)
+
     module.embed(text, merged_opts)
+    |> normalize()
   end
+
+  # A module implementing this behaviour can return anything, and every
+  # caller here matches on `{:ok, _}` / `{:error, _}`. Left unchecked, a
+  # module handing back a bare vector surfaced as a FunctionClauseError or a
+  # MatchError inside whichever caller happened to receive it, naming
+  # Arcana's internals rather than the embedder that did it. Function
+  # embedders already got this from `Arcana.Embedder.Custom`; doing it here
+  # covers module embedders too, for query and document embeddings alike.
+  defp normalize({:ok, embedding} = ok) when is_list(embedding), do: ok
+  defp normalize({:error, _reason} = error), do: error
+  defp normalize(other), do: {:error, {:unexpected_result, other}}
 
   @doc """
   Embeds multiple texts using the configured embedder.
