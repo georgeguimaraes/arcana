@@ -86,21 +86,6 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
 
   # The ask flow answers asynchronously, so poll the render instead of
   # sleeping a magic number of milliseconds.
-  defp render_until(view, expected, attempts \\ 50) do
-    html = render(view)
-
-    cond do
-      html =~ expected ->
-        html
-
-      attempts <= 0 ->
-        html
-
-      true ->
-        Process.sleep(20)
-        render_until(view, expected, attempts - 1)
-    end
-  end
 
   describe "collections page" do
     test "lists only allowed collections", %{conn: conn} do
