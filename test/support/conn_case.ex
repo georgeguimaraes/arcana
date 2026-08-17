@@ -10,6 +10,7 @@ defmodule ArcanaWeb.ConnCase do
       import Phoenix.ConnTest
       import Phoenix.LiveViewTest
       import Arcana.ConfigCase
+      import ArcanaWeb.AsyncAssertions
 
       alias Arcana.TestRepo, as: Repo
 

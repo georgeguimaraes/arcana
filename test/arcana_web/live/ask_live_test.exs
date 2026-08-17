@@ -445,8 +445,7 @@ defmodule ArcanaWeb.AskLiveTest do
       |> form("#ask-form", %{"question" => "q"})
       |> render_submit()
 
-      :timer.sleep(50)
-      assert render(view) =~ "should-be-cleared-on-switch"
+      render_until(view, "should-be-cleared-on-switch")
 
       view |> element(".arcana-ask-sub-tab", "Advanced") |> render_click()
 
@@ -506,12 +505,9 @@ defmodule ArcanaWeb.AskLiveTest do
       })
       |> render_submit()
 
-      # The ask_complete message should produce a loop-shaped result.
-      # Wait for the async task to complete.
-      :timer.sleep(50)
-      html = render(view)
-
-      assert html =~ "Agent trace"
+      # The ask_complete message should produce a loop-shaped result, which
+      # arrives from the async task rather than from render_submit.
+      html = render_until(view, "Agent trace")
       assert html =~ "stubbed answer from test"
     end
   end

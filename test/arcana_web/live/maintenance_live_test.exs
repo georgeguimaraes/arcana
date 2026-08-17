@@ -52,22 +52,6 @@ defmodule ArcanaWeb.MaintenanceLiveTest do
     # result lands in the LiveView asynchronously. Poll observable state
     # rather than the flash: a flash is one render away from being replaced,
     # and the state is what the assertion is actually about.
-    defp wait_until(fun, attempts \\ 100) do
-      cond do
-        fun.() ->
-          true
-
-        attempts == 0 ->
-          flunk("timed out waiting for the condition to hold")
-
-        true ->
-          # Process.sleep/1 returns :ok, so `sleep || recurse` would
-          # short-circuit and never retry. Keep these as statements.
-          Process.sleep(20)
-          wait_until(fun, attempts - 1)
-      end
-    end
-
     defp insert_community(collection, attrs) do
       %Community{}
       |> Community.changeset(Map.merge(%{level: 0, collection_id: collection.id}, attrs))
