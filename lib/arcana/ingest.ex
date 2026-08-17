@@ -403,7 +403,9 @@ defmodule Arcana.Ingest do
 
     {embedded, failed} =
       chunks
-      |> Enum.map(fn chunk -> {chunk, Embedder.embed(emb, chunk.text, intent: :document)} end)
+      |> Enum.map(fn chunk ->
+        {chunk, normalize_embedding(Embedder.embed(emb, chunk.text, intent: :document))}
+      end)
       |> Enum.split_with(fn {_chunk, result} -> match?({:ok, _}, result) end)
 
     {
@@ -413,6 +415,15 @@ defmodule Arcana.Ingest do
       end)
     }
   end
+
+  # `Arcana.Embedder.embed/3` hands a module embedder's return straight back
+  # without checking it, so anything is possible here. Without this a module
+  # returning a bare vector raised a FunctionClauseError pointing into this
+  # file rather than at the embedder that did it. Matches what
+  # `Arcana.Embedder.Custom` already does for function embedders.
+  defp normalize_embedding({:ok, embedding} = ok) when is_list(embedding), do: ok
+  defp normalize_embedding({:error, _reason} = error), do: error
+  defp normalize_embedding(other), do: {:error, {:unexpected_result, other}}
 
   # Inserts the document and its chunks together, so a failure here leaves
   # no row rather than an empty document nothing will ever look at again.

@@ -170,6 +170,28 @@ defmodule Arcana.IngestChunkFailureTest do
     end
   end
 
+  describe "a misbehaving embedder" do
+    defmodule BareVectorEmbedder do
+      @moduledoc false
+      @behaviour Arcana.Embedder
+      # Returns the vector itself instead of {:ok, vector}. Arcana.Embedder
+      # hands a module's return back unchecked, so this reaches ingest.
+      @impl true
+      def embed(_text, _opts), do: List.duplicate(0.1, 384)
+      @impl true
+      def dimensions(_opts), do: 384
+    end
+
+    test "a module returning a bare vector is reported, not a FunctionClauseError" do
+      put_arcana_env(:embedder, BareVectorEmbedder)
+
+      assert {:error, {:embedding_failed, %{reason: {:unexpected_result, _}}}} =
+               Arcana.ingest("some text to embed here. ", repo: Repo, collection: "bad-embedder")
+
+      assert counts() == {0, 0}
+    end
+  end
+
   describe "option validation" do
     test "an unknown on_chunk_error is rejected" do
       assert_raise ArgumentError, ~r/on_chunk_error must be :abort or :skip/, fn ->
