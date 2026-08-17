@@ -95,11 +95,7 @@ changes for everyone.
   * [Arcana.Chunker.Default] A `:chunk_overlap` greater than `:chunk_size` now raises an `ArgumentError` instead of being passed through. The combination is meaningless, and since the default overlap is 50, any `chunk_size` below that was silently in this state. text_chunker 0.7.0 rejects it outright, which surfaced as a `Protocol.UndefinedError` about `Tuple` rather than anything about chunk options
   * [Arcana.FileParser.PDF.Poppler] `parse/2` returns `{:ok, text, meta}` instead of `{:ok, text}`, where `meta` carries page byte ranges. A custom parser that delegates straight to it and matches `{:ok, text}` now raises a `MatchError`. Callers going through `Arcana.FileParser.PDF.parse/3` or `Arcana.Parser.parse/1` are unaffected: both still normalize to a two-tuple
   * [mix] `bumblebee` and `req_llm` are no longer pulled in transitively. Apps using the default local embedder must add `{:bumblebee, "~> 0.6"}` and a backend such as `{:exla, "~> 0.10"}`; apps passing model strings such as `"openai:gpt-4o-mini"` as the LLM, or using `Arcana.Loop`, must add `{:req_llm, "~> 1.2"}`. Both raise a message naming the missing dependency
-  * [Arcana.TaskSupervisor] The supervisor now registers its process under `ArcanaWeb.TaskSupervisor`. Calling `Task.Supervisor.start_child(Arcana.TaskSupervisor, fun)` by the old registered name fails. The deprecated module still delegates `child_spec/1` and `start_child/1`, so only passing the module as a registered name to `Task.Supervisor` directly breaks
-
-### Deprecations
-
-  * [Arcana.TaskSupervisor] Renamed to `ArcanaWeb.TaskSupervisor`, since it only serves the dashboard's async operations. The old module still works as a supervision-tree child and starts the same process, with a deprecation warning
+  * [Arcana.TaskSupervisor] Removed. It is `ArcanaWeb.TaskSupervisor` now, since it only serves the dashboard's async operations. Replace it in your supervision tree, **and** update any `Task.Supervisor.start_child(Arcana.TaskSupervisor, fun)` call sites: that argument is a registered process name rather than a module, so no shim could have kept it working. A deprecated alias shipped briefly and was dropped for exactly that reason, since it kept the once-per-app tree entry working while the per-call-site usage failed with a bare `:noproc` and no warning from either the compiler or runtime
 
 ## [2.0.2](https://github.com/georgeguimaraes/arcana/compare/v2.0.1...v2.0.2) (2026-08-15)
 
