@@ -344,6 +344,22 @@ defmodule Arcana.ChunkerTest do
       end
     end
 
+    test "an invalid :format is rejected the same way on both paths" do
+      # :format is the one option validated by text_chunker rather than
+      # here, since its valid list is a compile-time attribute we can't
+      # read. Both paths have to reach that check.
+      for text <- ["", "some real content to chunk"] do
+        assert_raise ArgumentError, ~r/invalid value for :format option/, fn ->
+          Chunker.chunk(text, format: :bogus)
+        end
+      end
+    end
+
+    test "a valid non-default :format still works on both paths" do
+      assert Chunker.chunk("", format: :markdown) == []
+      assert [_ | _] = Chunker.chunk("# Title\n\nSome content here.", format: :markdown)
+    end
+
     test "empty input with valid options is still just an empty list" do
       assert Chunker.chunk("", chunk_size: 100, chunk_overlap: 10) == []
     end

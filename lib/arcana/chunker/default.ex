@@ -68,27 +68,28 @@ defmodule Arcana.Chunker.Default do
   # value is reported whatever the input happens to be, and a new option
   # can't be validated on one path and skipped on the other.
   def chunk("", opts) do
-    _ = validated_opts(opts)
+    resolved = validated_opts(opts)
+
+    # Run the empty case through the library as well, so its own option
+    # checks apply here too. :format is the one option we don't validate
+    # ourselves: the valid list lives in a compile-time attribute we can't
+    # read, and hardcoding a copy would drift from the library. text_chunker
+    # answers empty input with a placeholder "No chunks created" chunk, so
+    # the result is discarded and only its validation is wanted.
+    _ =
+      ""
+      |> TextChunker.split(chunker_opts(resolved))
+      |> unwrap_split!()
+
     []
   end
 
   def chunk(text, opts) do
-    %{
-      effective_chunk_size: effective_chunk_size,
-      effective_overlap: effective_overlap,
-      format: format,
-      chars_per_token: chars_per_token,
-      max_chunk_chars: max_chunk_chars
-    } = validated_opts(opts)
-
-    text_chunker_opts = [
-      chunk_size: effective_chunk_size,
-      chunk_overlap: effective_overlap,
-      format: format
-    ]
+    %{chars_per_token: chars_per_token, max_chunk_chars: max_chunk_chars} =
+      resolved = validated_opts(opts)
 
     text
-    |> TextChunker.split(text_chunker_opts)
+    |> TextChunker.split(chunker_opts(resolved))
     |> unwrap_split!()
     |> Enum.flat_map(&enforce_max_chars(&1, max_chunk_chars))
     |> Enum.reject(&blank?(&1.text))
@@ -151,6 +152,14 @@ defmodule Arcana.Chunker.Default do
 
   defp unwrap_split!(other) do
     raise ArgumentError, "text_chunker returned something unexpected: #{inspect(other)}"
+  end
+
+  defp chunker_opts(%{
+         effective_chunk_size: chunk_size,
+         effective_overlap: overlap,
+         format: format
+       }) do
+    [chunk_size: chunk_size, chunk_overlap: overlap, format: format]
   end
 
   # Every option this chunker reads, validated and resolved in one place.
