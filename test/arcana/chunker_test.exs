@@ -320,6 +320,34 @@ defmodule Arcana.ChunkerTest do
       end
     end
 
+    # Both chunk/2 clauses resolve options through one function, so every
+    # option is checked on the empty path too. Validating on only one path
+    # is how the first two options drifted from the next three.
+    for {key, value} <- [
+          {:chunk_size, 0},
+          {:chunk_overlap, nil},
+          {:chunk_overlap, -1},
+          {:size_unit, :bogus},
+          {:chars_per_token, 0},
+          {:max_chunk_chars, 0}
+        ] do
+      test "empty input rejects #{key}: #{inspect(value)} too" do
+        assert_raise ArgumentError, fn ->
+          Chunker.chunk("", [{unquote(key), unquote(value)}])
+        end
+      end
+    end
+
+    test "empty input rejects an overlap larger than the chunk size too" do
+      assert_raise ArgumentError, ~r/:chunk_overlap must not be greater than :chunk_size/, fn ->
+        Chunker.chunk("", chunk_size: 30, size_unit: :characters)
+      end
+    end
+
+    test "empty input with valid options is still just an empty list" do
+      assert Chunker.chunk("", chunk_size: 100, chunk_overlap: 10) == []
+    end
+
     test "empty input still validates its options" do
       # The empty-text clause used to return before the validators ran, so
       # the documented ArgumentError depended on the input being non-empty.

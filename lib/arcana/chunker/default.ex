@@ -64,37 +64,22 @@ defmodule Arcana.Chunker.Default do
   @impl true
   def chunk(text, opts \\ [])
 
-  # Options are checked before the empty-text shortcut, so a bad value is
-  # reported whatever the input happens to be.
+  # Both clauses resolve options through the same function, so an invalid
+  # value is reported whatever the input happens to be, and a new option
+  # can't be validated on one path and skipped on the other.
   def chunk("", opts) do
-    _ = sizing_opts(opts)
+    _ = validated_opts(opts)
     []
   end
 
   def chunk(text, opts) do
-    chunk_size =
-      validate_positive!(:chunk_size, Keyword.get(opts, :chunk_size, @default_chunk_size))
-
-    chunk_overlap =
-      validate_non_negative!(
-        :chunk_overlap,
-        Keyword.get(opts, :chunk_overlap, @default_chunk_overlap)
-      )
-
-    format = Keyword.get(opts, :format, @default_format)
-    size_unit = validate_size_unit!(Keyword.get(opts, :size_unit, @default_size_unit))
-
-    {chars_per_token, max_chunk_chars} = sizing_opts(opts)
-
-    # Convert token-based sizes to character-based for text_chunker
-    # (text_chunker's merge logic doesn't use get_chunk_size properly)
-    {effective_chunk_size, effective_overlap} =
-      case size_unit do
-        :tokens -> {chunk_size * chars_per_token, chunk_overlap * chars_per_token}
-        :characters -> {chunk_size, chunk_overlap}
-      end
-
-    validate_overlap!(effective_chunk_size, effective_overlap, chunk_size, chunk_overlap)
+    %{
+      effective_chunk_size: effective_chunk_size,
+      effective_overlap: effective_overlap,
+      format: format,
+      chars_per_token: chars_per_token,
+      max_chunk_chars: max_chunk_chars
+    } = validated_opts(opts)
 
     text_chunker_opts = [
       chunk_size: effective_chunk_size,
@@ -168,7 +153,19 @@ defmodule Arcana.Chunker.Default do
     raise ArgumentError, "text_chunker returned something unexpected: #{inspect(other)}"
   end
 
-  defp sizing_opts(opts) do
+  # Every option this chunker reads, validated and resolved in one place.
+  defp validated_opts(opts) do
+    chunk_size =
+      validate_positive!(:chunk_size, Keyword.get(opts, :chunk_size, @default_chunk_size))
+
+    chunk_overlap =
+      validate_non_negative!(
+        :chunk_overlap,
+        Keyword.get(opts, :chunk_overlap, @default_chunk_overlap)
+      )
+
+    size_unit = validate_size_unit!(Keyword.get(opts, :size_unit, @default_size_unit))
+
     chars_per_token =
       validate_positive!(
         :chars_per_token,
@@ -181,7 +178,23 @@ defmodule Arcana.Chunker.Default do
         value -> validate_positive!(:max_chunk_chars, value)
       end
 
-    {chars_per_token, max_chunk_chars}
+    # Token-based sizes are converted to characters for text_chunker, whose
+    # merge logic doesn't use get_chunk_size properly.
+    {effective_chunk_size, effective_overlap} =
+      case size_unit do
+        :tokens -> {chunk_size * chars_per_token, chunk_overlap * chars_per_token}
+        :characters -> {chunk_size, chunk_overlap}
+      end
+
+    validate_overlap!(effective_chunk_size, effective_overlap, chunk_size, chunk_overlap)
+
+    %{
+      effective_chunk_size: effective_chunk_size,
+      effective_overlap: effective_overlap,
+      format: Keyword.get(opts, :format, @default_format),
+      chars_per_token: chars_per_token,
+      max_chunk_chars: max_chunk_chars
+    }
   end
 
   defp blank?(nil), do: true
