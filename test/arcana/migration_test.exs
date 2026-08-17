@@ -94,6 +94,13 @@ defmodule Arcana.MigrationTest do
     rule
   end
 
+  # COMMENT ON TABLE takes no bind parameters, so the literal is escaped the
+  # way Postgres wants: a single quote doubled.
+  defp set_table_comment(comment) do
+    escaped = String.replace(comment, "'", "''")
+    SQL.query!(Repo, "COMMENT ON TABLE arcana_documents IS '#{escaped}'", [])
+  end
+
   defp columns(table) do
     %{rows: rows} =
       SQL.query!(
@@ -252,6 +259,33 @@ defmodule Arcana.MigrationTest do
 
       %{rows: [[content]]} = SQL.query!(Repo, "SELECT content FROM arcana_documents", [])
       assert content == "kept", "converging the constraint must not touch rows"
+    end
+
+    # A comment arcana doesn't own must never be read as a version. The
+    # marker is anchored, so only an exact match counts.
+    for {label, comment} <- [
+          {"a host's own description", "Documents ingested by our pipeline"},
+          {"prose that happens to contain the marker", "see arcana:2 for details"},
+          {"a bare integer, which is what Oban stores", "1"},
+          {"the marker with trailing junk", "arcana:1 (do not edit)"},
+          {"an empty comment", ""}
+        ] do
+      test "#{label} does not read as a version" do
+        migrate(Arcana.Migration)
+        assert Arcana.Migration.recorded_version(Repo) == 1
+
+        set_table_comment(unquote(comment))
+
+        assert Arcana.Migration.recorded_version(Repo) == 0,
+               "#{unquote(label)} was mistaken for a recorded version"
+      end
+    end
+
+    test "the marker parses with surrounding whitespace" do
+      migrate(Arcana.Migration)
+      set_table_comment("  arcana:1\n")
+
+      assert Arcana.Migration.recorded_version(Repo) == 1
     end
 
     test "refuses to run against a database a newer release migrated" do

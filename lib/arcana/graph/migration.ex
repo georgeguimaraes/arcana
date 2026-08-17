@@ -30,6 +30,24 @@ defmodule Arcana.Graph.Migration do
   Version 1 converges them: it creates only what is absent and adds only the
   columns and indexes a later release introduced. It never drops anything.
 
+  ## Where the version is recorded
+
+  The applied version is stored as the Postgres comment on `arcana_graph_entities`, as
+  exactly `arcana_graph:<n>`:
+
+      SELECT obj_description('arcana_graph_entities'::regclass);
+
+  Arcana owns that comment. Two consequences worth knowing before you point
+  schema-documentation or data-catalog tooling at this table:
+
+    * recording a version replaces whatever comment is there, so a
+      description you wrote on `arcana_graph_entities` is lost on the next migration
+    * a comment Arcana doesn't recognise reads as version 0, the same as a
+      fresh install, so `up/1` re-runs the converge path (idempotent, and
+      harmless) while `down/1` declines to drop anything
+
+  Comment on any other table freely. Only `arcana_graph_entities` is reserved.
+
   ## Version history
 
     * 1 - entities, relationships, mentions and communities, including the
@@ -129,8 +147,13 @@ defmodule Arcana.Graph.Migration do
 
   defp parse_version(nil), do: 0
 
+  # Anchored, so only a comment that is exactly the marker counts. An
+  # unanchored match read a version out of any prose that happened to
+  # contain "arcana_graph:2", and a bare integer (what Oban stores) would read a
+  # host's own "1" as version 1. Anything we don't recognise reads as 0,
+  # which is the same answer as "never installed" - see the moduledoc.
   defp parse_version(comment) do
-    case Regex.run(~r/arcana_graph:(\d+)/, comment) do
+    case Regex.run(~r/\Aarcana_graph:(\d+)\z/, String.trim(comment)) do
       [_, version] -> String.to_integer(version)
       _ -> 0
     end
