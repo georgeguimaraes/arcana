@@ -72,10 +72,17 @@ defmodule Arcana.Chunker.Default do
   end
 
   def chunk(text, opts) do
-    chunk_size = Keyword.get(opts, :chunk_size, @default_chunk_size)
-    chunk_overlap = Keyword.get(opts, :chunk_overlap, @default_chunk_overlap)
+    chunk_size =
+      validate_positive!(:chunk_size, Keyword.get(opts, :chunk_size, @default_chunk_size))
+
+    chunk_overlap =
+      validate_non_negative!(
+        :chunk_overlap,
+        Keyword.get(opts, :chunk_overlap, @default_chunk_overlap)
+      )
+
     format = Keyword.get(opts, :format, @default_format)
-    size_unit = Keyword.get(opts, :size_unit, @default_size_unit)
+    size_unit = validate_size_unit!(Keyword.get(opts, :size_unit, @default_size_unit))
 
     {chars_per_token, max_chunk_chars} = sizing_opts(opts)
 
@@ -132,6 +139,22 @@ defmodule Arcana.Chunker.Default do
 
   defp validate_overlap!(_size, _overlap, _raw_size, _raw_overlap), do: :ok
 
+  # Zero overlap is meaningful (no overlap at all), so this can't reuse the
+  # positive check.
+  defp validate_non_negative!(_key, value) when is_integer(value) and value >= 0, do: value
+
+  defp validate_non_negative!(key, value) do
+    raise ArgumentError,
+          "#{inspect(key)} must be a non-negative integer, got: #{inspect(value)}"
+  end
+
+  defp validate_size_unit!(unit) when unit in [:tokens, :characters], do: unit
+
+  defp validate_size_unit!(other) do
+    raise ArgumentError,
+          ":size_unit must be :tokens or :characters, got: #{inspect(other)}"
+  end
+
   # text_chunker returns {:error, message} for an option combination it
   # refuses. Piping that into Enum blows up as a Protocol.UndefinedError
   # naming Enumerable and Tuple, which says nothing about what was wrong.
@@ -140,6 +163,10 @@ defmodule Arcana.Chunker.Default do
   end
 
   defp unwrap_split!(chunks) when is_list(chunks), do: chunks
+
+  defp unwrap_split!(other) do
+    raise ArgumentError, "text_chunker returned something unexpected: #{inspect(other)}"
+  end
 
   defp sizing_opts(opts) do
     chars_per_token =

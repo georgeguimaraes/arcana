@@ -258,6 +258,33 @@ defmodule Arcana.ChunkerTest do
       end
     end
 
+    # Elixir orders atoms above integers, so nil > 450 is true and a bad
+    # value used to trip the overlap comparison first, blaming the wrong
+    # option. Each of these has to name what the caller actually got wrong.
+    for {key, value, pattern} <- [
+          {:chunk_size, 0, ~r/:chunk_size must be a positive integer/},
+          {:chunk_size, -10, ~r/:chunk_size must be a positive integer/},
+          {:chunk_size, "450", ~r/:chunk_size must be a positive integer/},
+          {:chunk_overlap, nil, ~r/:chunk_overlap must be a non-negative integer/},
+          {:chunk_overlap, -1, ~r/:chunk_overlap must be a non-negative integer/},
+          {:size_unit, :bogus, ~r/:size_unit must be :tokens or :characters/}
+        ] do
+      test "#{key}: #{inspect(value)} is reported against that option" do
+        assert_raise ArgumentError, unquote(Macro.escape(pattern)), fn ->
+          Chunker.chunk("some text to split here", [{unquote(key), unquote(value)}])
+        end
+      end
+    end
+
+    test "chunk_overlap: 0 is valid, meaning no overlap" do
+      assert [_ | _] =
+               Chunker.chunk("some text to split up here and there. ",
+                 chunk_size: 20,
+                 chunk_overlap: 0,
+                 size_unit: :characters
+               )
+    end
+
     test "rejects an overlap larger than the chunk size" do
       # The default overlap is 50, so any chunk_size below it is invalid
       # unless the caller lowers the overlap as well. text_chunker returns
