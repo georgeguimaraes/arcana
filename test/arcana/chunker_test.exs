@@ -237,4 +237,29 @@ defmodule Arcana.ChunkerTest do
       end
     end
   end
+
+  describe "option validation" do
+    # Both options feed arithmetic, so an invalid one used to surface as a
+    # Protocol.UndefinedError or as silently absurd output rather than as
+    # the name of the option that was wrong.
+    for {key, value} <- [
+          {:chars_per_token, 0},
+          {:chars_per_token, -1},
+          {:chars_per_token, :bogus},
+          {:chars_per_token, 4.0},
+          {:max_chunk_chars, 0},
+          {:max_chunk_chars, -5},
+          {:max_chunk_chars, "500"}
+        ] do
+      test "rejects #{key}: #{inspect(value)}" do
+        assert_raise ArgumentError, ~r/#{inspect(unquote(key))} must be a positive integer/, fn ->
+          Chunker.chunk("some text to split up here. ", [{unquote(key), unquote(value)}])
+        end
+      end
+    end
+
+    test "max_chunk_chars: nil is the documented default, not an error" do
+      assert [_ | _] = Chunker.chunk("some text to split up here. ", max_chunk_chars: nil)
+    end
+  end
 end

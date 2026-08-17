@@ -12,12 +12,14 @@ defmodule Arcana.Chunker.Default do
     * `:format` - Text format: `:plaintext`, `:markdown`, `:elixir`, etc. (default: :plaintext)
     * `:size_unit` - How to measure size: `:characters` or `:tokens` (default: :tokens)
     * `:chars_per_token` - Characters assumed per token when `size_unit` is
-      `:tokens` (default: 4)
+      `:tokens` (default: 4). A positive integer; anything else raises an
+      `ArgumentError`
     * `:max_chunk_chars` - Ceiling on a chunk's length in bytes. A chunk over
       it is split rather than emitted (default: none). Splits land on
       grapheme boundaries, so a single grapheme longer than the budget - a
       ZWJ emoji sequence runs to 25 bytes - is emitted whole rather than
-      cut into invalid UTF-8. Any budget worth setting is far above that
+      cut into invalid UTF-8. Any budget worth setting is far above that.
+      A positive integer or `nil`; anything else raises an `ArgumentError`
 
   ## Sizing by tokens is an estimate, not a guarantee
 
@@ -70,8 +72,17 @@ defmodule Arcana.Chunker.Default do
     format = Keyword.get(opts, :format, @default_format)
     size_unit = Keyword.get(opts, :size_unit, @default_size_unit)
 
-    chars_per_token = Keyword.get(opts, :chars_per_token, @default_chars_per_token)
-    max_chunk_chars = Keyword.get(opts, :max_chunk_chars)
+    chars_per_token =
+      validate_positive!(
+        :chars_per_token,
+        Keyword.get(opts, :chars_per_token, @default_chars_per_token)
+      )
+
+    max_chunk_chars =
+      case Keyword.get(opts, :max_chunk_chars) do
+        nil -> nil
+        value -> validate_positive!(:max_chunk_chars, value)
+      end
 
     # Convert token-based sizes to character-based for text_chunker
     # (text_chunker's merge logic doesn't use get_chunk_size properly)
@@ -111,6 +122,17 @@ defmodule Arcana.Chunker.Default do
 
   defp blank?(nil), do: true
   defp blank?(str) when is_binary(str), do: String.trim(str) == ""
+
+  # Both of these feed arithmetic - one a div/2, the other a byte budget -
+  # so a zero or a non-integer surfaces far from the option that caused it:
+  # chars_per_token: 0 came out as a Protocol.UndefinedError, and
+  # max_chunk_chars: 0 silently returned one grapheme per chunk.
+  defp validate_positive!(_key, value) when is_integer(value) and value > 0, do: value
+
+  defp validate_positive!(key, value) do
+    raise ArgumentError,
+          "#{inspect(key)} must be a positive integer, got: #{inspect(value)}"
+  end
 
   # text_chunker sizes by its own rules and can still emit a chunk longer
   # than asked for. Splitting on bytes keeps start_byte/end_byte meaningful,
