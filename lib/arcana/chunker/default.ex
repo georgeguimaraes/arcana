@@ -87,6 +87,8 @@ defmodule Arcana.Chunker.Default do
         :characters -> {chunk_size, chunk_overlap}
       end
 
+    validate_overlap!(effective_chunk_size, effective_overlap, chunk_size, chunk_overlap)
+
     text_chunker_opts = [
       chunk_size: effective_chunk_size,
       chunk_overlap: effective_overlap,
@@ -95,6 +97,7 @@ defmodule Arcana.Chunker.Default do
 
     text
     |> TextChunker.split(text_chunker_opts)
+    |> unwrap_split!()
     |> Enum.flat_map(&enforce_max_chars(&1, max_chunk_chars))
     |> Enum.reject(&blank?(&1.text))
     |> Enum.with_index()
@@ -114,6 +117,29 @@ defmodule Arcana.Chunker.Default do
       }
     end)
   end
+
+  # An overlap larger than the chunk it overlaps is meaningless, and
+  # text_chunker rejects it. Checking here names arcana's own options and
+  # the unit they were given in, which the library can't do: with
+  # `size_unit: :tokens` it only ever sees the character-converted values.
+  defp validate_overlap!(size, overlap, raw_size, raw_overlap) when overlap > size do
+    raise ArgumentError,
+          ":chunk_overlap must not be greater than :chunk_size, got overlap " <>
+            "#{inspect(raw_overlap)} and size #{inspect(raw_size)}. The default " <>
+            "overlap is #{@default_chunk_overlap}, so a chunk_size below that " <>
+            "needs an explicit chunk_overlap too."
+  end
+
+  defp validate_overlap!(_size, _overlap, _raw_size, _raw_overlap), do: :ok
+
+  # text_chunker returns {:error, message} for an option combination it
+  # refuses. Piping that into Enum blows up as a Protocol.UndefinedError
+  # naming Enumerable and Tuple, which says nothing about what was wrong.
+  defp unwrap_split!({:error, reason}) do
+    raise ArgumentError, "text_chunker rejected these chunk options: #{reason}"
+  end
+
+  defp unwrap_split!(chunks) when is_list(chunks), do: chunks
 
   defp sizing_opts(opts) do
     chars_per_token =

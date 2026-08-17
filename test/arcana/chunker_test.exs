@@ -45,7 +45,7 @@ defmodule Arcana.ChunkerTest do
     test "splits on paragraph boundaries when possible" do
       text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph."
 
-      chunks = Chunker.chunk(text, chunk_size: 30, size_unit: :characters)
+      chunks = Chunker.chunk(text, chunk_size: 30, chunk_overlap: 5, size_unit: :characters)
 
       # Should split cleanly on \n\n
       assert Enum.any?(chunks, fn c -> c.text == "First paragraph." end)
@@ -59,7 +59,7 @@ defmodule Arcana.ChunkerTest do
       # Text with lots of whitespace that could produce empty chunks
       text = "Content.\n\n\n\n\n\n\nMore content."
 
-      chunks = Chunker.chunk(text, chunk_size: 20, size_unit: :characters)
+      chunks = Chunker.chunk(text, chunk_size: 20, chunk_overlap: 5, size_unit: :characters)
 
       # No chunk should be blank
       for chunk <- chunks do
@@ -255,6 +255,41 @@ defmodule Arcana.ChunkerTest do
         assert_raise ArgumentError, ~r/#{inspect(unquote(key))} must be a positive integer/, fn ->
           Chunker.chunk("some text to split up here. ", [{unquote(key), unquote(value)}])
         end
+      end
+    end
+
+    test "rejects an overlap larger than the chunk size" do
+      # The default overlap is 50, so any chunk_size below it is invalid
+      # unless the caller lowers the overlap as well. text_chunker returns
+      # {:error, _} for this, which used to reach Enum and surface as a
+      # Protocol.UndefinedError about Tuple.
+      assert_raise ArgumentError, ~r/:chunk_overlap must not be greater than :chunk_size/, fn ->
+        Chunker.chunk("some text here", chunk_size: 30, size_unit: :characters)
+      end
+
+      assert_raise ArgumentError, ~r/got overlap 100 and size 10/, fn ->
+        Chunker.chunk("some text here",
+          chunk_size: 10,
+          chunk_overlap: 100,
+          size_unit: :characters
+        )
+      end
+
+      # Equal is allowed, matching text_chunker's own rule.
+      assert [_ | _] =
+               Chunker.chunk("some text here to split",
+                 chunk_size: 20,
+                 chunk_overlap: 20,
+                 size_unit: :characters
+               )
+    end
+
+    test "the token unit is checked after conversion, and reported in tokens" do
+      # With size_unit: :tokens both values scale by chars_per_token, so the
+      # comparison holds either way, but the message has to quote what the
+      # caller actually passed rather than the converted characters.
+      assert_raise ArgumentError, ~r/got overlap 50 and size 10/, fn ->
+        Chunker.chunk("some text here", chunk_size: 10, chunk_overlap: 50)
       end
     end
 
