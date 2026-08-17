@@ -317,6 +317,41 @@ defmodule Arcana.MigrationTest do
       assert "arcana_chunks" in tables()
     end
 
+    test "down/1 refuses when the version table is gone but its siblings remain" do
+      migrate(Arcana.Migration)
+
+      # A partial or hand-modified install: the version table is gone, so
+      # there is nowhere to read a marker, but other Arcana tables are still
+      # here and a rollback does have something to do.
+      SQL.query!(Repo, "DROP TABLE arcana_documents CASCADE", [])
+
+      assert Arcana.Migration.recorded_version(Repo) == 0
+      assert "arcana_collections" in tables()
+
+      err =
+        assert_raise RuntimeError, ~r/can't tell which version is applied/, fn ->
+          migrate_down(Arcana.Migration, [])
+        end
+
+      # It can't offer the COMMENT recovery, because the table to comment on
+      # is the one that's missing.
+      assert err.message =~ "is not among them"
+      assert err.message =~ "arcana_collections"
+      refute err.message =~ "COMMENT ON TABLE"
+
+      assert "arcana_collections" in tables(), "refusing must leave them alone"
+    end
+
+    test "a view sharing the version table's name is not mistaken for an install" do
+      refute "arcana_documents" in tables()
+      SQL.query!(Repo, "CREATE VIEW arcana_documents AS SELECT 1 AS id", [])
+      on_exit(fn -> SQL.query!(Repo, "DROP VIEW IF EXISTS arcana_documents", []) end)
+
+      # relkind is constrained to tables, so this stays a quiet no-op rather
+      # than refusing with recovery SQL that could not work on a view.
+      assert :ok = migrate_down(Arcana.Migration, [])
+    end
+
     test "down/1 is a quiet no-op when nothing is installed" do
       # No tables at all, which is the one case version 0 legitimately means
       # "nothing to drop".

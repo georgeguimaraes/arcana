@@ -114,37 +114,78 @@ defmodule Arcana.Graph.Migration do
   # dropping nothing is the failure this module's own rescue clause goes out
   # of its way to avoid.
   defp refuse_blind_rollback!(prefix) do
-    if version_table_exists?(prefix) do
-      raise """
-      Arcana.Graph.Migration.down/1 can't tell which version is applied.
+    case owned_tables_present(prefix) do
+      [] ->
+        # Genuinely nothing here, which is the one case 0 can be answered
+        # by doing nothing.
+        :ok
 
-      #{qualify(@version_table, prefix)} exists, so Arcana is installed here, \
-      but its comment is not a recognised version marker. Either a host \
-      comment replaced it, or this install predates versioned migrations.
-
-      Rolling back blind could drop tables this release never created, so \
-      nothing was changed. Record the version that is actually applied and \
-      run the rollback again:
-
-          COMMENT ON TABLE #{qualify(@version_table, prefix)} IS 'arcana_graph:<n>';
-
-      See "Where the version is recorded" in Arcana.Graph.Migration for how this is stored.
-      """
+      present ->
+        raise blind_rollback_message(present, prefix)
     end
-
-    :ok
   end
 
-  defp version_table_exists?(prefix) do
-    %{rows: [[count]]} =
+  defp blind_rollback_message(present, prefix) do
+    listed = present |> Enum.sort() |> Enum.map_join("\n", &"        #{&1}")
+
+    recovery =
+      if @version_table in present do
+        """
+        Record the version that is actually applied and run the rollback again:
+
+            COMMENT ON TABLE #{qualify(@version_table, prefix)} IS 'arcana_graph:<n>';
+        """
+      else
+        """
+        #{qualify(@version_table, prefix)} is not among them, so there is nowhere
+        to record a version. This install is partial: drop what is left by hand,
+        or restore that table and record its version, then retry.
+        """
+      end
+
+    """
+    Arcana.Graph.Migration.down/1 can't tell which version is applied.
+
+    These tables are present, so something is installed here, but no
+    recognised version marker was found:
+
+    #{listed}
+
+    Either a host comment replaced the marker, this install predates
+    versioned migrations, or the schema was modified by hand. Rolling back
+    blind could drop tables this release never created, so nothing was
+    changed.
+
+    #{recovery}
+    See "Where the version is recorded" in Arcana.Graph.Migration for how this is stored.
+    """
+  end
+
+  # The tables change(1, :down, _) drops. Any of them being present means a
+  # rollback has something to do, so the version table alone is not enough
+  # evidence: it can be gone while its siblings remain.
+  #
+  # relkind is constrained to ordinary and partitioned tables, so a view or
+  # sequence that happens to share a name is not mistaken for an install.
+  defp owned_tables_present(prefix) do
+    %{rows: rows} =
       repo().query!(
-        "SELECT count(*) FROM pg_class c " <>
+        "SELECT c.relname FROM pg_class c " <>
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
-          "WHERE c.relname = $1 AND n.nspname = COALESCE($2, current_schema())",
-        [@version_table, prefix]
+          "WHERE c.relname = ANY($1) AND c.relkind IN ('r', 'p') " <>
+          "AND n.nspname = COALESCE($2, current_schema())",
+        [
+          ~w(
+                   arcana_graph_entities
+                   arcana_graph_entity_mentions
+                   arcana_graph_relationships
+                   arcana_graph_communities
+          ),
+          prefix
+        ]
       )
 
-    count > 0
+    List.flatten(rows)
   end
 
   @doc """
