@@ -799,8 +799,15 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
 
       {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/maintenance")
 
-      render_click(view, "summarize_communities", %{})
-      Process.sleep(300)
+      # Assert the refusal, not the absence of a result. Sleeping and then
+      # checking nothing happened passes just as well when the summarize did
+      # start and is merely slower than the sleep, which on a loaded runner
+      # is the likely outcome. The refusal is synchronous and flashes, so
+      # there is a positive signal to assert instead.
+      html = render_click(view, "summarize_communities", %{})
+
+      assert html =~ "Select an allowed collection first",
+             "expected a refusal, so nothing was ever dispatched"
 
       assert is_nil(Repo.get!(Community, theirs.id).summary),
              "summarized a collection the host never allowed"
@@ -817,8 +824,14 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/maintenance")
 
       render_change(view, "select_summarize_communities_collection", %{"collection" => "other"})
-      render_click(view, "summarize_communities", %{})
-      Process.sleep(300)
+      html = render_click(view, "summarize_communities", %{})
+
+      # The forged name never sticks, so the selection is still empty and the
+      # click is refused synchronously. Asserting the flash proves that,
+      # where a sleep plus a nil check would also pass if the summarizer had
+      # accepted "other" and simply not finished yet.
+      assert html =~ "Select an allowed collection first",
+             "the forged collection was accepted instead of refused"
 
       assert is_nil(Repo.get!(Community, theirs.id).summary),
              "a forged collection name reached the summarizer"
