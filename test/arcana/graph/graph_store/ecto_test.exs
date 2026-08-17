@@ -2,7 +2,7 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
   use Arcana.DataCase, async: true
 
   alias Arcana.{Chunk, Collection, Document}
-  alias Arcana.Graph.{Entity, EntityMention, EntityName, Relationship}
+  alias Arcana.Graph.{Community, Entity, EntityMention, EntityName, Relationship}
   alias Arcana.Graph.GraphStore.Ecto, as: EctoStore
 
   defp create_collection(name \\ "test-collection") do
@@ -69,6 +69,143 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       chunk_id: chunk.id
     })
     |> Repo.insert!()
+  end
+
+  describe "delete_by_chunks/2" do
+    test "sweeps orphans only in the collections those chunks belonged to" do
+      # The sweep used to run across every collection in the database, so a
+      # delete in one tenant could remove another tenant's entities.
+      mine = create_collection("dbc-mine-#{System.unique_integer([:positive])}")
+      theirs = create_collection("dbc-theirs-#{System.unique_integer([:positive])}")
+
+      my_chunk = mine |> create_document() |> create_chunk()
+      their_chunk = theirs |> create_document() |> create_chunk()
+
+      my_entity = create_entity(mine, "Mine")
+      their_entity = create_entity(theirs, "Theirs")
+
+      create_mention(my_entity, my_chunk)
+      create_mention(their_entity, their_chunk)
+
+      # An orphan in the other collection: nothing references it, so a global
+      # sweep would take it even though its chunks were never touched.
+      their_orphan = create_entity(theirs, "TheirOrphan")
+
+      assert :ok = EctoStore.delete_by_chunks([my_chunk.id], repo: Repo)
+
+      refute Repo.get(Entity, my_entity.id), "the orphan in the target collection should go"
+      assert Repo.get(Entity, their_entity.id), "another collection's entity must survive"
+
+      assert Repo.get(Entity, their_orphan.id),
+             "another collection's orphan is not this delete's business"
+    end
+
+    test "keeps an entity that still has mentions elsewhere" do
+      collection = create_collection("dbc-keep-#{System.unique_integer([:positive])}")
+      document = create_document(collection)
+      deleted = create_chunk(document, "goes away")
+      kept = create_chunk(document, "stays")
+
+      entity = create_entity(collection, "Shared")
+      create_mention(entity, deleted)
+      create_mention(entity, kept)
+
+      assert :ok = EctoStore.delete_by_chunks([deleted.id], repo: Repo)
+
+      assert Repo.get(Entity, entity.id), "still mentioned by another chunk"
+    end
+
+    test "sweeps an orphan that belongs to no collection" do
+      # The global sweep this replaced covered collection-less entities.
+      # A per-collection sweep structurally cannot, so they need their own
+      # pass or they leak forever.
+      collection = create_collection("dbc-nullcoll-#{System.unique_integer([:positive])}")
+      chunk = collection |> create_document() |> create_chunk()
+
+      uncollected =
+        %Entity{}
+        |> Entity.changeset(%{name: "Stray", type: "person"})
+        |> Repo.insert!()
+
+      assert is_nil(uncollected.collection_id), "precondition: no collection"
+
+      create_mention(uncollected, chunk)
+
+      assert :ok = EctoStore.delete_by_chunks([chunk.id], repo: Repo)
+
+      refute Repo.get(Entity, uncollected.id),
+             "a collection-less entity with no mentions left has to go too"
+    end
+
+    test "dirties a collection-less community when its entity is swept" do
+      # Communities hold entity ids in an array, not through a foreign key,
+      # so nothing cascades. A collection-less one is reachable by neither
+      # the per-collection sweep nor a cascade, and would keep serving a
+      # summary describing an entity that no longer exists.
+      collection = create_collection("dbc-nullcomm-#{System.unique_integer([:positive])}")
+      chunk = collection |> create_document() |> create_chunk()
+
+      stray =
+        %Entity{}
+        |> Entity.changeset(%{name: "StrayCommunity", type: "person"})
+        |> Repo.insert!()
+
+      create_mention(stray, chunk)
+
+      community =
+        %Community{}
+        |> Community.changeset(%{
+          level: 0,
+          summary: "a summary about StrayCommunity",
+          summary_fingerprint: "abc123",
+          entity_ids: [stray.id],
+          dirty: false
+        })
+        |> Repo.insert!()
+
+      assert is_nil(community.collection_id), "precondition: no collection"
+
+      assert :ok = EctoStore.delete_by_chunks([chunk.id], repo: Repo)
+
+      refute Repo.get(Entity, stray.id)
+
+      reloaded = Repo.get!(Community, community.id)
+
+      assert reloaded.dirty, "the community has to be re-summarized"
+
+      assert reloaded.entity_ids == [],
+             "a swept id left in entity_ids keeps inflating entity_count"
+    end
+
+    test "keeps a collection-less entity that is still mentioned" do
+      collection = create_collection("dbc-nullkeep-#{System.unique_integer([:positive])}")
+      document = create_document(collection)
+      deleted = create_chunk(document, "goes away")
+      kept = create_chunk(document, "stays")
+
+      uncollected =
+        %Entity{}
+        |> Entity.changeset(%{name: "StrayKept", type: "person"})
+        |> Repo.insert!()
+
+      create_mention(uncollected, deleted)
+      create_mention(uncollected, kept)
+
+      assert :ok = EctoStore.delete_by_chunks([deleted.id], repo: Repo)
+
+      assert Repo.get(Entity, uncollected.id), "still mentioned by another chunk"
+    end
+
+    test "an empty list touches nothing" do
+      collection = create_collection("dbc-empty-#{System.unique_integer([:positive])}")
+      chunk = collection |> create_document() |> create_chunk()
+      entity = create_entity(collection, "Untouched")
+      create_mention(entity, chunk)
+
+      assert :ok = EctoStore.delete_by_chunks([], repo: Repo)
+
+      assert Repo.get(Entity, entity.id)
+    end
   end
 
   describe "persist_entities/3" do

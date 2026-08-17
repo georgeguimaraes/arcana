@@ -244,21 +244,75 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   # === Deletion Callbacks ===
 
   @impl true
+  def delete_by_chunks([], _opts), do: :ok
+
   def delete_by_chunks(chunk_ids, opts) when is_list(chunk_ids) do
     repo = Keyword.fetch!(opts, :repo)
 
-    if chunk_ids == [] do
-      :ok
-    else
-      # Delete mentions for these chunks
-      {_count, _} =
-        repo.delete_all(from(m in EntityMention, where: m.chunk_id in ^chunk_ids))
+    # The entities come back from the delete itself rather than from a read
+    # before it. Reading first leaves a window: a concurrent build can add a
+    # mention after the read, the delete takes it anyway, and its collection
+    # never makes the sweep list, so the new entity is orphaned. Taking a
+    # lock instead doesn't close that - the collection can't be locked until
+    # it has been discovered. RETURNING has no window at all, and a mention
+    # committed after the delete simply isn't deleted.
+    {_count, entity_ids} =
+      repo.delete_all(
+        from(m in EntityMention, where: m.chunk_id in ^chunk_ids, select: m.entity_id)
+      )
 
-      # Find and delete orphaned entities (entities with no remaining mentions)
-      delete_orphaned_entities(repo)
+    # Only the collections these chunks touched: a delete in one tenant must
+    # not sweep another tenant's entities.
+    collection_ids = collections_for_entities(entity_ids, repo)
 
-      :ok
-    end
+    Enum.each(collection_ids, &sweep_orphans(&1, opts))
+    sweep_uncollected(entity_ids, repo)
+
+    :ok
+  end
+
+  # An entity with no collection has no collection to sweep, so the
+  # per-collection pass above can never reach it. The global sweep this
+  # replaced did, and dropping that silently would leak those rows forever.
+  # Removing them can't cross a tenant boundary, because belonging to no
+  # collection is what makes them unreachable in the first place. Nothing
+  # in-tree creates one - persist_entities/3 always carries a collection -
+  # so this is here for custom graph stores and hand-written rows.
+  defp sweep_uncollected([], _repo), do: :ok
+
+  defp sweep_uncollected(entity_ids, repo) do
+    mentioned = from(m in EntityMention, select: m.entity_id)
+
+    # Relationships cascade via the FK on source_id/target_id.
+    {_count, deleted} =
+      repo.delete_all(
+        from(e in Entity,
+          where:
+            e.id in ^Enum.uniq(entity_ids) and is_nil(e.collection_id) and
+              e.id not in subquery(mentioned),
+          select: e.id
+        )
+      )
+
+    # A community is collection-less on the same terms its entities are, and
+    # it holds their ids in an array rather than through a foreign key, so
+    # nothing cascades. Left alone it would keep counting rows that are gone
+    # and keep serving a summary describing them.
+    mark_communities_dirty(dynamic([c], is_nil(c.collection_id)), deleted || [], repo)
+
+    :ok
+  end
+
+  defp collections_for_entities([], _repo), do: []
+
+  defp collections_for_entities(entity_ids, repo) do
+    repo.all(
+      from(e in Entity,
+        where: e.id in ^Enum.uniq(entity_ids) and not is_nil(e.collection_id),
+        select: e.collection_id,
+        distinct: true
+      )
+    )
   end
 
   @impl true
@@ -354,13 +408,18 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   # until the next summarize pass, but until then its entity_count would
   # otherwise keep counting entities that no longer exist.
   defp mark_overlapping_communities_dirty(collection_id, entity_ids, repo) do
+    mark_communities_dirty(dynamic([c], c.collection_id == ^collection_id), entity_ids, repo)
+  end
+
+  defp mark_communities_dirty(_scope, [], _repo), do: :ok
+
+  defp mark_communities_dirty(scope, entity_ids, repo) do
     now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
     repo.update_all(
       from(c in Community,
-        where:
-          c.collection_id == ^collection_id and
-            fragment("? && ?", c.entity_ids, type(^entity_ids, {:array, Ecto.UUID})),
+        where: ^scope,
+        where: fragment("? && ?", c.entity_ids, type(^entity_ids, {:array, Ecto.UUID})),
         update: [
           set: [
             dirty: true,
@@ -829,34 +888,6 @@ defmodule Arcana.Graph.GraphStore.Ecto do
         )
       )
     end
-  end
-
-  defp delete_orphaned_entities(repo) do
-    # Find entities with no mentions
-    orphaned_ids =
-      repo.all(
-        from(e in Entity,
-          left_join: m in EntityMention,
-          on: m.entity_id == e.id,
-          group_by: e.id,
-          having: count(m.id) == 0,
-          select: e.id
-        )
-      )
-
-    if orphaned_ids != [] do
-      # Delete relationships involving orphaned entities
-      repo.delete_all(
-        from(r in Relationship,
-          where: r.source_id in ^orphaned_ids or r.target_id in ^orphaned_ids
-        )
-      )
-
-      # Delete the orphaned entities
-      repo.delete_all(from(e in Entity, where: e.id in ^orphaned_ids))
-    end
-
-    :ok
   end
 
   defp maybe_filter_by_collection(query, nil), do: query
