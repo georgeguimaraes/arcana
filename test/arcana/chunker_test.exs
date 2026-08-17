@@ -45,7 +45,7 @@ defmodule Arcana.ChunkerTest do
     test "splits on paragraph boundaries when possible" do
       text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph."
 
-      chunks = Chunker.chunk(text, chunk_size: 30, size_unit: :characters)
+      chunks = Chunker.chunk(text, chunk_size: 30, chunk_overlap: 5, size_unit: :characters)
 
       # Should split cleanly on \n\n
       assert Enum.any?(chunks, fn c -> c.text == "First paragraph." end)
@@ -59,7 +59,7 @@ defmodule Arcana.ChunkerTest do
       # Text with lots of whitespace that could produce empty chunks
       text = "Content.\n\n\n\n\n\n\nMore content."
 
-      chunks = Chunker.chunk(text, chunk_size: 20, size_unit: :characters)
+      chunks = Chunker.chunk(text, chunk_size: 20, chunk_overlap: 5, size_unit: :characters)
 
       # No chunk should be blank
       for chunk <- chunks do
@@ -256,6 +256,112 @@ defmodule Arcana.ChunkerTest do
           Chunker.chunk("some text to split up here. ", [{unquote(key), unquote(value)}])
         end
       end
+    end
+
+    # Elixir orders atoms above integers, so nil > 450 is true and a bad
+    # value used to trip the overlap comparison first, blaming the wrong
+    # option. Each of these has to name what the caller actually got wrong.
+    for {key, value, pattern} <- [
+          {:chunk_size, 0, ~r/:chunk_size must be a positive integer/},
+          {:chunk_size, -10, ~r/:chunk_size must be a positive integer/},
+          {:chunk_size, "450", ~r/:chunk_size must be a positive integer/},
+          {:chunk_overlap, nil, ~r/:chunk_overlap must be a non-negative integer/},
+          {:chunk_overlap, -1, ~r/:chunk_overlap must be a non-negative integer/},
+          {:size_unit, :bogus, ~r/:size_unit must be :tokens or :characters/}
+        ] do
+      test "#{key}: #{inspect(value)} is reported against that option" do
+        assert_raise ArgumentError, unquote(Macro.escape(pattern)), fn ->
+          Chunker.chunk("some text to split here", [{unquote(key), unquote(value)}])
+        end
+      end
+    end
+
+    test "chunk_overlap: 0 is valid, meaning no overlap" do
+      assert [_ | _] =
+               Chunker.chunk("some text to split up here and there. ",
+                 chunk_size: 20,
+                 chunk_overlap: 0,
+                 size_unit: :characters
+               )
+    end
+
+    test "rejects an overlap larger than the chunk size" do
+      # The default overlap is 50, so any chunk_size below it is invalid
+      # unless the caller lowers the overlap as well. text_chunker returns
+      # {:error, _} for this, which used to reach Enum and surface as a
+      # Protocol.UndefinedError about Tuple.
+      assert_raise ArgumentError, ~r/:chunk_overlap must not be greater than :chunk_size/, fn ->
+        Chunker.chunk("some text here", chunk_size: 30, size_unit: :characters)
+      end
+
+      assert_raise ArgumentError, ~r/got overlap 100 and size 10/, fn ->
+        Chunker.chunk("some text here",
+          chunk_size: 10,
+          chunk_overlap: 100,
+          size_unit: :characters
+        )
+      end
+
+      # Equal is allowed, matching text_chunker's own rule.
+      assert [_ | _] =
+               Chunker.chunk("some text here to split",
+                 chunk_size: 20,
+                 chunk_overlap: 20,
+                 size_unit: :characters
+               )
+    end
+
+    test "the token unit is checked after conversion, and reported in tokens" do
+      # With size_unit: :tokens both values scale by chars_per_token, so the
+      # comparison holds either way, but the message has to quote what the
+      # caller actually passed rather than the converted characters.
+      assert_raise ArgumentError, ~r/got overlap 50 and size 10/, fn ->
+        Chunker.chunk("some text here", chunk_size: 10, chunk_overlap: 50)
+      end
+    end
+
+    # Both chunk/2 clauses resolve options through one function, so every
+    # option is checked on the empty path too. Validating on only one path
+    # is how the first two options drifted from the next three.
+    for {key, value} <- [
+          {:chunk_size, 0},
+          {:chunk_overlap, nil},
+          {:chunk_overlap, -1},
+          {:size_unit, :bogus},
+          {:chars_per_token, 0},
+          {:max_chunk_chars, 0}
+        ] do
+      test "empty input rejects #{key}: #{inspect(value)} too" do
+        assert_raise ArgumentError, fn ->
+          Chunker.chunk("", [{unquote(key), unquote(value)}])
+        end
+      end
+    end
+
+    test "empty input rejects an overlap larger than the chunk size too" do
+      assert_raise ArgumentError, ~r/:chunk_overlap must not be greater than :chunk_size/, fn ->
+        Chunker.chunk("", chunk_size: 30, size_unit: :characters)
+      end
+    end
+
+    test "an invalid :format is rejected the same way on both paths" do
+      # :format is the one option validated by text_chunker rather than
+      # here, since its valid list is a compile-time attribute we can't
+      # read. Both paths have to reach that check.
+      for text <- ["", "some real content to chunk"] do
+        assert_raise ArgumentError, ~r/invalid value for :format option/, fn ->
+          Chunker.chunk(text, format: :bogus)
+        end
+      end
+    end
+
+    test "a valid non-default :format still works on both paths" do
+      assert Chunker.chunk("", format: :markdown) == []
+      assert [_ | _] = Chunker.chunk("# Title\n\nSome content here.", format: :markdown)
+    end
+
+    test "empty input with valid options is still just an empty list" do
+      assert Chunker.chunk("", chunk_size: 100, chunk_overlap: 10) == []
     end
 
     test "empty input still validates its options" do

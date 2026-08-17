@@ -64,37 +64,33 @@ defmodule Arcana.Chunker.Default do
   @impl true
   def chunk(text, opts \\ [])
 
-  # Options are checked before the empty-text shortcut, so a bad value is
-  # reported whatever the input happens to be.
+  # Both clauses resolve options through the same function, so an invalid
+  # value is reported whatever the input happens to be, and a new option
+  # can't be validated on one path and skipped on the other.
   def chunk("", opts) do
-    _ = sizing_opts(opts)
+    resolved = validated_opts(opts)
+
+    # Run the empty case through the library as well, so its own option
+    # checks apply here too. :format is the one option we don't validate
+    # ourselves: the valid list lives in a compile-time attribute we can't
+    # read, and hardcoding a copy would drift from the library. text_chunker
+    # answers empty input with a placeholder "No chunks created" chunk, so
+    # the result is discarded and only its validation is wanted.
+    _ =
+      ""
+      |> TextChunker.split(chunker_opts(resolved))
+      |> unwrap_split!()
+
     []
   end
 
   def chunk(text, opts) do
-    chunk_size = Keyword.get(opts, :chunk_size, @default_chunk_size)
-    chunk_overlap = Keyword.get(opts, :chunk_overlap, @default_chunk_overlap)
-    format = Keyword.get(opts, :format, @default_format)
-    size_unit = Keyword.get(opts, :size_unit, @default_size_unit)
-
-    {chars_per_token, max_chunk_chars} = sizing_opts(opts)
-
-    # Convert token-based sizes to character-based for text_chunker
-    # (text_chunker's merge logic doesn't use get_chunk_size properly)
-    {effective_chunk_size, effective_overlap} =
-      case size_unit do
-        :tokens -> {chunk_size * chars_per_token, chunk_overlap * chars_per_token}
-        :characters -> {chunk_size, chunk_overlap}
-      end
-
-    text_chunker_opts = [
-      chunk_size: effective_chunk_size,
-      chunk_overlap: effective_overlap,
-      format: format
-    ]
+    %{chars_per_token: chars_per_token, max_chunk_chars: max_chunk_chars} =
+      resolved = validated_opts(opts)
 
     text
-    |> TextChunker.split(text_chunker_opts)
+    |> TextChunker.split(chunker_opts(resolved))
+    |> unwrap_split!()
     |> Enum.flat_map(&enforce_max_chars(&1, max_chunk_chars))
     |> Enum.reject(&blank?(&1.text))
     |> Enum.with_index()
@@ -115,7 +111,70 @@ defmodule Arcana.Chunker.Default do
     end)
   end
 
-  defp sizing_opts(opts) do
+  # An overlap larger than the chunk it overlaps is meaningless, and
+  # text_chunker rejects it. Checking here names arcana's own options and
+  # the unit they were given in, which the library can't do: with
+  # `size_unit: :tokens` it only ever sees the character-converted values.
+  defp validate_overlap!(size, overlap, raw_size, raw_overlap) when overlap > size do
+    raise ArgumentError,
+          ":chunk_overlap must not be greater than :chunk_size, got overlap " <>
+            "#{inspect(raw_overlap)} and size #{inspect(raw_size)}. The default " <>
+            "overlap is #{@default_chunk_overlap}, so a chunk_size below that " <>
+            "needs an explicit chunk_overlap too."
+  end
+
+  defp validate_overlap!(_size, _overlap, _raw_size, _raw_overlap), do: :ok
+
+  # Zero overlap is meaningful (no overlap at all), so this can't reuse the
+  # positive check.
+  defp validate_non_negative!(_key, value) when is_integer(value) and value >= 0, do: value
+
+  defp validate_non_negative!(key, value) do
+    raise ArgumentError,
+          "#{inspect(key)} must be a non-negative integer, got: #{inspect(value)}"
+  end
+
+  defp validate_size_unit!(unit) when unit in [:tokens, :characters], do: unit
+
+  defp validate_size_unit!(other) do
+    raise ArgumentError,
+          ":size_unit must be :tokens or :characters, got: #{inspect(other)}"
+  end
+
+  # text_chunker returns {:error, message} for an option combination it
+  # refuses. Piping that into Enum blows up as a Protocol.UndefinedError
+  # naming Enumerable and Tuple, which says nothing about what was wrong.
+  defp unwrap_split!({:error, reason}) do
+    raise ArgumentError, "text_chunker rejected these chunk options: #{reason}"
+  end
+
+  defp unwrap_split!(chunks) when is_list(chunks), do: chunks
+
+  defp unwrap_split!(other) do
+    raise ArgumentError, "text_chunker returned something unexpected: #{inspect(other)}"
+  end
+
+  defp chunker_opts(%{
+         effective_chunk_size: chunk_size,
+         effective_overlap: overlap,
+         format: format
+       }) do
+    [chunk_size: chunk_size, chunk_overlap: overlap, format: format]
+  end
+
+  # Every option this chunker reads, validated and resolved in one place.
+  defp validated_opts(opts) do
+    chunk_size =
+      validate_positive!(:chunk_size, Keyword.get(opts, :chunk_size, @default_chunk_size))
+
+    chunk_overlap =
+      validate_non_negative!(
+        :chunk_overlap,
+        Keyword.get(opts, :chunk_overlap, @default_chunk_overlap)
+      )
+
+    size_unit = validate_size_unit!(Keyword.get(opts, :size_unit, @default_size_unit))
+
     chars_per_token =
       validate_positive!(
         :chars_per_token,
@@ -128,7 +187,23 @@ defmodule Arcana.Chunker.Default do
         value -> validate_positive!(:max_chunk_chars, value)
       end
 
-    {chars_per_token, max_chunk_chars}
+    # Token-based sizes are converted to characters for text_chunker, whose
+    # merge logic doesn't use get_chunk_size properly.
+    {effective_chunk_size, effective_overlap} =
+      case size_unit do
+        :tokens -> {chunk_size * chars_per_token, chunk_overlap * chars_per_token}
+        :characters -> {chunk_size, chunk_overlap}
+      end
+
+    validate_overlap!(effective_chunk_size, effective_overlap, chunk_size, chunk_overlap)
+
+    %{
+      effective_chunk_size: effective_chunk_size,
+      effective_overlap: effective_overlap,
+      format: Keyword.get(opts, :format, @default_format),
+      chars_per_token: chars_per_token,
+      max_chunk_chars: max_chunk_chars
+    }
   end
 
   defp blank?(nil), do: true
