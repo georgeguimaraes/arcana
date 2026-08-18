@@ -177,12 +177,15 @@ defmodule Arcana.Migration.UniqueIndex do
 
   # Only creates when absent, so this is safe to call on the no-index path and
   # after a drop alike.
+  #
+  # The index name is bare while the table stays qualified: CREATE INDEX takes
+  # no schema on the name and rejects one outright, and it puts the index in
+  # the table's schema regardless. DROP INDEX is the opposite - it names the
+  # index and not the table - which is why rebuild! qualifies there.
   defp create!(repo, name, table, columns, qualify) do
     cols = Enum.map_join(columns, ", ", &~s("#{&1}"))
 
-    repo.query!(
-      "CREATE UNIQUE INDEX IF NOT EXISTS #{qualify.(name)} ON #{qualify.(table)} (#{cols})"
-    )
+    repo.query!("CREATE UNIQUE INDEX IF NOT EXISTS \"#{name}\" ON #{qualify.(table)} (#{cols})")
 
     :ok
   end

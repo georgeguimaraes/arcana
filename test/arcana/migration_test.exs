@@ -1150,4 +1150,52 @@ defmodule Arcana.MigrationTest do
       assert mention_contexts() == ["older"]
     end
   end
+
+  describe "converge under a prefix" do
+    test "rebuilds inside the prefixed schema and leaves the default one alone" do
+      # CREATE INDEX rejects a schema on the index NAME and takes it from the
+      # table, so qualifying the name made every prefixed rebuild a syntax
+      # error - the multi-tenant half of the adoption this module exists for.
+      prefix = "tenprobe"
+      on_exit(fn -> SQL.query!(Repo, "DROP SCHEMA IF EXISTS \"tenprobe\" CASCADE", []) end)
+
+      migrate(Arcana.Migration)
+      migrate(Arcana.Migration, prefix: prefix)
+
+      for q <- [
+            "DROP INDEX arcana_collections_name_index",
+            "CREATE INDEX arcana_collections_name_index ON arcana_collections (name)",
+            "DROP INDEX \"tenprobe\".arcana_collections_name_index",
+            "CREATE INDEX arcana_collections_name_index ON \"tenprobe\".arcana_collections (name)"
+          ] do
+        SQL.query!(Repo, q, [])
+      end
+
+      refute unique_index_in?(nil), "precondition: default schema index is non-unique"
+      refute unique_index_in?(prefix), "precondition: prefixed index is non-unique"
+
+      migrate(Arcana.Migration, prefix: prefix)
+
+      assert unique_index_in?(prefix), "the prefixed index should have been rebuilt"
+
+      refute unique_index_in?(nil),
+             "a prefixed converge reached into the default schema and rebuilt the wrong index"
+    end
+  end
+
+  defp unique_index_in?(prefix) do
+    %{rows: rows} =
+      SQL.query!(
+        Repo,
+        "SELECT i.indisunique FROM pg_index i " <>
+          "JOIN pg_class ic ON ic.oid = i.indexrelid " <>
+          "JOIN pg_class tc ON tc.oid = i.indrelid " <>
+          "JOIN pg_namespace n ON n.oid = tc.relnamespace " <>
+          "WHERE ic.relname = 'arcana_collections_name_index' " <>
+          "AND n.nspname = COALESCE($1, current_schema())",
+        [prefix]
+      )
+
+    match?([[true]], rows)
+  end
 end
