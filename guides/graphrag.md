@@ -155,7 +155,7 @@ Pass `:prefix` to keep Arcana's tables in a schema of their own, and
 `create_schema: false` if you manage the schema yourself:
 
 ```elixir
-def up, do: Arcana.Graph.Migration.up(prefix: "tenant_a")
+def up, do: Arcana.Graph.Migration.up(dimensions: 384, prefix: "tenant_a")
 ```
 
 The graph tables foreign-key `arcana_chunks` and `arcana_collections`, so

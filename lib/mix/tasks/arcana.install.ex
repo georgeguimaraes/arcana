@@ -683,7 +683,10 @@ else
 
     @impl Mix.Task
     def run(args) do
-      {opts, _, _} = OptionParser.parse(args, strict: [repo: :string, dimensions: :integer])
+      # parse/2 reports a malformed value in its third element and leaves the
+      # key absent, so `--dimensions abc` would silently fall through to
+      # auto-detection. parse!/2 refuses instead.
+      {opts, _} = OptionParser.parse!(args, strict: [repo: :string, dimensions: :integer])
 
       # Load the host app's config so the repo's `:priv`, if it has one, is
       # visible to Arcana.MixHelpers.migrations_path/1.

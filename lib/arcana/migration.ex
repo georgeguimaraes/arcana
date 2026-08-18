@@ -63,6 +63,8 @@ defmodule Arcana.Migration do
 
   use Ecto.Migration
 
+  alias Arcana.Migration.Dimensions
+
   @current_version 1
 
   @version_table "arcana_documents"
@@ -285,87 +287,24 @@ defmodule Arcana.Migration do
     :ok
   end
 
-  # Required rather than defaulted. A wrong dimension is baked into the
-  # column, and on a database that already has the table
-  # create_if_not_exists means it changes nothing - so a silent default was
-  # invisible in development and only surfaced when a fresh database was
-  # built, usually CI.
-  #
-  # This deliberately does not ask the configured embedder.
-  # `Arcana.Embedder.dimensions/1` falls back to embedding a probe string, so
-  # defaulting from it would let a migration load a model or call a remote
-  # service. `mix arcana.install` detects the number and writes it into the
-  # generated migration instead, where you can read it.
-  # `create_if_not_exists` leaves an existing table alone, so on a database
-  # that already has arcana_chunks a wrong :dimensions changes nothing and
-  # reports success. That is the case that stays invisible in development and
-  # only breaks when a fresh database is built. Comparing against the column
-  # that is actually there catches it where it was typed.
-  #
-  # Reads the catalog rather than the embedder, so it costs one query and
-  # doesn't drag a model load into the migration.
   defp verify_embedding_dimensions!(requested, prefix) do
     execute(fn ->
-      %{rows: rows} =
-        repo().query!(
-          "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a " <>
-            "JOIN pg_class c ON c.oid = a.attrelid " <>
-            "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
-            "WHERE c.relname = $1 AND a.attname = 'embedding' " <>
-            "AND a.attnum > 0 AND NOT a.attisdropped " <>
-            "AND n.nspname = COALESCE($2, current_schema())",
-          ["arcana_chunks", prefix]
-        )
-
-      with [[declared]] when is_binary(declared) <- rows,
-           [_, actual] <- Regex.run(~r/vector\((\d+)\)/, declared),
-           actual = String.to_integer(actual),
-           true <- actual != requested do
-        raise ArgumentError, """
-        Arcana.Migration.up/1 was given dimensions: #{requested}, but
-        arcana_chunks.embedding is already vector(#{actual}).
-
-        The column was not changed: create_if_not_exists leaves an existing
-        table alone, so the mismatch would have gone unnoticed until a fresh
-        database was built with #{requested} and this one kept #{actual}.
-
-        Pass dimensions: #{actual} to match this database, or if #{requested} is
-        the number you want, resize the column deliberately with
+      Dimensions.verify!(
+        repo(),
+        requested,
+        Arcana.Migration,
+        "arcana_chunks",
+        qualify("arcana_chunks", prefix),
+        """
+        resize the column deliberately with
         `mix arcana.gen.embedding_migration` and re-embed.
         """
-      end
+      )
     end)
   end
 
   defp require_dimensions!(opts) do
-    case Keyword.get(opts, :dimensions) do
-      value when is_integer(value) and value > 0 ->
-        value
-
-      nil ->
-        raise ArgumentError, """
-        Arcana.Migration.up/1 requires :dimensions.
-
-        It sizes arcana_chunks.embedding, and the column can't be resized later
-        without rebuilding every vector in it, so there is no safe default to
-        guess.
-
-        Pass the dimension your embedder produces:
-
-            Arcana.Migration.up(dimensions: 384)
-
-        To find it, ask your embedder outside the migration:
-
-            Arcana.Embedder.dimensions(Arcana.Config.embedder())
-
-        `mix arcana.install` detects it and writes it into the migration it
-        generates, so a generated install already has this filled in.
-        """
-
-      other ->
-        raise ArgumentError,
-              ":dimensions must be a positive integer, got: #{inspect(other)}"
-    end
+    Dimensions.require!(opts, Arcana.Migration, "arcana_chunks")
   end
 
   defp validate_target!(target) when is_integer(target) and target >= 1 do
