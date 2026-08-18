@@ -36,7 +36,9 @@ defmodule Arcana.Migration do
   version. Version 1 is written to converge them: tables are created only
   when absent, and columns added by later Arcana releases are added only
   when missing. Running it against an existing database changes nothing it
-  already has, and never drops anything.
+  already has. The one exception is a unique index whose shape is wrong: see
+  "What converge verifies" below, which lists everything checked against the
+  catalog rather than merely created when absent.
 
   ## Where the version is recorded
 
@@ -56,6 +58,22 @@ defmodule Arcana.Migration do
 
   Comment on any other table freely. Only `arcana_documents` is reserved.
 
+  ## What converge verifies
+
+  Adoption creates only what is absent, so most objects are checked by name
+  alone. Three are verified against the catalog and corrected when they
+  differ, because being merely present isn't enough:
+
+    * `arcana_documents.collection_id`'s delete rule, since older templates
+      emitted `ON DELETE SET NULL`
+    * the embedding column's dimension, which is compared against
+      `:dimensions` rather than altered
+    * the unique index on `arcana_collections(name)` and on `arcana_evaluation_test_case_chunks(test_case_id, chunk_id)`, since `create_if_not_exists` matches on the index name and an
+      older template may have created one with a different shape
+
+  Everything else is create-if-absent. For the plain indexes that is
+  deliberate: a differing one costs performance, not correctness.
+
   ## Version history
 
     * 1 - collections, documents, chunks and the evaluation tables
@@ -64,7 +82,10 @@ defmodule Arcana.Migration do
 
   use Ecto.Migration
 
+  require Logger
+
   alias Arcana.Migration.Dimensions
+  alias Arcana.Migration.UniqueIndex
 
   @current_version 1
 
@@ -84,6 +105,12 @@ defmodule Arcana.Migration do
     # Before the version comparison, so a wrong number is caught even when
     # this database is already at the target and there is nothing to apply.
     verify_embedding_dimensions!(require_dimensions!(opts), prefix)
+
+    # Before the version steps: nothing here purges duplicates, so the
+    # preflight has to beat change(1, :up, _)'s create_if_not_exists to explain
+    # them rather than let Postgres raise a bare unique violation. The graph
+    # module orders its mentions index the other way, and says why.
+    converge_unique_indexes!(prefix)
 
     if current < target do
       maybe_create_schema(prefix, opts)
@@ -300,6 +327,24 @@ defmodule Arcana.Migration do
         resize the column deliberately with
         `mix arcana.gen.embedding_migration` and re-embed.
         """
+      )
+    end)
+  end
+
+  # Run from up/1 rather than inside change(1, :up, _): that clause is skipped
+  # once the recorded version already equals the target, so a database that
+  # adopted v1 while still carrying a wrong-shaped legacy index would never
+  # have been repaired.
+  defp converge_unique_indexes!(prefix) do
+    execute(fn ->
+      UniqueIndex.converge!(repo(), "arcana_collections", ["name"], prefix, &qualify(&1, prefix))
+
+      UniqueIndex.converge!(
+        repo(),
+        "arcana_evaluation_test_case_chunks",
+        ["test_case_id", "chunk_id"],
+        prefix,
+        &qualify(&1, prefix)
       )
     end)
   end

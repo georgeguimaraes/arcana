@@ -120,6 +120,155 @@ defmodule Arcana.MigrationTest do
     List.flatten(rows)
   end
 
+  defp create_graph_entities_table do
+    SQL.query!(Repo, "CREATE EXTENSION IF NOT EXISTS vector", [])
+
+    SQL.query!(
+      Repo,
+      """
+      CREATE TABLE arcana_graph_entities (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        name varchar(255) NOT NULL,
+        type varchar(255) NOT NULL,
+        description text,
+        embedding vector(384),
+        metadata jsonb DEFAULT '{}',
+        chunk_id uuid,
+        collection_id uuid,
+        inserted_at timestamp(0) NOT NULL DEFAULT now(),
+        updated_at timestamp(0) NOT NULL DEFAULT now()
+      )
+      """,
+      []
+    )
+  end
+
+  defp create_collections_table do
+    SQL.query!(
+      Repo,
+      """
+      CREATE TABLE arcana_collections (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        name varchar(255) NOT NULL,
+        description text,
+        inserted_at timestamp(0) NOT NULL DEFAULT now(),
+        updated_at timestamp(0) NOT NULL DEFAULT now()
+      )
+      """,
+      []
+    )
+  end
+
+  defp index_valid?(name) do
+    %{rows: rows} =
+      SQL.query!(
+        Repo,
+        "SELECT i.indisvalid AND i.indisready FROM pg_index i " <>
+          "JOIN pg_class ic ON ic.oid = i.indexrelid WHERE ic.relname = $1",
+        [name]
+      )
+
+    match?([[true]], rows)
+  end
+
+  # The OID identifies the physical index, so a drop-and-recreate changes it.
+  defp index_identity(name) do
+    %{rows: rows} =
+      SQL.query!(
+        Repo,
+        "SELECT i.indexrelid, i.indisunique, i.indpred IS NOT NULL, " <>
+          "0 = ANY(i.indkey::int2[]) FROM pg_index i " <>
+          "JOIN pg_class ic ON ic.oid = i.indexrelid WHERE ic.relname = $1",
+        [name]
+      )
+
+    case rows do
+      [[oid, unique, partial, expression]] ->
+        %{oid: oid, unique: unique, partial: partial, expression: expression}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp index_columns(name) do
+    %{rows: rows} =
+      SQL.query!(
+        Repo,
+        "SELECT array_agg(a.attname::text ORDER BY k.ord) FROM pg_index i " <>
+          "JOIN pg_class ic ON ic.oid = i.indexrelid " <>
+          "JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) ON true " <>
+          "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum " <>
+          "WHERE ic.relname = $1 GROUP BY i.indexrelid",
+        [name]
+      )
+
+    case rows do
+      [[cols]] -> cols
+      _ -> nil
+    end
+  end
+
+  # A mention pair needs a real entity and chunk behind it, and the chunk needs
+  # a document. The two rows differ in inserted_at, so the dedup has an
+  # unambiguous oldest row to keep, and in context, so a test can tell which
+  # one survived.
+  defp seed_duplicate_mentions do
+    %{rows: [[doc]]} =
+      SQL.query!(
+        Repo,
+        "INSERT INTO arcana_documents (id, inserted_at, updated_at) " <>
+          "VALUES (gen_random_uuid(), now(), now()) RETURNING id",
+        []
+      )
+
+    %{rows: [[chunk]]} =
+      SQL.query!(
+        Repo,
+        "INSERT INTO arcana_chunks (id, text, embedding, document_id, inserted_at, updated_at) " <>
+          "VALUES (gen_random_uuid(), 'x', array_fill(0::real, ARRAY[384])::vector, $1, " <>
+          "now(), now()) RETURNING id",
+        [doc]
+      )
+
+    %{rows: [[entity]]} =
+      SQL.query!(
+        Repo,
+        "INSERT INTO arcana_graph_entities (id, name, type, inserted_at, updated_at) " <>
+          "VALUES (gen_random_uuid(), 'e', 't', now(), now()) RETURNING id",
+        []
+      )
+
+    SQL.query!(
+      Repo,
+      "INSERT INTO arcana_graph_entity_mentions " <>
+        "(id, entity_id, chunk_id, context, inserted_at, updated_at) VALUES " <>
+        "(gen_random_uuid(), $1, $2, 'older', now() - interval '1 day', now()), " <>
+        "(gen_random_uuid(), $1, $2, 'newer', now(), now())",
+      [entity, chunk]
+    )
+  end
+
+  defp mention_contexts do
+    %{rows: rows} =
+      SQL.query!(Repo, "SELECT context FROM arcana_graph_entity_mentions", [])
+
+    List.flatten(rows)
+  end
+
+  defp unique_index?(name) do
+    %{rows: rows} =
+      SQL.query!(
+        Repo,
+        "SELECT i.indisunique FROM pg_index i " <>
+          "JOIN pg_class ic ON ic.oid = i.indexrelid " <>
+          "WHERE ic.relname = $1",
+        [name]
+      )
+
+    match?([[true]], rows)
+  end
+
   defp embedding_type(table) do
     %{rows: rows} =
       SQL.query!(
@@ -440,6 +589,298 @@ defmodule Arcana.MigrationTest do
       assert embedding_type("arcana_chunks") == "vector(384)"
     end
 
+    test "converge rebuilds a legacy index that has the right name and wrong shape" do
+      # Exactly what an older installer template could leave behind: the name
+      # Ecto would generate, but non-unique. create_if_not_exists matches on
+      # the name, so without a shape check Postgres skips creation, reports
+      # success, and the adopted database never gets the constraint.
+      create_collections_table()
+
+      SQL.query!(
+        Repo,
+        "CREATE INDEX arcana_collections_name_index ON arcana_collections (name)",
+        []
+      )
+
+      refute unique_index?("arcana_collections_name_index"), "precondition: not unique"
+
+      migrate(Arcana.Migration)
+
+      assert unique_index?("arcana_collections_name_index"),
+             "converge kept a non-unique index that shares the name"
+
+      # And it actually constrains now.
+      SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup')", [])
+
+      assert_raise Postgrex.Error, fn ->
+        SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup')", [])
+      end
+    end
+
+    test "a wrong-shaped index is rebuilt even when the version already matches" do
+      # The regression this guards: converge runs from up/1, but the recreate
+      # used to live inside change(1, :up, _), which is skipped once the
+      # recorded version equals the target. The index was dropped and never
+      # replaced, leaving the table with no index at all while the log claimed
+      # a rebuild.
+      migrate(Arcana.Migration)
+      assert Arcana.Migration.recorded_version(Repo) == 1
+
+      SQL.query!(Repo, "DROP INDEX arcana_collections_name_index", [])
+
+      SQL.query!(
+        Repo,
+        "CREATE INDEX arcana_collections_name_index ON arcana_collections (name)",
+        []
+      )
+
+      refute index_identity("arcana_collections_name_index").unique
+
+      # Already at the target version, so change(1, :up, _) will not run.
+      assert :ok = migrate(Arcana.Migration)
+
+      identity = index_identity("arcana_collections_name_index")
+      assert identity, "the index was dropped and never rebuilt"
+      assert identity.unique, "rebuilt, but not as a unique index"
+
+      # The migrated table has no default on id, unlike the hand-built one
+      # the other tests use.
+      insert =
+        "INSERT INTO arcana_collections (id, name, inserted_at, updated_at) " <>
+          "VALUES (gen_random_uuid(), 'x', now(), now())"
+
+      SQL.query!(Repo, insert, [])
+
+      assert_raise Postgrex.Error, fn -> SQL.query!(Repo, insert, []) end
+    end
+
+    test "converge rebuilds an index that shares the name but covers other columns" do
+      # The column-list mismatch: same name, so create_if_not_exists skips it,
+      # and it constrains the wrong column entirely.
+      create_collections_table()
+
+      SQL.query!(
+        Repo,
+        "CREATE UNIQUE INDEX arcana_collections_name_index ON arcana_collections (description)",
+        []
+      )
+
+      assert index_columns("arcana_collections_name_index") == ["description"],
+             "precondition: the index covers the wrong column"
+
+      migrate(Arcana.Migration)
+
+      assert index_columns("arcana_collections_name_index") == ["name"],
+             "an index on the wrong column kept its name and was left in place"
+
+      SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup')", [])
+
+      assert_raise Postgrex.Error, fn ->
+        SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup')", [])
+      end
+    end
+
+    test "adopting from version 0 explains duplicates instead of failing raw" do
+      # Nothing purges duplicate collection names, so the preflight has to run
+      # before change(1, :up, _) creates the unique index. Ordered the other way
+      # round, Postgres raised a bare unique violation from create_if_not_exists
+      # and the explanation never got a chance to run.
+      create_collections_table()
+      SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup'), ('dup')", [])
+      assert Arcana.Migration.recorded_version(Repo) == 0
+
+      err = assert_raise RuntimeError, fn -> migrate(Arcana.Migration) end
+
+      assert err.message =~ "can't add the unique index arcana_collections_name_index"
+      assert err.message =~ ~s(["dup"])
+    end
+
+    test "a missing index over duplicates is refused with an explanation" do
+      # The rebuild path checks for duplicates first, but an index that is
+      # absent entirely went straight to CREATE UNIQUE INDEX, so a table whose
+      # index was manually dropped produced a raw Postgrex unique violation
+      # instead of the refusal this migration promises.
+      migrate(Arcana.Migration)
+      SQL.query!(Repo, "DROP INDEX arcana_collections_name_index", [])
+
+      insert =
+        "INSERT INTO arcana_collections (id, name, inserted_at, updated_at) " <>
+          "VALUES (gen_random_uuid(), $1, now(), now())"
+
+      SQL.query!(Repo, insert, ["dup"])
+      SQL.query!(Repo, insert, ["dup"])
+
+      err = assert_raise RuntimeError, fn -> migrate(Arcana.Migration) end
+
+      assert err.message =~ "can't add the unique index arcana_collections_name_index"
+      assert err.message =~ "It is missing, so nothing enforced uniqueness"
+      assert err.message =~ ~s(["dup"])
+
+      refute index_identity("arcana_collections_name_index"),
+             "the refusal must not leave a half-built index behind"
+    end
+
+    test "rows with a NULL key column do not count as duplicates" do
+      # Postgres treats NULLs as distinct in a unique index, so these never
+      # collide and must not block the migration.
+      create_graph_entities_table()
+
+      SQL.query!(
+        Repo,
+        "CREATE INDEX arcana_graph_entities_name_collection_id_index " <>
+          "ON arcana_graph_entities (name, collection_id)",
+        []
+      )
+
+      SQL.query!(
+        Repo,
+        "INSERT INTO arcana_graph_entities (name, type) VALUES ('same','t'), ('same','t')",
+        []
+      )
+
+      migrate(Arcana.Migration)
+      assert :ok = migrate(Arcana.Graph.Migration)
+
+      assert index_identity("arcana_graph_entities_name_collection_id_index").unique,
+             "NULL collection_id rows were treated as duplicates and blocked the rebuild"
+    end
+
+    test "an invalid index of the right shape is rebuilt" do
+      # A failed CREATE INDEX CONCURRENTLY leaves an index that is present and
+      # correctly shaped but enforces nothing. Matching on shape alone treated
+      # it as healthy and left the table unconstrained.
+      migrate(Arcana.Migration)
+      before = index_identity("arcana_collections_name_index")
+      assert before.unique
+
+      SQL.query!(
+        Repo,
+        "UPDATE pg_index SET indisvalid = false " <>
+          "WHERE indexrelid = 'arcana_collections_name_index'::regclass",
+        []
+      )
+
+      refute index_valid?("arcana_collections_name_index"), "precondition: invalid"
+
+      assert :ok = migrate(Arcana.Migration)
+
+      assert index_valid?("arcana_collections_name_index"),
+             "an invalid index was treated as healthy and left in place"
+
+      assert index_identity("arcana_collections_name_index").oid != before.oid,
+             "it should have been rebuilt, not adopted"
+    end
+
+    test "a not-ready index of the right shape is rebuilt" do
+      # indisready is the other half of usable: an index still being built is
+      # present and shaped correctly but not yet enforcing anything.
+      migrate(Arcana.Migration)
+      before = index_identity("arcana_collections_name_index")
+
+      SQL.query!(
+        Repo,
+        "UPDATE pg_index SET indisready = false " <>
+          "WHERE indexrelid = 'arcana_collections_name_index'::regclass",
+        []
+      )
+
+      refute index_valid?("arcana_collections_name_index"), "precondition: not ready"
+
+      assert :ok = migrate(Arcana.Migration)
+
+      assert index_valid?("arcana_collections_name_index"),
+             "a not-ready index was treated as healthy and left in place"
+
+      assert index_identity("arcana_collections_name_index").oid != before.oid,
+             "it should have been rebuilt"
+    end
+
+    test "converge leaves a correctly-shaped index alone" do
+      migrate(Arcana.Migration)
+      before = index_identity("arcana_collections_name_index")
+      assert before.unique
+
+      assert :ok = migrate(Arcana.Migration)
+
+      # Compare the OID, not just uniqueness: a drop-and-recreate would still
+      # leave a unique index, so checking indisunique alone cannot fail on the
+      # churn this test claims to guard against.
+      assert index_identity("arcana_collections_name_index") == before,
+             "the index was rebuilt when its shape already matched"
+    end
+
+    test "a partial unique index is rebuilt, since it only constrains some rows" do
+      create_collections_table()
+
+      SQL.query!(
+        Repo,
+        "CREATE UNIQUE INDEX arcana_collections_name_index ON arcana_collections (name) " <>
+          "WHERE description IS NOT NULL",
+        []
+      )
+
+      migrate(Arcana.Migration)
+
+      identity = index_identity("arcana_collections_name_index")
+      assert identity.unique
+      refute identity.partial, "a partial index does not enforce uniqueness for every row"
+
+      SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup')", [])
+
+      assert_raise Postgrex.Error, fn ->
+        SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup')", [])
+      end
+    end
+
+    test "an expression index under the same name is rebuilt" do
+      create_collections_table()
+
+      SQL.query!(
+        Repo,
+        "CREATE UNIQUE INDEX arcana_collections_name_index ON arcana_collections (lower(name))",
+        []
+      )
+
+      migrate(Arcana.Migration)
+
+      identity = index_identity("arcana_collections_name_index")
+      refute identity.expression, "an expression index does not constrain the raw column"
+
+      # Differing only by case is now allowed again, and exact duplicates are not.
+      SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('Dup')", [])
+      SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup')", [])
+
+      assert_raise Postgrex.Error, fn ->
+        SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup')", [])
+      end
+    end
+
+    test "duplicates block the rebuild with the offending keys, changing nothing" do
+      create_collections_table()
+
+      SQL.query!(
+        Repo,
+        "CREATE INDEX arcana_collections_name_index ON arcana_collections (name)",
+        []
+      )
+
+      SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('same'), ('same')", [])
+
+      err =
+        assert_raise RuntimeError, ~r/can't add the unique index/, fn ->
+          migrate(Arcana.Migration)
+        end
+
+      assert err.message =~ ~s(["same"])
+      assert err.message =~ "cascades to rows it does not own"
+
+      # Nothing was changed: the legacy index survives and the rows are intact.
+      refute index_identity("arcana_collections_name_index").unique
+
+      %{rows: [[count]]} = SQL.query!(Repo, "SELECT count(*) FROM arcana_collections", [])
+      assert count == 2
+    end
+
     test "refuses to run against a database a newer release migrated" do
       migrate(Arcana.Migration)
 
@@ -662,5 +1103,99 @@ defmodule Arcana.MigrationTest do
       assert "summary_fingerprint" in columns("arcana_graph_communities")
       assert Arcana.Graph.Migration.recorded_version(Repo) == 1
     end
+
+    test "adoption dedups mentions before converging their unique index" do
+      # An install that never ran the standalone mentions upgrade has the
+      # table, no unique index, and the duplicate pairs converge_v1's DELETE
+      # exists to purge. Converging the index from the top of up/1 ran that
+      # check before the DELETE, so adoption refused instead of cleaning up.
+      migrate(Arcana.Graph.Migration)
+
+      SQL.query!(Repo, "DROP INDEX arcana_graph_entity_mentions_entity_id_chunk_id_index", [])
+      SQL.query!(Repo, "COMMENT ON TABLE arcana_graph_entities IS NULL", [])
+      seed_duplicate_mentions()
+
+      assert :ok = migrate(Arcana.Graph.Migration)
+
+      assert unique_index?("arcana_graph_entity_mentions_entity_id_chunk_id_index"),
+             "the mentions index should exist and be unique after adoption"
+
+      assert mention_contexts() == ["older"],
+             "the dedup should keep exactly the oldest row of each pair"
+    end
+
+    test "adoption rebuilds a wrong-shaped mentions index over duplicates" do
+      # Same adoption, except the legacy template left a non-unique index under
+      # the name Ecto generates, so create_if_not_exists skips it and only the
+      # shape check can repair it - after the dedup, not before.
+      migrate(Arcana.Graph.Migration)
+
+      SQL.query!(Repo, "DROP INDEX arcana_graph_entity_mentions_entity_id_chunk_id_index", [])
+
+      SQL.query!(
+        Repo,
+        "CREATE INDEX arcana_graph_entity_mentions_entity_id_chunk_id_index " <>
+          "ON arcana_graph_entity_mentions (entity_id, chunk_id)",
+        []
+      )
+
+      SQL.query!(Repo, "COMMENT ON TABLE arcana_graph_entities IS NULL", [])
+      seed_duplicate_mentions()
+
+      assert :ok = migrate(Arcana.Graph.Migration)
+
+      assert unique_index?("arcana_graph_entity_mentions_entity_id_chunk_id_index"),
+             "a non-unique index sharing the name was left in place"
+
+      assert mention_contexts() == ["older"]
+    end
+  end
+
+  describe "converge under a prefix" do
+    test "rebuilds inside the prefixed schema and leaves the default one alone" do
+      # CREATE INDEX rejects a schema on the index NAME and takes it from the
+      # table, so qualifying the name made every prefixed rebuild a syntax
+      # error - the multi-tenant half of the adoption this module exists for.
+      prefix = "tenprobe"
+      on_exit(fn -> SQL.query!(Repo, "DROP SCHEMA IF EXISTS \"tenprobe\" CASCADE", []) end)
+
+      migrate(Arcana.Migration)
+      migrate(Arcana.Migration, prefix: prefix)
+
+      for q <- [
+            "DROP INDEX arcana_collections_name_index",
+            "CREATE INDEX arcana_collections_name_index ON arcana_collections (name)",
+            "DROP INDEX \"tenprobe\".arcana_collections_name_index",
+            "CREATE INDEX arcana_collections_name_index ON \"tenprobe\".arcana_collections (name)"
+          ] do
+        SQL.query!(Repo, q, [])
+      end
+
+      refute unique_index_in?(nil), "precondition: default schema index is non-unique"
+      refute unique_index_in?(prefix), "precondition: prefixed index is non-unique"
+
+      migrate(Arcana.Migration, prefix: prefix)
+
+      assert unique_index_in?(prefix), "the prefixed index should have been rebuilt"
+
+      refute unique_index_in?(nil),
+             "a prefixed converge reached into the default schema and rebuilt the wrong index"
+    end
+  end
+
+  defp unique_index_in?(prefix) do
+    %{rows: rows} =
+      SQL.query!(
+        Repo,
+        "SELECT i.indisunique FROM pg_index i " <>
+          "JOIN pg_class ic ON ic.oid = i.indexrelid " <>
+          "JOIN pg_class tc ON tc.oid = i.indrelid " <>
+          "JOIN pg_namespace n ON n.oid = tc.relnamespace " <>
+          "WHERE ic.relname = 'arcana_collections_name_index' " <>
+          "AND n.nspname = COALESCE($1, current_schema())",
+        [prefix]
+      )
+
+    match?([[true]], rows)
   end
 end
