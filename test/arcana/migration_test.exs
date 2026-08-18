@@ -191,6 +191,70 @@ defmodule Arcana.MigrationTest do
     end
   end
 
+  defp index_columns(name) do
+    %{rows: rows} =
+      SQL.query!(
+        Repo,
+        "SELECT array_agg(a.attname::text ORDER BY k.ord) FROM pg_index i " <>
+          "JOIN pg_class ic ON ic.oid = i.indexrelid " <>
+          "JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) ON true " <>
+          "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum " <>
+          "WHERE ic.relname = $1 GROUP BY i.indexrelid",
+        [name]
+      )
+
+    case rows do
+      [[cols]] -> cols
+      _ -> nil
+    end
+  end
+
+  # A mention pair needs a real entity and chunk behind it, and the chunk needs
+  # a document. The two rows differ only in inserted_at, so the dedup has an
+  # unambiguous oldest row to keep.
+  defp seed_duplicate_mentions do
+    %{rows: [[doc]]} =
+      SQL.query!(
+        Repo,
+        "INSERT INTO arcana_documents (id, inserted_at, updated_at) " <>
+          "VALUES (gen_random_uuid(), now(), now()) RETURNING id",
+        []
+      )
+
+    %{rows: [[chunk]]} =
+      SQL.query!(
+        Repo,
+        "INSERT INTO arcana_chunks (id, text, embedding, document_id, inserted_at, updated_at) " <>
+          "VALUES (gen_random_uuid(), 'x', array_fill(0::real, ARRAY[384])::vector, $1, " <>
+          "now(), now()) RETURNING id",
+        [doc]
+      )
+
+    %{rows: [[entity]]} =
+      SQL.query!(
+        Repo,
+        "INSERT INTO arcana_graph_entities (id, name, type, inserted_at, updated_at) " <>
+          "VALUES (gen_random_uuid(), 'e', 't', now(), now()) RETURNING id",
+        []
+      )
+
+    SQL.query!(
+      Repo,
+      "INSERT INTO arcana_graph_entity_mentions " <>
+        "(id, entity_id, chunk_id, context, inserted_at, updated_at) VALUES " <>
+        "(gen_random_uuid(), $1, $2, 'older', now() - interval '1 day', now()), " <>
+        "(gen_random_uuid(), $1, $2, 'newer', now(), now())",
+      [entity, chunk]
+    )
+  end
+
+  defp mention_contexts do
+    %{rows: rows} =
+      SQL.query!(Repo, "SELECT context FROM arcana_graph_entity_mentions", [])
+
+    List.flatten(rows)
+  end
+
   defp unique_index?(name) do
     %{rows: rows} =
       SQL.query!(
@@ -587,6 +651,32 @@ defmodule Arcana.MigrationTest do
       SQL.query!(Repo, insert, [])
 
       assert_raise Postgrex.Error, fn -> SQL.query!(Repo, insert, []) end
+    end
+
+    test "converge rebuilds an index that shares the name but covers other columns" do
+      # The column-list mismatch: same name, so create_if_not_exists skips it,
+      # and it constrains the wrong column entirely.
+      create_collections_table()
+
+      SQL.query!(
+        Repo,
+        "CREATE UNIQUE INDEX arcana_collections_name_index ON arcana_collections (description)",
+        []
+      )
+
+      assert index_columns("arcana_collections_name_index") == ["description"],
+             "precondition: the index covers the wrong column"
+
+      migrate(Arcana.Migration)
+
+      assert index_columns("arcana_collections_name_index") == ["name"],
+             "an index on the wrong column kept its name and was left in place"
+
+      SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup')", [])
+
+      assert_raise Postgrex.Error, fn ->
+        SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup')", [])
+      end
     end
 
     test "a missing index over duplicates is refused with an explanation" do
@@ -996,6 +1086,52 @@ defmodule Arcana.MigrationTest do
 
       assert "summary_fingerprint" in columns("arcana_graph_communities")
       assert Arcana.Graph.Migration.recorded_version(Repo) == 1
+    end
+
+    test "adoption dedups mentions before converging their unique index" do
+      # An install that never ran the standalone mentions upgrade has the
+      # table, no unique index, and the duplicate pairs converge_v1's DELETE
+      # exists to purge. Converging the index from the top of up/1 ran that
+      # check before the DELETE, so adoption refused instead of cleaning up.
+      migrate(Arcana.Graph.Migration)
+
+      SQL.query!(Repo, "DROP INDEX arcana_graph_entity_mentions_entity_id_chunk_id_index", [])
+      SQL.query!(Repo, "COMMENT ON TABLE arcana_graph_entities IS NULL", [])
+      seed_duplicate_mentions()
+
+      assert :ok = migrate(Arcana.Graph.Migration)
+
+      assert unique_index?("arcana_graph_entity_mentions_entity_id_chunk_id_index"),
+             "the mentions index should exist and be unique after adoption"
+
+      assert mention_contexts() == ["older"],
+             "the dedup should keep exactly the oldest row of each pair"
+    end
+
+    test "adoption rebuilds a wrong-shaped mentions index over duplicates" do
+      # Same adoption, except the legacy template left a non-unique index under
+      # the name Ecto generates, so create_if_not_exists skips it and only the
+      # shape check can repair it - after the dedup, not before.
+      migrate(Arcana.Graph.Migration)
+
+      SQL.query!(Repo, "DROP INDEX arcana_graph_entity_mentions_entity_id_chunk_id_index", [])
+
+      SQL.query!(
+        Repo,
+        "CREATE INDEX arcana_graph_entity_mentions_entity_id_chunk_id_index " <>
+          "ON arcana_graph_entity_mentions (entity_id, chunk_id)",
+        []
+      )
+
+      SQL.query!(Repo, "COMMENT ON TABLE arcana_graph_entities IS NULL", [])
+      seed_duplicate_mentions()
+
+      assert :ok = migrate(Arcana.Graph.Migration)
+
+      assert unique_index?("arcana_graph_entity_mentions_entity_id_chunk_id_index"),
+             "a non-unique index sharing the name was left in place"
+
+      assert mention_contexts() == ["older"]
     end
   end
 end
