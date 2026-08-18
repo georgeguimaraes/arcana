@@ -41,8 +41,12 @@ defmodule Arcana.VectorStore.HnswIndexDefinitionTest do
           [unquote(table), unquote(index)]
         )
 
-      assert [[indexdef]] = rows,
-             "#{unquote(index)} is missing from #{unquote(table)}"
+      # Checked before destructuring: `assert [[x]] = rows, "msg"` raises a bare
+      # MatchError on [] and the message never prints, which loses the only
+      # thing that says WHICH index went missing.
+      assert rows != [], "#{unquote(index)} is missing from #{unquote(table)}"
+
+      [[indexdef]] = rows
 
       assert indexdef =~ "USING hnsw",
              "expected an hnsw index, got: #{indexdef}"
