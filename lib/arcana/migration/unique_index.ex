@@ -183,20 +183,26 @@ defmodule Arcana.Migration.UniqueIndex do
   # the table's schema regardless. DROP INDEX is the opposite - it names the
   # index and not the table - which is why rebuild! qualifies there.
   defp create!(repo, name, table, columns, qualify) do
-    cols = Enum.map_join(columns, ", ", &~s("#{&1}"))
+    cols = Enum.map_join(columns, ", ", &quoted/1)
 
-    repo.query!("CREATE UNIQUE INDEX IF NOT EXISTS \"#{name}\" ON #{qualify.(table)} (#{cols})")
+    repo.query!(
+      "CREATE UNIQUE INDEX IF NOT EXISTS #{quoted(name)} ON #{qualify.(table)} (#{cols})"
+    )
 
     :ok
   end
+
+  # A double quote inside an identifier is escaped by doubling it, the same way
+  # the migration modules' own qualify/2 does it.
+  defp quoted(identifier), do: ~s("#{String.replace(identifier, ~s("), ~s(""))}")
 
   # Postgres treats NULLs as distinct in a unique index, so rows with a NULL in
   # any key column never collide and must not count as duplicates here - a
   # GROUP BY would otherwise group them together and block a migration that
   # would in fact succeed.
   defp duplicates(repo, table, columns, prefix, qualify) do
-    cols = Enum.map_join(columns, ", ", &~s("#{&1}"))
-    not_null = Enum.map_join(columns, " AND ", &~s("#{&1}" IS NOT NULL))
+    cols = Enum.map_join(columns, ", ", &quoted/1)
+    not_null = Enum.map_join(columns, " AND ", &(quoted(&1) <> " IS NOT NULL"))
 
     %{rows: rows} =
       repo.query!(
