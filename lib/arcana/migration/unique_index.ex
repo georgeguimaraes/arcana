@@ -115,6 +115,8 @@ defmodule Arcana.Migration.UniqueIndex do
   # promises - and a table whose index was manually dropped is exactly the
   # kind of drifted install adoption exists to handle.
   defp create_absent!(repo, name, table, columns, prefix, qualify) do
+    lock!(repo, table, qualify)
+
     case duplicates(repo, table, columns, prefix, qualify) do
       [] ->
         create!(repo, name, table, columns, qualify)
@@ -125,6 +127,8 @@ defmodule Arcana.Migration.UniqueIndex do
   end
 
   defp rebuild!(repo, name, table, columns, existing, prefix, qualify) do
+    lock!(repo, table, qualify)
+
     case duplicates(repo, table, columns, prefix, qualify) do
       [] ->
         repo.query!("DROP INDEX #{qualify.(name)}")
@@ -159,6 +163,16 @@ defmodule Arcana.Migration.UniqueIndex do
     again. Arcana won't delete them for you: on this table that cascades \
     to rows it does not own.
     """
+  end
+
+  # Without this, a write committing between the duplicate preflight and the
+  # CREATE turns the explained refusal back into a raw Postgrex error. SHARE
+  # conflicts with the ROW EXCLUSIVE that writers take, and CREATE UNIQUE
+  # INDEX takes SHARE anyway, so this only moves that lock earlier - the
+  # converge paths that change nothing never reach it. Ecto runs migrations in
+  # a transaction, which is what makes the lock outlive this statement.
+  defp lock!(repo, table, qualify) do
+    repo.query!("LOCK TABLE #{qualify.(table)} IN SHARE MODE")
   end
 
   # Only creates when absent, so this is safe to call on the no-index path and
