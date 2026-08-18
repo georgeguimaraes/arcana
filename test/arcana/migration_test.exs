@@ -8,6 +8,8 @@ defmodule Arcana.MigrationTest do
   """
   use ExUnit.Case, async: false
 
+  doctest Arcana.Migration.Dimensions
+
   alias Arcana.MigrationRepo, as: Repo
   alias Ecto.Adapters.Postgres
   alias Ecto.Adapters.SQL

@@ -52,6 +52,35 @@ defmodule Arcana.Migration.Dimensions do
   end
 
   @doc """
+  The dimension a `format_type` string declares, or `nil` when it carries none.
+
+  Public so the parsing is testable without relocating the pgvector extension
+  to force a schema-qualified type name.
+
+      iex> Arcana.Migration.Dimensions.declared_dimension("vector(384)")
+      384
+
+      iex> Arcana.Migration.Dimensions.declared_dimension("myschema.vector(1024)")
+      1024
+
+      iex> Arcana.Migration.Dimensions.declared_dimension("vector")
+      nil
+  """
+  def declared_dimension(declared) when is_binary(declared) do
+    # pgvector has more than one sized type, and format_type schema-qualifies
+    # the name when the extension is not on the connection's search_path.
+    case Regex.run(
+           ~r/\A(?:[\w"]+\.)?(?:vector|halfvec|sparsevec)\((\d+)\)\z/,
+           String.trim(declared)
+         ) do
+      [_, n] -> String.to_integer(n)
+      _ -> nil
+    end
+  end
+
+  def declared_dimension(_), do: nil
+
+  @doc """
   Raises when `table`.embedding already exists with a different dimension.
 
   `create_if_not_exists` leaves an existing table alone, so a wrong number
@@ -74,15 +103,16 @@ defmodule Arcana.Migration.Dimensions do
         [table, prefix]
       )
 
-    # pgvector has more than one sized type, so the match is not vector-only.
+    # pgvector has more than one sized type, so the match is not vector-only,
+    # and format_type schema-qualifies the type when the extension is not on
+    # the connection's search_path (`myschema.vector(384)`), so the qualifier
+    # is optional rather than absent.
     # Anything without a dimension is left alone rather than guessed at: an
     # unsized `vector` column can't reach production here anyway, because
     # creating the HNSW index on it fails with "column does not have
     # dimensions" later in the same migration.
     with [[declared]] when is_binary(declared) <- rows,
-         [_, actual] <-
-           Regex.run(~r/\A(?:vector|halfvec|sparsevec)\((\d+)\)\z/, String.trim(declared)),
-         actual = String.to_integer(actual),
+         actual when is_integer(actual) <- declared_dimension(declared),
          true <- actual != requested do
       raise ArgumentError, """
       #{inspect(module)}.up/1 was given dimensions: #{requested}, but
