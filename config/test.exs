@@ -67,9 +67,15 @@ config :arcana, Arcana.TestRepo,
   # at distance ~0, so every candidate is invisible to the querying transaction
   # and search returns zero rows for data it can plainly see.
   #
-  # At test row counts a clean heap seq-scans anyway, so nothing here needs an
-  # index scan to be correct or fast. Real index behaviour is exercised against
-  # a production-sized table, not this suite.
+  # At test row counts a clean heap seq-scans anyway, so no test here needs an
+  # index scan to be correct or fast: this makes explicit what was already true
+  # and stops bloat from flipping it mid-run. The index itself is untouched, so
+  # the schema still matches migration output.
+  #
+  # It does mean nothing would notice the shipped index breaking, so
+  # test/arcana/vector_store/pgvector_index_path_test.exs re-enables index scans
+  # on its own connection, asserts the plan really is an HNSW index scan, and
+  # checks the results. That file is the only index-path coverage there is.
   parameters: [enable_indexscan: "off"]
 
 config :arcana, ArcanaWeb.Endpoint,
