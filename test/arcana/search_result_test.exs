@@ -1,6 +1,8 @@
 defmodule Arcana.SearchResultTest do
   use ExUnit.Case, async: true
 
+  doctest Arcana.SearchResult
+
   alias Arcana.SearchResult
 
   describe "from_store_result/1" do
@@ -92,6 +94,68 @@ defmodule Arcana.SearchResultTest do
       result = %SearchResult{id: "x", text: "t", score: 1.0, metadata: %{"a" => 1}}
 
       assert {%{"a" => 1}, %SearchResult{metadata: %{}}} = Access.pop(result, :metadata)
+    end
+  end
+
+  describe "to_map/1" do
+    test "returns every documented field, including the nils" do
+      result = %Arcana.SearchResult{
+        id: "chunk-1",
+        text: "hello",
+        document_id: "doc-1",
+        chunk_index: 3,
+        score: 0.75,
+        metadata: %{"page_start" => 4}
+      }
+
+      map = Arcana.SearchResult.to_map(result)
+
+      assert map == %{
+               id: "chunk-1",
+               text: "hello",
+               document_id: "doc-1",
+               chunk_index: 3,
+               score: 0.75,
+               vector_score: nil,
+               keyword_score: nil,
+               rerank_score: nil,
+               metadata: %{"page_start" => 4}
+             }
+    end
+
+    test "is a plain map, so it encodes" do
+      result = %Arcana.SearchResult{id: "a", text: "t", score: 1.0}
+
+      # The struct itself does not encode, which is the deliberate part.
+      assert_raise Protocol.UndefinedError, fn -> JSON.encode!(result) end
+
+      # to_map/1 is the supported seam.
+      assert is_binary(JSON.encode!(Arcana.SearchResult.to_map(result)))
+    end
+
+    test "does not leak a field the struct gains later" do
+      # The contract is one-directional: to_map/1 must not expose keys beyond
+      # this set. Adding a field to the struct does not fail this test, and
+      # should not - to_map/1 lists its keys, so a new field stays private
+      # until someone adds it here on purpose. What this catches is widening
+      # to_map/1 without widening the documented set.
+      documented =
+        MapSet.new([
+          :id,
+          :text,
+          :document_id,
+          :chunk_index,
+          :score,
+          :vector_score,
+          :keyword_score,
+          :rerank_score,
+          :metadata
+        ])
+
+      actual =
+        %Arcana.SearchResult{} |> Arcana.SearchResult.to_map() |> Map.keys() |> MapSet.new()
+
+      assert actual == documented
     end
   end
 end
