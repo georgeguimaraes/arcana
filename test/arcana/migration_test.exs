@@ -101,6 +101,18 @@ defmodule Arcana.MigrationTest do
     SQL.query!(Repo, "COMMENT ON TABLE arcana_documents IS '#{escaped}'", [])
   end
 
+  defp tables do
+    %{rows: rows} =
+      SQL.query!(
+        Repo,
+        "SELECT table_name FROM information_schema.tables " <>
+          "WHERE table_schema = current_schema()",
+        []
+      )
+
+    List.flatten(rows)
+  end
+
   defp columns(table) do
     %{rows: rows} =
       SQL.query!(
@@ -286,6 +298,81 @@ defmodule Arcana.MigrationTest do
       set_table_comment("  arcana:1\n")
 
       assert Arcana.Migration.recorded_version(Repo) == 1
+    end
+
+    test "down/1 refuses to roll back when the marker is gone but the tables aren't" do
+      migrate(Arcana.Migration)
+      assert Arcana.Migration.recorded_version(Repo) == 1
+
+      # What a host comment on the version table looks like afterwards.
+      set_table_comment("Documents ingested by our pipeline")
+      assert Arcana.Migration.recorded_version(Repo) == 0
+
+      assert_raise RuntimeError, ~r/can't tell which version is applied/, fn ->
+        migrate_down(Arcana.Migration, [])
+      end
+
+      # Refusing means refusing: the tables are still there.
+      assert "arcana_documents" in tables()
+      assert "arcana_chunks" in tables()
+    end
+
+    test "down/1 refuses when the version table is gone but its siblings remain" do
+      migrate(Arcana.Migration)
+
+      # A partial or hand-modified install: the version table is gone, so
+      # there is nowhere to read a marker, but other Arcana tables are still
+      # here and a rollback does have something to do.
+      SQL.query!(Repo, "DROP TABLE arcana_documents CASCADE", [])
+
+      assert Arcana.Migration.recorded_version(Repo) == 0
+      assert "arcana_collections" in tables()
+
+      err =
+        assert_raise RuntimeError, ~r/can't tell which version is applied/, fn ->
+          migrate_down(Arcana.Migration, [])
+        end
+
+      # It can't offer the COMMENT recovery, because the table to comment on
+      # is the one that's missing.
+      assert err.message =~ "is not among them"
+      assert err.message =~ "arcana_collections"
+      refute err.message =~ "COMMENT ON TABLE"
+
+      assert "arcana_collections" in tables(), "refusing must leave them alone"
+    end
+
+    test "a view sharing the version table's name is not mistaken for an install" do
+      refute "arcana_documents" in tables()
+      SQL.query!(Repo, "CREATE VIEW arcana_documents AS SELECT 1 AS id", [])
+      on_exit(fn -> SQL.query!(Repo, "DROP VIEW IF EXISTS arcana_documents", []) end)
+
+      # relkind is constrained to tables, so this stays a quiet no-op rather
+      # than refusing with recovery SQL that could not work on a view.
+      assert :ok = migrate_down(Arcana.Migration, [])
+    end
+
+    test "down/1 is a quiet no-op when nothing is installed" do
+      # No tables at all, which is the one case version 0 legitimately means
+      # "nothing to drop".
+      refute "arcana_documents" in tables()
+
+      assert :ok = migrate_down(Arcana.Migration, [])
+    end
+
+    test "restoring the marker makes the rollback work again" do
+      migrate(Arcana.Migration)
+      set_table_comment("clobbered by a schema-doc tool")
+
+      assert_raise RuntimeError, ~r/can't tell which version is applied/, fn ->
+        migrate_down(Arcana.Migration, [])
+      end
+
+      # The error tells the operator to do exactly this.
+      set_table_comment("arcana:1")
+
+      assert :ok = migrate_down(Arcana.Migration, [])
+      refute "arcana_documents" in tables()
     end
 
     test "refuses to run against a database a newer release migrated" do
