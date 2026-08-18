@@ -77,6 +77,14 @@ jobs:
         run: mix deps.get
       - name: Check formatting
         run: mix format --check-formatted
+      # Catches unused variables, orphaned requires and the like in lib/. Not
+      # `mix test --warnings-as-errors`: the LiveView test helpers emit dozens
+      # of runtime warnings, which would drown this signal rather than add to
+      # it.
+      - name: Compile without warnings
+        env:
+          MIX_ENV: test
+        run: mix compile --force --warnings-as-errors
       - name: Run Credo
         run: mix credo --strict
       - name: Create database

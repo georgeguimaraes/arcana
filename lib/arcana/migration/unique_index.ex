@@ -38,7 +38,7 @@ defmodule Arcana.Migration.UniqueIndex do
   defp converge_existing!(repo, name, table, columns, prefix, qualify) do
     case describe(repo, name, table, prefix) do
       nil ->
-        create_absent!(repo, name, table, columns, prefix, qualify)
+        create_absent!(repo, name, table, columns, qualify)
 
       %{
         unique: true,
@@ -51,7 +51,7 @@ defmodule Arcana.Migration.UniqueIndex do
         :ok
 
       existing ->
-        rebuild!(repo, name, table, columns, existing, prefix, qualify)
+        rebuild!(repo, name, table, columns, existing, qualify)
     end
   end
 
@@ -114,10 +114,10 @@ defmodule Arcana.Migration.UniqueIndex do
   # Postgrex.Error unique violation rather than the explanation this module
   # promises - and a table whose index was manually dropped is exactly the
   # kind of drifted install adoption exists to handle.
-  defp create_absent!(repo, name, table, columns, prefix, qualify) do
+  defp create_absent!(repo, name, table, columns, qualify) do
     lock!(repo, table, qualify)
 
-    case duplicates(repo, table, columns, prefix, qualify) do
+    case duplicates(repo, table, columns, qualify) do
       [] ->
         create!(repo, name, table, columns, qualify)
 
@@ -126,10 +126,10 @@ defmodule Arcana.Migration.UniqueIndex do
     end
   end
 
-  defp rebuild!(repo, name, table, columns, existing, prefix, qualify) do
+  defp rebuild!(repo, name, table, columns, existing, qualify) do
     lock!(repo, table, qualify)
 
-    case duplicates(repo, table, columns, prefix, qualify) do
+    case duplicates(repo, table, columns, qualify) do
       [] ->
         repo.query!("DROP INDEX #{qualify.(name)}")
         create!(repo, name, table, columns, qualify)
@@ -200,7 +200,7 @@ defmodule Arcana.Migration.UniqueIndex do
   # any key column never collide and must not count as duplicates here - a
   # GROUP BY would otherwise group them together and block a migration that
   # would in fact succeed.
-  defp duplicates(repo, table, columns, prefix, qualify) do
+  defp duplicates(repo, table, columns, qualify) do
     cols = Enum.map_join(columns, ", ", &quoted/1)
     not_null = Enum.map_join(columns, " AND ", &(quoted(&1) <> " IS NOT NULL"))
 
