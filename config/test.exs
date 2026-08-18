@@ -56,7 +56,21 @@ config :arcana, Arcana.TestRepo,
   queue_target: 30_000,
   queue_interval: 30_000,
   priv: "priv/test_repo",
-  types: Arcana.PostgrexTypes
+  types: Arcana.PostgrexTypes,
+  # Sandboxed tests roll back, but the pages they touched stay, so
+  # arcana_chunks grows physically during a run. The planner sizes a table from
+  # its current block count rather than from stats, so past a few hundred pages
+  # `ORDER BY embedding <=> $1 LIMIT n` flips from a seq scan to an HNSW index
+  # scan - with pg_class.relpages still reading 0 and no ANALYZE involved.
+  # That scan then takes hnsw.ef_search (40) candidates before checking
+  # visibility, and async tests keep thousands of uncommitted rows in the index
+  # at distance ~0, so every candidate is invisible to the querying transaction
+  # and search returns zero rows for data it can plainly see.
+  #
+  # At test row counts a clean heap seq-scans anyway, so nothing here needs an
+  # index scan to be correct or fast. Real index behaviour is exercised against
+  # a production-sized table, not this suite.
+  parameters: [enable_indexscan: "off"]
 
 config :arcana, ArcanaWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
