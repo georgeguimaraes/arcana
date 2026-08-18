@@ -76,4 +76,17 @@ defmodule Arcana.VectorStore.HnswIndexDefinitionTest do
 
     assert healthy, "#{@index} exists but is not valid and ready, so nothing will use it"
   end
+
+  test "test connections plan without index scans" do
+    # The other half of the guard. Everything above checks the index is still
+    # right; this checks the setting that keeps the suite from planning against
+    # it. Drop `parameters: [enable_indexscan: "off"]` from config/test.exs and
+    # the zero-results flake comes back with nothing else failing, because the
+    # only symptom is a search returning nothing under bloat that no assertion
+    # here would attribute to the planner.
+    %{rows: [[setting]]} = SQL.query!(Repo, "SHOW enable_indexscan", [])
+
+    assert setting == "off",
+           "test connections must not plan index scans (see config/test.exs), got: #{setting}"
+  end
 end
