@@ -137,8 +137,8 @@ defmodule Arcana.SearchResultTest do
       # The contract is one-directional: to_map/1 must not expose keys beyond
       # this set. Adding a field to the struct does not fail this test, and
       # should not - to_map/1 lists its keys, so a new field stays private
-      # until someone adds it here on purpose. What this catches is that
-      # edit: widening to_map/1 without widening the documented set.
+      # until someone adds it here on purpose. What this catches is widening
+      # to_map/1 without widening the documented set.
       documented =
         MapSet.new([
           :id,
