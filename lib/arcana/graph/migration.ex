@@ -284,7 +284,7 @@ defmodule Arcana.Graph.Migration do
         requested,
         Arcana.Graph.Migration,
         "arcana_graph_entities",
-        qualify("arcana_graph_entities", prefix),
+        prefix,
         """
         alter the column yourself and re-extract. Note
         `mix arcana.gen.embedding_migration` will not help here: it only

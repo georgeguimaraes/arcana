@@ -294,7 +294,7 @@ defmodule Arcana.Migration do
         requested,
         Arcana.Migration,
         "arcana_chunks",
-        qualify("arcana_chunks", prefix),
+        prefix,
         """
         resize the column deliberately with
         `mix arcana.gen.embedding_migration` and re-embed.

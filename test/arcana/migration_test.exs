@@ -542,6 +542,37 @@ defmodule Arcana.MigrationTest do
       assert rule == "r", "the FK convergence has to reach a quote-bearing schema too"
     end
 
+    test "a dimension mismatch is caught in a schema whose name contains a dot" do
+      # The verifier used to rebuild the prefix by splitting the qualified
+      # name on ".", so a dotted schema resolved to the wrong one and a
+      # contradicting dimension slipped through.
+      prefix = "ten.ant"
+      on_exit(fn -> SQL.query!(Repo, ~s(DROP SCHEMA IF EXISTS "ten.ant" CASCADE), []) end)
+
+      migrate(Arcana.Migration, dimensions: 384, prefix: prefix)
+
+      %{rows: [[declared]]} =
+        SQL.query!(
+          Repo,
+          "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a " <>
+            "JOIN pg_class c ON c.oid = a.attrelid " <>
+            "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
+            "WHERE c.relname = 'arcana_chunks' AND a.attname = 'embedding' " <>
+            "AND a.attnum > 0 AND n.nspname = $1",
+          [prefix]
+        )
+
+      assert declared == "vector(384)"
+
+      err =
+        assert_raise ArgumentError, fn ->
+          migrate(Arcana.Migration, dimensions: 1024, prefix: prefix)
+        end
+
+      assert err.message =~ "already vector(384)",
+             "the dotted schema was not inspected, so the mismatch was missed"
+    end
+
     test "the graph stream honors the prefix too" do
       SQL.query!(Repo, ~s(DROP SCHEMA IF EXISTS "tenant_b" CASCADE), [])
       on_exit(fn -> SQL.query!(Repo, ~s(DROP SCHEMA IF EXISTS "tenant_b" CASCADE), []) end)

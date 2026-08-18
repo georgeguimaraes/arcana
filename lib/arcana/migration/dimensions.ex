@@ -62,7 +62,7 @@ defmodule Arcana.Migration.Dimensions do
   Reads the catalog rather than the embedder, so it costs one query and does
   not drag a model load into the migration.
   """
-  def verify!(repo, requested, module, table, qualified, remedy) do
+  def verify!(repo, requested, module, table, prefix, remedy) do
     %{rows: rows} =
       repo.query!(
         "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a " <>
@@ -71,7 +71,7 @@ defmodule Arcana.Migration.Dimensions do
           "WHERE c.relname = $1 AND a.attname = 'embedding' " <>
           "AND a.attnum > 0 AND NOT a.attisdropped " <>
           "AND n.nspname = COALESCE($2, current_schema())",
-        [table, prefix_of(qualified)]
+        [table, prefix]
       )
 
     with [[declared]] when is_binary(declared) <- rows,
@@ -92,14 +92,5 @@ defmodule Arcana.Migration.Dimensions do
     end
 
     :ok
-  end
-
-  # The caller hands over the qualified name it already built; the prefix is
-  # recovered from it so the signature stays small.
-  defp prefix_of(qualified) do
-    case String.split(qualified, ".") do
-      [_table] -> nil
-      [prefix | _] -> String.trim(prefix, ~s("))
-    end
   end
 end
