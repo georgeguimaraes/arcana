@@ -106,17 +106,17 @@ defmodule Arcana.Migration do
     # this database is already at the target and there is nothing to apply.
     verify_embedding_dimensions!(require_dimensions!(opts), prefix)
 
+    # Before the version steps: nothing here purges duplicates, so the
+    # preflight has to beat change(1, :up, _)'s create_if_not_exists to explain
+    # them rather than let Postgres raise a bare unique violation. The graph
+    # module orders its mentions index the other way, and says why.
+    converge_unique_indexes!(prefix)
+
     if current < target do
       maybe_create_schema(prefix, opts)
       for version <- (current + 1)..target//1, do: change(version, :up, opts)
       record_version(target, prefix)
     end
-
-    # After the version steps, not before: those steps purge the duplicate rows
-    # a unique index cannot coexist with, and converging first refused the
-    # migration over duplicates it was about to clean. Still outside the
-    # comparison, so a database already at the target gets repaired too.
-    converge_unique_indexes!(prefix)
 
     :ok
   end

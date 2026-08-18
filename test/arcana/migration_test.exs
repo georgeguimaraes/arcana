@@ -210,8 +210,9 @@ defmodule Arcana.MigrationTest do
   end
 
   # A mention pair needs a real entity and chunk behind it, and the chunk needs
-  # a document. The two rows differ only in inserted_at, so the dedup has an
-  # unambiguous oldest row to keep.
+  # a document. The two rows differ in inserted_at, so the dedup has an
+  # unambiguous oldest row to keep, and in context, so a test can tell which
+  # one survived.
   defp seed_duplicate_mentions do
     %{rows: [[doc]]} =
       SQL.query!(
@@ -677,6 +678,21 @@ defmodule Arcana.MigrationTest do
       assert_raise Postgrex.Error, fn ->
         SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup')", [])
       end
+    end
+
+    test "adopting from version 0 explains duplicates instead of failing raw" do
+      # Nothing purges duplicate collection names, so the preflight has to run
+      # before change(1, :up, _) creates the unique index. Ordered the other way
+      # round, Postgres raised a bare unique violation from create_if_not_exists
+      # and the explanation never got a chance to run.
+      create_collections_table()
+      SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup'), ('dup')", [])
+      assert Arcana.Migration.recorded_version(Repo) == 0
+
+      err = assert_raise RuntimeError, fn -> migrate(Arcana.Migration) end
+
+      assert err.message =~ "can't add the unique index arcana_collections_name_index"
+      assert err.message =~ ~s(["dup"])
     end
 
     test "a missing index over duplicates is refused with an explanation" do
