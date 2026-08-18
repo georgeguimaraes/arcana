@@ -53,7 +53,8 @@ if Code.ensure_loaded?(Igniter) do
         example: "mix arcana.install",
         schema: [
           dashboard: :boolean,
-          repo: :string
+          repo: :string,
+          dimensions: :integer
         ],
         defaults: [dashboard: true],
         aliases: []
@@ -85,7 +86,7 @@ if Code.ensure_loaded?(Igniter) do
       {existing_types, unparsable_config} = existing_types_module(igniter, app_name, repo_module)
 
       igniter
-      |> create_migration(repo_module)
+      |> create_migration(repo_module, resolve_dimensions(opts[:dimensions]))
       |> setup_postgrex_types(existing_types, app_name, repo_module, types_module)
       |> maybe_warn_unparsable(unparsable_lib ++ unparsable_config)
       |> maybe_add_dashboard_route(opts[:dashboard], web_module)
@@ -124,24 +125,31 @@ if Code.ensure_loaded?(Igniter) do
       """)
     end
 
-    defp create_migration(igniter, repo_module) do
+    defp create_migration(igniter, repo_module, dimensions) do
       migrations_path = Arcana.MixHelpers.migrations_path(repo_module)
       timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
       filename = "#{timestamp}_add_arcana.exs"
       path = Path.join(migrations_path, filename)
 
-      Igniter.create_new_file(igniter, path, migration_contents(repo_module))
+      Igniter.create_new_file(igniter, path, migration_contents(repo_module, dimensions))
     end
 
     # The migration delegates instead of spelling out DDL. Arcana owns one
     # definition of its schema and a version history; upgrading is another
     # migration calling up/1 again, not a hand-written diff.
-    defp migration_contents(repo_module) do
+    # Mirrors mix arcana.graph.install: the dimension is detected from the
+    # configured embedder and written into the migration, so the generated
+    # file states the number rather than relying on a default that could
+    # disagree with the embedder actually in use.
+    defp resolve_dimensions(nil), do: Arcana.MixHelpers.detect_dimensions!()
+    defp resolve_dimensions(given), do: Arcana.MixHelpers.validate_dimensions!(given)
+
+    defp migration_contents(repo_module, dimensions) do
       """
       defmodule #{inspect(repo_module)}.Migrations.AddArcana do
         use Ecto.Migration
 
-        def up, do: Arcana.Migration.up()
+        def up, do: Arcana.Migration.up(dimensions: #{dimensions})
 
         def down, do: Arcana.Migration.down()
       end
@@ -675,7 +683,10 @@ else
 
     @impl Mix.Task
     def run(args) do
-      {opts, _, _} = OptionParser.parse(args, strict: [repo: :string])
+      # parse/2 reports a malformed value in its third element and leaves the
+      # key absent, so `--dimensions abc` would silently fall through to
+      # auto-detection. parse!/2 refuses instead.
+      {opts, _} = OptionParser.parse!(args, strict: [repo: :string, dimensions: :integer])
 
       # Load the host app's config so the repo's `:priv`, if it has one, is
       # visible to Arcana.MixHelpers.migrations_path/1.
@@ -690,7 +701,7 @@ else
       filename = "#{timestamp}_add_arcana.exs"
       path = Path.join(migrations_path, filename)
 
-      content = migration_contents(Module.concat([repo]))
+      content = migration_contents(Module.concat([repo]), resolve_dimensions(opts[:dimensions]))
 
       create_file(path, content)
 
@@ -766,12 +777,19 @@ else
       end
     end
 
-    defp migration_contents(repo_module) do
+    # Mirrors mix arcana.graph.install: the dimension is detected from the
+    # configured embedder and written into the migration, so the generated
+    # file states the number rather than relying on a default that could
+    # disagree with the embedder actually in use.
+    defp resolve_dimensions(nil), do: Arcana.MixHelpers.detect_dimensions!()
+    defp resolve_dimensions(given), do: Arcana.MixHelpers.validate_dimensions!(given)
+
+    defp migration_contents(repo_module, dimensions) do
       """
       defmodule #{inspect(repo_module)}.Migrations.AddArcana do
         use Ecto.Migration
 
-        def up, do: Arcana.Migration.up()
+        def up, do: Arcana.Migration.up(dimensions: #{dimensions})
 
         def down, do: Arcana.Migration.down()
       end

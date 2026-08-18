@@ -58,8 +58,9 @@ defmodule Arcana.Graph.Migration do
 
   use Ecto.Migration
 
+  alias Arcana.Migration.Dimensions
+
   @current_version 1
-  @default_dimensions 384
 
   @version_table "arcana_graph_entities"
 
@@ -73,6 +74,10 @@ defmodule Arcana.Graph.Migration do
     prefix = Keyword.get(opts, :prefix)
     current = recorded_version(repo(), prefix: prefix)
     validate_recorded!(current)
+
+    # Before the version comparison, so a wrong number is caught even when
+    # this database is already at the target and there is nothing to apply.
+    verify_embedding_dimensions!(require_dimensions!(opts), prefix)
 
     if current < target do
       maybe_create_schema(prefix, opts)
@@ -272,6 +277,27 @@ defmodule Arcana.Graph.Migration do
     :ok
   end
 
+  defp verify_embedding_dimensions!(requested, prefix) do
+    execute(fn ->
+      Dimensions.verify!(
+        repo(),
+        requested,
+        Arcana.Graph.Migration,
+        "arcana_graph_entities",
+        prefix,
+        """
+        alter the column yourself and re-extract. Note
+        `mix arcana.gen.embedding_migration` will not help here: it only
+        resizes arcana_chunks.embedding.
+        """
+      )
+    end)
+  end
+
+  defp require_dimensions!(opts) do
+    Dimensions.require!(opts, Arcana.Graph.Migration, "arcana_graph_entities")
+  end
+
   defp validate_target!(target) when is_integer(target) and target >= 1 do
     if target > @current_version do
       raise ArgumentError,
@@ -306,7 +332,7 @@ defmodule Arcana.Graph.Migration do
   # === Version 1 ===
 
   defp change(1, :up, opts) do
-    dimensions = Keyword.get(opts, :dimensions, @default_dimensions)
+    dimensions = require_dimensions!(opts)
     prefix = Keyword.get(opts, :prefix)
 
     execute("CREATE EXTENSION IF NOT EXISTS vector")

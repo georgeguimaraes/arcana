@@ -20,13 +20,14 @@ upgrading later is another migration calling `up/1` again:
 defmodule MyApp.Repo.Migrations.AddArcana do
   use Ecto.Migration
 
-  def up, do: Arcana.Migration.up()
+  def up, do: Arcana.Migration.up(dimensions: 384)
 
   def down, do: Arcana.Migration.down()
 end
 ```
 
-`up/1` takes `:dimensions` when your embedder isn't 384-dimensional, and
+`up/1` requires `:dimensions`, which `mix arcana.install` fills in from your
+configured embedder. It also takes
 `:prefix` to install into a Postgres schema of its own. Installs predating
 versioned migrations converge by running it: version 1 creates only what is
 absent and adds only what a later release introduced, without dropping

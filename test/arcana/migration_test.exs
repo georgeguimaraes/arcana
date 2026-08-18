@@ -8,6 +8,8 @@ defmodule Arcana.MigrationTest do
   """
   use ExUnit.Case, async: false
 
+  doctest Arcana.Migration.Dimensions
+
   alias Arcana.MigrationRepo, as: Repo
   alias Ecto.Adapters.Postgres
   alias Ecto.Adapters.SQL
@@ -58,7 +60,12 @@ defmodule Arcana.MigrationTest do
     :ok
   end
 
-  defp migrate(module, opts \\ []), do: run(module, :up, opts)
+  # up/1 requires :dimensions now. These tests are about versioning, not the
+  # number, so the helper supplies one unless a test cares.
+  defp migrate(module, opts \\ []) do
+    run(module, :up, Keyword.put_new(opts, :dimensions, 384))
+  end
+
   defp migrate_down(module, opts), do: run(module, :down, opts)
 
   # Ecto.Migration's DSL only works inside a running migration, and the
@@ -111,6 +118,22 @@ defmodule Arcana.MigrationTest do
       )
 
     List.flatten(rows)
+  end
+
+  defp embedding_type(table) do
+    %{rows: rows} =
+      SQL.query!(
+        Repo,
+        "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a " <>
+          "JOIN pg_class c ON c.oid = a.attrelid " <>
+          "WHERE c.relname = $1 AND a.attname = 'embedding' AND a.attnum > 0",
+        [table]
+      )
+
+    case rows do
+      [[t]] -> t
+      _ -> nil
+    end
   end
 
   defp columns(table) do
@@ -375,6 +398,48 @@ defmodule Arcana.MigrationTest do
       refute "arcana_documents" in tables()
     end
 
+    test "up/1 requires :dimensions" do
+      err =
+        assert_raise ArgumentError, fn ->
+          run(Arcana.Migration, :up, [])
+        end
+
+      assert err.message =~ "requires :dimensions"
+      assert err.message =~ "Arcana.Embedder.dimensions"
+      assert embedding_type("arcana_chunks") == nil, "nothing should be created"
+    end
+
+    for bad <- [0, -1, "384", 384.0] do
+      test "up/1 rejects dimensions: #{inspect(bad)}" do
+        assert_raise ArgumentError, ~r/:dimensions must be a positive integer/, fn ->
+          run(Arcana.Migration, :up, dimensions: unquote(bad))
+        end
+      end
+    end
+
+    test "a dimension contradicting an existing column is refused, not ignored" do
+      migrate(Arcana.Migration, dimensions: 384)
+      assert embedding_type("arcana_chunks") == "vector(384)"
+
+      # create_if_not_exists leaves the table alone, so without the check this
+      # would report success and silently keep 384 while a fresh database
+      # built from the same migration would get 1024.
+      err =
+        assert_raise ArgumentError, fn ->
+          migrate(Arcana.Migration, dimensions: 1024)
+        end
+
+      assert err.message =~ "already vector(384)"
+      assert err.message =~ "Pass dimensions: 384"
+      assert embedding_type("arcana_chunks") == "vector(384)", "column must be untouched"
+    end
+
+    test "re-running with the matching dimension is fine" do
+      migrate(Arcana.Migration, dimensions: 384)
+      assert :ok = migrate(Arcana.Migration, dimensions: 384)
+      assert embedding_type("arcana_chunks") == "vector(384)"
+    end
+
     test "refuses to run against a database a newer release migrated" do
       migrate(Arcana.Migration)
 
@@ -477,6 +542,37 @@ defmodule Arcana.MigrationTest do
         )
 
       assert rule == "r", "the FK convergence has to reach a quote-bearing schema too"
+    end
+
+    test "a dimension mismatch is caught in a schema whose name contains a dot" do
+      # The verifier used to rebuild the prefix by splitting the qualified
+      # name on ".", so a dotted schema resolved to the wrong one and a
+      # contradicting dimension slipped through.
+      prefix = "ten.ant"
+      on_exit(fn -> SQL.query!(Repo, ~s(DROP SCHEMA IF EXISTS "ten.ant" CASCADE), []) end)
+
+      migrate(Arcana.Migration, dimensions: 384, prefix: prefix)
+
+      %{rows: [[declared]]} =
+        SQL.query!(
+          Repo,
+          "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a " <>
+            "JOIN pg_class c ON c.oid = a.attrelid " <>
+            "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
+            "WHERE c.relname = 'arcana_chunks' AND a.attname = 'embedding' " <>
+            "AND a.attnum > 0 AND n.nspname = $1",
+          [prefix]
+        )
+
+      assert declared == "vector(384)"
+
+      err =
+        assert_raise ArgumentError, fn ->
+          migrate(Arcana.Migration, dimensions: 1024, prefix: prefix)
+        end
+
+      assert err.message =~ "already vector(384)",
+             "the dotted schema was not inspected, so the mismatch was missed"
     end
 
     test "the graph stream honors the prefix too" do
