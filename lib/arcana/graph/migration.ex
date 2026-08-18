@@ -28,7 +28,8 @@ defmodule Arcana.Graph.Migration do
 
   Installs predating this module have graph tables but no recorded version.
   Version 1 converges them: it creates only what is absent and adds only the
-  columns and indexes a later release introduced. It never drops anything.
+  columns and indexes a later release introduced. The one thing it drops is a
+  unique index whose shape is wrong: see "What converge verifies" below.
 
   ## Where the version is recorded
 
@@ -48,6 +49,22 @@ defmodule Arcana.Graph.Migration do
 
   Comment on any other table freely. Only `arcana_graph_entities` is reserved.
 
+  ## What converge verifies
+
+  Adoption creates only what is absent, so most objects are checked by name
+  alone. Three are verified against the catalog and corrected when they
+  differ, because being merely present isn't enough:
+
+    * `arcana_documents.collection_id`'s delete rule, since older templates
+      emitted `ON DELETE SET NULL`
+    * the embedding column's dimension, which is compared against
+      `:dimensions` rather than altered
+    * the unique indexes on `arcana_graph_entities(name, collection_id)` and `arcana_graph_entity_mentions(entity_id, chunk_id)`, since `create_if_not_exists` matches on the index name and an
+      older template may have created one with a different shape
+
+  Everything else is create-if-absent. For the plain indexes that is
+  deliberate: a differing one costs performance, not correctness.
+
   ## Version history
 
     * 1 - entities, relationships, mentions and communities, including the
@@ -58,7 +75,10 @@ defmodule Arcana.Graph.Migration do
 
   use Ecto.Migration
 
+  require Logger
+
   alias Arcana.Migration.Dimensions
+  alias Arcana.Migration.UniqueIndex
 
   @current_version 1
 
@@ -78,6 +98,7 @@ defmodule Arcana.Graph.Migration do
     # Before the version comparison, so a wrong number is caught even when
     # this database is already at the target and there is nothing to apply.
     verify_embedding_dimensions!(require_dimensions!(opts), prefix)
+    converge_unique_indexes!(prefix)
 
     if current < target do
       maybe_create_schema(prefix, opts)
@@ -290,6 +311,30 @@ defmodule Arcana.Graph.Migration do
         `mix arcana.gen.embedding_migration` will not help here: it only
         resizes arcana_chunks.embedding.
         """
+      )
+    end)
+  end
+
+  # Run from up/1 rather than inside change(1, :up, _): that clause is skipped
+  # once the recorded version already equals the target, so a database that
+  # adopted v1 while still carrying a wrong-shaped legacy index would never
+  # have been repaired.
+  defp converge_unique_indexes!(prefix) do
+    execute(fn ->
+      UniqueIndex.converge!(
+        repo(),
+        "arcana_graph_entities",
+        ["name", "collection_id"],
+        prefix,
+        &qualify(&1, prefix)
+      )
+
+      UniqueIndex.converge!(
+        repo(),
+        "arcana_graph_entity_mentions",
+        ["entity_id", "chunk_id"],
+        prefix,
+        &qualify(&1, prefix)
       )
     end)
   end
