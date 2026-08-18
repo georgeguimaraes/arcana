@@ -23,7 +23,8 @@ defmodule Arcana.Migration do
       for the embedder you run, or storing a chunk fails. There is no
       default: the column can't be resized without rebuilding every vector
       in it, and a wrong guess stays invisible on a database that already
-      has the table. `mix arcana.install` detects it and writes it in
+      has the table. `mix arcana.install` detects it from your configured embedder and writes
+      it into the migration it generates
     * `:prefix` - Postgres schema to install into (defaults to the
       connection's current schema)
     * `:create_schema` - whether to create `:prefix` when it is missing

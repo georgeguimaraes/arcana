@@ -74,8 +74,14 @@ defmodule Arcana.Migration.Dimensions do
         [table, prefix]
       )
 
+    # pgvector has more than one sized type, so the match is not vector-only.
+    # Anything without a dimension is left alone rather than guessed at: an
+    # unsized `vector` column can't reach production here anyway, because
+    # creating the HNSW index on it fails with "column does not have
+    # dimensions" later in the same migration.
     with [[declared]] when is_binary(declared) <- rows,
-         [_, actual] <- Regex.run(~r/vector\((\d+)\)/, declared),
+         [_, actual] <-
+           Regex.run(~r/\A(?:vector|halfvec|sparsevec)\((\d+)\)\z/, String.trim(declared)),
          actual = String.to_integer(actual),
          true <- actual != requested do
       raise ArgumentError, """

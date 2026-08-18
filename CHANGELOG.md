@@ -13,8 +13,8 @@ search returns one shape in every mode, and the library no longer drags a
 machine-learning toolchain into apps that bring their own embedder.
 
 This is a major version. Read "Backwards incompatible changes" before
-upgrading, and note that how you install and upgrade the schema changes
-for everyone.
+upgrading. How you install and upgrade the schema changes for everyone, so
+read that part even if nothing else here applies to you.
 
 ### Enhancements
 
