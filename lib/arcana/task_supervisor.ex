@@ -6,16 +6,19 @@ defmodule Arcana.TaskSupervisor do
   lives under the `ArcanaWeb` namespace now. Update your children list to
   `ArcanaWeb.TaskSupervisor`.
 
-  Two things carried the old name, and both keep working for the deprecation
-  window:
+  Two things carried the old name. Only the first one still works:
 
-    * listing this module in a supervision tree, via `child_spec/1` here
+    * listing this module in a supervision tree, via `child_spec/1` here,
+      which keeps working for the deprecation window
     * `Task.Supervisor.start_child(Arcana.TaskSupervisor, fun)`, which
       resolves the atom as a registered process name rather than calling
-      anything on this module
+      anything on this module, and **does not work and cannot be made to**
 
-  The second **does not work and cannot be made to**. A process may hold only
-  one registered name, so the supervisor cannot answer to this one as well:
+  A process may hold only one registered name, and the supervisor already
+  holds the new one, so it cannot answer to the old one as well:
+
+      Process.register(pid, ArcanaWeb.TaskSupervisor)
+      true
 
       Process.register(pid, Arcana.TaskSupervisor)
       ** (ArgumentError) could not register #PID<...> ... it has already been
