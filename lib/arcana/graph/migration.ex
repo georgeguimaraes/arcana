@@ -107,7 +107,9 @@ defmodule Arcana.Graph.Migration do
   # Version 0 means "no marker found", which covers two different states:
   # nothing is installed, or the tables are there and the marker isn't -
   # either clobbered by a host comment, or never written because the install
-  # predates versioning. `arcana_graph_entities` existing tells them apart.
+  # predates versioning. Any table this module owns still being present
+  # tells them apart - not just the version table, which can be the one
+  # that's missing while its siblings remain.
   #
   # Only the first is safe to answer by doing nothing. In the others the
   # operator asked to remove tables that are really there, and silently
