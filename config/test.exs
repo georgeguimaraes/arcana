@@ -63,9 +63,11 @@ config :arcana, Arcana.TestRepo,
   # `ORDER BY embedding <=> $1 LIMIT n` flips from a seq scan to an HNSW index
   # scan - with pg_class.relpages still reading 0 and no ANALYZE involved.
   # That scan then takes hnsw.ef_search (40) candidates before checking
-  # visibility, and async tests keep thousands of uncommitted rows in the index
-  # at distance ~0, so every candidate is invisible to the querying transaction
-  # and search returns zero rows for data it can plainly see.
+  # visibility, and the suite leaves hundreds to thousands of invisible entries
+  # in that index at distance ~0 - rolled back, since rollback does not remove
+  # an HNSW entry, or in flight from a concurrent async test. So every candidate
+  # is invisible to the querying transaction and search returns zero rows for
+  # data it can plainly see.
   #
   # At test row counts a clean heap seq-scans anyway, so no test here needs an
   # index scan to be correct or fast: this makes explicit what was already true

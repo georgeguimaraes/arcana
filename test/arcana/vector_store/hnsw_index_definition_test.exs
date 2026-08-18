@@ -52,11 +52,32 @@ defmodule Arcana.VectorStore.HnswIndexDefinitionTest do
 
       case unquote(predicate) do
         nil ->
-          :ok
+          # Not just "no predicate asserted" - assert there is none. A partial
+          # index cannot serve an unpredicated query at all, so one copy-pasted
+          # onto this index would take it out of the search path silently.
+          refute indexdef =~ " WHERE ",
+                 "this index must cover every row, got: #{indexdef}"
 
         pred ->
           assert indexdef =~ pred, "expected the partial predicate #{pred}, got: #{indexdef}"
       end
+
+      # Shape alone is not health. pg_indexes has no validity predicate and
+      # pg_get_indexdef renders an invalid index identically to a live one, but
+      # the planner refuses it outright - so an interrupted CREATE INDEX
+      # CONCURRENTLY would leave searches seq-scanning with this test green.
+      # Arcana.Migration converges exactly this state (see the "an invalid index
+      # of the right shape is rebuilt" case in migration_test.exs), so it has to
+      # be checked here too. Safe to cast to regclass: the assertion above has
+      # already established the index exists.
+      %{rows: [[valid]]} =
+        SQL.query!(
+          Repo,
+          "SELECT indisvalid AND indisready FROM pg_index WHERE indexrelid = $1::text::regclass",
+          [unquote(index)]
+        )
+
+      assert valid, "#{unquote(index)} exists but is not valid and ready, so nothing will use it"
     end
   end
 end
