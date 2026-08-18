@@ -82,8 +82,6 @@ defmodule Arcana.Migration do
 
   use Ecto.Migration
 
-  require Logger
-
   alias Arcana.Migration.Dimensions
   alias Arcana.Migration.UniqueIndex
 
