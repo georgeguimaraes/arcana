@@ -589,6 +589,31 @@ defmodule Arcana.MigrationTest do
       assert_raise Postgrex.Error, fn -> SQL.query!(Repo, insert, []) end
     end
 
+    test "a missing index over duplicates is refused with an explanation" do
+      # The rebuild path checks for duplicates first, but an index that is
+      # absent entirely went straight to CREATE UNIQUE INDEX, so a table whose
+      # index was manually dropped produced a raw Postgrex unique violation
+      # instead of the refusal this migration promises.
+      migrate(Arcana.Migration)
+      SQL.query!(Repo, "DROP INDEX arcana_collections_name_index", [])
+
+      insert =
+        "INSERT INTO arcana_collections (id, name, inserted_at, updated_at) " <>
+          "VALUES (gen_random_uuid(), $1, now(), now())"
+
+      SQL.query!(Repo, insert, ["dup"])
+      SQL.query!(Repo, insert, ["dup"])
+
+      err = assert_raise RuntimeError, fn -> migrate(Arcana.Migration) end
+
+      assert err.message =~ "can't add the unique index arcana_collections_name_index"
+      assert err.message =~ "It is missing, so nothing enforced uniqueness"
+      assert err.message =~ ~s(["dup"])
+
+      refute index_identity("arcana_collections_name_index"),
+             "the refusal must not leave a half-built index behind"
+    end
+
     test "rows with a NULL key column do not count as duplicates" do
       # Postgres treats NULLs as distinct in a unique index, so these never
       # collide and must not block the migration.

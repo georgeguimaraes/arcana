@@ -38,7 +38,7 @@ defmodule Arcana.Migration.UniqueIndex do
   defp converge_existing!(repo, name, table, columns, prefix, qualify) do
     case describe(repo, name, table, prefix) do
       nil ->
-        create!(repo, name, table, columns, qualify)
+        create_absent!(repo, name, table, columns, prefix, qualify)
 
       %{
         unique: true,
@@ -74,6 +74,9 @@ defmodule Arcana.Migration.UniqueIndex do
   defp describe(repo, name, table, prefix) do
     %{rows: rows} =
       repo.query!(
+        # Group by the boolean, not by indpred itself: grouping a
+        # pg_node_tree only works because it is implicitly binary-coercible
+        # to text, which is not a guarantee worth leaning on.
         "SELECT i.indisunique, i.indpred IS NOT NULL, " <>
           "0 = ANY(i.indkey::int2[]), i.indisvalid, i.indisready, " <>
           "array_agg(a.attname::text ORDER BY k.ord) " <>
@@ -85,7 +88,8 @@ defmodule Arcana.Migration.UniqueIndex do
           "LEFT JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = k.attnum " <>
           "WHERE ic.relname = $1 AND tc.relname = $2 " <>
           "AND n.nspname = COALESCE($3, current_schema()) " <>
-          "GROUP BY i.indisunique, i.indpred, i.indkey, i.indisvalid, i.indisready",
+          "GROUP BY i.indisunique, i.indpred IS NOT NULL, i.indkey, " <>
+          "i.indisvalid, i.indisready",
         [name, table, prefix]
       )
 
@@ -105,6 +109,21 @@ defmodule Arcana.Migration.UniqueIndex do
     end
   end
 
+  # An index that is missing entirely needs the same duplicate check the
+  # rebuild path does. Without it the CREATE below surfaces a raw
+  # Postgrex.Error unique violation rather than the explanation this module
+  # promises - and a table whose index was manually dropped is exactly the
+  # kind of drifted install adoption exists to handle.
+  defp create_absent!(repo, name, table, columns, prefix, qualify) do
+    case duplicates(repo, table, columns, prefix, qualify) do
+      [] ->
+        create!(repo, name, table, columns, qualify)
+
+      dupes ->
+        refuse!(name, table, columns, dupes, "It is missing, so nothing enforced uniqueness")
+    end
+  end
+
   defp rebuild!(repo, name, table, columns, existing, prefix, qualify) do
     case duplicates(repo, table, columns, prefix, qualify) do
       [] ->
@@ -117,20 +136,29 @@ defmodule Arcana.Migration.UniqueIndex do
         """)
 
       dupes ->
-        raise """
-        Arcana can't add the unique index #{name} on #{table}.
-
-        It already exists as #{shape(existing)}, so it never enforced \
-        uniqueness, and these #{inspect(columns)} values are duplicated as a \
-        result:
-
-        #{Enum.map_join(dupes, "\n", fn row -> "    " <> inspect(row) end)}
-
-        Nothing was changed. Resolve the duplicates and run the migration \
-        again. Arcana won't delete them for you: on this table that cascades \
-        to rows it does not own.
-        """
+        refuse!(
+          name,
+          table,
+          columns,
+          dupes,
+          "It already exists as #{shape(existing)}, so it never enforced uniqueness"
+        )
     end
+  end
+
+  defp refuse!(name, table, columns, dupes, cause) do
+    raise """
+    Arcana can't add the unique index #{name} on #{table}.
+
+    #{cause}, and these #{inspect(columns)} values are duplicated as a \
+    result:
+
+    #{Enum.map_join(dupes, "\n", fn row -> "    " <> inspect(row) end)}
+
+    Nothing was changed. Resolve the duplicates and run the migration \
+    again. Arcana won't delete them for you: on this table that cascades \
+    to rows it does not own.
+    """
   end
 
   # Only creates when absent, so this is safe to call on the no-index path and
