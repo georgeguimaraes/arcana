@@ -72,10 +72,12 @@ config :arcana, Arcana.TestRepo,
   # and stops bloat from flipping it mid-run. The index itself is untouched, so
   # the schema still matches migration output.
   #
-  # It does mean nothing would notice the shipped index breaking, so
-  # test/arcana/vector_store/pgvector_index_path_test.exs re-enables index scans
-  # on its own connection, asserts the plan really is an HNSW index scan, and
-  # checks the results. That file is the only index-path coverage there is.
+  # It does mean nothing would notice the shipped indexes breaking, so
+  # test/arcana/vector_store/hnsw_index_definition_test.exs asserts both HNSW
+  # index definitions against the catalog. It checks the definitions rather than
+  # query results, because forcing an index scan against the shared index means
+  # querying through every other test's leftover entries - which is this same
+  # flake. That file says why in more detail.
   parameters: [enable_indexscan: "off"]
 
 config :arcana, ArcanaWeb.Endpoint,
