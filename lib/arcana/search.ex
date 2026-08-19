@@ -169,7 +169,8 @@ defmodule Arcana.Search do
         vector_weight: Keyword.get(opts, :vector_weight, 0.5),
         keyword_weight: Keyword.get(opts, :keyword_weight, 0.5),
         id_by_name: id_by_name,
-        # Original opts so backends can pick up any extra knobs (e.g. :hnsw_ef_search)
+        # Original opts so backends can pick up their own knobs, such as
+        # :hnsw_ef_search for pgvector
         opts: opts
       }
 

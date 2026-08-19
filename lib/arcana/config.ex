@@ -70,7 +70,7 @@ defmodule Arcana.Config do
         vector_weight: 0.5,         # for hybrid mode
         keyword_weight: 0.5,        # for hybrid mode
         rewriter: &MyApp.rewrite/1, # query rewriter function
-        # plus any backend-specific opts (e.g. :hnsw_ef_search for pgvector)
+        hnsw_ef_search: 100,       # pgvector only, see Arcana.VectorStore.Pgvector
       ]
 
   ## Ask Defaults
