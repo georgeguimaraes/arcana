@@ -56,16 +56,32 @@ jobs:
             exit 0
           fi
 
-          for attempt in 1 2 3; do
-            if timeout 90 sudo apt-get update &&
-               timeout 120 sudo apt-get install -y --no-install-recommends cmake poppler-utils; then
+          # Two attempts at 60s + 90s plus one 10s sleep is 310s worst case,
+          # inside the 6 minute step timeout above - so the error below always
+          # gets to print. Three attempts would not fit, and the runner killing
+          # the step swallows the diagnostic.
+          for attempt in 1 2; do
+            status=0
+            timeout 60 sudo apt-get update &&
+              timeout 90 sudo apt-get install -y --no-install-recommends cmake poppler-utils ||
+              status=$?
+
+            if [ "$status" -eq 0 ]; then
               exit 0
             fi
-            echo "::warning::apt attempt $attempt did not finish, retrying"
+
+            # 124 is timeout(1) killing a stalled call; anything else is apt
+            # itself refusing, which needs reading rather than retrying.
+            if [ "$status" -eq 124 ]; then
+              echo "::warning::apt attempt $attempt stalled and was killed, retrying"
+            else
+              echo "::warning::apt attempt $attempt failed with status $status, retrying"
+            fi
+
             sleep 10
           done
 
-          echo "::error::apt-get never completed after 3 attempts"
+          echo "::error::could not install cmake and poppler-utils. A stall is usually the Ubuntu mirror; the apt output above says which."
           exit 1
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
