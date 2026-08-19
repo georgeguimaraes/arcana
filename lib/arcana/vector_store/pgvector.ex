@@ -45,8 +45,14 @@ defmodule Arcana.VectorStore.Pgvector do
   round-trip. Set it per call on the searches that need the recall, rather than
   globally, if that matters to you.
 
-  Applies to `:vector` and `:hybrid` modes. `:keyword` never touches the vector
-  index, so it ignores the option.
+  Applies to the chunk search in `:vector` and `:hybrid` modes. `:keyword` never
+  touches the vector index, so it ignores the option.
+
+  It does not reach the graph paths. `Arcana.Graph.GraphStore.Ecto`'s entity
+  search runs its own filtered query against `arcana_graph_entities`' HNSW index,
+  so with `graph: true` (or `Arcana.ask/2`'s graph context) the chunk search
+  honours the option while the entity match can still under-return. Extending it
+  there is a separate change.
 
   ## Notes
 
@@ -506,22 +512,32 @@ defmodule Arcana.VectorStore.Pgvector do
     end
   end
 
+  # pgvector's own bound on hnsw.ef_search. Checked here rather than left to
+  # Postgres because out of range fails two different ways: on a connection that
+  # has already loaded pgvector it raises a bare Postgrex.Error, but on a fresh
+  # one set_config runs before the library loads, succeeds against a placeholder
+  # GUC, and is then silently reset to the default when the search query loads
+  # pgvector - so the search runs at default recall, which is the under-return
+  # this option exists to avoid. Nondeterministic per pooled connection.
+  @ef_search_range 1..1000
+
   @doc false
   def ef_search!(opts) do
     case Keyword.get(opts, :hnsw_ef_search) do
       nil ->
         nil
 
-      ef when is_integer(ef) and ef > 0 ->
+      ef when is_integer(ef) and ef in @ef_search_range ->
         ef
 
       other ->
         raise ArgumentError, """
-        :hnsw_ef_search must be a positive integer, got: #{inspect(other)}
+        :hnsw_ef_search must be an integer in #{inspect(@ef_search_range)}, got: #{inspect(other)}
 
         It is pgvector's hnsw.ef_search: how many candidates an index scan
         considers before filtering. Higher finds more of the true nearest
         neighbours on a filtered search, at the cost of more work per query.
+        pgvector rejects anything outside #{inspect(@ef_search_range)}.
         """
     end
   end

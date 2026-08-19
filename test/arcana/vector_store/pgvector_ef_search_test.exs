@@ -125,14 +125,32 @@ defmodule Arcana.VectorStore.PgvectorEfSearchTest do
       # on whether the name happened to exist.
       put_arcana_env(:strict_collections, true)
 
-      assert_raise ArgumentError, ~r/:hnsw_ef_search must be a positive integer/, fn ->
+      assert_raise ArgumentError, ~r/:hnsw_ef_search must be an integer in 1\.\.1000/, fn ->
         Pgvector.search("no-such-collection", @embedding, repo: Repo, hnsw_ef_search: -5)
+      end
+    end
+
+    test "accepts the top of pgvector's range" do
+      collection = seed("ef-max")
+
+      assert [_] = Pgvector.search(collection, @embedding, repo: Repo, hnsw_ef_search: 1000)
+      assert current_ef_search() == "1000"
+    end
+
+    test "rejects above pgvector's range instead of letting it degrade silently" do
+      # 1001+ is where it gets nasty: on a connection that has already loaded
+      # pgvector this raises a bare Postgrex.Error, but on a fresh one set_config
+      # succeeds against a placeholder GUC and is silently reset to the default
+      # when the query loads pgvector - so the search quietly runs at the recall
+      # this option was set to avoid.
+      assert_raise ArgumentError, ~r/must be an integer in 1\.\.1000/, fn ->
+        Pgvector.search("ef-too-big", @embedding, repo: Repo, hnsw_ef_search: 1001)
       end
     end
 
     for bad <- [0, -1, "100", 100.0] do
       test "rejects #{inspect(bad)}" do
-        assert_raise ArgumentError, ~r/:hnsw_ef_search must be a positive integer/, fn ->
+        assert_raise ArgumentError, ~r/:hnsw_ef_search must be an integer in 1\.\.1000/, fn ->
           Pgvector.search("ef-bad", @embedding, repo: Repo, hnsw_ef_search: unquote(bad))
         end
       end
