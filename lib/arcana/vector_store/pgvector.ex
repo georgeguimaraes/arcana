@@ -30,11 +30,20 @@ defmodule Arcana.VectorStore.Pgvector do
 
       config :arcana, search: [hnsw_ef_search: 200]
 
-  Two things worth knowing. It only applies when the planner actually chooses an
-  index scan - on a small table a sequential scan is exact and the setting is
-  irrelevant. And because `hnsw.ef_search` is a GUC, applying it means running
-  the search inside a transaction; if you already have one open, the setting
-  stays in effect for the rest of *your* transaction rather than just the search.
+  Three things worth knowing. It only applies when the planner actually chooses
+  an index scan - on a small table a sequential scan is exact and the setting is
+  irrelevant. Because `hnsw.ef_search` is a GUC, applying it means running the
+  search inside a transaction; if you already have one open, the setting stays in
+  effect for the rest of *your* transaction rather than just the search.
+
+  And it costs a round-trip. Setting it adds a transaction and one `set_config`
+  query per search, and `Arcana.search/2` searches each collection separately -
+  so a query over three collections pays it three times, and as a global default
+  it applies to every search. That is deliberate rather than hoisted up to wrap
+  the whole retrieval: retrieval also embeds the query, and holding a database
+  transaction open across a call to an embedding service is worse than an extra
+  round-trip. Set it per call on the searches that need the recall, rather than
+  globally, if that matters to you.
 
   Applies to `:vector` and `:hybrid` modes. `:keyword` never touches the vector
   index, so it ignores the option.
@@ -128,6 +137,11 @@ defmodule Arcana.VectorStore.Pgvector do
     threshold = Keyword.get(opts, :threshold, 0.0)
     source_id = Keyword.get(opts, :source_id)
 
+    # Validated before the collection is resolved: an unknown collection under
+    # strict mode returns early, and a bad option should be a bad option either
+    # way rather than depending on whether the name happens to exist.
+    ef_search = ef_search!(opts)
+
     case resolve_filter_collection_id(collection, repo, opts) do
       :unknown ->
         []
@@ -157,7 +171,7 @@ defmodule Arcana.VectorStore.Pgvector do
           |> maybe_filter_source_id(source_id)
           |> maybe_filter_collection_id(collection_id)
 
-        with_ef_search(repo, ef_search!(opts), fn -> repo.all(query) end)
+        with_ef_search(repo, ef_search, fn -> repo.all(query) end)
     end
   end
 
@@ -246,6 +260,7 @@ defmodule Arcana.VectorStore.Pgvector do
     vector_weight = Keyword.get(opts, :vector_weight, 0.5)
     keyword_weight = Keyword.get(opts, :keyword_weight, 0.5)
     threshold = Keyword.get(opts, :threshold, 0.0)
+    ef_search = ef_search!(opts)
 
     # Resolve the collection filter, converted to binary for raw SQL
     case resolve_filter_collection_id(collection, repo, opts) do
@@ -263,7 +278,7 @@ defmodule Arcana.VectorStore.Pgvector do
               binary_id
           end
 
-        with_ef_search(repo, ef_search!(opts), fn ->
+        with_ef_search(repo, ef_search, fn ->
           do_search_hybrid(collection_id, query_embedding, query_text, %{
             repo: repo,
             limit: limit,

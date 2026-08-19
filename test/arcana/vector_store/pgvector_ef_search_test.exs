@@ -119,6 +119,17 @@ defmodule Arcana.VectorStore.PgvectorEfSearchTest do
              "a global search default for :hnsw_ef_search never reached the backend"
     end
 
+    test "rejects a bad value even when the collection resolves to nothing" do
+      # Under strict mode an unknown collection returns early, so validating
+      # inside that branch meant the same bad option raised or didn't depending
+      # on whether the name happened to exist.
+      put_arcana_env(:strict_collections, true)
+
+      assert_raise ArgumentError, ~r/:hnsw_ef_search must be a positive integer/, fn ->
+        Pgvector.search("no-such-collection", @embedding, repo: Repo, hnsw_ef_search: -5)
+      end
+    end
+
     for bad <- [0, -1, "100", 100.0] do
       test "rejects #{inspect(bad)}" do
         assert_raise ArgumentError, ~r/:hnsw_ef_search must be a positive integer/, fn ->
