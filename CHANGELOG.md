@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased (3.0.0)
+## [3.0.0](https://github.com/georgeguimaraes/arcana/compare/v2.0.2...v3.0.0) (2026-08-19)
 
 Since v2.0.2, largely driven by feedback from a multi-tenant production
 adoption (#94). The headline is that collection scoping can now fail closed,
@@ -105,78 +105,6 @@ read that part even if nothing else here applies to you.
 ### Deprecations
 
   * [Arcana.TaskSupervisor] Renamed to `ArcanaWeb.TaskSupervisor`, since it only serves the dashboard's async operations. The old module still works as a supervision-tree child and starts the same process, with a deprecation warning
-
-## [3.0.0](https://github.com/georgeguimaraes/arcana/compare/v2.0.2...v3.0.0) (2026-08-19)
-
-
-### ⚠ BREAKING CHANGES
-
-* Require :dimensions on up/1 and refuse a contradicting one ([#153](https://github.com/georgeguimaraes/arcana/issues/153))
-* Versioned migrations for the core and graph schemas ([#135](https://github.com/georgeguimaraes/arcana/issues/135))
-* Community detection and summarization correctness ([#133](https://github.com/georgeguimaraes/arcana/issues/133))
-* General file parser registry and chunk source offsets ([#129](https://github.com/georgeguimaraes/arcana/issues/129))
-
-### Features
-
-* Add replace: true to ingest for atomic re-ingest by source_id ([#106](https://github.com/georgeguimaraes/arcana/issues/106)) ([7a8a32c](https://github.com/georgeguimaraes/arcana/commit/7a8a32ce41bd45429446f2c07e0dc81e7058d3f1))
-* Add SearchResult.to_map/1 and stop suggesting an impossible derive ([#155](https://github.com/georgeguimaraes/arcana/issues/155)) ([351c4ab](https://github.com/georgeguimaraes/arcana/commit/351c4ab42ed3f5b2a3b6a85a940c50bc709a16d7))
-* Fail-closed collection scoping, one result shape, release-safe LLM config ([#103](https://github.com/georgeguimaraes/arcana/issues/103)) ([9de6ddd](https://github.com/georgeguimaraes/arcana/commit/9de6ddd2036a761cb894d1933c6ce62393a7452e))
-* General file parser registry and chunk source offsets ([#129](https://github.com/georgeguimaraes/arcana/issues/129)) ([c37ffce](https://github.com/georgeguimaraes/arcana/commit/c37ffce1cf51e8bd0008678bf78908f7e752052b))
-* Host-provided collection scoping for the dashboard ([#126](https://github.com/georgeguimaraes/arcana/issues/126)) ([77e3dd5](https://github.com/georgeguimaraes/arcana/commit/77e3dd5a5ebe7ae1659c06f465cd57637b43579c))
-* Implement :hnsw_ef_search, which the docs already named ([#159](https://github.com/georgeguimaraes/arcana/issues/159)) ([4dbdc56](https://github.com/georgeguimaraes/arcana/commit/4dbdc569c4fd328d12c03a19c77c7a5bb7d1aaf3))
-* Let integrators size chunks for dense text ([#138](https://github.com/georgeguimaraes/arcana/issues/138)) ([cff7a94](https://github.com/georgeguimaraes/arcana/commit/cff7a9423d781bba42e1af7051fb813165ffe0ac))
-* Make bumblebee and req_llm optional dependencies ([#107](https://github.com/georgeguimaraes/arcana/issues/107)) ([4573ab3](https://github.com/georgeguimaraes/arcana/commit/4573ab383a05f00e99040f3d7edb6c40938db3b5))
-* Opt-in graph_depth traversal for query-time graph retrieval ([#123](https://github.com/georgeguimaraes/arcana/issues/123)) ([0799a58](https://github.com/georgeguimaraes/arcana/commit/0799a58a307ef6fadf0e51afd8018a8e51f9689f))
-* Public API for listing and reading documents ([#105](https://github.com/georgeguimaraes/arcana/issues/105)) ([ebcb694](https://github.com/georgeguimaraes/arcana/commit/ebcb694764c72f054f9526675cdaa91a8e535276))
-* Require :dimensions on up/1 and refuse a contradicting one ([#153](https://github.com/georgeguimaraes/arcana/issues/153)) ([591b2e1](https://github.com/georgeguimaraes/arcana/commit/591b2e139857a1939f92ec63de5fb23b0fa63fbe))
-* Versioned migrations for the core and graph schemas ([#135](https://github.com/georgeguimaraes/arcana/issues/135)) ([8aabfb4](https://github.com/georgeguimaraes/arcana/commit/8aabfb4c1595e3272470c2d52f6ff9976f9c5b54))
-
-
-### Bug Fixes
-
-* Anchor the migration version marker and document where it lives ([#146](https://github.com/georgeguimaraes/arcana/issues/146)) ([555f003](https://github.com/georgeguimaraes/arcana/commit/555f00378048d115dc6d3899371b456aabcc27a2))
-* Clear the compile warnings [#154](https://github.com/georgeguimaraes/arcana/issues/154) left behind and guard against more ([#157](https://github.com/georgeguimaraes/arcana/issues/157)) ([992b28c](https://github.com/georgeguimaraes/arcana/commit/992b28cf317a2b24c3d563218d1c19ebe2f58e3f))
-* Community detection and summarization correctness ([#133](https://github.com/georgeguimaraes/arcana/issues/133)) ([a0e5068](https://github.com/georgeguimaraes/arcana/commit/a0e506852ba63c837eb8020bbfdc945bbb60b7e9))
-* Compile without phoenix, gating the dashboard behind LiveView ([#108](https://github.com/georgeguimaraes/arcana/issues/108)) ([af2b067](https://github.com/georgeguimaraes/arcana/commit/af2b06704cbdc8deb9f581c2dd3c4812f56cfff2))
-* Derive dashboard paths from the actual mount point ([#104](https://github.com/georgeguimaraes/arcana/issues/104)) ([2d42a13](https://github.com/georgeguimaraes/arcana/commit/2d42a13dee16e74c69e1fe46c23be0752e5c967d))
-* drop duplicate hierarchy levels once community detection converges ([edddf99](https://github.com/georgeguimaraes/arcana/commit/edddf992a3be90b62ac635e750e031284e18aebb)), closes [#115](https://github.com/georgeguimaraes/arcana/issues/115)
-* Drop duplicate hierarchy levels once community detection converges ([#119](https://github.com/georgeguimaraes/arcana/issues/119)) ([edddf99](https://github.com/georgeguimaraes/arcana/commit/edddf992a3be90b62ac635e750e031284e18aebb))
-* Embed every chunk before writing anything ([#140](https://github.com/georgeguimaraes/arcana/issues/140)) ([d512d1f](https://github.com/georgeguimaraes/arcana/commit/d512d1f568dc164001e502014008f45809ef332f))
-* Graph lifecycle hygiene: mention dedup, file-ingest parity, orphan sweep, name normalization ([#124](https://github.com/georgeguimaraes/arcana/issues/124)) ([a5c6fc3](https://github.com/georgeguimaraes/arcana/commit/a5c6fc3bdc769de19c3f2583c659270491db1d55))
-* Installer and migration generator fixes ([#122](https://github.com/georgeguimaraes/arcana/issues/122)) ([9bf463f](https://github.com/georgeguimaraes/arcana/commit/9bf463feaff0c43835a382b04f0261924df0001b))
-* Name the bad chunk option instead of dying inside Enum ([#141](https://github.com/georgeguimaraes/arcana/issues/141)) ([79b8f38](https://github.com/georgeguimaraes/arcana/commit/79b8f384d21546e20e56af8912248f198068ca91))
-* Order community summaries by overlap before the limit ([#137](https://github.com/georgeguimaraes/arcana/issues/137)) ([e2b1774](https://github.com/georgeguimaraes/arcana/commit/e2b1774693cf6093a245336ea31d586c293adfa4)), closes [#132](https://github.com/georgeguimaraes/arcana/issues/132)
-* Refuse a blind rollback instead of dropping nothing quietly ([#152](https://github.com/georgeguimaraes/arcana/issues/152)) ([9d12179](https://github.com/georgeguimaraes/arcana/commit/9d12179ecf93deccd27450000cfd19a0b8268628))
-* Scope delete_by_chunks to the collections it touched ([#136](https://github.com/georgeguimaraes/arcana/issues/136)) ([62922c4](https://github.com/georgeguimaraes/arcana/commit/62922c483d5ca80fdf846083c1e519ce8c88d1dc))
-* Stop the test suite flaking on zero search results ([#158](https://github.com/georgeguimaraes/arcana/issues/158)) ([f3fb8f6](https://github.com/georgeguimaraes/arcana/commit/f3fb8f6234d1bef0c405fe6c95bf0c655f8f20fd))
-* Vector equality for changeset dirty tracking ([#125](https://github.com/georgeguimaraes/arcana/issues/125)) ([f0d6619](https://github.com/georgeguimaraes/arcana/commit/f0d6619567c17e92cc5b6272b88bc1c5411691ae))
-* Verify unique index shapes on adoption instead of trusting names ([#154](https://github.com/georgeguimaraes/arcana/issues/154)) ([bb7e152](https://github.com/georgeguimaraes/arcana/commit/bb7e1529c00a688a96c20e9be546c3d544b1658a))
-
-
-### Miscellaneous
-
-* **deps:** Bump text_chunker from 0.6.1 to 0.7.0 ([#143](https://github.com/georgeguimaraes/arcana/issues/143)) ([ecddeda](https://github.com/georgeguimaraes/arcana/commit/ecddedad882afbe652a002e104f9c5aeb194d246))
-
-
-### Documentation
-
-* Correct what ingest_binary/2 actually does ([#134](https://github.com/georgeguimaraes/arcana/issues/134)) ([fbdaaae](https://github.com/georgeguimaraes/arcana/commit/fbdaaae2113dff0b0f4021440334e4c099648702))
-* Hand-written changelog for the unreleased work ([#131](https://github.com/georgeguimaraes/arcana/issues/131)) ([9b3f632](https://github.com/georgeguimaraes/arcana/commit/9b3f6324e6990336d9578256bcdc481f056dca8b))
-* Oban ingestion recipe ([#121](https://github.com/georgeguimaraes/arcana/issues/121)) ([cb9af59](https://github.com/georgeguimaraes/arcana/commit/cb9af596fb871288ef05e46265e45f9f7fc24bee))
-* State that the TaskSupervisor legacy name cannot be shimmed ([#156](https://github.com/georgeguimaraes/arcana/issues/156)) ([8dd02d1](https://github.com/georgeguimaraes/arcana/commit/8dd02d1431266f4eb9ce812f8d6f124ca55d6426))
-
-
-### Tests
-
-* Assert the tenancy refusal instead of sleeping and checking nothing ([#144](https://github.com/georgeguimaraes/arcana/issues/144)) ([2ed59c3](https://github.com/georgeguimaraes/arcana/commit/2ed59c379f7af72daafe8ac2df01fb523309ab5e))
-* Wait for async LiveView work instead of sleeping past it ([#142](https://github.com/georgeguimaraes/arcana/issues/142)) ([69bd3f5](https://github.com/georgeguimaraes/arcana/commit/69bd3f5637f6ba971c03facd94bb18be0db981e4))
-
-
-### Continuous Integration
-
-* install poppler and run the pdf_support tests ([1827891](https://github.com/georgeguimaraes/arcana/commit/182789132348ab64f3f356e7731b70bf7faff1b1))
-* Install poppler and run the pdf_support tests ([#130](https://github.com/georgeguimaraes/arcana/issues/130)) ([1827891](https://github.com/georgeguimaraes/arcana/commit/182789132348ab64f3f356e7731b70bf7faff1b1))
-* Run the test suite on PRs that don't target main ([#139](https://github.com/georgeguimaraes/arcana/issues/139)) ([ae1523e](https://github.com/georgeguimaraes/arcana/commit/ae1523e4ecd497fc71badfcf0f27084de0d2b1d7))
 
 ## [2.0.2](https://github.com/georgeguimaraes/arcana/compare/v2.0.1...v2.0.2) (2026-08-15)
 
