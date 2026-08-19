@@ -16,6 +16,29 @@ defmodule Arcana.VectorStore.Pgvector do
 
       config :arcana, vector_store: :pgvector  # default
 
+  ## Tuning recall with :hnsw_ef_search
+
+  An HNSW index scan considers `hnsw.ef_search` candidates and only then applies
+  the query's filters, so a search scoped to a collection or a source can come
+  back with fewer rows than exist - occasionally none. pgvector's default is 40.
+  Raising it finds more of the true nearest neighbours, at the cost of more work
+  per query:
+
+      Arcana.search("question", collections: ["docs"], hnsw_ef_search: 200)
+
+  It can also be a global search default:
+
+      config :arcana, search: [hnsw_ef_search: 200]
+
+  Two things worth knowing. It only applies when the planner actually chooses an
+  index scan - on a small table a sequential scan is exact and the setting is
+  irrelevant. And because `hnsw.ef_search` is a GUC, applying it means running
+  the search inside a transaction; if you already have one open, the setting
+  stays in effect for the rest of *your* transaction rather than just the search.
+
+  Applies to `:vector` and `:hybrid` modes. `:keyword` never touches the vector
+  index, so it ignores the option.
+
   ## Notes
 
   This backend works with the existing `arcana_chunks` and `arcana_documents`
@@ -129,10 +152,12 @@ defmodule Arcana.VectorStore.Pgvector do
             limit: ^limit
           )
 
-        base_query
-        |> maybe_filter_source_id(source_id)
-        |> maybe_filter_collection_id(collection_id)
-        |> repo.all()
+        query =
+          base_query
+          |> maybe_filter_source_id(source_id)
+          |> maybe_filter_collection_id(collection_id)
+
+        with_ef_search(repo, ef_search!(opts), fn -> repo.all(query) end)
     end
   end
 
@@ -238,14 +263,16 @@ defmodule Arcana.VectorStore.Pgvector do
               binary_id
           end
 
-        do_search_hybrid(collection_id, query_embedding, query_text, %{
-          repo: repo,
-          limit: limit,
-          source_id: source_id,
-          vector_weight: vector_weight,
-          keyword_weight: keyword_weight,
-          threshold: threshold
-        })
+        with_ef_search(repo, ef_search!(opts), fn ->
+          do_search_hybrid(collection_id, query_embedding, query_text, %{
+            repo: repo,
+            limit: limit,
+            source_id: source_id,
+            vector_weight: vector_weight,
+            keyword_weight: keyword_weight,
+            threshold: threshold
+          })
+        end)
     end
   end
 
@@ -462,6 +489,50 @@ defmodule Arcana.VectorStore.Pgvector do
       nil -> if Arcana.Config.strict_collections?(opts), do: :unknown, else: {:ok, nil}
       coll -> {:ok, coll.id}
     end
+  end
+
+  @doc false
+  def ef_search!(opts) do
+    case Keyword.get(opts, :hnsw_ef_search) do
+      nil ->
+        nil
+
+      ef when is_integer(ef) and ef > 0 ->
+        ef
+
+      other ->
+        raise ArgumentError, """
+        :hnsw_ef_search must be a positive integer, got: #{inspect(other)}
+
+        It is pgvector's hnsw.ef_search: how many candidates an index scan
+        considers before filtering. Higher finds more of the true nearest
+        neighbours on a filtered search, at the cost of more work per query.
+        """
+    end
+  end
+
+  # hnsw.ef_search is a GUC, so it only applies for the duration of a
+  # transaction. The transaction here is doing two jobs and neither is optional:
+  # it scopes the setting, and it pins the set_config and the query to the same
+  # pooled connection - without it they can land on different connections and
+  # the setting silently does nothing. Do not unwrap it.
+  #
+  # set_config/3 rather than SET LOCAL because SET takes no bind parameters, and
+  # this value reaches SQL from user options.
+  #
+  # Inside an enclosing transaction Ecto joins it rather than nesting, so the
+  # setting persists until that transaction ends rather than just for this
+  # query. pgvector's own docs describe the same caveat.
+  defp with_ef_search(_repo, nil, fun), do: fun.()
+
+  defp with_ef_search(repo, ef, fun) when is_integer(ef) and ef > 0 do
+    {:ok, result} =
+      repo.transaction(fn ->
+        repo.query!("SELECT set_config('hnsw.ef_search', $1, true)", [Integer.to_string(ef)])
+        fun.()
+      end)
+
+    result
   end
 
   defp maybe_filter_source_id(query, nil), do: query
