@@ -42,8 +42,31 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+      # apt-get blocks rather than fails when it loses the dpkg lock race
+      # against the runner's unattended-upgrades, and it does not time out on
+      # its own. On the 3.0.0 release commit two of three jobs sat on this step
+      # for 30 minutes while the third passed, so a wedged runner looks exactly
+      # like a slow build. Bound each call, retry, and skip apt entirely when
+      # the image already has both tools.
       - name: Install cmake (for hnswlib) and poppler (for PDF tests)
-        run: sudo apt-get update && sudo apt-get install -y cmake poppler-utils
+        timeout-minutes: 6
+        run: |
+          if command -v cmake >/dev/null && command -v pdftotext >/dev/null; then
+            echo "cmake and poppler-utils already present, nothing to install"
+            exit 0
+          fi
+
+          for attempt in 1 2 3; do
+            if timeout 90 sudo apt-get update &&
+               timeout 120 sudo apt-get install -y --no-install-recommends cmake poppler-utils; then
+              exit 0
+            fi
+            echo "::warning::apt attempt $attempt did not finish, retrying"
+            sleep 10
+          done
+
+          echo "::error::apt-get never completed after 3 attempts"
+          exit 1
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
         with:
