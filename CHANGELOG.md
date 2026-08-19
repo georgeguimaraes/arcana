@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased (3.0.0)
+## [3.0.0](https://github.com/georgeguimaraes/arcana/compare/v2.0.2...v3.0.0) (2026-08-19)
 
 Since v2.0.2, largely driven by feedback from a multi-tenant production
 adoption (#94). The headline is that collection scoping can now fail closed,
