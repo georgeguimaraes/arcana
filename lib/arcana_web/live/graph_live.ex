@@ -28,6 +28,11 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       {:ok,
        socket
        |> assign(repo: repo)
+       # The graph tables carry their own migration version, so an install can
+       # legitimately skip them. Everything below queries arcana_graph_entities,
+       # which is an undefined_table error rather than an empty page when they
+       # are absent.
+       |> assign(graph_installed: Arcana.Graph.installed?(repo))
        |> assign(
          current_subtab: :entities,
          selected_collection: nil,
@@ -72,10 +77,18 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       selected_collection =
         normalize_selected_collection(params["collection"], socket.assigns.allowed_collections)
 
-      {:noreply,
-       socket
-       |> assign(current_subtab: subtab, selected_collection: selected_collection)
-       |> load_data()}
+      socket = assign(socket, current_subtab: subtab, selected_collection: selected_collection)
+
+      if socket.assigns.graph_installed do
+        {:noreply, load_data(socket)}
+      else
+        # load_stats/2 tolerates the missing tables, so the stats bar and nav
+        # still render around the explanation.
+        {:noreply,
+         assign(socket,
+           stats: load_stats(socket.assigns.repo, socket.assigns.allowed_collections)
+         )}
+      end
     end
 
     # Unrestricted dashboards keep the param as-is (nil means "all
@@ -672,6 +685,22 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
             Explore entities, relationships, and communities extracted from your documents.
           </p>
 
+          <%= if !@graph_installed do %>
+            <div class="arcana-empty-state">
+              <p><strong>GraphRAG is not installed in this database.</strong></p>
+              <p>
+                The graph tables carry their own migration version, so they are not
+                created by <code>Arcana.Migration.up/1</code>. Add a migration that
+                calls <code>Arcana.Graph.Migration.up(dimensions: n)</code> to use
+                this page.
+              </p>
+              <p>
+                Nothing else on the dashboard needs them, so the rest keeps working
+                without it.
+              </p>
+            </div>
+          <% else %>
+
           <div class="arcana-collection-selector">
             <label>Collection:</label>
             <select phx-change="select_collection" name="collection">
@@ -758,6 +787,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
                   total_pages={total_pages(@communities_total)}
                 />
             <% end %>
+          <% end %>
           <% end %>
         </div>
       </.dashboard_layout>
