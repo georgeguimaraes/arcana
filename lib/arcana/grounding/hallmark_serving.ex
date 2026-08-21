@@ -26,6 +26,18 @@ defmodule Arcana.Grounding.HallmarkServing do
   The model is downloaded automatically on first use via Bumblebee.
   """
 
+  # hallmark is an optional dependency, so in an app that does not use NLI
+  # grounding the module genuinely is not there and every reference to it warns
+  # at compile time. Nothing here runs without it: this GenServer only starts
+  # when grounding is configured, and Arcana.Grounding checks first. A
+  # Code.ensure_loaded? guard at each call site would say the same thing while
+  # adding a branch that can never be taken.
+  #
+  # Arcana's own build has hallmark, so its compile is clean either way and CI
+  # cannot catch a regression here - reproduce by commenting the dep out of
+  # mix.exs and running `MIX_ENV=dev mix compile --force`.
+  @compile {:no_warn_undefined, Hallmark}
+
   use GenServer
 
   alias Arcana.Grounding.{Attribution, Result}
