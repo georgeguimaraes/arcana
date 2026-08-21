@@ -28,6 +28,11 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       {:ok,
        socket
        |> assign(repo: repo)
+       # The graph tables carry their own migration version, so an install can
+       # legitimately skip them. Everything below queries arcana_graph_entities,
+       # which is an undefined_table error rather than an empty page when they
+       # are absent.
+       |> assign(graph_installed: Arcana.Graph.installed?(repo))
        |> assign(
          current_subtab: :entities,
          selected_collection: nil,
@@ -72,10 +77,18 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       selected_collection =
         normalize_selected_collection(params["collection"], socket.assigns.allowed_collections)
 
-      {:noreply,
-       socket
-       |> assign(current_subtab: subtab, selected_collection: selected_collection)
-       |> load_data()}
+      socket = assign(socket, current_subtab: subtab, selected_collection: selected_collection)
+
+      if socket.assigns.graph_installed do
+        {:noreply, load_data(socket)}
+      else
+        # load_stats/2 tolerates the missing tables, so the stats bar and nav
+        # still render around the explanation.
+        {:noreply,
+         assign(socket,
+           stats: load_stats(socket.assigns.repo, socket.assigns.allowed_collections)
+         )}
+      end
     end
 
     # Unrestricted dashboards keep the param as-is (nil means "all
@@ -406,6 +419,14 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     @impl true
+    # Hiding the controls only stops the honest client. Every handler below
+    # reaches a loader that queries arcana_graph_entities, so a forged event
+    # over the socket would still crash the LiveView on a database without the
+    # graph schema. This clause is first so it catches all of them.
+    def handle_event(_event, _params, %{assigns: %{graph_installed: false}} = socket) do
+      {:noreply, socket}
+    end
+
     def handle_event("switch_subtab", %{"tab" => tab}, socket) do
       {:noreply, push_patch(socket, to: build_path(socket, tab: tab))}
     end
@@ -672,6 +693,22 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
             Explore entities, relationships, and communities extracted from your documents.
           </p>
 
+          <%= if !@graph_installed do %>
+            <div class="arcana-empty-state">
+              <p><strong>GraphRAG is not installed in this database.</strong></p>
+              <p>
+                The graph tables carry their own migration version, so they are not
+                created by <code>Arcana.Migration.up/1</code>. Add a migration that
+                calls <code>Arcana.Graph.Migration.up(dimensions: n)</code> to use
+                this page.
+              </p>
+              <p>
+                The other pages work without it: they show no entity counts and
+                nothing else changes.
+              </p>
+            </div>
+          <% else %>
+
           <div class="arcana-collection-selector">
             <label>Collection:</label>
             <select phx-change="select_collection" name="collection">
@@ -758,6 +795,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
                   total_pages={total_pages(@communities_total)}
                 />
             <% end %>
+          <% end %>
           <% end %>
         </div>
       </.dashboard_layout>

@@ -242,6 +242,53 @@ defmodule Arcana.Graph do
   end
 
   @doc """
+  Returns whether the GraphRAG schema is installed in the database.
+
+  Separate from `enabled?/0`, which only reads config. The graph tables ship on
+  their own migration version, so an app can legitimately run
+  `Arcana.Migration.up/1` and skip `Arcana.Graph.Migration.up/1` - and then a
+  graph query fails with `relation "arcana_graph_entities" does not exist`
+  rather than returning nothing. Config being on says the operator wants graph
+  features; this says the database can actually answer.
+
+      if Arcana.Graph.installed?(MyApp.Repo) do
+        # safe to query entities, relationships, communities
+      end
+
+  Checks the table rather than the `arcana_graph:<n>` version marker on purpose:
+  the marker can be missing on an install that predates versioning, or that had
+  its table comment clobbered, and those databases can still be queried.
+
+  ## Options
+
+    * `:prefix` - the Postgres schema to look in. Without it the question is
+      whether an unqualified query would find the table, which is what the
+      callers actually do
+  """
+  def installed?(repo, opts \\ []) do
+    prefix = Keyword.get(opts, :prefix)
+
+    # pg_table_is_visible rather than current_schema() for the unprefixed case.
+    # current_schema() is only the first entry on the search_path, but the
+    # queries this guards are unqualified and resolve against the whole path -
+    # so on the common `search_path = tenant, public` layout with arcana in
+    # public, comparing against current_schema() reports "not installed" for a
+    # database whose graph queries work perfectly well, and the page then
+    # refuses to render.
+    %{rows: [[count]]} =
+      repo.query!(
+        "SELECT count(*) FROM pg_class c " <>
+          "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
+          "WHERE c.relname = $1 AND c.relkind IN ('r', 'p') " <>
+          "AND CASE WHEN $2::text IS NULL " <>
+          "THEN pg_table_is_visible(c.oid) ELSE n.nspname = $2::text END",
+        ["arcana_graph_entities", prefix]
+      )
+
+    count > 0
+  end
+
+  @doc """
   Resolves the query-time graph traversal depth from per-call opts and
   global config.
 
