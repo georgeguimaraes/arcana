@@ -361,22 +361,29 @@ defmodule Arcana.VectorStore.Pgvector do
         -- keyword mode uses - makes a non-match contribute exactly 0 instead of
         -- competing for the top of the normalization range.
         --
-        -- to_tsvector appears twice rather than being hoisted into its own CTE.
-        -- A CTE gets inlined anyway, so it did not save the second evaluation,
-        -- and carrying the tsvector into a CTE that later materializes spilled
-        -- ~24MB to temp on 5k chunks. Written this way the CASE short-circuits,
-        -- so ts_rank only runs for rows that actually match, and on a realistic
-        -- corpus that pays for the extra to_tsvector: measured at parity with
-        -- the pre-gate query (257ms vs 254ms on 5k chunks, 2% matching) where
-        -- the CTE version took 519ms and spilled.
-        CASE
-          WHEN to_tsvector('english', c.text) @@ q.tsq
-          THEN ts_rank(to_tsvector('english', c.text), q.tsq)
-          ELSE 0
-        END AS keyword_score
+        -- The tsvector is built once in the LATERAL and used for both the gate
+        -- and the rank. A plain CTE will not do it: Postgres inlines it, so the
+        -- tsvector was still built twice, and carrying it into a CTE that later
+        -- materializes spilled ~24MB to temp on 5k chunks. Writing
+        -- to_tsvector twice inline avoids the spill but costs an extra pass per
+        -- MATCHING row, so it degrades linearly with selectivity - fine on a
+        -- multi-term query, 2x on a single-term query against a topical corpus.
+        --
+        -- Measured on 5k chunks of distinct text, parallelism off: at 2%
+        -- matching 204ms here against 214ms for the double-inline form, and at
+        -- 100% matching 144ms against 290ms. Flat rather than selectivity
+        -- dependent.
+        --
+        -- OFFSET 0 is what keeps the subquery from being pulled up and
+        -- flattened back into two evaluations. It is a long-standing optimizer
+        -- fence rather than a documented guarantee, so if a future Postgres
+        -- stops honouring it this silently becomes the double-inline form
+        -- again: slower on matching rows, still correct.
+        CASE WHEN v.tsv @@ q.tsq THEN ts_rank(v.tsv, q.tsq) ELSE 0 END AS keyword_score
       FROM arcana_chunks c
       JOIN arcana_documents d ON c.document_id = d.id
       CROSS JOIN q
+      CROSS JOIN LATERAL (SELECT to_tsvector('english', c.text) AS tsv OFFSET 0) v
       WHERE ($3::uuid IS NULL OR d.collection_id = $3::uuid)
         AND ($4::text IS NULL OR d.source_id = $4::text)
     ),
