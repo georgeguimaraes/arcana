@@ -369,10 +369,11 @@ defmodule Arcana.VectorStore.Pgvector do
         -- MATCHING row, so it degrades linearly with selectivity - fine on a
         -- multi-term query, 2x on a single-term query against a topical corpus.
         --
-        -- Measured on 5k chunks of distinct text, parallelism off: at 2%
-        -- matching 204ms here against 214ms for the double-inline form, and at
-        -- 100% matching 144ms against 290ms. Flat rather than selectivity
-        -- dependent.
+        -- Measured on 5k chunks of distinct text, parallelism off, varying only
+        -- the share of rows matching within one corpus. Double-inline runs
+        -- 527ms at 0% matching and climbs to 1065ms at 100%; this form stays
+        -- between 528ms and 539ms across the whole range. Flat rather than
+        -- selectivity dependent, and never slower.
         --
         -- OFFSET 0 is what keeps the subquery from being pulled up and
         -- flattened back into two evaluations. It is a long-standing optimizer
