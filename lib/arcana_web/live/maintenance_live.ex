@@ -21,6 +21,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       {:ok,
        socket
        |> assign(repo: repo)
+       # The graph tables are on their own migration version, so this page is
+       # reachable on a database without them. The counts below already rescue,
+       # but the actions do not - see the guard on the graph events.
+       |> assign(graph_installed: Arcana.Graph.installed?(repo))
        |> assign(
          reembed_running: false,
          reembed_progress: nil,
@@ -169,6 +173,26 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     @impl true
+    # Every one of these reaches the graph tables. The buttons are hidden when
+    # there is nothing to act on, but hiding a control does not stop an event
+    # pushed straight over the socket, and on a database without the graph
+    # schema that took the whole LiveView down with an undefined_table. Named
+    # rather than a catch-all: the other events on this page have nothing to do
+    # with the graph and must keep working.
+    @graph_events ~w(rebuild_graph detect_communities summarize_communities
+                     assign_orphans delete_orphans)
+
+    def handle_event(event, _params, %{assigns: %{graph_installed: false}} = socket)
+        when event in @graph_events do
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         "GraphRAG is not installed in this database. Run a migration calling " <>
+           "Arcana.Graph.Migration.up/1 to use the graph actions."
+       )}
+    end
+
     def handle_event("select_reembed_collection", %{"collection" => collection}, socket) do
       collection = if collection == "", do: nil, else: collection
 
