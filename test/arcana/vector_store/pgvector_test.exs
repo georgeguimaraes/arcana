@@ -535,14 +535,18 @@ defmodule Arcana.VectorStore.PgvectorTest do
         })
         |> repo.insert()
 
-      # Create chunk with low-similarity embedding
-      embedding = normalize([0.1] ++ List.duplicate(0.0, 383))
+      # Genuinely low-scoring on both halves. The previous version used
+      # normalize([0.1] ++ zeros) as the "low-similarity" embedding, which
+      # normalizes to the same unit vector as the query - so the vector score was
+      # 1.0, and the blend only stayed under the threshold because a real keyword
+      # match was being zeroed by the min == max branch this fix removed.
+      embedding = normalize([1.0, 1.0] ++ List.duplicate(0.0, 382))
       query = normalize([1.0] ++ List.duplicate(0.0, 383))
 
       {:ok, _chunk} =
         %Chunk{}
         |> Chunk.changeset(%{
-          text: "unrelated content",
+          text: "nothing in common",
           embedding: embedding,
           document_id: doc.id
         })
