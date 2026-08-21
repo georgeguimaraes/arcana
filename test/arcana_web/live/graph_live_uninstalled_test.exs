@@ -66,7 +66,19 @@ defmodule ArcanaWeb.GraphLiveUninstalledTest do
   test "the rest of the dashboard still works without the graph schema", %{conn: conn} do
     # The point of the split migration: skipping graph costs you the graph page
     # and nothing else.
-    for path <- ["/arcana", "/arcana/documents", "/arcana/collections", "/arcana/search"] do
+    # Every page reachable from the nav, not a subset. The first version of this
+    # list omitted /arcana/ask, which was the one that still raised 42P01 - so
+    # the test asserted the claim it was meant to check and passed anyway.
+    for path <- [
+          "/arcana",
+          "/arcana/documents",
+          "/arcana/collections",
+          "/arcana/search",
+          "/arcana/ask",
+          "/arcana/evaluation",
+          "/arcana/maintenance",
+          "/arcana/info"
+        ] do
       assert {:ok, _view, _html} = live(conn, path), "#{path} should mount without graph tables"
     end
   end

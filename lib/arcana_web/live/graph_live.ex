@@ -703,8 +703,8 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
                 this page.
               </p>
               <p>
-                Nothing else on the dashboard needs them, so the rest keeps working
-                without it.
+                The other pages work without it: they show no entity counts and
+                nothing else changes.
               </p>
             </div>
           <% else %>

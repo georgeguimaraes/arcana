@@ -261,18 +261,27 @@ defmodule Arcana.Graph do
 
   ## Options
 
-    * `:prefix` - the Postgres schema to look in (defaults to the connection's
-      current schema)
+    * `:prefix` - the Postgres schema to look in. Without it the question is
+      whether an unqualified query would find the table, which is what the
+      callers actually do
   """
   def installed?(repo, opts \\ []) do
     prefix = Keyword.get(opts, :prefix)
 
+    # pg_table_is_visible rather than current_schema() for the unprefixed case.
+    # current_schema() is only the first entry on the search_path, but the
+    # queries this guards are unqualified and resolve against the whole path -
+    # so on the common `search_path = tenant, public` layout with arcana in
+    # public, comparing against current_schema() reports "not installed" for a
+    # database whose graph queries work perfectly well, and the page then
+    # refuses to render.
     %{rows: [[count]]} =
       repo.query!(
         "SELECT count(*) FROM pg_class c " <>
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
           "WHERE c.relname = $1 AND c.relkind IN ('r', 'p') " <>
-          "AND n.nspname = COALESCE($2, current_schema())",
+          "AND CASE WHEN $2::text IS NULL " <>
+          "THEN pg_table_is_visible(c.oid) ELSE n.nspname = $2::text END",
         ["arcana_graph_entities", prefix]
       )
 

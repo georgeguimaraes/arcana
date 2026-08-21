@@ -113,9 +113,20 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp load_collections_with_graph_status(repo, allowed) do
       collections = load_collections(repo, allowed)
+      counts = entity_counts(repo)
 
-      # Get entity counts per collection
-      entity_counts =
+      Enum.map(collections, fn c ->
+        Map.put(c, :graph_enabled, Map.get(counts, c.id, 0) > 0)
+      end)
+    end
+
+    # The graph tables are on their own migration version, so an install can
+    # skip them - and this page is reachable from the nav on a database that
+    # did. Without the check the entity count raises undefined_table and takes
+    # the whole page with it. No graph schema means no entities, which is what
+    # an empty map says.
+    defp entity_counts(repo) do
+      if Arcana.Graph.installed?(repo) do
         repo.all(
           from(e in Entity,
             group_by: e.collection_id,
@@ -123,11 +134,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           )
         )
         |> Map.new()
-
-      Enum.map(collections, fn c ->
-        entity_count = Map.get(entity_counts, c.id, 0)
-        Map.put(c, :graph_enabled, entity_count > 0)
-      end)
+      else
+        %{}
+      end
     end
 
     defp selected_graph_enabled?(collections, selected) do

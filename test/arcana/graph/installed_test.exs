@@ -29,6 +29,27 @@ defmodule Arcana.Graph.InstalledTest do
       refute Arcana.Graph.installed?(Repo, prefix: "no_such_schema_here")
     end
 
+    test "finds the table through the search_path, not just the first schema on it" do
+      # The multi-tenant layout: a tenant schema first, arcana's tables in
+      # public. An unqualified query resolves through the whole search_path and
+      # finds the graph, so comparing against current_schema() alone reported
+      # "not installed" for a database whose graph pages work.
+      SQL.query!(Repo, ~s(CREATE SCHEMA IF NOT EXISTS "tenant_first"), [])
+      original = SQL.query!(Repo, "SHOW search_path", []).rows |> List.flatten() |> hd()
+
+      try do
+        SQL.query!(Repo, ~s(SET search_path TO "tenant_first", public), [])
+
+        assert SQL.query!(Repo, "SELECT count(*) FROM arcana_graph_entities", []),
+               "precondition: an unqualified query still resolves the table"
+
+        assert Arcana.Graph.installed?(Repo),
+               "installed?/2 must agree with how the page's own queries resolve"
+      after
+        SQL.query!(Repo, "SET search_path TO #{original}", [])
+      end
+    end
+
     test "does not confuse another table in the same schema for the graph" do
       SQL.query!(Repo, ~s(CREATE SCHEMA IF NOT EXISTS "graph_decoy"), [])
 
