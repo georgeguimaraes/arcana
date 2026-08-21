@@ -419,6 +419,14 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     @impl true
+    # Hiding the controls only stops the honest client. Every handler below
+    # reaches a loader that queries arcana_graph_entities, so a forged event
+    # over the socket would still crash the LiveView on a database without the
+    # graph schema. This clause is first so it catches all of them.
+    def handle_event(_event, _params, %{assigns: %{graph_installed: false}} = socket) do
+      {:noreply, socket}
+    end
+
     def handle_event("switch_subtab", %{"tab" => tab}, socket) do
       {:noreply, push_patch(socket, to: build_path(socket, tab: tab))}
     end

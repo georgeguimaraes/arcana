@@ -44,6 +44,25 @@ defmodule ArcanaWeb.GraphLiveUninstalledTest do
            "the collection selector queries entities, so it must not render"
   end
 
+  test "a forged event does not crash the page the controls are hidden from", %{conn: conn} do
+    # Hiding the controls only stops the honest client. Every graph handler
+    # reaches a loader that queries arcana_graph_entities, so an event pushed
+    # straight over the socket would still crash the LiveView.
+    {:ok, view, _html} = live(conn, "/arcana/graph")
+
+    for {event, params} <- [
+          {"switch_subtab", %{"tab" => "relationships"}},
+          {"filter_entities", %{"name" => "anything"}},
+          {"select_entity", %{"id" => Ecto.UUID.generate()}},
+          {"filter_communities", %{"name" => "x"}}
+        ] do
+      assert render_hook(view, event, params) =~ "GraphRAG is not installed",
+             "#{event} should be ignored, not crash the view"
+    end
+
+    assert Process.alive?(view.pid), "the LiveView should have survived every forged event"
+  end
+
   test "the rest of the dashboard still works without the graph schema", %{conn: conn} do
     # The point of the split migration: skipping graph costs you the graph page
     # and nothing else.
