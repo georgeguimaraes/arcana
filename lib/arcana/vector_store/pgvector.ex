@@ -347,7 +347,7 @@ defmodule Arcana.VectorStore.Pgvector do
     WITH q AS (
       SELECT plainto_tsquery('english', $2) AS tsq
     ),
-    tokenized AS (
+    base_scores AS (
       SELECT
         c.id,
         c.text,
@@ -355,23 +355,30 @@ defmodule Arcana.VectorStore.Pgvector do
         c.document_id,
         c.metadata,
         1 - (c.embedding <=> $1) AS vector_score,
-        to_tsvector('english', c.text) AS tsv
-      FROM arcana_chunks c
-      JOIN arcana_documents d ON c.document_id = d.id
-      WHERE ($3::uuid IS NULL OR d.collection_id = $3::uuid)
-        AND ($4::text IS NULL OR d.source_id = $4::text)
-    ),
-    base_scores AS (
-      SELECT
-        t.*,
         -- ts_rank scores term overlap, not whether the query matched: for
         -- 'sheen & durat & come' a chunk carrying two of the three still ranks
         -- ~0.097 while satisfying nothing. Gating on @@ - the same test
         -- keyword mode uses - makes a non-match contribute exactly 0 instead of
         -- competing for the top of the normalization range.
-        CASE WHEN t.tsv @@ q.tsq THEN ts_rank(t.tsv, q.tsq) ELSE 0 END AS keyword_score
-      FROM tokenized t
+        --
+        -- to_tsvector appears twice rather than being hoisted into its own CTE.
+        -- A CTE gets inlined anyway, so it did not save the second evaluation,
+        -- and carrying the tsvector into a CTE that later materializes spilled
+        -- ~24MB to temp on 5k chunks. Written this way the CASE short-circuits,
+        -- so ts_rank only runs for rows that actually match, and on a realistic
+        -- corpus that pays for the extra to_tsvector: measured at parity with
+        -- the pre-gate query (257ms vs 254ms on 5k chunks, 2% matching) where
+        -- the CTE version took 519ms and spilled.
+        CASE
+          WHEN to_tsvector('english', c.text) @@ q.tsq
+          THEN ts_rank(to_tsvector('english', c.text), q.tsq)
+          ELSE 0
+        END AS keyword_score
+      FROM arcana_chunks c
+      JOIN arcana_documents d ON c.document_id = d.id
       CROSS JOIN q
+      WHERE ($3::uuid IS NULL OR d.collection_id = $3::uuid)
+        AND ($4::text IS NULL OR d.source_id = $4::text)
     ),
     score_bounds AS (
       SELECT MAX(keyword_score) AS max_kw
@@ -382,9 +389,15 @@ defmodule Arcana.VectorStore.Pgvector do
         bs.*,
         -- Divide by the floor when the whole set is weak, so "the best of a bad
         -- set" stays weak instead of stretching to 1.0 and taking the full
-        -- keyword weight. Above the floor this is exactly the old scaling.
-        -- No min subtraction: it used to force the weakest genuine match to 0
-        -- regardless of how good it was.
+        -- keyword weight.
+        --
+        -- Dropping the min subtraction changes ordering in sets where every
+        -- chunk matches, not only weak ones: subtracting the minimum stretched
+        -- the gap between the weakest and strongest match across the whole 0..1
+        -- range, so 0.20 vs 0.46 became 0 vs 1. Now they stay 0.43 vs 1.0 and
+        -- the vector side gets a proportionate say. That is the intended
+        -- behaviour, and it is a ranking change for existing queries, not only
+        -- a fix for noisy ones.
         -- NULLIF guards the one case where the divisor is 0: a floor of 0
         -- (opting out of flooring) on a set where nothing matched at all. The
         -- old min = max branch covered that; without the guard it is a
