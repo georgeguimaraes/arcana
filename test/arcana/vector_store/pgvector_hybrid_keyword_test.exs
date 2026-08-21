@@ -141,6 +141,22 @@ defmodule Arcana.VectorStore.PgvectorHybridKeywordTest do
              "an empty tsquery matches nothing, so nothing should score"
     end
 
+    test "opting out of the floor on a set where nothing matched is not a divide by zero" do
+      # floor 0 means "scale against the set's own best", and with no matches at
+      # all that best is 0. The old min = max branch absorbed this; the divisor
+      # form needs its own guard, and Postgres raises 22012 without one.
+      collection = seed("kw-divzero", ["totally unrelated text", "also unrelated"])
+
+      results =
+        Pgvector.search_hybrid(collection, @embedding, "zzzznomatchzzzz",
+          repo: Repo,
+          keyword_score_floor: 0.0
+        )
+
+      assert length(results) == 2
+      assert Enum.all?(results, &(&1.metadata[:keyword_score] == 0.0))
+    end
+
     for bad <- [-0.1, 1.5, "0.05", nil] do
       test "rejects a floor of #{inspect(bad)}" do
         assert_raise ArgumentError, ~r/:keyword_score_floor must be a number/, fn ->

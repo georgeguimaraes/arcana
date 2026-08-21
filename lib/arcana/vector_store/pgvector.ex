@@ -385,7 +385,14 @@ defmodule Arcana.VectorStore.Pgvector do
         -- keyword weight. Above the floor this is exactly the old scaling.
         -- No min subtraction: it used to force the weakest genuine match to 0
         -- regardless of how good it was.
-        bs.keyword_score / GREATEST(sb.max_kw, $9::float) AS keyword_normalized
+        -- NULLIF guards the one case where the divisor is 0: a floor of 0
+        -- (opting out of flooring) on a set where nothing matched at all. The
+        -- old min = max branch covered that; without the guard it is a
+        -- division_by_zero from Postgres.
+        COALESCE(
+          bs.keyword_score / NULLIF(GREATEST(sb.max_kw, $9::float), 0),
+          0
+        ) AS keyword_normalized
       FROM base_scores bs, score_bounds sb
     )
     SELECT
