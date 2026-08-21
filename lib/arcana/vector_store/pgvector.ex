@@ -16,6 +16,38 @@ defmodule Arcana.VectorStore.Pgvector do
 
       config :arcana, vector_store: :pgvector  # default
 
+  ## How hybrid blends the two scores
+
+  `:hybrid` mode scores each chunk on cosine similarity and on `ts_rank`, then
+  blends them by `:vector_weight` and `:keyword_weight`. Two details decide what
+  the keyword half is worth.
+
+  A chunk only scores on the keyword side if it actually satisfies the query.
+  `plainto_tsquery` builds an AND query, but `ts_rank` scores term overlap
+  regardless, so a chunk carrying some of the terms and not others gets a real
+  score while matching nothing - and a term-dense one can out-score a chunk that
+  genuinely answers the query. Keyword mode has always gated on `@@`; hybrid does
+  too.
+
+  The scores are then scaled against the best keyword hit in the candidate set,
+  so results stay comparable across queries. On its own that maps the best hit to
+  1.0 however weak it is, which turns "nothing really matched" into a
+  full-strength signal. `:keyword_score_floor` is the `ts_rank` treated as
+  full strength: when the whole set falls below it, scores are scaled against the
+  floor instead, so a weak set stays weak.
+
+      # a corpus whose genuine matches score lower than most
+      Arcana.search("question", mode: :hybrid, keyword_score_floor: 0.02)
+
+      # or globally
+      config :arcana, search: [keyword_score_floor: 0.02]
+
+  It defaults to `0.05`. Raise it if lexical noise still promotes wrong chunks,
+  lower it if real matches in your corpus are being damped, and set `0` to scale
+  against the set's own best the way earlier versions did. `ts_rank` magnitudes
+  depend on document length and term frequency, so the useful value is
+  corpus-specific.
+
   ## Tuning recall with :hnsw_ef_search
 
   An HNSW index scan considers `hnsw.ef_search` candidates and only then applies
@@ -267,6 +299,7 @@ defmodule Arcana.VectorStore.Pgvector do
     keyword_weight = Keyword.get(opts, :keyword_weight, 0.5)
     threshold = Keyword.get(opts, :threshold, 0.0)
     ef_search = ef_search!(opts)
+    keyword_score_floor = keyword_score_floor!(opts)
 
     # Resolve the collection filter, converted to binary for raw SQL
     case resolve_filter_collection_id(collection, repo, opts) do
@@ -291,7 +324,8 @@ defmodule Arcana.VectorStore.Pgvector do
             source_id: source_id,
             vector_weight: vector_weight,
             keyword_weight: keyword_weight,
-            threshold: threshold
+            threshold: threshold,
+            keyword_score_floor: keyword_score_floor
           })
         end)
     end
@@ -304,12 +338,16 @@ defmodule Arcana.VectorStore.Pgvector do
       source_id: source_id,
       vector_weight: vector_weight,
       keyword_weight: keyword_weight,
-      threshold: threshold
+      threshold: threshold,
+      keyword_score_floor: keyword_score_floor
     } = params
 
     # Use raw SQL for the hybrid query with CTEs for proper normalization
     sql = """
-    WITH base_scores AS (
+    WITH q AS (
+      SELECT plainto_tsquery('english', $2) AS tsq
+    ),
+    tokenized AS (
       SELECT
         c.id,
         c.text,
@@ -317,25 +355,37 @@ defmodule Arcana.VectorStore.Pgvector do
         c.document_id,
         c.metadata,
         1 - (c.embedding <=> $1) AS vector_score,
-        COALESCE(ts_rank(to_tsvector('english', c.text), plainto_tsquery('english', $2)), 0) AS keyword_score
+        to_tsvector('english', c.text) AS tsv
       FROM arcana_chunks c
       JOIN arcana_documents d ON c.document_id = d.id
       WHERE ($3::uuid IS NULL OR d.collection_id = $3::uuid)
         AND ($4::text IS NULL OR d.source_id = $4::text)
     ),
-    score_bounds AS (
+    base_scores AS (
       SELECT
-        MIN(keyword_score) AS min_kw,
-        MAX(keyword_score) AS max_kw
+        t.*,
+        -- ts_rank scores term overlap, not whether the query matched: for
+        -- 'sheen & durat & come' a chunk carrying two of the three still ranks
+        -- ~0.097 while satisfying nothing. Gating on @@ - the same test
+        -- keyword mode uses - makes a non-match contribute exactly 0 instead of
+        -- competing for the top of the normalization range.
+        CASE WHEN t.tsv @@ q.tsq THEN ts_rank(t.tsv, q.tsq) ELSE 0 END AS keyword_score
+      FROM tokenized t
+      CROSS JOIN q
+    ),
+    score_bounds AS (
+      SELECT MAX(keyword_score) AS max_kw
       FROM base_scores
     ),
     normalized AS (
       SELECT
         bs.*,
-        CASE
-          WHEN sb.max_kw = sb.min_kw THEN 0
-          ELSE (bs.keyword_score - sb.min_kw) / (sb.max_kw - sb.min_kw)
-        END AS keyword_normalized
+        -- Divide by the floor when the whole set is weak, so "the best of a bad
+        -- set" stays weak instead of stretching to 1.0 and taking the full
+        -- keyword weight. Above the floor this is exactly the old scaling.
+        -- No min subtraction: it used to force the weakest genuine match to 0
+        -- regardless of how good it was.
+        bs.keyword_score / GREATEST(sb.max_kw, $9::float) AS keyword_normalized
       FROM base_scores bs, score_bounds sb
     )
     SELECT
@@ -366,7 +416,8 @@ defmodule Arcana.VectorStore.Pgvector do
         vector_weight,
         keyword_weight,
         threshold,
-        limit
+        limit,
+        keyword_score_floor
       ])
 
     # Transform rows to result maps
@@ -520,6 +571,33 @@ defmodule Arcana.VectorStore.Pgvector do
   # pgvector - so the search runs at default recall, which is the under-return
   # this option exists to avoid. Nondeterministic per pooled connection.
   @ef_search_range 1..1000
+
+  # Below this, "the best keyword hit in the set" is not evidence of a lexical
+  # match. Measured with ts_rank's default normalization: a chunk carrying every
+  # query term scores ~0.22-0.27, the canonical single term in a single document
+  # is 0.0607, and the case in #166 that normalized to a perfect 1.0 was 0.011.
+  # 0.05 sits under every genuine match measured and several times above the
+  # noise. ts_rank magnitudes are corpus-dependent, hence the option.
+  @default_keyword_score_floor 0.05
+
+  @doc false
+  def keyword_score_floor!(opts) do
+    case Keyword.get(opts, :keyword_score_floor, @default_keyword_score_floor) do
+      floor when is_number(floor) and floor >= 0 and floor <= 1 ->
+        floor / 1
+
+      other ->
+        raise ArgumentError, """
+        :keyword_score_floor must be a number between 0 and 1, got: #{inspect(other)}
+
+        It is the ts_rank score treated as a full-strength keyword match when
+        normalizing hybrid results. A candidate set whose best keyword hit falls
+        below it is scaled against the floor instead of against itself, so weak
+        lexical noise cannot reach a normalized 1.0. Set 0 to restore
+        normalize-against-the-best-in-set.
+        """
+    end
+  end
 
   @doc false
   def ef_search!(opts) do
