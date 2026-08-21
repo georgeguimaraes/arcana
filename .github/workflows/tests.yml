@@ -42,8 +42,51 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+      # apt-get blocks rather than fails when it loses the dpkg lock race
+      # against the runner's unattended-upgrades, and it does not time out on
+      # its own. On the 3.0.0 release commit two of three jobs sat on this step
+      # for 30 minutes while the third passed, so a wedged runner looks exactly
+      # like a slow build. Bound each call, retry, and skip apt entirely when
+      # the image already has both tools.
       - name: Install cmake (for hnswlib) and poppler (for PDF tests)
-        run: sudo apt-get update && sudo apt-get install -y cmake poppler-utils
+        timeout-minutes: 6
+        run: |
+          if command -v cmake >/dev/null && command -v pdftotext >/dev/null; then
+            echo "cmake and poppler-utils already present, nothing to install"
+            exit 0
+          fi
+
+          # One 10s sleep plus two attempts at 60s + 90s is 310s worst case,
+          # inside the 6 minute step timeout above - so the error below always
+          # gets to print. Three attempts would not fit, and the runner killing
+          # the step swallows the diagnostic. The sleep is before the retry
+          # rather than after each attempt, so a run that is going to fail does
+          # not sit there for another 10s first.
+          for attempt in 1 2; do
+            if [ "$attempt" -gt 1 ]; then
+              sleep 10
+            fi
+
+            status=0
+            timeout 60 sudo apt-get update &&
+              timeout 90 sudo apt-get install -y --no-install-recommends cmake poppler-utils ||
+              status=$?
+
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+
+            # 124 is timeout(1) killing a stalled call; anything else is apt
+            # itself refusing, which needs reading rather than retrying.
+            if [ "$status" -eq 124 ]; then
+              echo "::warning::apt attempt $attempt stalled and was killed"
+            else
+              echo "::warning::apt attempt $attempt failed with status $status"
+            fi
+          done
+
+          echo "::error::could not install cmake and poppler-utils. A stall is usually the Ubuntu mirror; the apt output above says which."
+          exit 1
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
         with:
