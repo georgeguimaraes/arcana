@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1](https://github.com/georgeguimaraes/arcana/compare/v3.0.0...v3.0.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* Explain the missing GraphRAG schema instead of 500ing the Graph page ([#168](https://github.com/georgeguimaraes/arcana/issues/168)) ([c868bb2](https://github.com/georgeguimaraes/arcana/commit/c868bb2798b66ca7cc6860679b5f331a34cdea69))
+* Reject the Maintenance page's graph actions when the schema is absent ([#171](https://github.com/georgeguimaraes/arcana/issues/171)) ([d8c3cf9](https://github.com/georgeguimaraes/arcana/commit/d8c3cf981bc0c77cbd762ed6f27c7eb5dcac552f))
+* Stop hybrid search scoring chunks the query does not match ([#170](https://github.com/georgeguimaraes/arcana/issues/170)) ([6246824](https://github.com/georgeguimaraes/arcana/commit/62468242d7181a7c3670bacb03f6acec37f2e8be))
+* Stop the optional hallmark dep warning in every app that lacks it ([#165](https://github.com/georgeguimaraes/arcana/issues/165)) ([3dbb4e7](https://github.com/georgeguimaraes/arcana/commit/3dbb4e7e00d49473dc53d6a1e725b5ebcccab43d)), closes [#161](https://github.com/georgeguimaraes/arcana/issues/161)
+
+
+### Continuous Integration
+
+* Stop the apt step hanging a job for half an hour ([#160](https://github.com/georgeguimaraes/arcana/issues/160)) ([5ddf80f](https://github.com/georgeguimaraes/arcana/commit/5ddf80f947d824153823613bc15b981db99e7120))
+
 ## [3.0.0](https://github.com/georgeguimaraes/arcana/compare/v2.0.2...v3.0.0) (2026-08-19)
 
 Since v2.0.2, largely driven by feedback from a multi-tenant production
