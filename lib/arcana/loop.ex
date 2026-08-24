@@ -72,12 +72,15 @@ defmodule Arcana.Loop do
   string, and anything else - including an error - silently keeps the
   controller's own draft rather than failing the run.
 
-  The `max_iterations` fallback synthesizer wants that same non-empty text, but
-  failing it costs you more. It only runs when the controller never called
-  `answer`, so there is no draft underneath it: a failed synthesis leaves
-  `:answer` as `nil` and the run still comes back `{:ok, ctx}` with
-  `terminated_by: :max_iterations`. Check for a nil answer on that path rather
-  than assuming something was written.
+  The `max_iterations` fallback synthesizer has no draft underneath it at all,
+  since it only runs when the controller never called `answer`, so failing it
+  costs you more. A failed synthesis leaves `:answer` as `nil` and the run still
+  comes back `{:ok, ctx}` with `terminated_by: :max_iterations`.
+
+  The non-empty part of that contract belongs to the default synthesizer rather
+  than to the loop. A custom `:synthesizer` has its `{:ok, text}` stored
+  verbatim, so `{:ok, ""}` leaves you an empty answer instead of `nil`. If you
+  supply your own, check that the answer is present rather than just non-nil.
 
   ## Two models
 
