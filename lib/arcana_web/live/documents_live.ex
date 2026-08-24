@@ -9,6 +9,8 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     """
     use Phoenix.LiveView
 
+    require Logger
+
     import ArcanaWeb.DashboardComponents
 
     alias Arcana.Document
@@ -290,15 +292,26 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       socket = assign(socket, graph_indexing: true)
 
       ArcanaWeb.TaskSupervisor.start_child(fn ->
-        # The task is supervised, not linked to this LiveView, so a raise in
-        # here would kill it silently: no {:graph_complete, _} would arrive and
-        # graph_indexing would stay true, spinning forever. Report the failure
-        # instead. Covers anything that raises, not just a missing schema.
+        # The task is supervised, not linked to this LiveView, so a failure in
+        # here dies silently: no {:graph_complete, _} arrives and graph_indexing
+        # stays true, spinning forever. Report it instead.
+        #
+        # `catch` rather than `rescue`, for the reason Arcana.Ingest gives at
+        # build_graph_or_fail_document/5: an extractor or store is as free to
+        # throw or exit as to raise, and a GenServer.call timeout exits. A
+        # rescue here left an exiting extractor stranding the spinner exactly
+        # the way the missing schema did.
         result =
           try do
             Arcana.Graph.build_and_persist(chunks, collection, repo, [])
-          rescue
-            error -> {:error, Exception.message(error)}
+          catch
+            kind, reason ->
+              Logger.error(
+                "Arcana: graph build failed for document #{document.id}: " <>
+                  Exception.format(kind, reason, __STACKTRACE__)
+              )
+
+              {:error, Exception.format_banner(kind, reason)}
           end
 
         send(parent, {:graph_complete, result})
