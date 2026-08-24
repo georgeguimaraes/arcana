@@ -41,8 +41,12 @@ defmodule Arcana.Loop do
       Arcana.Loop.run(ctx,
         controller_llm: fn messages, tools, opts ->
           # messages are ReqLLM.Context entries, tools are ReqLLM.Tool structs.
-          # Return {:ok, %{text: ..., tool_calls: [...]}} in the shape
-          # ReqLLM.Response.classify/1 produces, or {:error, reason}.
+          # Return the shape ReqLLM.Response.classify/1 produces. The loop
+          # routes on :type and has no fallback clause, so it must be there:
+          #
+          #     {:ok, %{type: :tool_calls, tool_calls: [...]}}
+          #     {:ok, %{type: :final_answer, text: "..."}}
+          #     {:error, reason}
           MyApp.LLM.complete_with_tools(messages, tools, opts)
         end
       )
