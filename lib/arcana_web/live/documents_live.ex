@@ -27,6 +27,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
        |> assign(upload_error: nil)
        |> assign(filter_collection: nil)
        |> assign(graph_enabled: Arcana.Graph.enabled?())
+       # enabled? is config, installed? is the schema. The Build Graph button
+       # renders on the former, so with the graph configured but never migrated
+       # the click used to start a task that raised 42P01 and told nobody.
+       |> assign(graph_installed: Arcana.Graph.installed?(repo))
        |> assign(graph_indexing: false)
        |> assign(stats: nil, collections: [], documents: [], total_pages: 1, total_count: 0)
        |> allow_upload(:files,
@@ -267,6 +271,16 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       {:noreply, socket}
     end
 
+    def handle_event("build_graph", _params, %{assigns: %{graph_installed: false}} = socket) do
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         "GraphRAG is not installed in this database. Run a migration calling " <>
+           "Arcana.Graph.Migration.up/1 to build a graph."
+       )}
+    end
+
     def handle_event("build_graph", _params, socket) do
       %{document: document, chunks: chunks} = socket.assigns.viewing_document
       collection = document.collection
@@ -276,7 +290,17 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       socket = assign(socket, graph_indexing: true)
 
       ArcanaWeb.TaskSupervisor.start_child(fn ->
-        result = Arcana.Graph.build_and_persist(chunks, collection, repo, [])
+        # The task is supervised, not linked to this LiveView, so a raise in
+        # here would kill it silently: no {:graph_complete, _} would arrive and
+        # graph_indexing would stay true, spinning forever. Report the failure
+        # instead. Covers anything that raises, not just a missing schema.
+        result =
+          try do
+            Arcana.Graph.build_and_persist(chunks, collection, repo, [])
+          rescue
+            error -> {:error, Exception.message(error)}
+          end
+
         send(parent, {:graph_complete, result})
       end)
 
