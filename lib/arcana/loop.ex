@@ -24,6 +24,64 @@ defmodule Arcana.Loop do
       ctx.tool_history
       ctx.terminated_by
 
+  ## The loop's LLM options differ from the rest of arcana
+
+  `Arcana.ask/2`, `Arcana.Pipeline`, graph extraction and community
+  summarization all accept a `{module, function}` LLM. **The loop does not**, and
+  passing one raises `ArgumentError`. Two things to know before adopting it.
+
+  `req_llm` is required either way. `run/2` refuses to start without it, because
+  the messages and tools the loop builds are `ReqLLM.Context` and `ReqLLM.Tool`
+  structs. So the loop is the one part of arcana an app cannot use while leaving
+  `req_llm` out.
+
+  You can still route the model call through your own stack, using a
+  three-arity function rather than a `{module, function}` tuple:
+
+      Arcana.Loop.run(ctx,
+        controller_llm: fn messages, tools, opts ->
+          # messages are ReqLLM.Context entries, tools are ReqLLM.Tool structs.
+          # Return the shape ReqLLM.Response.classify/1 produces. The loop
+          # routes on :type and has no fallback clause, so it must be there:
+          #
+          #     {:ok, %{type: :tool_calls, tool_calls: [...]}}
+          #     {:ok, %{type: :final_answer, text: "..."}}
+          #     {:error, reason}
+          MyApp.LLM.complete_with_tools(messages, tools, opts)
+        end
+      )
+
+  That is the hook for your own tracing and cost accounting. What it cannot do is
+  live in `config/runtime.exs` as data: a captured function does not serialize
+  into a release's `sys.config`, which is exactly what `{module, function}` was
+  added for elsewhere. So the loop's LLM has to be wired where code runs, not in
+  config.
+
+  Why the tuple is refused rather than supported: a `{module, function}` LLM is
+  called as a plain completion - prompt in, text out - with nowhere to pass tools
+  or read tool calls back. The loop needs both, so accepting the shape would mean
+  a provider-agnostic tool-calling contract for arcana. If you want that, say so
+  on [#164](https://github.com/georgeguimaraes/arcana/issues/164).
+
+  `:answer_llm` carries the same restriction. The answerer is passed no tools and
+  asked for prose, but both roles go through the same call path, so it takes a
+  model spec or a three-arity function too.
+
+  Its return contract is looser, though. The `:type` routing above is the
+  controller's: the answerer only needs `{:ok, %{text: binary}}` with a non-empty
+  string, and anything else - including an error - silently keeps the
+  controller's own draft rather than failing the run.
+
+  The `max_iterations` fallback synthesizer has no draft underneath it at all,
+  since it only runs when the controller never called `answer`, so failing it
+  costs you more. A failed synthesis leaves `:answer` as `nil` and the run still
+  comes back `{:ok, ctx}` with `terminated_by: :max_iterations`.
+
+  The non-empty part of that contract belongs to the default synthesizer rather
+  than to the loop. A custom `:synthesizer` has its `{:ok, text}` stored
+  verbatim, so `{:ok, ""}` leaves you an empty answer instead of `nil`. If you
+  supply your own, check that the answer is present rather than just non-nil.
+
   ## Two models
 
   You can configure separate models for the loop controller and the final
