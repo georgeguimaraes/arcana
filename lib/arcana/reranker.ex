@@ -10,8 +10,12 @@ defmodule Arcana.Reranker do
   `Arcana.search/2` returns its results unreranked, even when an LLM is
   configured for `Arcana.ask/2`.
 
-      config :arcana, reranker: :llm                     # every search
-      Arcana.search(query, reranker: :llm)               # this search
+      config :arcana, reranker: Arcana.Reranker.LLM        # every search
+      Arcana.search(query, reranker: Arcana.Reranker.LLM)  # this search
+
+  A module, or a `{module, opts}` tuple, or a three-arity function. There is no
+  `:llm` shortcut - unlike `:embedder` and `:chunker`, the reranker spec defines
+  none, so name the module.
 
   ## Reranking filters as well as reorders
 
@@ -24,10 +28,9 @@ defmodule Arcana.Reranker do
 
   ## Built-in Implementations
 
-  - `Arcana.Reranker.LLM` - uses your LLM to score relevance. This is what
-    `:llm` resolves to, and it costs an LLM round trip per search, which is
-    seconds rather than milliseconds - see its moduledoc before using it on an
-    interactive path
+  - `Arcana.Reranker.LLM` - uses your LLM to score relevance. Costs an LLM round
+    trip per search, which is seconds rather than milliseconds - see its
+    moduledoc before using it on an interactive path
   - `Arcana.Reranker.CrossEncoder` and `Arcana.Reranker.ColBERT` - local models,
     no LLM call
 

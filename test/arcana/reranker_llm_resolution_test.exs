@@ -56,7 +56,11 @@ defmodule Arcana.RerankerLlmResolutionTest do
                  reranker: {LLM, []}
                )
 
-      assert is_list(results)
+      # Asserting on :rerank_score, not just {:ok, _}: a bare shape check would
+      # also pass if reranking were silently skipped, which is the thing this
+      # test exists to notice.
+      assert Enum.all?(results, &is_number(&1.rerank_score)),
+             "every returned chunk should carry the score the reranker gave it"
     end
 
     test "and with the llm inside the reranker tuple" do
@@ -70,7 +74,7 @@ defmodule Arcana.RerankerLlmResolutionTest do
                  reranker: {LLM, llm: scorer()}
                )
 
-      assert is_list(results)
+      assert Enum.all?(results, &is_number(&1.rerank_score))
     end
   end
 
