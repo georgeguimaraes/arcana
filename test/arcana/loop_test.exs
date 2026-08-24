@@ -12,6 +12,55 @@ defmodule Arcana.LoopTest do
   alias Arcana.Loop.Context
   alias Arcana.Loop.Tools
 
+  describe "llm option shapes" do
+    test "a {module, function} controller is refused, and says what to pass instead" do
+      # The loop cannot use the serializable {module, function} LLM the rest of
+      # arcana accepts: that shape is called as prompt-in/text-out, with nowhere
+      # to pass tools or read tool calls back. See the moduledoc section on the
+      # loop's LLM options.
+      ctx = Loop.new("q", repo: Arcana.TestRepo)
+
+      err =
+        assert_raise ArgumentError, fn ->
+          Loop.run(ctx, controller_llm: {MyApp.LLM, :complete})
+        end
+
+      assert err.message =~ ":controller_llm"
+      assert err.message =~ "provider:model"
+    end
+
+    test "and the same for :answer_llm" do
+      ctx = Loop.new("q", repo: Arcana.TestRepo)
+
+      assert_raise ArgumentError, ~r/:answer_llm/, fn ->
+        Loop.run(ctx,
+          controller_llm: fn _m, _t, _o -> {:ok, %{type: :final_answer, text: "x"}} end,
+          answer_llm: {MyApp.LLM, :complete}
+        )
+      end
+    end
+
+    test "a three-arity function is the supported way to bring your own stack" do
+      # This is what the moduledoc points people at, so it is pinned here rather
+      # than left implicit in the stub helper every other test happens to use.
+      ctx = Loop.new("q", repo: Arcana.TestRepo)
+
+      called = :counters.new(1, [])
+
+      controller = fn messages, tools, _opts ->
+        :counters.add(called, 1, 1)
+        assert is_list(tools), "the loop must hand tools to a custom controller"
+        assert messages != [], "and the conversation so far"
+        {:ok, %{type: :final_answer, text: "done"}}
+      end
+
+      {:ok, result} = Loop.run(ctx, controller_llm: controller)
+
+      assert :counters.get(called, 1) == 1, "the custom function must actually be called"
+      assert result.answer == "done"
+    end
+  end
+
   # Builds a stub controller that returns scripted responses one per call.
   # Each scripted response is either a `ReqLLM.Response.classify_result()`-shaped
   # map or a function `(messages, tools, opts) -> {:ok, classified}` that lets a
