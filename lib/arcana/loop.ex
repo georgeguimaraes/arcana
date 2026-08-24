@@ -67,6 +67,12 @@ defmodule Arcana.Loop do
   asked for prose, but both roles go through the same call path, so it takes a
   model spec or a three-arity function too.
 
+  Its return contract is looser, though. The `:type` routing above is the
+  controller's: the answerer (and the `max_iterations` fallback synthesizer) only
+  needs `{:ok, %{text: binary}}` with a non-empty string, and anything else -
+  including an error - silently keeps the controller's own draft rather than
+  failing the run.
+
   ## Two models
 
   You can configure separate models for the loop controller and the final
