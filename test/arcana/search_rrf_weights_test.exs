@@ -49,11 +49,18 @@ defmodule Arcana.SearchRrfWeightsTest do
     test "a zero weight removes a side's contribution without dropping its items" do
       results = Search.rrf_combine(@vector_only, @keyword_only, 4, 60, {1.0, 0.0})
 
-      assert ids(results) == ["v1", "v2", "k1", "k2"]
+      assert length(results) == 4, "a zero weight must not drop the items"
 
-      for r <- results, r.id in ["k1", "k2"] do
-        assert r.score == 0.0, "a zero-weighted side should contribute nothing"
-      end
+      scored = Map.new(results, &{&1.id, &1.score})
+
+      assert scored["k1"] == 0.0 and scored["k2"] == 0.0,
+             "a zero-weighted side should contribute nothing"
+
+      assert scored["v1"] > scored["k1"], "and the weighted side should outrank it"
+
+      # Deliberately not asserting the order within the zero-weighted pair:
+      # those scores tie, rrf_combine has no tiebreaker, and the final order
+      # comes out of map enumeration. Pinning it would be testing an accident.
     end
 
     test "an item in both lists still accumulates from each side" do
@@ -72,6 +79,46 @@ defmodule Arcana.SearchRrfWeightsTest do
       # The graph fusion path calls it this way, so the default has to hold.
       assert ids(Search.rrf_combine(@vector_only, @keyword_only, 4)) ==
                ids(Search.rrf_combine(@vector_only, @keyword_only, 4, 60, {1.0, 1.0}))
+    end
+
+    test "equal weights keep the magnitudes unweighted RRF produced, not half of them" do
+      # do_hybrid_rrf passes the 0.5/0.5 defaults, so without normalizing by the
+      # larger weight every score on that path would silently halve - ordering
+      # intact, but different numbers for anyone reading .score or its telemetry.
+      unweighted = Search.rrf_combine(@vector_only, @keyword_only, 4, 60)
+      defaults = Search.rrf_combine(@vector_only, @keyword_only, 4, 60, {0.5, 0.5})
+
+      assert Enum.map(unweighted, & &1.score) == Enum.map(defaults, & &1.score)
+    end
+
+    test "the ratio is what matters, not the scale" do
+      tenths = Search.rrf_combine(@vector_only, @keyword_only, 4, 60, {0.9, 0.1})
+      whole = Search.rrf_combine(@vector_only, @keyword_only, 4, 60, {9, 1})
+
+      assert ids(tenths) == ids(whole)
+
+      # Equal within tolerance rather than identical: 0.1/0.9 and 1/9 differ by
+      # one ULP, so the ratio survives normalization but the bits do not.
+      for {a, b} <- Enum.zip(tenths, whole) do
+        assert_in_delta a.score, b.score, 1.0e-15
+      end
+    end
+
+    for bad <- [{nil, 0.5}, {0.5, nil}, {-1.0, 1.0}, {"0.5", 0.5}] do
+      test "rejects #{inspect(bad)} instead of producing nonsense" do
+        # Unvalidated, a nil crashed with ArithmeticError deep in the fusion and a
+        # negative weight silently inverted that side's ranking.
+        assert_raise ArgumentError, ~r/must be non-negative numbers/, fn ->
+          Search.rrf_combine(@vector_only, @keyword_only, 4, 60, unquote(Macro.escape(bad)))
+        end
+      end
+    end
+
+    test "both weights zero means no preference rather than an arbitrary order" do
+      zeroed = Search.rrf_combine(@vector_only, @keyword_only, 4, 60, {0.0, 0.0})
+      equal = Search.rrf_combine(@vector_only, @keyword_only, 4, 60, {1.0, 1.0})
+
+      assert Enum.map(zeroed, & &1.score) == Enum.map(equal, & &1.score)
     end
 
     test "limit still truncates after fusion" do

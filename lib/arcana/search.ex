@@ -623,7 +623,7 @@ defmodule Arcana.Search do
   # :keyword_weight mean anything on this path: it used to ignore them outright,
   # so a backend routed through here silently discarded both options.
   def rrf_combine(list1, list2, limit, k \\ 60, weights \\ {1.0, 1.0}) do
-    {weight1, weight2} = weights
+    {weight1, weight2} = normalize_weights!(weights)
 
     scores1 =
       list1
@@ -647,6 +647,32 @@ defmodule Arcana.Search do
     end)
     |> Enum.sort_by(& &1.score, :desc)
     |> Enum.take(limit)
+  end
+
+  # Weights are relative, so only their ratio matters to the ordering - which
+  # means they can be scaled to put the larger one at 1.0. That keeps the scores
+  # in the range they had before weighting existed: equal weights, including the
+  # 0.5/0.5 defaults, come out exactly as unweighted RRF rather than uniformly
+  # halved. Without this, turning weights on silently changed every score any
+  # caller of a non-pgvector hybrid search was reading.
+  defp normalize_weights!({weight1, weight2} = weights) do
+    unless is_number(weight1) and is_number(weight2) and weight1 >= 0 and weight2 >= 0 do
+      raise ArgumentError, """
+      :vector_weight and :keyword_weight must be non-negative numbers, got: \
+      #{inspect(weights)}
+
+      They are relative, so only their ratio matters: {0.9, 0.1} and {9, 1} rank
+      the same. A negative weight would invert that side's ranking.
+      """
+    end
+
+    case max(weight1, weight2) do
+      # Both zero. Every score would be 0 and the order would fall out of map
+      # enumeration, so treat it as "no preference" rather than a silent shuffle.
+      +0.0 -> {1.0, 1.0}
+      0 -> {1.0, 1.0}
+      scale -> {weight1 / scale, weight2 / scale}
+    end
   end
 
   defp warn_deprecated_weight_opts(opts) do
