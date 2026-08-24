@@ -217,10 +217,25 @@ end
 
 Where `k` is a constant (default 60) that prevents top-ranked items from dominating.
 
+**Weights on this path:**
+
+`:vector_weight` and `:keyword_weight` apply here too, scaling each side's
+contribution. Canonical RRF is unweighted, and equal weights reproduce it
+exactly, since scaling both sides by the same factor cannot reorder anything.
+Only the ratio matters, so `{0.9, 0.1}` ranks identically to `{9, 1}` and the
+weights are rescaled to put the larger one at `1.0` before use. That keeps the
+absolute scores where they were before weighting existed, which is why the
+default `0.5`/`0.5` produces plain unweighted RRF rather than every score
+halved. This differs from pgvector, where the weights are absolute multipliers
+that interact with `:threshold`.
+
 **Algorithm:**
 
 ```elixir
-def rrf_combine(vector_results, keyword_results, limit) do
+def rrf_combine(vector_results, keyword_results, limit, k \\ 60, weights \\ {1.0, 1.0}) do
+  # Rescaled so the larger weight is 1.0 - only the ratio affects ranking
+  {vector_weight, keyword_weight} = normalize_weights!(weights)
+
   # Build rank maps
   vector_ranks = build_rank_map(vector_results)
   keyword_ranks = build_rank_map(keyword_results)
@@ -234,7 +249,9 @@ def rrf_combine(vector_results, keyword_results, limit) do
     vector_rank = Map.get(vector_ranks, id, 1000)  # Default: low rank
     keyword_rank = Map.get(keyword_ranks, id, 1000)
 
-    rrf_score = 1/(60 + vector_rank) + 1/(60 + keyword_rank)
+    rrf_score =
+      vector_weight / (k + vector_rank) + keyword_weight / (k + keyword_rank)
+
     {id, rrf_score}
   end)
   |> Enum.sort_by(&elem(&1, 1), :desc)

@@ -67,6 +67,12 @@ defmodule Arcana.Search do
     * `:vector_store` - Override the configured vector store backend
     * `:vector_weight` - Weight for vector scores in hybrid mode (default: 0.5)
     * `:keyword_weight` - Weight for keyword scores in hybrid mode (default: 0.5)
+
+      Both must be non-negative numbers and cannot both be zero. What they mean
+      depends on the backend: pgvector multiplies them into a blended score that
+      is then compared against `:threshold`, so their magnitudes matter there.
+      Every other backend fuses ranks, where only the ratio matters and
+      `{0.9, 0.1}` ranks the same as `{9, 1}`.
     * `:reranker` - Reranker module or function. Defaults to `config :arcana, :reranker`.
       Pass `false` to disable a globally configured reranker for this call.
       When set, retrieves `limit * over_fetch` candidates, reranks, returns top `limit`.
@@ -505,6 +511,15 @@ defmodule Arcana.Search do
   defp do_search(:hybrid, query, params) do
     backend = params.vector_store || VectorStore.backend()
 
+    # Validate here rather than inside the fusion helper: pgvector multiplies
+    # the weights straight into SQL and never goes near rrf_combine, so
+    # validating downstream would leave the default backend accepting the
+    # garbage the other path rejects.
+    validate_weights!({
+      Map.get(params, :vector_weight, 0.5),
+      Map.get(params, :keyword_weight, 0.5)
+    })
+
     case backend do
       :pgvector ->
         do_hybrid_pgvector(query, params)
@@ -649,30 +664,50 @@ defmodule Arcana.Search do
     |> Enum.take(limit)
   end
 
-  # Weights are relative, so only their ratio matters to the ordering - which
-  # means they can be scaled to put the larger one at 1.0. That keeps the scores
-  # in the range they had before weighting existed: equal weights, including the
-  # 0.5/0.5 defaults, come out exactly as unweighted RRF rather than uniformly
-  # halved. Without this, turning weights on silently changed every score any
-  # caller of a non-pgvector hybrid search was reading.
-  defp normalize_weights!({weight1, weight2} = weights) do
+  # On this path the weights are relative, so only their ratio matters to the
+  # ordering - which means they can be scaled to put the larger one at 1.0. That
+  # keeps the scores in the range they had before weighting existed: equal
+  # weights, including the 0.5/0.5 defaults, come out exactly as unweighted RRF
+  # rather than uniformly halved. Without this, turning weights on silently
+  # changed every score any caller of a non-pgvector hybrid search was reading.
+  #
+  # Note this rescaling is specific to rank fusion. pgvector multiplies the raw
+  # weights into a score it then compares against `:threshold`, so there the
+  # magnitudes matter too and are deliberately left alone.
+  defp normalize_weights!(weights) do
+    {weight1, weight2} = validate_weights!(weights)
+
+    # Non-negative and not both zero, so the larger one is strictly positive.
+    scale = max(weight1, weight2)
+    {weight1 / scale, weight2 / scale}
+  end
+
+  defp validate_weights!({weight1, weight2} = weights) do
     unless is_number(weight1) and is_number(weight2) and weight1 >= 0 and weight2 >= 0 do
       raise ArgumentError, """
       :vector_weight and :keyword_weight must be non-negative numbers, got: \
       #{inspect(weights)}
 
-      They are relative, so only their ratio matters: {0.9, 0.1} and {9, 1} rank
-      the same. A negative weight would invert that side's ranking.
+      A negative weight inverts that side's ranking instead of down-weighting it.
       """
     end
 
-    case max(weight1, weight2) do
-      # Both zero. Every score would be 0 and the order would fall out of map
-      # enumeration, so treat it as "no preference" rather than a silent shuffle.
-      +0.0 -> {1.0, 1.0}
-      0 -> {1.0, 1.0}
-      scale -> {weight1 / scale, weight2 / scale}
+    # Compared with == rather than matched against a zero literal: -0.0 is a
+    # number that passes the guard above, and since Elixir 1.16 it does not
+    # match the pattern +0.0. Left as a match, `{-0.0, 0.0}` slipped through to
+    # -0.0 / -0.0 and raised ArithmeticError.
+    if weight1 == 0 and weight2 == 0 do
+      raise ArgumentError, """
+      :vector_weight and :keyword_weight cannot both be zero, got: \
+      #{inspect(weights)}
+
+      There would be nothing left to rank by. On the rank-fusion path every
+      score collapses to 0 and the order falls out of map enumeration; on
+      pgvector every row scores 0 and `:threshold` then filters all of them out.
+      """
     end
+
+    weights
   end
 
   defp warn_deprecated_weight_opts(opts) do

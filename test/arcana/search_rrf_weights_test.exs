@@ -104,21 +104,31 @@ defmodule Arcana.SearchRrfWeightsTest do
       end
     end
 
-    for bad <- [{nil, 0.5}, {0.5, nil}, {-1.0, 1.0}, {"0.5", 0.5}] do
-      test "rejects #{inspect(bad)} instead of producing nonsense" do
-        # Unvalidated, a nil crashed with ArithmeticError deep in the fusion and a
-        # negative weight silently inverted that side's ranking.
+    test "rejects weights that are not non-negative numbers" do
+      # Unvalidated, a nil crashed with ArithmeticError deep in the fusion and a
+      # negative weight silently inverted that side's ranking.
+      #
+      # Iterated at runtime rather than generated as separate tests: unquoting
+      # these in as literals lets the compiler infer the argument type from the
+      # raising guard and warn "incompatible types" for every case, which is
+      # permanent noise on a suite that runs constantly.
+      for bad <- [{nil, 0.5}, {0.5, nil}, {-1.0, 1.0}, {"0.5", 0.5}] do
         assert_raise ArgumentError, ~r/must be non-negative numbers/, fn ->
-          Search.rrf_combine(@vector_only, @keyword_only, 4, 60, unquote(Macro.escape(bad)))
+          Search.rrf_combine(@vector_only, @keyword_only, 4, 60, bad)
         end
       end
     end
 
-    test "both weights zero means no preference rather than an arbitrary order" do
-      zeroed = Search.rrf_combine(@vector_only, @keyword_only, 4, 60, {0.0, 0.0})
-      equal = Search.rrf_combine(@vector_only, @keyword_only, 4, 60, {1.0, 1.0})
-
-      assert Enum.map(zeroed, & &1.score) == Enum.map(equal, & &1.score)
+    test "rejects both weights being zero rather than picking an order" do
+      # Every score collapses to 0, so the ranking would come out of map
+      # enumeration. Rejecting it also keeps the two hybrid backends agreeing:
+      # pgvector scores every row 0 and :threshold then drops all of them, so
+      # the same call used to return everything here and nothing there.
+      for bad <- [{0.0, 0.0}, {0, 0}, {0, 0.0}, {-0.0, 0.0}, {-0.0, -0.0}] do
+        assert_raise ArgumentError, ~r/cannot both be zero/, fn ->
+          Search.rrf_combine(@vector_only, @keyword_only, 4, 60, bad)
+        end
+      end
     end
 
     test "limit still truncates after fusion" do
