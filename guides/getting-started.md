@@ -357,13 +357,24 @@ Arcana's schemas directly:
 # Hybrid search (combines semantic + fulltext)
 {:ok, results} = Arcana.search("Elixir patterns", repo: MyApp.Repo, mode: :hybrid)
 
-# Hybrid with custom weights (pgvector backend)
+# Hybrid with custom weights
 {:ok, results} = Arcana.search("Elixir patterns",
   repo: MyApp.Repo,
   mode: :hybrid,
   vector_weight: 0.7,  # Weight for semantic similarity
   keyword_weight: 0.3   # Weight for keyword matching
 )
+```
+
+Both weights must be non-negative and cannot both be zero. They apply on every
+backend, but they do not mean quite the same thing on each: pgvector blends the
+two scores and compares the result against `:threshold`, so raising both weights
+raises the blended score and can let more rows past the threshold. Other
+backends fuse by rank, where only the ratio counts and `0.9/0.1` ranks
+identically to `9/1`. See
+[Search Algorithms](search-algorithms.md) for the details.
+
+```elixir
 
 # With filters
 {:ok, results} = Arcana.search("query",
