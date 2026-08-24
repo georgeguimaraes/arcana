@@ -20,6 +20,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     @impl true
     def mount(_params, session, socket) do
       repo = get_repo_from_session(session)
+      graph_enabled = Arcana.Graph.enabled?()
 
       {:ok,
        socket
@@ -28,11 +29,16 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
        |> assign(viewing_document: nil)
        |> assign(upload_error: nil)
        |> assign(filter_collection: nil)
-       |> assign(graph_enabled: Arcana.Graph.enabled?())
+       |> assign(graph_enabled: graph_enabled)
        # enabled? is config, installed? is the schema. The Build Graph button
        # renders on the former, so with the graph configured but never migrated
        # the click used to start a task that raised 42P01 and told nobody.
-       |> assign(graph_installed: Arcana.Graph.installed?(repo))
+       #
+       # Short-circuited so an app that does not use the graph pays nothing:
+       # installed?/2 is a pg_class lookup on every mount of this page
+       # otherwise. When the graph is off the button does not render, so the
+       # guard below is only reachable by a forged event either way.
+       |> assign(graph_installed: graph_enabled and Arcana.Graph.installed?(repo))
        |> assign(graph_indexing: false)
        |> assign(stats: nil, collections: [], documents: [], total_pages: 1, total_count: 0)
        |> allow_upload(:files,
@@ -291,31 +297,39 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
       socket = assign(socket, graph_indexing: true)
 
-      ArcanaWeb.TaskSupervisor.start_child(fn ->
-        # The task is supervised, not linked to this LiveView, so a failure in
-        # here dies silently: no {:graph_complete, _} arrives and graph_indexing
-        # stays true, spinning forever. Report it instead.
-        #
-        # `catch` rather than `rescue`, for the reason Arcana.Ingest gives at
-        # build_graph_or_fail_document/5: an extractor or store is as free to
-        # throw or exit as to raise, and a GenServer.call timeout exits. A
-        # rescue here left an exiting extractor stranding the spinner exactly
-        # the way the missing schema did.
-        result =
-          try do
-            Arcana.Graph.build_and_persist(chunks, collection, repo, [])
-          catch
-            kind, reason ->
-              Logger.error(
-                "Arcana: graph build failed for document #{document.id}: " <>
-                  Exception.format(kind, reason, __STACKTRACE__)
-              )
+      {:ok, task_pid} =
+        ArcanaWeb.TaskSupervisor.start_child(fn ->
+          # The task is supervised, not linked to this LiveView, so a failure
+          # in here dies silently: no {:graph_complete, _} arrives and
+          # graph_indexing stays true, spinning forever. Report it instead.
+          #
+          # `catch` rather than `rescue`, for the reason Arcana.Ingest gives at
+          # build_graph_or_fail_document/5: an extractor or store is as free to
+          # throw or exit as to raise, and a GenServer.call timeout exits. A
+          # rescue here left an exiting extractor stranding the spinner exactly
+          # the way the missing schema did.
+          result =
+            try do
+              Arcana.Graph.build_and_persist(chunks, collection, repo, [])
+            catch
+              kind, reason ->
+                Logger.error(
+                  "Arcana: graph build failed for document #{document.id}: " <>
+                    Exception.format(kind, reason, __STACKTRACE__)
+                )
 
-              {:error, Exception.format_banner(kind, reason)}
-          end
+                {:error, Exception.format_banner(kind, reason)}
+            end
 
-        send(parent, {:graph_complete, result})
-      end)
+          send(parent, {:graph_complete, result})
+        end)
+
+      # The catch above enumerates the ways the build itself fails. A monitor
+      # covers the ways it stops without running our code at all - the
+      # supervisor shutting the task down, an external kill, the node running
+      # out of memory - so the spinner clears on every termination kind rather
+      # than on the list we thought of.
+      Process.monitor(task_pid)
 
       {:noreply, socket}
     end
@@ -350,6 +364,21 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         end
 
       load_data(socket)
+    end
+
+    # Fires after {:graph_complete, _} on a healthy run, where graph_indexing is
+    # already false and this is a no-op. It earns its keep when the task stopped
+    # without reporting: :normal is the reported path, anything else is not.
+    @impl true
+    def handle_info({:DOWN, _ref, :process, _pid, reason}, socket) do
+      if socket.assigns.graph_indexing and reason != :normal do
+        {:noreply,
+         socket
+         |> assign(graph_indexing: false)
+         |> put_flash(:error, "Graph build stopped: #{inspect(reason)}")}
+      else
+        {:noreply, socket}
+      end
     end
 
     @impl true

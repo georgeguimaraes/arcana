@@ -22,6 +22,13 @@ defmodule ArcanaWeb.DocumentsLiveBuildGraphTest do
 
   defp open_document(conn, doc), do: live(conn, "/arcana/documents?doc=#{doc.id}")
 
+  # render_click through the element rather than render_hook: it goes through
+  # the rendered button, so it also proves the button exists and is not
+  # disabled. render_hook fires whether or not anything is on screen.
+  defp click_build_graph(view) do
+    view |> element("button[phx-click='build_graph']") |> render_click()
+  end
+
   defp seed_document do
     # Ingest before enabling the graph: with the graph on, Arcana.ingest/2
     # builds one too, so seeding afterwards fails in setup for the very
@@ -52,7 +59,7 @@ defmodule ArcanaWeb.DocumentsLiveBuildGraphTest do
     test "clicking Build Graph names the migration to run", %{conn: conn, doc: doc} do
       {:ok, view, _html} = open_document(conn, doc)
 
-      html = render_hook(view, "build_graph", %{})
+      html = click_build_graph(view)
 
       assert html =~ "GraphRAG is not installed"
       assert html =~ "Arcana.Graph.Migration.up"
@@ -64,7 +71,7 @@ defmodule ArcanaWeb.DocumentsLiveBuildGraphTest do
       # was graph_indexing going true with nothing left alive to clear it.
       {:ok, view, _html} = open_document(conn, doc)
 
-      render_hook(view, "build_graph", %{})
+      click_build_graph(view)
 
       refute render(view) =~ "Building...",
              "graph_indexing must not be left on after a refused build"
@@ -87,7 +94,7 @@ defmodule ArcanaWeb.DocumentsLiveBuildGraphTest do
       )
 
       {:ok, view, _html} = open_document(conn, doc)
-      render_hook(view, "build_graph", %{})
+      click_build_graph(view)
 
       assert eventually(fn -> not (render(view) =~ "Building...") end),
              "an exit inside the task left graph_indexing on"
@@ -102,10 +109,38 @@ defmodule ArcanaWeb.DocumentsLiveBuildGraphTest do
       )
 
       {:ok, view, _html} = open_document(conn, doc)
-      render_hook(view, "build_graph", %{})
+      click_build_graph(view)
 
       assert eventually(fn -> not (render(view) =~ "Building...") end),
              "a raise inside the task left graph_indexing on"
+
+      assert Process.alive?(view.pid)
+    end
+
+    test "a killed task does not strand the spinner either", %{conn: conn, doc: doc} do
+      # No try/catch can see this one: :kill does not run the task's code. The
+      # monitor is what clears the spinner, which is the difference between
+      # "we handled the failures we listed" and "the spinner always clears".
+      test_pid = self()
+
+      put_arcana_env(:graph,
+        enabled: true,
+        entity_extractor: fn _text, _opts ->
+          send(test_pid, {:building, self()})
+          Process.sleep(:infinity)
+        end
+      )
+
+      {:ok, view, _html} = open_document(conn, doc)
+      click_build_graph(view)
+
+      assert render(view) =~ "Building...", "precondition: the build is in flight"
+
+      assert_receive {:building, worker}, 5000
+      Process.exit(worker, :kill)
+
+      assert eventually(fn -> not (render(view) =~ "Building...") end),
+             "a killed task left graph_indexing on"
 
       assert Process.alive?(view.pid)
     end
