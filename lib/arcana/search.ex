@@ -566,7 +566,12 @@ defmodule Arcana.Search do
 
     with {:ok, vector_results} <- do_search(:vector, query, vector_params),
          {:ok, keyword_results} <- do_search(:keyword, query, keyword_params) do
-      {:ok, rrf_combine(vector_results, keyword_results, params.limit, rrf_k)}
+      weights = {
+        Map.get(params, :vector_weight, 0.5),
+        Map.get(params, :keyword_weight, 0.5)
+      }
+
+      {:ok, rrf_combine(vector_results, keyword_results, params.limit, rrf_k, weights)}
     end
   end
 
@@ -611,12 +616,24 @@ defmodule Arcana.Search do
   end
 
   @doc false
-  def rrf_combine(list1, list2, limit, k \\ 60) do
+  # Reciprocal rank fusion. Canonical RRF (Cormack et al. 2009) is unweighted -
+  # sum 1/(k + rank) across the lists - and that is what equal weights give, since
+  # scaling both sides by the same factor cannot change the ordering. Unequal
+  # weights are the common extension, and they are what makes :vector_weight and
+  # :keyword_weight mean anything on this path: it used to ignore them outright,
+  # so a backend routed through here silently discarded both options.
+  def rrf_combine(list1, list2, limit, k \\ 60, weights \\ {1.0, 1.0}) do
+    {weight1, weight2} = weights
+
     scores1 =
-      list1 |> Enum.with_index(1) |> Map.new(fn {item, rank} -> {item.id, 1 / (k + rank)} end)
+      list1
+      |> Enum.with_index(1)
+      |> Map.new(fn {item, rank} -> {item.id, weight1 / (k + rank)} end)
 
     scores2 =
-      list2 |> Enum.with_index(1) |> Map.new(fn {item, rank} -> {item.id, 1 / (k + rank)} end)
+      list2
+      |> Enum.with_index(1)
+      |> Map.new(fn {item, rank} -> {item.id, weight2 / (k + rank)} end)
 
     all_items =
       (list1 ++ list2)
