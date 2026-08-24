@@ -68,10 +68,16 @@ defmodule Arcana.Loop do
   model spec or a three-arity function too.
 
   Its return contract is looser, though. The `:type` routing above is the
-  controller's: the answerer (and the `max_iterations` fallback synthesizer) only
-  needs `{:ok, %{text: binary}}` with a non-empty string, and anything else -
-  including an error - silently keeps the controller's own draft rather than
-  failing the run.
+  controller's: the answerer only needs `{:ok, %{text: binary}}` with a non-empty
+  string, and anything else - including an error - silently keeps the
+  controller's own draft rather than failing the run.
+
+  The `max_iterations` fallback synthesizer wants that same non-empty text, but
+  failing it costs you more. It only runs when the controller never called
+  `answer`, so there is no draft underneath it: a failed synthesis leaves
+  `:answer` as `nil` and the run still comes back `{:ok, ctx}` with
+  `terminated_by: :max_iterations`. Check for a nil answer on that path rather
+  than assuming something was written.
 
   ## Two models
 
