@@ -5,6 +5,25 @@ defmodule Arcana.Reranker.LLM do
   Sends all chunks to the LLM in one prompt, gets back JSON scores (0-10),
   then filters by threshold and sorts by score descending.
 
+  ## Cost
+
+  One LLM call per search, on the critical path. Measured on a ~230 document
+  collection at `limit: 8` with `over_fetch: 3`: 16-35 seconds per search against
+  0.2-0.8 seconds unreranked. That is fine for a batch or background path and
+  usually too slow for an interactive one - `Arcana.Reranker.CrossEncoder` and
+  `Arcana.Reranker.ColBERT` score locally if you want reranking without the round
+  trip.
+
+  Also note the threshold filters: it defaults to 7, so chunks the LLM scores
+  below that are dropped from the results rather than moved down. See
+  `Arcana.Reranker` for what that trade means.
+
+  ## Which LLM it uses
+
+  In order: `:llm` in these opts (whether passed beside `:reranker` or inside its
+  option list), then `config :arcana, llm: ...`. `Arcana.Pipeline` supplies
+  `ctx.llm` through the first. It raises only when neither is set.
+
   ## Usage
 
       # With Arcana.Pipeline (uses ctx.llm automatically)
@@ -41,7 +60,7 @@ defmodule Arcana.Reranker.LLM do
   def rerank(_question, [], _opts), do: {:ok, []}
 
   def rerank(question, chunks, opts) do
-    llm = Keyword.fetch!(opts, :llm)
+    llm = resolve_llm!(opts)
     threshold = Keyword.get(opts, :threshold, @default_threshold)
     prompt_fn = Keyword.get(opts, :prompt)
 
@@ -54,6 +73,32 @@ defmodule Arcana.Reranker.LLM do
 
       {:error, _} ->
         {:ok, chunks}
+    end
+  end
+
+  # Falls back to the configured LLM the way Arcana.Ask does. Without this,
+  # `search(reranker: {Arcana.Reranker.LLM, []})` raised KeyError on an app that
+  # had an LLM configured all along, and the fix was to hand the library its own
+  # LLM back - `llm: Arcana.Config.get([], :llm)`. Pipeline still supplies
+  # ctx.llm through opts, and a per-call `llm:` still wins over config.
+  defp resolve_llm!(opts) do
+    case Arcana.Config.get(opts, :llm) do
+      nil ->
+        raise ArgumentError, """
+        Arcana.Reranker.LLM needs an LLM and none was found.
+
+        Configure one globally:
+
+            config :arcana, llm: {MyApp.LLM, :complete}
+
+        or pass it for this call, either beside :reranker or inside its opts:
+
+            Arcana.search(query, reranker: {Arcana.Reranker.LLM, []}, llm: my_llm)
+            Arcana.search(query, reranker: {Arcana.Reranker.LLM, llm: my_llm})
+        """
+
+      llm ->
+        llm
     end
   end
 

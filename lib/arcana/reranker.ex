@@ -5,9 +5,31 @@ defmodule Arcana.Reranker do
   Re-rankers improve retrieval quality by scoring chunks based on their
   relevance to the question, then filtering and re-sorting by score.
 
+  **No reranker runs unless you configure one.** There is no implicit default:
+  with neither `config :arcana, reranker: ...` nor a `:reranker` option,
+  `Arcana.search/2` returns its results unreranked, even when an LLM is
+  configured for `Arcana.ask/2`.
+
+      config :arcana, reranker: :llm                     # every search
+      Arcana.search(query, reranker: :llm)               # this search
+
+  ## Reranking filters as well as reorders
+
+  Worth knowing before you enable one: the callback returns chunks *filtered* by
+  `:threshold` and sorted by score, so a chunk that was in the results can be
+  absent afterwards rather than merely lower down. `:threshold` is therefore a
+  recall-for-precision trade, not a display preference - if a relevant chunk
+  disappears when you turn reranking on, lower it (or set it to 0 to reorder
+  only).
+
   ## Built-in Implementations
 
-  - `Arcana.Reranker.LLM` - Uses your LLM to score relevance (default)
+  - `Arcana.Reranker.LLM` - uses your LLM to score relevance. This is what
+    `:llm` resolves to, and it costs an LLM round trip per search, which is
+    seconds rather than milliseconds - see its moduledoc before using it on an
+    interactive path
+  - `Arcana.Reranker.CrossEncoder` and `Arcana.Reranker.ColBERT` - local models,
+    no LLM call
 
   ## Custom Implementations
 
