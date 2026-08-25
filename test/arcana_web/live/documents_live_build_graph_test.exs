@@ -144,6 +144,72 @@ defmodule ArcanaWeb.DocumentsLiveBuildGraphTest do
 
       assert Process.alive?(view.pid)
     end
+
+    test "an unrelated process dying does not clear the spinner", %{conn: conn, doc: doc} do
+      # The DOWN clause used to match any ref, so any other monitor firing
+      # during a build would clear the spinner and flash a graph error for a
+      # process that had nothing to do with the graph.
+      test_pid = self()
+
+      put_arcana_env(:graph,
+        enabled: true,
+        entity_extractor: fn _text, _opts ->
+          send(test_pid, {:building, self()})
+          Process.sleep(:infinity)
+        end
+      )
+
+      {:ok, view, _html} = open_document(conn, doc)
+      click_build_graph(view)
+      assert_receive {:building, _worker}, 5000
+      assert render(view) =~ "Building...", "precondition: the build is in flight"
+
+      # A process the LiveView monitors that is not the graph task.
+      stranger = spawn(fn -> Process.sleep(:infinity) end)
+      send(view.pid, {:DOWN, make_ref(), :process, stranger, :killed})
+
+      assert render(view) =~ "Building...",
+             "someone else's DOWN must leave the build alone"
+
+      refute render(view) =~ "Graph build stopped"
+    end
+  end
+
+  describe "the build task cannot be started" do
+    setup do
+      %{doc: seed_document()}
+    end
+
+    test "a supervisor that refuses does not take the page down", %{conn: conn, doc: doc} do
+      # Matching {:ok, task_pid} crashed the LiveView when start_child returned
+      # an error tuple, which is a worse outcome than the hang being fixed.
+      put_arcana_env(:graph, enabled: true)
+
+      {:ok, view, _html} = open_document(conn, doc)
+
+      # max_children: 0 makes the next start_child return {:error, :max_children}
+      # without having to reach into the supervisor's internals.
+      :ok = restrict_task_supervisor()
+
+      html = click_build_graph(view)
+
+      assert Process.alive?(view.pid), "a refused start must not crash the page"
+      assert html =~ "Could not start the graph build"
+      refute html =~ "Building..."
+    end
+  end
+
+  # Flip ArcanaWeb.TaskSupervisor to max_children: 0 for the rest of the test.
+  # It is a named supervisor shared by the app, so put it back afterwards.
+  defp restrict_task_supervisor do
+    original = :sys.get_state(ArcanaWeb.TaskSupervisor)
+    on_exit(fn -> :sys.replace_state(ArcanaWeb.TaskSupervisor, fn _ -> original end) end)
+
+    :sys.replace_state(ArcanaWeb.TaskSupervisor, fn state ->
+      %{state | max_children: 0}
+    end)
+
+    :ok
   end
 
   # The task is asynchronous, so poll rather than sleep a fixed guess: a fixed

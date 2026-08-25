@@ -39,7 +39,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
        # otherwise. When the graph is off the button does not render, so the
        # guard below is only reachable by a forged event either way.
        |> assign(graph_installed: graph_enabled and Arcana.Graph.installed?(repo))
-       |> assign(graph_indexing: false)
+       |> assign(graph_indexing: false, graph_task_ref: nil)
        |> assign(stats: nil, collections: [], documents: [], total_pages: 1, total_count: 0)
        |> allow_upload(:files,
          accept: ~w(.txt .md .markdown .pdf),
@@ -295,9 +295,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       repo = socket.assigns.repo
       parent = self()
 
-      socket = assign(socket, graph_indexing: true)
-
-      {:ok, task_pid} =
+      started =
         ArcanaWeb.TaskSupervisor.start_child(fn ->
           # The task is supervised, not linked to this LiveView, so a failure
           # in here dies silently: no {:graph_complete, _} arrives and
@@ -324,14 +322,30 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           send(parent, {:graph_complete, result})
         end)
 
-      # The catch above enumerates the ways the build itself fails. A monitor
-      # covers the ways it stops without running our code at all - the
-      # supervisor shutting the task down, an external kill, the node running
-      # out of memory - so the spinner clears on every termination kind rather
-      # than on the list we thought of.
-      Process.monitor(task_pid)
+      case started do
+        {:ok, task_pid} ->
+          # The catch above enumerates the ways the build itself fails. A
+          # monitor covers the ways it stops without running our code at all -
+          # the supervisor shutting the task down, an external kill, the node
+          # running out of memory - so the spinner clears on every termination
+          # kind rather than on the list we thought of.
+          #
+          # The ref is kept so the DOWN clause can tell this task's death from
+          # any other monitor's: clearing the spinner on someone else's DOWN
+          # would flash a graph error for an unrelated process.
+          {:noreply,
+           assign(socket, graph_indexing: true, graph_task_ref: Process.monitor(task_pid))}
 
-      {:noreply, socket}
+        {:error, reason} ->
+          # The supervisor can refuse (max_children, or it is not running).
+          # Turning the spinner on first and matching {:ok, _} here took the
+          # whole LiveView down instead, which is worse than the hang this
+          # function exists to fix.
+          Logger.error("Arcana: could not start the graph build task: #{inspect(reason)}")
+
+          {:noreply,
+           put_flash(socket, :error, "Could not start the graph build: #{inspect(reason)}")}
+      end
     end
 
     defp ingest_uploads(socket, collection, graph) do
@@ -366,23 +380,32 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       load_data(socket)
     end
 
-    # Fires after {:graph_complete, _} on a healthy run, where graph_indexing is
-    # already false and this is a no-op. It earns its keep when the task stopped
-    # without reporting: :normal is the reported path, anything else is not.
+    # Only the graph task's own DOWN, matched on the stored ref. The reported
+    # path demonitors with :flush below, so reaching here at all means the task
+    # died without sending a result.
     @impl true
-    def handle_info({:DOWN, _ref, :process, _pid, reason}, socket) do
-      if socket.assigns.graph_indexing and reason != :normal do
-        {:noreply,
-         socket
-         |> assign(graph_indexing: false)
-         |> put_flash(:error, "Graph build stopped: #{inspect(reason)}")}
-      else
-        {:noreply, socket}
-      end
+    def handle_info(
+          {:DOWN, ref, :process, _pid, reason},
+          %{assigns: %{graph_task_ref: ref}} = socket
+        )
+        when reason != :normal do
+      {:noreply,
+       socket
+       |> assign(graph_indexing: false, graph_task_ref: nil)
+       |> put_flash(:error, "Graph build stopped: #{inspect(reason)}")}
     end
 
     @impl true
+    def handle_info({:DOWN, _ref, :process, _pid, _reason}, socket), do: {:noreply, socket}
+
+    @impl true
     def handle_info({:graph_complete, result}, socket) do
+      # The task reported, so its DOWN carries no information. Flush it rather
+      # than leaving a stale message to be matched against a later build's ref.
+      if ref = socket.assigns.graph_task_ref, do: Process.demonitor(ref, [:flush])
+
+      socket = assign(socket, graph_task_ref: nil)
+
       socket =
         case result do
           {:ok, %{entity_count: entities, relationship_count: relationships}} ->
