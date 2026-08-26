@@ -161,17 +161,62 @@ defmodule ArcanaWeb.DocumentsLiveBuildGraphTest do
 
       {:ok, view, _html} = open_document(conn, doc)
       click_build_graph(view)
-      assert_receive {:building, _worker}, 5000
+      assert_receive {:building, worker}, 5000
       assert render(view) =~ "Building...", "precondition: the build is in flight"
 
-      # A process the LiveView monitors that is not the graph task.
+      # Both of these sleep forever, and the worker holds a sandbox connection
+      # from the shared task supervisor, so leaving them running leaks into the
+      # rest of the suite.
       stranger = spawn(fn -> Process.sleep(:infinity) end)
+
+      on_exit(fn ->
+        Process.exit(worker, :kill)
+        Process.exit(stranger, :kill)
+      end)
+
       send(view.pid, {:DOWN, make_ref(), :process, stranger, :killed})
 
       assert render(view) =~ "Building...",
              "someone else's DOWN must leave the build alone"
 
       refute render(view) =~ "Graph build stopped"
+    end
+  end
+
+  describe "a build already in flight" do
+    setup do
+      %{doc: seed_document()}
+    end
+
+    test "a second build_graph is ignored rather than displacing the first", %{
+      conn: conn,
+      doc: doc
+    } do
+      # The second start overwrote graph_task_ref, so the first completion
+      # demonitored the second task and cleared the spinner while it ran on.
+      test_pid = self()
+
+      put_arcana_env(:graph,
+        enabled: true,
+        entity_extractor: fn _text, _opts ->
+          send(test_pid, {:building, self()})
+          Process.sleep(:infinity)
+        end
+      )
+
+      {:ok, view, _html} = open_document(conn, doc)
+      click_build_graph(view)
+      assert_receive {:building, worker}, 5000
+      on_exit(fn -> Process.exit(worker, :kill) end)
+
+      # The button is disabled at this point, so go straight at the handler the
+      # way a raced or forged event would.
+      render_hook(view, "build_graph", %{})
+
+      refute_receive {:building, _second}, 500
+
+      assert render(view) =~ "Building...",
+             "the first build must still be running"
     end
   end
 

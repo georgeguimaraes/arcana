@@ -279,6 +279,15 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       {:noreply, socket}
     end
 
+    # A build already running. The button renders disabled while graph_indexing
+    # is true so this is not reachable by clicking, but a forged or raced event
+    # would otherwise start a second task and overwrite graph_task_ref: the
+    # first completion would then demonitor the *second* task, dropping its
+    # failure monitoring and clearing the spinner out from under it.
+    def handle_event("build_graph", _params, %{assigns: %{graph_indexing: true}} = socket) do
+      {:noreply, socket}
+    end
+
     def handle_event("build_graph", _params, %{assigns: %{graph_installed: false}} = socket) do
       {:noreply,
        put_flash(
