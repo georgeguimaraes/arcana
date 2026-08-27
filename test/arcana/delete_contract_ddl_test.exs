@@ -105,6 +105,84 @@ defmodule Arcana.DeleteContractDDLTest do
     assert count >= 1, "the caller's transaction committed and the document is still there"
   end
 
+  test "a savepoint works with the graph enabled too" do
+    # The graph-off version above passed while this one failed, because the
+    # sweeping branch wraps the delete in the graph write lock and that used to
+    # open a nested Ecto transaction. DBConnection marks the connection aborted
+    # when work inside one fails, which refused the ROLLBACK TO SAVEPOINT and
+    # took the caller's pooled connection with it. Since every ingest lands in
+    # a collection, "graph enabled" was the whole audience for the documented
+    # recipe.
+    extractor = fn _t, _o -> {:ok, [%{name: "Tau", type: "concept"}]} end
+
+    {:ok, doc} =
+      Arcana.ingest("tau content",
+        repo: Repo,
+        graph: true,
+        entity_extractor: extractor,
+        collection: "savepoint-graph-on"
+      )
+
+    reference_document("host_refs_sp_graph", doc)
+
+    result =
+      Repo.transaction(fn ->
+        Repo.query!("SAVEPOINT before_delete")
+
+        outcome = Arcana.delete(doc.id, repo: Repo, graph: true)
+
+        Repo.query!("ROLLBACK TO SAVEPOINT before_delete")
+
+        {outcome, Repo.aggregate(Arcana.Document, :count)}
+      end)
+
+    assert {:ok, {{:error, _reason}, count}} = result
+    assert count >= 1, "the caller's transaction survived and committed"
+  end
+
+  test "a savepoint recovers even a sweep that raises" do
+    # The docs claim the recipe covers every failure the built-in stores can
+    # produce, this being the least obvious one. It only holds because
+    # with_write_lock/3 no longer opens a nested transaction; before that the
+    # ROLLBACK TO SAVEPOINT was refused here too.
+    extractor = fn _t, _o -> {:ok, [%{name: "Omega", type: "concept"}]} end
+
+    {:ok, doc} =
+      Arcana.ingest("omega content",
+        repo: Repo,
+        graph: true,
+        entity_extractor: extractor,
+        collection: "savepoint-sweep-raises"
+      )
+
+    entity = Repo.one!(from(e in Arcana.Graph.Entity, where: e.name == "Omega"))
+
+    SQL.query!(
+      Repo,
+      "CREATE TABLE host_entity_refs_sp (id serial primary key, " <>
+        "entity_id uuid REFERENCES arcana_graph_entities(id))",
+      []
+    )
+
+    SQL.query!(Repo, "INSERT INTO host_entity_refs_sp (entity_id) VALUES ($1)", [
+      Ecto.UUID.dump!(entity.id)
+    ])
+
+    result =
+      Repo.transaction(fn ->
+        Repo.query!("SAVEPOINT before_delete")
+
+        outcome = Arcana.delete(doc.id, repo: Repo, graph: true)
+
+        Repo.query!("ROLLBACK TO SAVEPOINT before_delete")
+
+        {outcome, Repo.aggregate(Arcana.Document, :count)}
+      end)
+
+    assert {:ok, {{:error, %Postgrex.Error{}}, count}} = result
+    assert count >= 1, "the caller's transaction survived and committed"
+  end
+
   test "a sweep that raises on a host constraint is a tuple, not an exception" do
     # sweep_orphans/2 deletes with repo.delete_all/1, which skips changeset
     # constraint mapping, so a host row referencing an orphaned entity raises a

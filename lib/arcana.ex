@@ -181,11 +181,14 @@ defmodule Arcana do
         :ok -> Repo.query!("RELEASE SAVEPOINT before_delete")
       end
 
-  That recovers a failed `repo.delete` and a `:sweep_failed`. It cannot
-  recover an *exception* raised inside a custom graph store's sweep: that goes
-  through a nested `Ecto` transaction, which marks the connection aborted, and
-  the `ROLLBACK TO SAVEPOINT` is then refused too. Calling `delete/2` outside
-  your transaction avoids the whole question.
+  That recovers every failure the built-in stores can produce: a failed
+  `repo.delete`, a `:sweep_failed`, and a sweep that raises.
+
+  A custom graph store can still defeat it, by opening a nested `Ecto`
+  transaction of its own around work that then fails — DBConnection marks the
+  connection aborted, and the `ROLLBACK TO SAVEPOINT` is refused along with
+  everything else. Calling `delete/2` outside your transaction avoids the
+  question entirely.
 
   Sweeping is optional for custom graph stores: one that doesn't
   implement `c:Arcana.Graph.GraphStore.sweep_orphans/2` returns `:ok` and

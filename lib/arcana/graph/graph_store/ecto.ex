@@ -352,21 +352,36 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
   Keep the wrapped work to DB writes: the lock blocks every concurrent
   graph write for the collection until the transaction commits.
+
+  Opens a transaction only when there isn't one already. A nested Ecto
+  transaction never isolated anything - it joins the outer one - but it does
+  make DBConnection mark the connection aborted when the wrapped work fails,
+  which refuses every later statement including a caller's
+  `ROLLBACK TO SAVEPOINT`. Skipping it costs nothing, because
+  `pg_advisory_xact_lock/1` binds to the enclosing transaction either way.
   """
   @impl true
   def with_write_lock(collection_id, opts, fun) when is_function(fun, 0) do
     repo = Keyword.fetch!(opts, :repo)
 
-    {:ok, result} =
-      repo.transaction(fn ->
-        repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
-          "arcana:graph:#{collection_id}"
-        ])
+    if repo.in_transaction?() do
+      take_write_lock(repo, collection_id)
+      fun.()
+    else
+      {:ok, result} =
+        repo.transaction(fn ->
+          take_write_lock(repo, collection_id)
+          fun.()
+        end)
 
-        fun.()
-      end)
+      result
+    end
+  end
 
-    result
+  defp take_write_lock(repo, collection_id) do
+    repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      "arcana:graph:#{collection_id}"
+    ])
   end
 
   @doc """
