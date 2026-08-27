@@ -126,8 +126,8 @@ defmodule Arcana do
 
   Returns `:ok`, `{:error, :not_found}`, `{:error, {:sweep_failed, reason}}`
   when the graph store fails to sweep, or `{:error, reason}` for a database
-  failure such as a foreign key violation from another table pointing at the
-  document.
+  failure such as a foreign key violation, or a not-null violation from
+  another table pointing at the document.
 
   A concurrent delete reports `{:error, :not_found}`, the same as losing that
   race by a moment more would have.
@@ -143,10 +143,13 @@ defmodule Arcana do
   this case used to delete the document and report the failed cleanup
   afterwards.
 
-  The transaction covers what runs on `:repo`. A custom graph store that
-  keeps its data elsewhere is outside it, so a store that fails partway
-  through its own sweep may have applied some of it even though the
-  document survives.
+  The transaction covers what runs on `:repo`. A graph store holding its data
+  anywhere else is outside it — that includes the built-in `:memory` backend,
+  whose sweep is a `GenServer.call`, not only custom stores. So the two can
+  disagree in both directions: a store that fails partway through its own
+  sweep may have applied some of it even though the document survives, and a
+  store that sweeps successfully before the repo side rolls back has dropped
+  graph data for a document that is still there.
 
   Called from inside your own transaction, this does not open one and does
   not roll anything back — rolling back a nested Ecto transaction aborts the
@@ -225,6 +228,15 @@ defmodule Arcana do
     # arrive as Ecto.ConstraintError, which is the first case the docs
     # promised a tuple for.
     error in Ecto.ConstraintError ->
+      {:error, error}
+
+    # And Ecto only builds a ConstraintError out of fk/unique/check/exclusion
+    # codes. A host foreign key declared ON DELETE SET NULL against a NOT NULL
+    # column raises 23502 instead, and a host BEFORE DELETE trigger can raise
+    # anything - both are "another table pointing at the document", which the
+    # docs promise a tuple for. Postgrex.Error is SQL-level only, so a dropped
+    # connection or a pool timeout is a different struct and still raises.
+    error in Postgrex.Error ->
       {:error, error}
   end
 
