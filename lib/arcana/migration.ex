@@ -139,11 +139,57 @@ defmodule Arcana.Migration do
     if current >= 1 and target == 0, do: refuse_dependent_drop!(prefix)
 
     if current > target do
-      for version <- current..(target + 1)//-1, do: change(version, :down, opts)
+      run_rollback(current, target, prefix, opts)
       record_version(target, prefix)
     end
 
     :ok
+  end
+
+  # The foreign key preflight above catches the case worth naming a next action
+  # for, and it is the common one. It cannot be the whole story: a view, a
+  # materialized view or a generated column referencing these tables blocks the
+  # DROP just as hard and is not a constraint, so it would still surface as a
+  # bare 2BP01 - the thing this is all here to avoid. Postgres already knows
+  # what depends on what, so let it say, and add the context it has no way to
+  # know.
+  defp run_rollback(current, target, prefix, opts) do
+    for version <- current..(target + 1)//-1, do: change(version, :down, opts)
+
+    # Ecto's migration runner queues DDL and flushes it after the migration
+    # function returns, which is outside this rescue. Flushing here is what
+    # brings the DROPs inside it.
+    flush()
+  rescue
+    error in Postgrex.Error ->
+      case error.postgres do
+        %{code: :dependent_objects_still_exist} = pg ->
+          reraise dependent_object_message(pg, prefix), __STACKTRACE__
+
+        _ ->
+          reraise error, __STACKTRACE__
+      end
+  end
+
+  defp dependent_object_message(pg, prefix) do
+    detail = pg[:detail] || pg[:message]
+
+    """
+    Arcana.Migration.down/1 could not drop its tables: something in the
+    database still depends on them.
+
+    Postgres reported:
+
+        #{detail}
+
+    Foreign keys from other tables are checked before the rollback starts and
+    reported with the call that clears them. This is something else - a view, a
+    materialized view or a generated column reading these tables are the usual
+    ones - so it has to be dropped or altered by hand first.
+
+    #{qualify("arcana_chunks", prefix)} and its siblings are otherwise ready to
+    go; nothing was changed.
+    """
   end
 
   # Version 0 means "no marker found", which covers two different states:

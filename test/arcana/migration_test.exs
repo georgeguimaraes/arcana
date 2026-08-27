@@ -1355,6 +1355,28 @@ defmodule Arcana.MigrationTest do
       assert error.message =~ "not Arcana's tables"
     end
 
+    test "a view is explained too, not just foreign keys" do
+      # A view is not a constraint, so the preflight cannot see it, and it
+      # blocks the DROP just as hard. Without the rescue this came back as a
+      # bare 2BP01 - exactly what this guard exists to replace.
+      assert :ok = migrate(Arcana.Migration)
+
+      SQL.query!(Repo, "DROP VIEW IF EXISTS chunk_peek CASCADE", [])
+      on_exit(fn -> SQL.query!(Repo, "DROP VIEW IF EXISTS chunk_peek CASCADE", []) end)
+
+      SQL.query!(Repo, "CREATE VIEW chunk_peek AS SELECT id FROM arcana_chunks", [])
+
+      error = assert_raise RuntimeError, fn -> migrate_down(Arcana.Migration, []) end
+
+      assert error.message =~ "still depends on them"
+
+      assert error.message =~ "chunk_peek",
+             "Postgres names the dependent object; the message should carry it through"
+
+      assert error.message =~ "view",
+             "and say what kind of thing this usually is"
+    end
+
     test "both a graph and a host dependency name both steps" do
       assert :ok = migrate(Arcana.Migration)
       assert :ok = migrate(Arcana.Graph.Migration)
