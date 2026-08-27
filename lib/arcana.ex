@@ -125,9 +125,15 @@ defmodule Arcana do
   summarize pass regenerates them.
 
   Returns `:ok`, `{:error, :not_found}`, `{:error, {:sweep_failed, reason}}`
-  when the graph store fails to sweep, or `{:error, reason}` for a database
-  failure such as a foreign key violation, or a not-null violation from
-  another table pointing at the document.
+  when the graph store *returns* an error from its sweep, or
+  `{:error, reason}` for a database failure such as a foreign key violation,
+  or a not-null violation from another table pointing at the document.
+
+  A sweep that *raises* rather than returning an error reports as a database
+  failure, not as `:sweep_failed` — so match `{:error, _}` as well if you
+  route on the sweep case. `sweep_orphans/2` deletes through
+  `repo.delete_all/1`, which skips changeset constraint mapping, so a host row
+  referencing an entity the sweep wants to remove arrives that way.
 
   A concurrent delete reports `{:error, :not_found}`, the same as losing that
   race by a moment more would have.
@@ -137,11 +143,12 @@ defmodule Arcana do
   so those are left to the caller's supervisor rather than flattened into a
   tuple that would read like a clean refusal.
 
-  The delete and the orphan sweep run in one transaction, so a
-  `:sweep_failed` leaves the document in place: nothing happened and the
+  Called on its own, the delete and the orphan sweep run in one transaction,
+  so a `:sweep_failed` leaves the document in place: nothing happened and the
   call can be retried. That is worth knowing if you are upgrading, because
   this case used to delete the document and report the failed cleanup
-  afterwards.
+  afterwards. Inside a transaction of your own it behaves differently — see
+  below.
 
   The transaction covers what runs on `:repo`. A graph store holding its data
   anywhere else is outside it — that includes the built-in `:memory` backend,
@@ -151,18 +158,34 @@ defmodule Arcana do
   store that sweeps successfully before the repo side rolls back has dropped
   graph data for a document that is still there.
 
-  Called from inside your own transaction, this does not open one and does
-  not roll anything back — rolling back a nested Ecto transaction aborts the
-  outermost one, which would kill your transaction while handing you an error
-  that looks recoverable. So a `:sweep_failed` there comes back as a tuple
-  with your transaction intact, the delete still in its scope, and whether to
-  undo it your call to make with `rollback/1`.
+  ## Inside a transaction of your own
 
-  A *database* failure is different, and not something this function can
-  soften: Postgres aborts the surrounding transaction on a constraint
-  violation, so inside your transaction that error ends it whatever is
-  returned. If you need to handle a foreign key violation and carry on, call
-  `delete/2` outside your transaction, where it manages its own.
+  It does not open one, and it does not roll anything back: rolling back a
+  nested Ecto transaction aborts the outermost one, which would kill your
+  transaction while handing you an error that looks recoverable.
+
+  So the guarantee above is weaker here. A `:sweep_failed` comes back as a
+  tuple with your transaction intact, but **the delete has been applied** and
+  stays in your transaction's scope — undoing it is yours to do. That is the
+  one place where `:sweep_failed` does not mean "nothing happened".
+
+  A database failure is harsher: Postgres aborts to the nearest savepoint, and
+  with none open that is the whole transaction, so the error ends it whatever
+  gets returned. If you need to survive one, set your own savepoint around the
+  call:
+
+      Repo.query!("SAVEPOINT before_delete")
+
+      case Arcana.delete(id, repo: Repo) do
+        {:error, _reason} -> Repo.query!("ROLLBACK TO SAVEPOINT before_delete")
+        :ok -> Repo.query!("RELEASE SAVEPOINT before_delete")
+      end
+
+  That recovers a failed `repo.delete` and a `:sweep_failed`. It cannot
+  recover an *exception* raised inside a custom graph store's sweep: that goes
+  through a nested `Ecto` transaction, which marks the connection aborted, and
+  the `ROLLBACK TO SAVEPOINT` is then refused too. Calling `delete/2` outside
+  your transaction avoids the whole question.
 
   Sweeping is optional for custom graph stores: one that doesn't
   implement `c:Arcana.Graph.GraphStore.sweep_orphans/2` returns `:ok` and
@@ -202,10 +225,10 @@ defmodule Arcana do
   # provides the atomicity, and the error is theirs to act on.
   defp delete_document(document, repo, opts) do
     if repo.in_transaction?() do
-      delete_and_sweep(document, repo, opts)
+      locked_delete(document, repo, opts)
     else
       repo.transaction(fn ->
-        case delete_and_sweep(document, repo, opts) do
+        case locked_delete(document, repo, opts) do
           :ok -> :ok
           {:error, reason} -> repo.rollback(reason)
         end
@@ -240,16 +263,55 @@ defmodule Arcana do
       {:error, error}
   end
 
+  # The advisory lock goes first, before any row locks, because that is the
+  # order the build side takes them (Arcana.Graph.persist_chunk_graph/6 holds
+  # the write lock and then writes mentions that reference arcana_chunks).
+  #
+  # Deleting first and sweeping second reverses it: the cascade holds chunk row
+  # locks, then asks for the advisory lock a concurrent build already has,
+  # while that build waits on the chunk rows. That deadlocks, and it is a
+  # regression from taking one transaction across both - repo.delete!/1 used to
+  # autocommit and release the row locks before the sweep asked for anything.
+  defp locked_delete(document, repo, opts) do
+    if sweeping?(document, opts) do
+      GraphStore.with_write_lock(
+        document.collection_id,
+        Keyword.put(opts, :repo, repo),
+        fn -> delete_and_sweep(document, repo, opts) end
+      )
+    else
+      delete_and_sweep(document, repo, opts)
+    end
+  end
+
+  # The same condition maybe_sweep_orphans/3 uses, so a delete that will not
+  # sweep does not take a graph lock it has no use for.
+  defp sweeping?(document, opts) do
+    !is_nil(document.collection_id) and Arcana.Config.graph_enabled?(opts)
+  end
+
   defp delete_and_sweep(document, repo, opts) do
     case repo.delete(document) do
       {:ok, _deleted} ->
-        case GraphStore.maybe_sweep_orphans(document.collection_id, repo, opts) do
-          :ok -> :ok
-          {:error, reason} -> {:error, {:sweep_failed, reason}}
-        end
+        sweep(document, repo, opts)
 
       {:error, changeset} ->
         {:error, changeset}
+    end
+  end
+
+  # :sweep_failed is for a store that *returns* an error. One that raises is
+  # deliberately not folded into it: the exception happens inside the write
+  # lock's own nested transaction, so DBConnection has already marked the
+  # connection aborted by the time anything here could catch it, and rescuing
+  # at this depth only turned the error into a MatchError on with_write_lock's
+  # `{:ok, result} =`. Left to propagate, the outer rescue reports it as the
+  # database error it is, with the transaction rolled back and the document
+  # intact. Documented on delete/2 rather than papered over.
+  defp sweep(document, repo, opts) do
+    case GraphStore.maybe_sweep_orphans(document.collection_id, repo, opts) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:sweep_failed, reason}}
     end
   end
 end

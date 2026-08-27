@@ -71,14 +71,72 @@ defmodule Arcana.DeleteContractDDLTest do
     assert Repo.get(Arcana.Document, doc.id)
   end
 
-  test "a database failure ends the caller's transaction, as documented" do
-    # Not a defect being pinned, a limitation being held to. Postgres aborts
-    # the surrounding transaction on error, so no return value can make this
-    # recoverable. The docs say so; this keeps them true.
+  test "a database failure ends a caller's transaction that set no savepoint" do
+    # Postgres aborts to the nearest savepoint, and with none open that is the
+    # whole transaction. Not a defect, but see the next test: it is the absence
+    # of a savepoint doing this, not something delete/2 cannot be recovered
+    # from, which is what the docs used to imply.
     doc = ingest_doc()
     reference_document("host_refs_txn", doc)
 
     assert {:error, :rollback} =
              Repo.transaction(fn -> Arcana.delete(doc.id, repo: Repo) end)
+  end
+
+  test "a savepoint lets the caller survive a database failure" do
+    # The documented recovery. Worth a test because the docs previously called
+    # this unrecoverable and told people to restructure their code instead.
+    doc = ingest_doc()
+    reference_document("host_refs_sp", doc)
+
+    result =
+      Repo.transaction(fn ->
+        Repo.query!("SAVEPOINT before_delete")
+
+        outcome = Arcana.delete(doc.id, repo: Repo)
+
+        Repo.query!("ROLLBACK TO SAVEPOINT before_delete")
+
+        # The point: still usable after the failure.
+        {outcome, Repo.aggregate(Arcana.Document, :count)}
+      end)
+
+    assert {:ok, {{:error, _reason}, count}} = result
+    assert count >= 1, "the caller's transaction committed and the document is still there"
+  end
+
+  test "a sweep that raises on a host constraint is a tuple, not an exception" do
+    # sweep_orphans/2 deletes with repo.delete_all/1, which skips changeset
+    # constraint mapping, so a host row referencing an orphaned entity raises a
+    # bare Postgrex.Error. It reports as a database failure rather than
+    # :sweep_failed - folding it into :sweep_failed means rescuing inside the
+    # write lock's nested transaction, which is already aborted by then and
+    # turns the error into a MatchError. The docs say which one you get.
+    extractor = fn _t, _o -> {:ok, [%{name: "Sigma", type: "concept"}]} end
+
+    {:ok, doc} =
+      Arcana.ingest("sigma content",
+        repo: Repo,
+        graph: true,
+        entity_extractor: extractor,
+        collection: "sweep-host-fk"
+      )
+
+    entity = Repo.one!(from(e in Arcana.Graph.Entity, where: e.name == "Sigma"))
+
+    SQL.query!(
+      Repo,
+      "CREATE TABLE host_entity_refs (id serial primary key, " <>
+        "entity_id uuid REFERENCES arcana_graph_entities(id))",
+      []
+    )
+
+    SQL.query!(Repo, "INSERT INTO host_entity_refs (entity_id) VALUES ($1)", [
+      Ecto.UUID.dump!(entity.id)
+    ])
+
+    assert {:error, %Postgrex.Error{}} = Arcana.delete(doc.id, repo: Repo, graph: true)
+
+    assert Repo.get(Arcana.Document, doc.id), "the document comes back"
   end
 end
