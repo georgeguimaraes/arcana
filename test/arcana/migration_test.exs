@@ -1198,4 +1198,94 @@ defmodule Arcana.MigrationTest do
 
     match?([[true]], rows)
   end
+
+  describe "down/1 with tables that reference Arcana's" do
+    test "explains the GraphRAG schema instead of raising 2BP01" do
+      assert :ok = migrate(Arcana.Migration)
+      assert :ok = migrate(Arcana.Graph.Migration)
+
+      error =
+        assert_raise RuntimeError, fn ->
+          migrate_down(Arcana.Migration, [])
+        end
+
+      assert error.message =~ "other tables reference them"
+
+      assert error.message =~ "arcana_graph_entities -> arcana_chunks",
+             "the message should name the foreign key in the way"
+
+      assert error.message =~ "Arcana.Graph.Migration.down(",
+             "and name the call that unblocks it"
+
+      refute error.message =~ "2BP01 (dependent_objects_still_exist)",
+             "the point is to replace the raw Postgres error, not quote it back"
+    end
+
+    test "nothing was dropped when it refuses" do
+      assert :ok = migrate(Arcana.Migration)
+      assert :ok = migrate(Arcana.Graph.Migration)
+
+      assert_raise RuntimeError, fn -> migrate_down(Arcana.Migration, []) end
+
+      assert table_exists?("arcana_chunks"), "a refused rollback must change nothing"
+      assert table_exists?("arcana_documents")
+      assert Arcana.Migration.recorded_version(Repo) == Arcana.Migration.current_version()
+    end
+
+    test "a host table referencing arcana_chunks gets its own message" do
+      assert :ok = migrate(Arcana.Migration)
+
+      # on_exit rather than a drop at the end of the test: this test asserts a
+      # raise, so anything after it only runs when the assertion fails, and a
+      # leftover table then breaks every later run with a duplicate_table.
+      on_exit(fn ->
+        SQL.query!(Repo, "DROP TABLE IF EXISTS host_annotations CASCADE", [])
+      end)
+
+      # Dropped first as well as after: a stale one from an earlier failed run
+      # survives with its foreign key already cascaded away, so CREATE IF NOT
+      # EXISTS would leave this test with nothing to detect.
+      SQL.query!(Repo, "DROP TABLE IF EXISTS host_annotations CASCADE", [])
+
+      SQL.query!(
+        Repo,
+        "CREATE TABLE host_annotations (id serial primary key, " <>
+          "chunk_id uuid REFERENCES arcana_chunks(id))",
+        []
+      )
+
+      error = assert_raise RuntimeError, fn -> migrate_down(Arcana.Migration, []) end
+
+      assert error.message =~ "host_annotations -> arcana_chunks"
+
+      assert error.message =~ "not Arcana's tables",
+             "a host's own foreign key is not a GraphRAG problem"
+
+      refute error.message =~ "Arcana.Graph.Migration.down("
+    end
+
+    test "rolls back normally once the graph schema is gone" do
+      # The control: the guard has to let the supported order through, or it
+      # would just be a different way of making down/1 not work.
+      assert :ok = migrate(Arcana.Migration)
+      assert :ok = migrate(Arcana.Graph.Migration)
+      assert :ok = migrate_down(Arcana.Graph.Migration, [])
+      assert :ok = migrate_down(Arcana.Migration, [])
+
+      refute table_exists?("arcana_chunks")
+      refute table_exists?("arcana_collections")
+    end
+
+    test "a partial rollback that keeps the core tables is unaffected" do
+      # Only version 1's down drops them, so a rollback stopping above it has
+      # nothing to conflict with and must not be blocked.
+      assert :ok = migrate(Arcana.Migration)
+      assert :ok = migrate(Arcana.Graph.Migration)
+
+      assert :ok = migrate_down(Arcana.Migration, version: 1)
+
+      assert table_exists?("arcana_chunks")
+      assert table_exists?("arcana_graph_entities")
+    end
+  end
 end

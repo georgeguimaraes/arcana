@@ -134,6 +134,10 @@ defmodule Arcana.Migration do
 
     if current == 0, do: refuse_blind_rollback!(prefix)
 
+    # Only version 1's down drops the core tables, so only a rollback that
+    # reaches 0 can trip over something referencing them.
+    if current >= 1 and target == 0, do: refuse_dependent_drop!(prefix)
+
     if current > target do
       for version <- current..(target + 1)//-1, do: change(version, :down, opts)
       record_version(target, prefix)
@@ -163,6 +167,82 @@ defmodule Arcana.Migration do
       present ->
         raise blind_rollback_message(present, prefix)
     end
+  end
+
+  # The graph schema installs on its own migration version and points foreign
+  # keys at arcana_chunks. `on_delete:` governs row deletes, so it does nothing
+  # for a DROP TABLE, and this module would otherwise walk into a bare 2BP01
+  # naming a constraint the operator may never have heard of.
+  #
+  # Asked of Postgres rather than matched against a list of known graph table
+  # names: a host is free to reference arcana_chunks from its own schema too,
+  # and that fails identically and deserves the same message.
+  defp refuse_dependent_drop!(prefix) do
+    case dependent_tables(prefix) do
+      [] -> :ok
+      dependents -> raise dependent_drop_message(dependents, prefix)
+    end
+  end
+
+  # Foreign keys pointing at a table this module drops, from a table it does
+  # not. The owned tables reference each other and are dropped together, so
+  # those are excluded or every install would look blocked.
+  defp dependent_tables(prefix) do
+    %{rows: rows} =
+      repo().query!(
+        "SELECT DISTINCT dn.nspname, dependent.relname, referenced.relname " <>
+          "FROM pg_constraint con " <>
+          "JOIN pg_class dependent ON dependent.oid = con.conrelid " <>
+          "JOIN pg_namespace dn ON dn.oid = dependent.relnamespace " <>
+          "JOIN pg_class referenced ON referenced.oid = con.confrelid " <>
+          "JOIN pg_namespace rn ON rn.oid = referenced.relnamespace " <>
+          "WHERE con.contype = 'f' " <>
+          "AND referenced.relname = ANY($1) " <>
+          "AND dependent.relname <> ALL($1) " <>
+          "AND rn.nspname = COALESCE($2, current_schema())",
+        [owned_table_names(), prefix]
+      )
+
+    Enum.map(rows, fn [schema, dependent, referenced] ->
+      {schema, dependent, referenced}
+    end)
+  end
+
+  @graph_tables ~w(arcana_graph_entities arcana_graph_entity_mentions
+                   arcana_graph_relationships arcana_graph_communities)
+
+  defp dependent_drop_message(dependents, prefix) do
+    listed =
+      dependents
+      |> Enum.sort()
+      |> Enum.map_join("\n", fn {schema, dependent, referenced} ->
+        "        #{schema}.#{dependent} -> #{referenced}"
+      end)
+
+    next =
+      if Enum.any?(dependents, fn {_s, d, _r} -> d in @graph_tables end) do
+        """
+        The GraphRAG schema is installed. Roll it back first, then retry:
+
+            Arcana.Graph.Migration.down(#{inspect(prefix: prefix)})
+        """
+      else
+        """
+        These are not Arcana's tables. Drop them, or remove the foreign keys,
+        before rolling Arcana's schema back.
+        """
+      end
+
+    """
+    Arcana.Migration.down/1 can't drop its tables: other tables reference them.
+
+    Postgres would refuse this with a dependent_objects_still_exist error
+    (2BP01), so nothing was changed. These foreign keys are in the way:
+
+    #{listed}
+
+    #{next}
+    """
   end
 
   defp blind_rollback_message(present, prefix) do
@@ -201,6 +281,19 @@ defmodule Arcana.Migration do
     """
   end
 
+  # Exactly what change(1, :down, _) drops. Both rollback guards read this, so
+  # a table added to that function has one place to be listed.
+  defp owned_table_names do
+    ~w(
+      arcana_collections
+      arcana_documents
+      arcana_chunks
+      arcana_evaluation_test_cases
+      arcana_evaluation_test_case_chunks
+      arcana_evaluation_runs
+    )
+  end
+
   # The tables change(1, :down, _) drops. Any of them being present means a
   # rollback has something to do, so the version table alone is not enough
   # evidence: it can be gone while its siblings remain.
@@ -214,17 +307,7 @@ defmodule Arcana.Migration do
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
           "WHERE c.relname = ANY($1) AND c.relkind IN ('r', 'p') " <>
           "AND n.nspname = COALESCE($2, current_schema())",
-        [
-          ~w(
-                   arcana_collections
-                   arcana_documents
-                   arcana_chunks
-                   arcana_evaluation_test_cases
-                   arcana_evaluation_test_case_chunks
-                   arcana_evaluation_runs
-          ),
-          prefix
-        ]
+        [owned_table_names(), prefix]
       )
 
     List.flatten(rows)
