@@ -82,6 +82,8 @@ defmodule Arcana.Migration do
 
   use Ecto.Migration
 
+  require Logger
+
   alias Arcana.Migration.Dimensions
   alias Arcana.Migration.UniqueIndex
 
@@ -139,6 +141,7 @@ defmodule Arcana.Migration do
     if current >= 1 and target == 0, do: refuse_dependent_drop!(prefix)
 
     if current > target do
+      warn_if_untransacted()
       run_rollback(current, target, prefix, opts)
       record_version(target, prefix)
     end
@@ -153,6 +156,23 @@ defmodule Arcana.Migration do
   # bare 2BP01 - the thing this is all here to avoid. Postgres already knows
   # what depends on what, so let it say, and add the context it has no way to
   # know.
+  # Said before the drops rather than only after one fails. Without a
+  # transaction each DROP commits on its own, so an error part-way leaves the
+  # schema half removed with a stale version marker, and the operator should
+  # know that going in. Not refused outright: a host may have
+  # @disable_ddl_transaction set for unrelated reasons in the same migration,
+  # and refusing would break a rollback that works today.
+  defp warn_if_untransacted do
+    unless repo().in_transaction?() do
+      Logger.warning(
+        "Arcana.Migration.down/1 is running without a transaction " <>
+          "(@disable_ddl_transaction). Each DROP commits on its own, so a " <>
+          "failure part-way leaves the schema partly removed and the version " <>
+          "marker stale. Prefer a transactional migration for rollbacks."
+      )
+    end
+  end
+
   defp run_rollback(current, target, prefix, opts) do
     for version <- current..(target + 1)//-1, do: change(version, :down, opts)
 
