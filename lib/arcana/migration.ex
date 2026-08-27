@@ -278,7 +278,8 @@ defmodule Arcana.Migration do
     # install and must not send the operator to Graph.Migration.down/1.
     {graph, host} =
       Enum.split_with(dependents, fn d ->
-        d.table in @graph_tables and d.schema == target_schema
+        d.table in @graph_tables and not is_nil(target_schema) and
+          d.schema == target_schema
       end)
 
     next =
@@ -357,9 +358,15 @@ defmodule Arcana.Migration do
     """
   end
 
+  # current_schema() is NULL when search_path names only schemas that do not
+  # exist. Nothing reaches this in that state today - the guard's own query
+  # returns no rows, so no message is built - but a nil here would quietly
+  # class every graph table as "not Arcana's", so it is not left to chance.
   defp current_schema do
-    %{rows: [[schema]]} = repo().query!("SELECT current_schema()", [])
-    schema
+    case repo().query!("SELECT current_schema()", []) do
+      %{rows: [[schema]]} when is_binary(schema) -> schema
+      _ -> nil
+    end
   end
 
   # Exactly what change(1, :down, _) drops. Both rollback guards read this, so

@@ -1221,14 +1221,22 @@ defmodule Arcana.MigrationTest do
              "the point is to replace the raw Postgres error, not quote it back"
     end
 
-    test "nothing was dropped when it refuses" do
+    test "it refuses before dropping anything" do
       assert :ok = migrate(Arcana.Migration)
       assert :ok = migrate(Arcana.Graph.Migration)
 
       assert_raise RuntimeError, fn -> migrate_down(Arcana.Migration, []) end
 
-      assert table_exists?("arcana_chunks"), "a refused rollback must change nothing"
-      assert table_exists?("arcana_documents")
+      # Ordering, not atomicity: the migration runs in a transaction, so a
+      # raise after a partial drop would roll back and these would still hold.
+      # What this pins is that the guard runs before any DDL does.
+      for table <- ~w(arcana_collections arcana_documents arcana_chunks
+                      arcana_evaluation_test_cases
+                      arcana_evaluation_test_case_chunks
+                      arcana_evaluation_runs) do
+        assert table_exists?(table), "#{table} should be untouched by a refused rollback"
+      end
+
       assert Arcana.Migration.recorded_version(Repo) == Arcana.Migration.current_version()
     end
 
@@ -1375,6 +1383,30 @@ defmodule Arcana.MigrationTest do
 
       assert error.message =~ "view",
              "and say what kind of thing this usually is"
+    end
+
+    test "a materialized view is explained too" do
+      # Same class as the plain view, different relkind. Worth its own case
+      # because the fix works by translating Postgres's error rather than by
+      # enumerating dependency kinds, and this is the check on that claim.
+      assert :ok = migrate(Arcana.Migration)
+
+      SQL.query!(Repo, "DROP MATERIALIZED VIEW IF EXISTS chunk_mv CASCADE", [])
+
+      on_exit(fn ->
+        SQL.query!(Repo, "DROP MATERIALIZED VIEW IF EXISTS chunk_mv CASCADE", [])
+      end)
+
+      SQL.query!(
+        Repo,
+        "CREATE MATERIALIZED VIEW chunk_mv AS SELECT id FROM arcana_chunks",
+        []
+      )
+
+      error = assert_raise RuntimeError, fn -> migrate_down(Arcana.Migration, []) end
+
+      assert error.message =~ "still depends on them"
+      assert error.message =~ "chunk_mv"
     end
 
     test "both a graph and a host dependency name both steps" do
