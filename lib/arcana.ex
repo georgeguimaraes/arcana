@@ -129,11 +129,15 @@ defmodule Arcana do
   `{:error, reason}` for a database failure such as a foreign key violation,
   or a not-null violation from another table pointing at the document.
 
-  A sweep that *raises* rather than returning an error reports as a database
-  failure, not as `:sweep_failed` — so match `{:error, _}` as well if you
-  route on the sweep case. `sweep_orphans/2` deletes through
-  `repo.delete_all/1`, which skips changeset constraint mapping, so a host row
-  referencing an entity the sweep wants to remove arrives that way.
+  A sweep that raises a *database* error reports as a database failure rather
+  than as `:sweep_failed` — so match `{:error, _}` as well if you route on the
+  sweep case. `sweep_orphans/2` deletes through `repo.delete_all/1`, which
+  skips changeset constraint mapping, so a host row referencing an entity the
+  sweep wants to remove arrives that way.
+
+  Any other exception from a graph store propagates. A custom store raising
+  `RuntimeError` is a bug in that store, not a failure mode with a return
+  value, and swallowing it into `{:error, _}` would hide it.
 
   A concurrent delete reports `{:error, :not_found}`, the same as losing that
   race by a moment more would have.
@@ -276,7 +280,7 @@ defmodule Arcana do
   # regression from taking one transaction across both - repo.delete!/1 used to
   # autocommit and release the row locks before the sweep asked for anything.
   defp locked_delete(document, repo, opts) do
-    if sweeping?(document, opts) do
+    if sweeping?(document, opts) and ecto_graph_store?(opts) do
       GraphStore.with_write_lock(
         document.collection_id,
         Keyword.put(opts, :repo, repo),
@@ -291,6 +295,23 @@ defmodule Arcana do
   # sweep does not take a graph lock it has no use for.
   defp sweeping?(document, opts) do
     !is_nil(document.collection_id) and Arcana.Config.graph_enabled?(opts)
+  end
+
+  # Only the :ecto store. The lock is hoisted here to fix an ordering hazard
+  # between *that* store's advisory lock and the row locks the FK cascade
+  # takes, and pg_advisory_xact_lock is re-entrant within a transaction, so
+  # sweep_orphans/2 taking it again is free.
+  #
+  # A custom store's lock has no such hazard to fix - it does not contend with
+  # arcana_chunks row locks - and nothing says its with_write_lock/3 has to be
+  # re-entrant. Hoisting it there would buy nothing and could deadlock every
+  # graph-enabled delete against the sweep's own acquisition.
+  defp ecto_graph_store?(opts) do
+    case Keyword.get(opts, :graph_store, GraphStore.backend()) do
+      :ecto -> true
+      {:ecto, _opts} -> true
+      _other -> false
+    end
   end
 
   defp delete_and_sweep(document, repo, opts) do
