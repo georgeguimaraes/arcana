@@ -82,6 +82,8 @@ defmodule Arcana.Migration do
 
   use Ecto.Migration
 
+  alias Arcana.Migration.SchemaScope
+
   require Logger
 
   alias Arcana.Migration.Dimensions
@@ -435,7 +437,7 @@ defmodule Arcana.Migration do
         "SELECT c.relname FROM pg_class c " <>
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
           "WHERE c.relname = ANY($1) AND c.relkind IN ('r', 'p') " <>
-          "AND n.nspname = COALESCE($2, current_schema())",
+          "AND " <> SchemaScope.visible("c", "n", "$2"),
         [owned_table_names(), prefix]
       )
 
@@ -467,7 +469,7 @@ defmodule Arcana.Migration do
       repo.query!(
         "SELECT obj_description(c.oid) FROM pg_class c " <>
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
-          "WHERE c.relname = $1 AND n.nspname = COALESCE($2, current_schema())",
+          "WHERE c.relname = $1 AND " <> SchemaScope.visible("c", "n", "$2"),
         [@version_table, prefix]
       )
 
@@ -780,7 +782,7 @@ defmodule Arcana.Migration do
             "JOIN pg_namespace n ON n.oid = t.relnamespace " <>
             "WHERE con.conname = 'arcana_documents_collection_id_fkey' " <>
             "AND t.relname = 'arcana_documents' " <>
-            "AND n.nspname = COALESCE($1, current_schema())",
+            "AND " <> SchemaScope.visible("t", "n", "$1"),
           [prefix]
         )
 

@@ -1,4 +1,5 @@
 defmodule Arcana.Migration.UniqueIndex do
+  alias Arcana.Migration.SchemaScope
   @moduledoc false
 
   # Shared by `Arcana.Migration` and `Arcana.Graph.Migration`, which each own
@@ -61,7 +62,7 @@ defmodule Arcana.Migration.UniqueIndex do
         "SELECT count(*) FROM pg_class c " <>
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
           "WHERE c.relname = $1 AND c.relkind IN ('r', 'p') " <>
-          "AND n.nspname = COALESCE($2, current_schema())",
+          "AND " <> SchemaScope.visible("c", "n", "$2"),
         [table, prefix]
       )
 
@@ -87,7 +88,9 @@ defmodule Arcana.Migration.UniqueIndex do
           "LEFT JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) ON true " <>
           "LEFT JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = k.attnum " <>
           "WHERE ic.relname = $1 AND tc.relname = $2 " <>
-          "AND n.nspname = COALESCE($3, current_schema()) " <>
+          "AND " <>
+          SchemaScope.visible("tc", "n", "$3") <>
+          " " <>
           "GROUP BY i.indisunique, i.indpred IS NOT NULL, i.indkey, " <>
           "i.indisvalid, i.indisready",
         [name, table, prefix]

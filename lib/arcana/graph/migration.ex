@@ -75,6 +75,8 @@ defmodule Arcana.Graph.Migration do
 
   use Ecto.Migration
 
+  alias Arcana.Migration.SchemaScope
+
   alias Arcana.Migration.Dimensions
   alias Arcana.Migration.UniqueIndex
 
@@ -210,7 +212,7 @@ defmodule Arcana.Graph.Migration do
         "SELECT c.relname FROM pg_class c " <>
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
           "WHERE c.relname = ANY($1) AND c.relkind IN ('r', 'p') " <>
-          "AND n.nspname = COALESCE($2, current_schema())",
+          "AND " <> SchemaScope.visible("c", "n", "$2"),
         [
           ~w(
                    arcana_graph_entities
@@ -250,7 +252,7 @@ defmodule Arcana.Graph.Migration do
       repo.query!(
         "SELECT obj_description(c.oid) FROM pg_class c " <>
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
-          "WHERE c.relname = $1 AND n.nspname = COALESCE($2, current_schema())",
+          "WHERE c.relname = $1 AND " <> SchemaScope.visible("c", "n", "$2"),
         [@version_table, prefix]
       )
 

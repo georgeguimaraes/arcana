@@ -1,4 +1,5 @@
 defmodule Arcana.Migration.Dimensions do
+  alias Arcana.Migration.SchemaScope
   @moduledoc false
 
   # Shared by `Arcana.Migration` and `Arcana.Graph.Migration`, which each size
@@ -99,7 +100,7 @@ defmodule Arcana.Migration.Dimensions do
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
           "WHERE c.relname = $1 AND a.attname = 'embedding' " <>
           "AND a.attnum > 0 AND NOT a.attisdropped " <>
-          "AND n.nspname = COALESCE($2, current_schema())",
+          "AND " <> SchemaScope.visible("c", "n", "$2"),
         [table, prefix]
       )
 

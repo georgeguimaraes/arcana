@@ -10,6 +10,7 @@ defmodule Arcana.MigrationTest do
 
   doctest Arcana.Migration.Dimensions
 
+  alias Arcana.Migration.Dimensions
   alias Arcana.MigrationRepo, as: Repo
   alias Ecto.Adapters.Postgres
   alias Ecto.Adapters.SQL
@@ -1203,6 +1204,88 @@ defmodule Arcana.MigrationTest do
       )
 
     match?([[true]], rows)
+  end
+
+  describe "a search_path whose first entry isn't Arcana's schema" do
+    # The supported multi-tenant layout: a tenant schema first, Arcana's tables
+    # in public, no :prefix. Unqualified DDL resolves through the whole
+    # search_path and finds them; every catalog lookup used to compare against
+    # current_schema(), which is only the FIRST entry, and so reported nothing.
+    setup do
+      SQL.query!(Repo, ~s(CREATE SCHEMA IF NOT EXISTS "tenant_first"), [])
+      original = SQL.query!(Repo, "SHOW search_path", []).rows |> List.flatten() |> hd()
+
+      on_exit(fn ->
+        SQL.query!(Repo, "SET search_path TO #{original}", [])
+        SQL.query!(Repo, ~s(DROP SCHEMA IF EXISTS "tenant_first" CASCADE), [])
+      end)
+
+      :ok
+    end
+
+    # Repo.checkout pins ONE connection for the whole block. Without it the
+    # SET lands on a pooled connection and the lookup runs on another, so the
+    # search_path never applies and the test passes against the bug.
+    defp with_tenant_first(fun) do
+      Repo.checkout(fn ->
+        SQL.query!(Repo, ~s(SET search_path TO "tenant_first", public), [])
+
+        try do
+          fun.()
+        after
+          SQL.query!(Repo, "SET search_path TO public", [])
+        end
+      end)
+    end
+
+    test "the recorded version is found rather than read as 0" do
+      assert :ok = migrate(Arcana.Migration)
+
+      assert with_tenant_first(fn -> Arcana.Migration.recorded_version(Repo) end) ==
+               Arcana.Migration.current_version(),
+             "the version table is visible through the search_path"
+    end
+
+    test "the embedding dimension check still catches a mismatch" do
+      # Same lookup family, different module, and a quieter failure: finding no
+      # row makes verify!/6 fall through its `with` and return :ok, so on this
+      # layout a dimension mismatch passed unnoticed - exactly the case that
+      # function exists to catch.
+      assert :ok = migrate(Arcana.Migration)
+
+      assert_raise ArgumentError, ~r/already vector\(384\)/, fn ->
+        with_tenant_first(fn ->
+          Dimensions.verify!(Repo, 512, Arcana.Migration, "arcana_chunks", nil, "remedy")
+        end)
+      end
+    end
+
+    # Deliberately no end-to-end down/1 assertion. Ecto.Migrator runs the
+    # migration through its own connection handling, so a search_path pinned
+    # with Repo.checkout never reaches its statements and the rollback behaves
+    # as though the path were plain public - a test written that way passes
+    # with the bug present, which is worse than no test. recorded_version/2 is
+    # the mechanism of the silent no-op (it reads 0, so down/1 concludes
+    # nothing is installed and skips the loop), and that is covered above.
+
+    test "the graph module reads its own version the same way" do
+      assert :ok = migrate(Arcana.Migration)
+      assert :ok = migrate(Arcana.Graph.Migration)
+
+      assert with_tenant_first(fn -> Arcana.Graph.Migration.recorded_version(Repo) end) ==
+               Arcana.Graph.Migration.current_version()
+    end
+
+    test "an explicit prefix still means that schema and nothing else" do
+      # Visibility is only for the unprefixed case. A named prefix says where
+      # to look, so a table visible through the search_path but not in that
+      # schema must still read as absent.
+      assert :ok = migrate(Arcana.Migration)
+
+      assert with_tenant_first(fn ->
+               Arcana.Migration.recorded_version(Repo, prefix: "tenant_first")
+             end) == 0
+    end
   end
 
   describe "down/1 with tables that reference Arcana's" do
