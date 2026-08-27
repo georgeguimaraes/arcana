@@ -148,6 +148,19 @@ defmodule Arcana do
   through its own sweep may have applied some of it even though the
   document survives.
 
+  Called from inside your own transaction, this does not open one and does
+  not roll anything back — rolling back a nested Ecto transaction aborts the
+  outermost one, which would kill your transaction while handing you an error
+  that looks recoverable. So a `:sweep_failed` there comes back as a tuple
+  with your transaction intact, the delete still in its scope, and whether to
+  undo it your call to make with `rollback/1`.
+
+  A *database* failure is different, and not something this function can
+  soften: Postgres aborts the surrounding transaction on a constraint
+  violation, so inside your transaction that error ends it whatever is
+  returned. If you need to handle a foreign key violation and carry on, call
+  `delete/2` outside your transaction, where it manages its own.
+
   Sweeping is optional for custom graph stores: one that doesn't
   implement `c:Arcana.Graph.GraphStore.sweep_orphans/2` returns `:ok` and
   leaves the orphans alone.
@@ -178,22 +191,26 @@ defmodule Arcana do
   #
   # The sweep joins the same transaction so a failed cleanup no longer leaves
   # a deleted document behind it. Retrying is then the whole recovery.
+  # Two shapes on purpose. Standalone, this owns a transaction so a failed
+  # sweep takes the delete with it. Inside a caller's transaction, it must not:
+  # repo.rollback/1 in a nested Ecto transaction aborts the OUTERMOST one, so
+  # forcing it here would kill the caller's transaction while handing back a
+  # tuple that reads like a recoverable refusal. Their transaction already
+  # provides the atomicity, and the error is theirs to act on.
   defp delete_document(document, repo, opts) do
-    repo.transaction(fn ->
-      case repo.delete(document) do
-        {:ok, _deleted} ->
-          case GraphStore.maybe_sweep_orphans(document.collection_id, repo, opts) do
-            :ok -> :ok
-            {:error, reason} -> repo.rollback({:sweep_failed, reason})
-          end
-
-        {:error, changeset} ->
-          repo.rollback(changeset)
+    if repo.in_transaction?() do
+      delete_and_sweep(document, repo, opts)
+    else
+      repo.transaction(fn ->
+        case delete_and_sweep(document, repo, opts) do
+          :ok -> :ok
+          {:error, reason} -> repo.rollback(reason)
+        end
+      end)
+      |> case do
+        {:ok, :ok} -> :ok
+        {:error, reason} -> {:error, reason}
       end
-    end)
-    |> case do
-      {:ok, :ok} -> :ok
-      {:error, reason} -> {:error, reason}
     end
   rescue
     # The row went away between the get and the delete. A concurrent deleter
@@ -209,5 +226,18 @@ defmodule Arcana do
     # promised a tuple for.
     error in Ecto.ConstraintError ->
       {:error, error}
+  end
+
+  defp delete_and_sweep(document, repo, opts) do
+    case repo.delete(document) do
+      {:ok, _deleted} ->
+        case GraphStore.maybe_sweep_orphans(document.collection_id, repo, opts) do
+          :ok -> :ok
+          {:error, reason} -> {:error, {:sweep_failed, reason}}
+        end
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
   end
 end

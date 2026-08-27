@@ -78,6 +78,55 @@ defmodule Arcana.DeleteContractTest do
     end
   end
 
+  describe "inside a caller's own transaction" do
+    test "a failed sweep does not destroy the caller's transaction" do
+      # repo.rollback/1 in a nested Ecto transaction aborts the OUTERMOST one,
+      # so opening a transaction here unconditionally killed the caller's while
+      # handing back a tuple that reads like a recoverable refusal.
+      extractor = fn _t, _o -> {:ok, [%{name: "Alpha", type: "concept"}]} end
+
+      opts = [
+        repo: Repo,
+        graph: true,
+        graph_store: Arcana.FailingSweepGraphStore,
+        collection: "delete-contract-sweep"
+      ]
+
+      {:ok, doc} = Arcana.ingest("alpha", Keyword.put(opts, :entity_extractor, extractor))
+
+      result =
+        Repo.transaction(fn ->
+          deleted = Arcana.delete(doc.id, opts)
+
+          # Still able to work: the point is the caller keeps their transaction.
+          {deleted, Repo.aggregate(Arcana.Document, :count)}
+        end)
+
+      assert {:ok, {{:error, {:sweep_failed, :sweep_boom}}, _count}} = result
+    end
+
+    test "a database failure ends the caller's transaction, as documented" do
+      # Not a defect being pinned, a limitation being held to. Postgres aborts
+      # the surrounding transaction on a constraint violation, so no return
+      # value can make this recoverable. The docs say so; this keeps them true.
+      doc = ingest_doc()
+
+      SQL.query!(
+        Repo,
+        "CREATE TABLE host_refs_txn (id serial primary key, " <>
+          "document_id uuid REFERENCES arcana_documents(id))",
+        []
+      )
+
+      SQL.query!(Repo, "INSERT INTO host_refs_txn (document_id) VALUES ($1)", [
+        Ecto.UUID.dump!(doc.id)
+      ])
+
+      assert {:error, :rollback} =
+               Repo.transaction(fn -> Arcana.delete(doc.id, repo: Repo) end)
+    end
+  end
+
   describe "the delete and the sweep are one unit" do
     test "chunks go with the document" do
       doc = ingest_doc("Elixir runs on the BEAM virtual machine, which is Erlang's.")
