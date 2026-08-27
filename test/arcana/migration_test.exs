@@ -73,6 +73,24 @@ defmodule Arcana.MigrationTest do
   # generated module rather than passed as a closure. Both directions go
   # through Migrator.up/4: `down` here means "the thing this migration
   # does is call Arcana.Migration.down/1", not a rollback of it.
+  # Same as run/3 but with @disable_ddl_transaction, so the DDL autocommits
+  # statement by statement instead of rolling back as a unit.
+  defp run_untransacted(module, direction, opts) do
+    name = :"Elixir.MigTestNT#{System.unique_integer([:positive])}"
+
+    body =
+      quote do
+        use Ecto.Migration
+
+        @disable_ddl_transaction true
+
+        def up, do: unquote(module).unquote(direction)(unquote(Macro.escape(opts)))
+      end
+
+    Module.create(name, body, Macro.Env.location(__ENV__))
+    Ecto.Migrator.up(Repo, System.unique_integer([:positive]), name, log: false)
+  end
+
   defp run(module, direction, opts) do
     name = :"Elixir.MigTest#{System.unique_integer([:positive])}"
 
@@ -1407,6 +1425,32 @@ defmodule Arcana.MigrationTest do
 
       assert error.message =~ "still depends on them"
       assert error.message =~ "chunk_mv"
+    end
+
+    test "a non-transactional rollback admits it left the schema part-way" do
+      # With @disable_ddl_transaction the earlier DROPs have already committed
+      # by the time a later one hits the dependency, so the schema really is
+      # part-way removed. Claiming "nothing was changed" there would send the
+      # operator looking in the wrong place.
+      assert :ok = migrate(Arcana.Migration)
+
+      SQL.query!(Repo, "DROP VIEW IF EXISTS chunk_nt CASCADE", [])
+      on_exit(fn -> SQL.query!(Repo, "DROP VIEW IF EXISTS chunk_nt CASCADE", []) end)
+
+      SQL.query!(Repo, "CREATE VIEW chunk_nt AS SELECT id FROM arcana_chunks", [])
+
+      error =
+        assert_raise RuntimeError, fn -> run_untransacted(Arcana.Migration, :down, []) end
+
+      assert error.message =~ "still depends on them"
+
+      assert error.message =~ "@disable_ddl_transaction",
+             "the operator needs to know which situation they are in"
+
+      assert error.message =~ "part-way removed"
+
+      refute error.message =~ "nothing was changed",
+             "that would be false here"
     end
 
     test "both a graph and a host dependency name both steps" do

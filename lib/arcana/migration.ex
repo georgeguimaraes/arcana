@@ -187,9 +187,27 @@ defmodule Arcana.Migration do
     materialized view or a generated column reading these tables are the usual
     ones - so it has to be dropped or altered by hand first.
 
-    #{qualify("arcana_chunks", prefix)} and its siblings are otherwise ready to
-    go; nothing was changed.
+    #{state_after_failure(prefix)}
     """
+  end
+
+  # Only claim nothing happened when that is actually true. The migration runs
+  # in a transaction unless the host set @disable_ddl_transaction true, and
+  # without one each DROP has already committed on its own: earlier tables are
+  # gone, the version marker was never updated, and telling the operator
+  # nothing changed would send them looking in the wrong place.
+  defp state_after_failure(prefix) do
+    if repo().in_transaction?() do
+      "#{qualify("arcana_chunks", prefix)} and its siblings are otherwise " <>
+        "ready to go; this migration is transactional, so nothing was changed."
+    else
+      """
+      This migration runs with @disable_ddl_transaction true, so the drops that
+      came before this one have already been committed and the version marker
+      was not updated. The schema is part-way removed. Clear the dependency,
+      then run the rollback again to finish it.
+      """
+    end
   end
 
   # Version 0 means "no marker found", which covers two different states:
