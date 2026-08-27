@@ -662,7 +662,7 @@ defmodule Arcana.GraphIntegrationTest do
       refute "OldEntity" in names
     end
 
-    test "propagates a failing sweep after the document is already deleted" do
+    test "a failing sweep rolls the delete back rather than half-finishing" do
       extractor = fn _text, _opts -> {:ok, [%{name: "Delta", type: "concept"}]} end
 
       {:ok, doc} =
@@ -681,8 +681,11 @@ defmodule Arcana.GraphIntegrationTest do
                  graph_store: Arcana.FailingSweepGraphStore
                )
 
-      # The document is gone regardless: only the cleanup failed
-      assert Repo.get(Arcana.Document, doc.id) == nil
+      # The sweep shares the delete's transaction, so a failed cleanup takes
+      # the delete with it. This used to report the failure *after* deleting
+      # the document, which left the caller an error it could not retry.
+      assert Repo.get(Arcana.Document, doc.id),
+             "a failed sweep must leave the document in place"
     end
 
     test "build and sweep use the same per-call graph store" do
