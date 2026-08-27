@@ -73,30 +73,18 @@ defmodule Arcana.MigrationTest do
   # generated module rather than passed as a closure. Both directions go
   # through Migrator.up/4: `down` here means "the thing this migration
   # does is call Arcana.Migration.down/1", not a rollback of it.
-  # Same as run/3 but with @disable_ddl_transaction, so the DDL autocommits
+  defp run(module, direction, opts), do: run(module, direction, opts, transactional: true)
+
+  # transactional: false sets @disable_ddl_transaction, so the DDL autocommits
   # statement by statement instead of rolling back as a unit.
-  defp run_untransacted(module, direction, opts) do
-    name = :"Elixir.MigTestNT#{System.unique_integer([:positive])}"
-
-    body =
-      quote do
-        use Ecto.Migration
-
-        @disable_ddl_transaction true
-
-        def up, do: unquote(module).unquote(direction)(unquote(Macro.escape(opts)))
-      end
-
-    Module.create(name, body, Macro.Env.location(__ENV__))
-    Ecto.Migrator.up(Repo, System.unique_integer([:positive]), name, log: false)
-  end
-
-  defp run(module, direction, opts) do
+  defp run(module, direction, opts, transactional: transactional?) do
     name = :"Elixir.MigTest#{System.unique_integer([:positive])}"
 
     body =
       quote do
         use Ecto.Migration
+
+        unless unquote(transactional?), do: @disable_ddl_transaction(true)
 
         def up, do: unquote(module).unquote(direction)(unquote(Macro.escape(opts)))
       end
@@ -1440,17 +1428,23 @@ defmodule Arcana.MigrationTest do
       SQL.query!(Repo, "CREATE VIEW chunk_nt AS SELECT id FROM arcana_chunks", [])
 
       error =
-        assert_raise RuntimeError, fn -> run_untransacted(Arcana.Migration, :down, []) end
+        assert_raise RuntimeError, fn ->
+          run(Arcana.Migration, :down, [], transactional: false)
+        end
 
       assert error.message =~ "still depends on them"
 
       assert error.message =~ "@disable_ddl_transaction",
              "the operator needs to know which situation they are in"
 
-      assert error.message =~ "part-way removed"
+      assert error.message =~ "already committed",
+             "and that earlier drops are not coming back"
 
       refute error.message =~ "nothing was changed",
              "that would be false here"
+
+      refute error.message =~ "part-way removed",
+             "the failure can land on the first drop, so do not assert how much is gone"
     end
 
     test "both a graph and a host dependency name both steps" do

@@ -201,10 +201,13 @@ defmodule Arcana.Migration do
       "#{qualify("arcana_chunks", prefix)} and its siblings are otherwise " <>
         "ready to go; this migration is transactional, so nothing was changed."
     else
+      # Deliberately not saying how much is gone: the failure can land on the
+      # first DROP, in which case nothing was, and claiming a part-way schema
+      # would be its own wrong answer.
       """
-      This migration runs with @disable_ddl_transaction true, so the drops that
-      came before this one have already been committed and the version marker
-      was not updated. The schema is part-way removed. Clear the dependency,
+      This migration runs with @disable_ddl_transaction true, so any drops that
+      ran before this one are already committed and the version marker was not
+      updated. Check what is still there before retrying. Clear the dependency,
       then run the rollback again to finish it.
       """
     end
