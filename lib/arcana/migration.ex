@@ -190,21 +190,27 @@ defmodule Arcana.Migration do
   defp dependent_tables(prefix) do
     %{rows: rows} =
       repo().query!(
-        "SELECT DISTINCT dn.nspname, dependent.relname, referenced.relname " <>
+        # Scoped to the target schema, not matched on name alone: the owned
+        # tables reference each other and go together, but a table of the
+        # same name in ANOTHER schema is a real dependent, and excluding it
+        # by name hid the foreign key and handed back the 2BP01 anyway.
+        "SELECT DISTINCT dn.nspname, dependent.relname, referenced.relname, con.conname " <>
           "FROM pg_constraint con " <>
           "JOIN pg_class dependent ON dependent.oid = con.conrelid " <>
           "JOIN pg_namespace dn ON dn.oid = dependent.relnamespace " <>
           "JOIN pg_class referenced ON referenced.oid = con.confrelid " <>
           "JOIN pg_namespace rn ON rn.oid = referenced.relnamespace " <>
           "WHERE con.contype = 'f' " <>
+          "AND dependent.relkind IN ('r', 'p') " <>
           "AND referenced.relname = ANY($1) " <>
-          "AND dependent.relname <> ALL($1) " <>
-          "AND rn.nspname = COALESCE($2, current_schema())",
+          "AND rn.nspname = COALESCE($2, current_schema()) " <>
+          "AND NOT (dn.nspname = COALESCE($2, current_schema()) " <>
+          "AND dependent.relname = ANY($1))",
         [owned_table_names(), prefix]
       )
 
-    Enum.map(rows, fn [schema, dependent, referenced] ->
-      {schema, dependent, referenced}
+    Enum.map(rows, fn [schema, dependent, referenced, constraint] ->
+      %{schema: schema, table: dependent, referenced: referenced, constraint: constraint}
     end)
   end
 
@@ -214,23 +220,47 @@ defmodule Arcana.Migration do
   defp dependent_drop_message(dependents, prefix) do
     listed =
       dependents
-      |> Enum.sort()
-      |> Enum.map_join("\n", fn {schema, dependent, referenced} ->
-        "        #{schema}.#{dependent} -> #{referenced}"
+      |> Enum.sort_by(&{&1.schema, &1.table, &1.constraint})
+      |> Enum.map_join("\n", fn d ->
+        "        #{d.schema}.#{d.table} -> #{d.referenced} (#{d.constraint})"
+      end)
+
+    target_schema = prefix || current_schema()
+
+    # Graph tables in the schema being rolled back. A host table that happens
+    # to carry one of these names in a different schema is not the GraphRAG
+    # install and must not send the operator to Graph.Migration.down/1.
+    {graph, host} =
+      Enum.split_with(dependents, fn d ->
+        d.table in @graph_tables and d.schema == target_schema
       end)
 
     next =
-      if Enum.any?(dependents, fn {_s, d, _r} -> d in @graph_tables end) do
-        """
-        The GraphRAG schema is installed. Roll it back first, then retry:
+      case {graph, host} do
+        {[_ | _], []} ->
+          """
+          The GraphRAG schema is installed. Roll it back first, then retry:
 
-            Arcana.Graph.Migration.down(#{inspect(prefix: prefix)})
-        """
-      else
-        """
-        These are not Arcana's tables. Drop them, or remove the foreign keys,
-        before rolling Arcana's schema back.
-        """
+              Arcana.Graph.Migration.down(#{inspect(prefix: prefix)})
+          """
+
+        {[], _} ->
+          """
+          These are not Arcana's tables. Drop them, or remove the foreign keys,
+          before rolling Arcana's schema back.
+          """
+
+        {[_ | _], [_ | _]} ->
+          # Both, so naming only the graph step would send them round for a
+          # second failure on the ones it does not clear.
+          """
+          Two things are in the way. Roll the GraphRAG schema back:
+
+              Arcana.Graph.Migration.down(#{inspect(prefix: prefix)})
+
+          and drop the non-Arcana tables above, or remove their foreign keys.
+          Clearing only one of the two leaves the rollback blocked.
+          """
       end
 
     """
@@ -279,6 +309,11 @@ defmodule Arcana.Migration do
     #{recovery}
     See "Where the version is recorded" in Arcana.Migration for how this is stored.
     """
+  end
+
+  defp current_schema do
+    %{rows: [[schema]]} = repo().query!("SELECT current_schema()", [])
+    schema
   end
 
   # Exactly what change(1, :down, _) drops. Both rollback guards read this, so

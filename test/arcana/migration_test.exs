@@ -1276,16 +1276,107 @@ defmodule Arcana.MigrationTest do
       refute table_exists?("arcana_collections")
     end
 
-    test "a partial rollback that keeps the core tables is unaffected" do
-      # Only version 1's down drops them, so a rollback stopping above it has
-      # nothing to conflict with and must not be blocked.
+    test "the guard does not fire for a rollback that stops above version 1" do
+      # With @current_version at 1 this rollback is a no-op: current > target
+      # is 1 > 1, so the loop never runs and nothing is dropped. What it pins
+      # is the gating - the guard is skipped for a non-zero target, and would
+      # raise here if it ran, because the graph schema is installed.
       assert :ok = migrate(Arcana.Migration)
       assert :ok = migrate(Arcana.Graph.Migration)
 
       assert :ok = migrate_down(Arcana.Migration, version: 1)
+    end
 
-      assert table_exists?("arcana_chunks")
-      assert table_exists?("arcana_graph_entities")
+    test "names the blocking constraint, not just the tables" do
+      # The operator has to be able to find the foreign key. A table pair on
+      # its own does not identify which constraint to drop.
+      assert :ok = migrate(Arcana.Migration)
+      assert :ok = migrate(Arcana.Graph.Migration)
+
+      error = assert_raise RuntimeError, fn -> migrate_down(Arcana.Migration, []) end
+
+      assert error.message =~ "arcana_graph_entities_chunk_id_fkey",
+             "the constraint name is what Postgres would have reported"
+    end
+
+    test "a same-named table in another schema is not mistaken for an owned one" do
+      # The exclusion is scoped to the target schema. Matching on name alone
+      # hid this foreign key and let the rollback fail with the raw 2BP01.
+      assert :ok = migrate(Arcana.Migration)
+
+      SQL.query!(Repo, ~s(CREATE SCHEMA IF NOT EXISTS "other_tenant"), [])
+      SQL.query!(Repo, "DROP TABLE IF EXISTS other_tenant.arcana_documents CASCADE", [])
+
+      on_exit(fn ->
+        SQL.query!(Repo, "DROP SCHEMA IF EXISTS \"other_tenant\" CASCADE", [])
+      end)
+
+      # Named exactly like an owned table, but in a different schema, so it is
+      # a genuine dependent rather than something dropped alongside.
+      SQL.query!(
+        Repo,
+        "CREATE TABLE other_tenant.arcana_documents (id serial primary key, " <>
+          "chunk_id uuid REFERENCES public.arcana_chunks(id))",
+        []
+      )
+
+      error = assert_raise RuntimeError, fn -> migrate_down(Arcana.Migration, []) end
+
+      assert error.message =~ "other_tenant.arcana_documents -> arcana_chunks"
+
+      assert error.message =~ "not Arcana's tables",
+             "a same-named table in a foreign schema is not the GraphRAG install"
+    end
+
+    test "a host table wearing a graph table's name does not get graph advice" do
+      # @graph_tables is matched against the target schema. A coincidental name
+      # elsewhere must not send the operator to Graph.Migration.down/1, which
+      # would not clear it.
+      assert :ok = migrate(Arcana.Migration)
+
+      SQL.query!(Repo, ~s(CREATE SCHEMA IF NOT EXISTS "impostor"), [])
+
+      on_exit(fn ->
+        SQL.query!(Repo, "DROP SCHEMA IF EXISTS \"impostor\" CASCADE", [])
+      end)
+
+      SQL.query!(
+        Repo,
+        "CREATE TABLE impostor.arcana_graph_entities (id serial primary key, " <>
+          "chunk_id uuid REFERENCES public.arcana_chunks(id))",
+        []
+      )
+
+      error = assert_raise RuntimeError, fn -> migrate_down(Arcana.Migration, []) end
+
+      refute error.message =~ "Arcana.Graph.Migration.down(",
+             "there is no GraphRAG install here to roll back"
+
+      assert error.message =~ "not Arcana's tables"
+    end
+
+    test "both a graph and a host dependency name both steps" do
+      assert :ok = migrate(Arcana.Migration)
+      assert :ok = migrate(Arcana.Graph.Migration)
+
+      SQL.query!(Repo, "DROP TABLE IF EXISTS host_both CASCADE", [])
+
+      on_exit(fn -> SQL.query!(Repo, "DROP TABLE IF EXISTS host_both CASCADE", []) end)
+
+      SQL.query!(
+        Repo,
+        "CREATE TABLE host_both (id serial primary key, " <>
+          "chunk_id uuid REFERENCES arcana_chunks(id))",
+        []
+      )
+
+      error = assert_raise RuntimeError, fn -> migrate_down(Arcana.Migration, []) end
+
+      assert error.message =~ "Arcana.Graph.Migration.down(",
+             "the graph step is still needed"
+
+      assert error.message =~ "Clearing only one of the two",
+             "and so is the host one, or the retry just fails differently"
     end
   end
 end
