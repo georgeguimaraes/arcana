@@ -21,9 +21,12 @@ defmodule Arcana.Graph.GraphStore.Memory do
 
   use GenServer
 
+  import Ecto.Query
+
   @behaviour Arcana.Graph.GraphStore
 
-  alias Arcana.Graph.EntityName
+  alias Arcana.Graph.{EntityName, Relationship}
+  alias Arcana.RetrievalScope
 
   # === Client API ===
 
@@ -54,9 +57,9 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl Arcana.Graph.GraphStore
-  def persist_relationships(relationships, entity_id_map, opts) do
+  def persist_relationships(chunk_id, relationships, entity_id_map, opts) do
     server = get_server(opts)
-    GenServer.call(server, {:persist_relationships, relationships, entity_id_map})
+    GenServer.call(server, {:persist_relationships, chunk_id, relationships, entity_id_map})
   end
 
   @impl Arcana.Graph.GraphStore
@@ -68,7 +71,11 @@ defmodule Arcana.Graph.GraphStore.Memory do
   @impl Arcana.Graph.GraphStore
   def search(entity_names, collection_ids, opts) do
     server = get_server(opts)
-    GenServer.call(server, {:search, entity_names, collection_ids})
+
+    GenServer.call(
+      server,
+      {:search, entity_names, collection_ids, visible_chunk_ids(server, opts)}
+    )
   end
 
   @impl Arcana.Graph.GraphStore
@@ -77,13 +84,17 @@ defmodule Arcana.Graph.GraphStore.Memory do
   @impl Arcana.Graph.GraphStore
   def find_entities(collection_id, opts) do
     server = get_server(opts)
-    GenServer.call(server, {:find_entities, collection_id})
+    GenServer.call(server, {:find_entities, collection_id, visible_chunk_ids(server, opts)})
   end
 
   @impl Arcana.Graph.GraphStore
   def find_related_entities(entity_id, depth, opts) do
     server = get_server(opts)
-    GenServer.call(server, {:find_related_entities, entity_id, depth})
+
+    GenServer.call(
+      server,
+      {:find_related_entities, entity_id, depth, visible_chunk_ids(server, opts)}
+    )
   end
 
   @impl Arcana.Graph.GraphStore
@@ -101,7 +112,12 @@ defmodule Arcana.Graph.GraphStore.Memory do
   @impl Arcana.Graph.GraphStore
   def delete_by_chunks(chunk_ids, opts) do
     server = get_server(opts)
-    GenServer.call(server, {:delete_by_chunks, chunk_ids})
+
+    GenServer.call(
+      server,
+      {:delete_by_chunks, chunk_ids, visible_chunk_ids(server, opts),
+       MapSet.new(Keyword.get(opts, :published_chunk_ids, []))}
+    )
   end
 
   @impl Arcana.Graph.GraphStore
@@ -112,32 +128,42 @@ defmodule Arcana.Graph.GraphStore.Memory do
 
   @impl Arcana.Graph.GraphStore
   def sweep_orphans(collection_id, opts) do
+    with_write_lock(collection_id, opts, fn ->
+      server = get_server(opts)
+      GenServer.call(server, {:sweep_orphans, collection_id})
+    end)
+  end
+
+  @impl Arcana.Graph.GraphStore
+  def with_write_lock(collection_id, opts, fun) when is_function(fun, 0) do
     server = get_server(opts)
-    GenServer.call(server, {:sweep_orphans, collection_id})
+    server_pid = server_pid!(server)
+    resource = {__MODULE__, server_pid, collection_id}
+    :global.trans({resource, self()}, fun, [node(server_pid)])
   end
 
   @impl Arcana.Graph.GraphStore
   def get_entity(entity_id, opts) do
     server = get_server(opts)
-    GenServer.call(server, {:get_entity, entity_id})
+    GenServer.call(server, {:get_entity, entity_id, visible_chunk_ids(server, opts)})
   end
 
   @impl Arcana.Graph.GraphStore
   def get_relationships(entity_id, opts) do
     server = get_server(opts)
-    GenServer.call(server, {:get_relationships, entity_id})
+    GenServer.call(server, {:get_relationships, entity_id, visible_chunk_ids(server, opts)})
   end
 
   @impl Arcana.Graph.GraphStore
   def get_relationship(relationship_id, opts) do
     server = get_server(opts)
-    GenServer.call(server, {:get_relationship, relationship_id})
+    GenServer.call(server, {:get_relationship, relationship_id, visible_chunk_ids(server, opts)})
   end
 
   @impl Arcana.Graph.GraphStore
   def get_mentions(entity_id, opts) do
     server = get_server(opts)
-    GenServer.call(server, {:get_mentions, entity_id})
+    GenServer.call(server, {:get_mentions, entity_id, visible_chunk_ids(server, opts)})
   end
 
   @impl Arcana.Graph.GraphStore
@@ -149,13 +175,13 @@ defmodule Arcana.Graph.GraphStore.Memory do
   @impl Arcana.Graph.GraphStore
   def list_entities(opts) do
     server = get_server(opts)
-    GenServer.call(server, {:list_entities, opts})
+    GenServer.call(server, {:list_entities, opts, visible_chunk_ids(server, opts)})
   end
 
   @impl Arcana.Graph.GraphStore
   def list_relationships(opts) do
     server = get_server(opts)
-    GenServer.call(server, {:list_relationships, opts})
+    GenServer.call(server, {:list_relationships, opts, visible_chunk_ids(server, opts)})
   end
 
   @impl Arcana.Graph.GraphStore
@@ -217,7 +243,11 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl GenServer
-  def handle_call({:persist_relationships, relationships, entity_id_map}, _from, state) do
+  def handle_call(
+        {:persist_relationships, chunk_id, relationships, entity_id_map},
+        _from,
+        state
+      ) do
     valid_relationships =
       relationships
       |> Enum.map(fn rel ->
@@ -227,18 +257,53 @@ defmodule Arcana.Graph.GraphStore.Memory do
         Map.has_key?(entity_id_map, source_key) and Map.has_key?(entity_id_map, target_key)
       end)
       |> Enum.map(fn {source_key, target_key, rel} ->
-        %{
-          id: Ecto.UUID.generate(),
+        attrs = %{
           source_id: entity_id_map[source_key],
           target_id: entity_id_map[target_key],
           type: rel.type,
           description: rel[:description],
-          strength: rel[:strength]
+          strength: rel[:strength],
+          metadata: Relationship.normalized_metadata(rel[:metadata])
         }
+
+        Map.put(attrs, :fingerprint, Relationship.fingerprint(attrs))
       end)
 
-    new_state = %{state | relationships: state.relationships ++ valid_relationships}
+    new_relationships =
+      Enum.reduce(valid_relationships, state.relationships, fn relationship, stored ->
+        case Enum.find_index(stored, &(&1.fingerprint == relationship.fingerprint)) do
+          nil ->
+            [
+              relationship
+              |> Map.put(:id, Ecto.UUID.generate())
+              |> Map.put(:evidence, MapSet.new([chunk_id]))
+              | stored
+            ]
+
+          index ->
+            List.update_at(stored, index, fn existing ->
+              %{existing | evidence: MapSet.put(existing.evidence, chunk_id)}
+            end)
+        end
+      end)
+
+    new_state = %{state | relationships: new_relationships}
     {:reply, :ok, new_state}
+  end
+
+  @impl GenServer
+  def handle_call(:publication_candidates, _from, state) do
+    chunk_ids =
+      state.mentions
+      |> Enum.map(& &1.chunk_id)
+      |> Enum.concat(
+        Enum.flat_map(state.relationships, fn relationship ->
+          MapSet.to_list(relationship.evidence)
+        end)
+      )
+      |> Enum.uniq()
+
+    {:reply, chunk_ids, state}
   end
 
   @impl GenServer
@@ -266,7 +331,7 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl GenServer
-  def handle_call({:search, entity_names, collection_ids}, _from, state) do
+  def handle_call({:search, entity_names, collection_ids, visible_chunks}, _from, state) do
     # Match on the normalized name: persistence collapses variants onto
     # one entity keeping its first-seen display name, so matching raw
     # names here would miss a stored "Two_Year_Limited_Warranty" for a
@@ -287,7 +352,9 @@ defmodule Arcana.Graph.GraphStore.Memory do
       # Find chunks with mentions of these entities
       chunk_scores =
         state.mentions
-        |> Enum.filter(fn m -> MapSet.member?(entity_ids, m.entity_id) end)
+        |> Enum.filter(fn m ->
+          MapSet.member?(entity_ids, m.entity_id) and visible_chunk?(m.chunk_id, visible_chunks)
+        end)
         |> Enum.group_by(& &1.chunk_id)
         |> Enum.map(fn {chunk_id, mentions} ->
           %{chunk_id: chunk_id, score: length(mentions) * 0.1}
@@ -299,10 +366,11 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl GenServer
-  def handle_call({:find_entities, collection_id}, _from, state) do
+  def handle_call({:find_entities, collection_id, visible_chunks}, _from, state) do
     entities =
       state.entities
       |> Map.get(collection_id, [])
+      |> Enum.filter(&visible_entity?(&1.id, state.mentions, visible_chunks))
       |> Enum.map(fn e ->
         %{id: e.id, name: e.name, type: e.type, description: e[:description]}
       end)
@@ -311,14 +379,17 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl GenServer
-  def handle_call({:find_related_entities, entity_id, depth}, _from, state) do
+  def handle_call({:find_related_entities, entity_id, depth, visible_chunks}, _from, state) do
     # BFS traversal
-    visited = find_related_bfs([entity_id], MapSet.new([entity_id]), depth, state.relationships)
+    relationships = Enum.filter(state.relationships, &visible_relationship?(&1, visible_chunks))
+    visited = find_related_bfs([entity_id], MapSet.new([entity_id]), depth, relationships)
 
     entities =
       state.entities
       |> Enum.flat_map(fn {_cid, ents} -> ents end)
-      |> Enum.filter(fn e -> MapSet.member?(visited, e.id) end)
+      |> Enum.filter(fn e ->
+        MapSet.member?(visited, e.id) and visible_entity?(e.id, state.mentions, visible_chunks)
+      end)
       |> Enum.map(fn e ->
         %{id: e.id, name: e.name, type: e.type, description: e[:description]}
       end)
@@ -337,6 +408,7 @@ defmodule Arcana.Graph.GraphStore.Memory do
     communities =
       state.communities
       |> Map.get(collection_id, [])
+      |> Enum.reject(& &1[:dirty])
       |> Enum.map(fn c ->
         %{id: c.id, level: c.level, summary: c.summary, entity_ids: c.entity_ids}
       end)
@@ -345,8 +417,31 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl GenServer
-  def handle_call({:delete_by_chunks, chunk_ids}, _from, state) do
+  def handle_call(
+        {:delete_by_chunks, chunk_ids, visible_chunks, published_chunk_ids},
+        _from,
+        state
+      ) do
     chunk_id_set = MapSet.new(chunk_ids)
+    visible_before_delete = include_published_snapshot(visible_chunks, published_chunk_ids)
+
+    unpublished_endpoints =
+      state.relationships
+      |> Enum.filter(fn relationship ->
+        Enum.any?(relationship.evidence, &visible_chunk?(&1, visible_before_delete)) and
+          not MapSet.disjoint?(relationship.evidence, chunk_id_set) and
+          relationship.evidence
+          |> MapSet.difference(chunk_id_set)
+          |> Enum.all?(&(not visible_chunk?(&1, visible_chunks)))
+      end)
+      |> Enum.flat_map(&[&1.source_id, &1.target_id])
+      |> MapSet.new()
+
+    new_relationships =
+      Enum.flat_map(state.relationships, fn relationship ->
+        evidence = MapSet.difference(relationship.evidence, chunk_id_set)
+        if MapSet.size(evidence) == 0, do: [], else: [%{relationship | evidence: evidence}]
+      end)
 
     # Remove mentions for these chunks
     new_mentions =
@@ -359,6 +454,7 @@ defmodule Arcana.Graph.GraphStore.Memory do
       |> Enum.filter(&MapSet.member?(chunk_id_set, &1.chunk_id))
       |> Enum.map(& &1.entity_id)
       |> MapSet.new()
+      |> MapSet.union(unpublished_endpoints)
 
     affected_collections =
       state.entities
@@ -375,9 +471,10 @@ defmodule Arcana.Graph.GraphStore.Memory do
     new_state =
       Enum.reduce(
         affected_collections,
-        %{state | mentions: new_mentions},
+        %{state | mentions: new_mentions, relationships: new_relationships},
         &sweep_collection(&2, &1)
       )
+      |> mark_relationship_communities_dirty(unpublished_endpoints)
 
     {:reply, :ok, new_state}
   end
@@ -425,11 +522,13 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl GenServer
-  def handle_call({:get_entity, entity_id}, _from, state) do
+  def handle_call({:get_entity, entity_id, visible_chunks}, _from, state) do
     entity =
       state.entities
       |> Enum.flat_map(fn {_cid, ents} -> ents end)
-      |> Enum.find(fn e -> e.id == entity_id end)
+      |> Enum.find(fn e ->
+        e.id == entity_id and visible_entity?(e.id, state.mentions, visible_chunks)
+      end)
 
     result =
       case entity do
@@ -441,7 +540,7 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl GenServer
-  def handle_call({:get_relationships, entity_id}, _from, state) do
+  def handle_call({:get_relationships, entity_id, visible_chunks}, _from, state) do
     # Build entity lookup for names
     entity_by_id =
       state.entities
@@ -450,7 +549,10 @@ defmodule Arcana.Graph.GraphStore.Memory do
 
     relationships =
       state.relationships
-      |> Enum.filter(fn r -> r.source_id == entity_id or r.target_id == entity_id end)
+      |> Enum.filter(fn relationship ->
+        visible_relationship?(relationship, visible_chunks) and
+          (relationship.source_id == entity_id or relationship.target_id == entity_id)
+      end)
       |> Enum.map(fn r ->
         source = Map.get(entity_by_id, r.source_id)
         target = Map.get(entity_by_id, r.target_id)
@@ -471,14 +573,17 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl GenServer
-  def handle_call({:get_relationship, relationship_id}, _from, state) do
+  def handle_call({:get_relationship, relationship_id, visible_chunks}, _from, state) do
     # Build entity lookup for names
     entity_by_id =
       state.entities
       |> Enum.flat_map(fn {_cid, ents} -> ents end)
       |> Map.new(fn e -> {e.id, e} end)
 
-    relationship = Enum.find(state.relationships, fn r -> r.id == relationship_id end)
+    relationship =
+      Enum.find(state.relationships, fn r ->
+        r.id == relationship_id and visible_relationship?(r, visible_chunks)
+      end)
 
     result =
       case relationship do
@@ -506,11 +611,13 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl GenServer
-  def handle_call({:get_mentions, entity_id}, _from, state) do
+  def handle_call({:get_mentions, entity_id, visible_chunks}, _from, state) do
     # Note: In memory backend, we don't have chunk text - just return mention structure
     mentions =
       state.mentions
-      |> Enum.filter(fn m -> m.entity_id == entity_id end)
+      |> Enum.filter(fn mention ->
+        mention.entity_id == entity_id and visible_chunk?(mention.chunk_id, visible_chunks)
+      end)
       |> Enum.map(fn m ->
         %{
           id: m.id,
@@ -542,7 +649,7 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl GenServer
-  def handle_call({:list_entities, opts}, _from, state) do
+  def handle_call({:list_entities, opts, visible_chunks}, _from, state) do
     collection_id = Keyword.get(opts, :collection_id)
     type_filter = Keyword.get(opts, :type)
     search_filter = Keyword.get(opts, :search)
@@ -556,16 +663,19 @@ defmodule Arcana.Graph.GraphStore.Memory do
       else
         Enum.flat_map(state.entities, fn {_cid, ents} -> ents end)
       end
+      |> Enum.filter(&visible_entity?(&1.id, state.mentions, visible_chunks))
 
     # Count mentions per entity
     mention_counts =
       state.mentions
+      |> Enum.filter(&visible_chunk?(&1.chunk_id, visible_chunks))
       |> Enum.group_by(& &1.entity_id)
       |> Map.new(fn {eid, mentions} -> {eid, length(mentions)} end)
 
     # Count relationships per entity
     relationship_counts =
       state.relationships
+      |> Enum.filter(&visible_relationship?(&1, visible_chunks))
       |> Enum.flat_map(fn r -> [r.source_id, r.target_id] end)
       |> Enum.frequencies()
 
@@ -589,7 +699,7 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl GenServer
-  def handle_call({:list_relationships, opts}, _from, state) do
+  def handle_call({:list_relationships, opts, visible_chunks}, _from, state) do
     collection_id = Keyword.get(opts, :collection_id)
     type_filter = Keyword.get(opts, :type)
     search_filter = Keyword.get(opts, :search)
@@ -616,6 +726,7 @@ defmodule Arcana.Graph.GraphStore.Memory do
 
     relationships =
       state.relationships
+      |> Enum.filter(&visible_relationship?(&1, visible_chunks))
       |> maybe_filter_rels_by_collection(collection_entity_ids)
       |> maybe_filter_rels_by_type(type_filter)
       |> maybe_filter_rels_by_strength(strength_filter)
@@ -685,6 +796,58 @@ defmodule Arcana.Graph.GraphStore.Memory do
     end
   end
 
+  defp server_pid!(server) do
+    case GenServer.whereis(server) do
+      pid when is_pid(pid) -> pid
+      nil -> raise ArgumentError, "memory graph store #{inspect(server)} is not running"
+    end
+  end
+
+  defp visible_chunk_ids(server, opts) do
+    case Keyword.fetch(opts, :repo) do
+      {:ok, repo} ->
+        candidates = GenServer.call(server, :publication_candidates)
+
+        if candidates == [] do
+          MapSet.new()
+        else
+          repo.all(
+            from([chunk: c] in RetrievalScope.chunks(),
+              where: c.id in ^candidates,
+              select: c.id
+            )
+          )
+          |> MapSet.new()
+        end
+
+      :error ->
+        :all
+    end
+  end
+
+  defp visible_chunk?(_chunk_id, :all), do: true
+  defp visible_chunk?(chunk_id, visible_chunks), do: MapSet.member?(visible_chunks, chunk_id)
+
+  defp include_published_snapshot(:all, _published_chunk_ids), do: :all
+
+  defp include_published_snapshot(visible_chunks, published_chunk_ids) do
+    MapSet.union(visible_chunks, published_chunk_ids)
+  end
+
+  defp visible_entity?(entity_id, mentions, visible_chunks) do
+    if visible_chunks == :all do
+      true
+    else
+      Enum.any?(mentions, fn mention ->
+        mention.entity_id == entity_id and visible_chunk?(mention.chunk_id, visible_chunks)
+      end)
+    end
+  end
+
+  defp visible_relationship?(relationship, visible_chunks) do
+    Enum.any?(relationship.evidence, &visible_chunk?(&1, visible_chunks))
+  end
+
   # nil means unscoped; [] means the caller named collections that resolved
   # to nothing and must match nothing, never fall back to everything.
   defp filter_by_collections(entities_map, nil), do: entities_map
@@ -731,6 +894,34 @@ defmodule Arcana.Graph.GraphStore.Memory do
         community
       end
     end)
+  end
+
+  defp mark_relationship_communities_dirty(state, endpoint_ids) do
+    if MapSet.size(endpoint_ids) == 0 do
+      state
+    else
+      now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+      communities =
+        Map.new(state.communities, fn {collection_id, communities} ->
+          updated =
+            Enum.map(communities, &maybe_dirty_relationship_community(&1, endpoint_ids, now))
+
+          {collection_id, updated}
+        end)
+
+      %{state | communities: communities}
+    end
+  end
+
+  defp maybe_dirty_relationship_community(community, endpoint_ids, now) do
+    if Enum.any?(community.entity_ids || [], &MapSet.member?(endpoint_ids, &1)) do
+      community
+      |> Map.put(:dirty, true)
+      |> Map.put(:updated_at, now)
+    else
+      community
+    end
   end
 
   # Drops entities in the collection that no mention points at any more,

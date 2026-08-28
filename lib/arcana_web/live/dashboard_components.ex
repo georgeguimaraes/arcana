@@ -243,12 +243,17 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp load_graph_stats(repo, :all) do
       import Ecto.Query
 
-      entity_count = repo.one(from(e in Arcana.Graph.Entity, select: count(e.id))) || 0
+      entity_count =
+        repo.one(from([entity: e] in Arcana.RetrievalScope.entities(), select: count(e.id))) || 0
 
       relationship_count =
-        repo.one(from(r in Arcana.Graph.Relationship, select: count(r.id))) || 0
+        repo.one(
+          from([relationship: r] in Arcana.RetrievalScope.relationships(), select: count(r.id))
+        ) || 0
 
-      community_count = repo.one(from(c in Arcana.Graph.Community, select: count(c.id))) || 0
+      community_count =
+        repo.one(from([community: c] in Arcana.RetrievalScope.communities(), select: count(c.id))) ||
+          0
 
       %{entities: entity_count, relationships: relationship_count, communities: community_count}
     rescue
@@ -263,7 +268,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
       entity_count =
         repo.one(
-          from(e in Arcana.Graph.Entity,
+          from([entity: e] in Arcana.RetrievalScope.entities(),
             where: e.collection_id in subquery(collection_ids),
             select: count(e.id)
           )
@@ -272,7 +277,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       # Relationships carry no collection_id; scope through the source entity
       relationship_count =
         repo.one(
-          from(r in Arcana.Graph.Relationship,
+          from([relationship: r] in Arcana.RetrievalScope.relationships(),
             join: e in Arcana.Graph.Entity,
             on: r.source_id == e.id,
             where: e.collection_id in subquery(collection_ids),
@@ -282,7 +287,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
       community_count =
         repo.one(
-          from(c in Arcana.Graph.Community,
+          from([community: c] in Arcana.RetrievalScope.communities(),
             where: c.collection_id in subquery(collection_ids),
             select: count(c.id)
           )

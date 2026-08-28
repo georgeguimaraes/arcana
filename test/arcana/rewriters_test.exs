@@ -133,7 +133,7 @@ defmodule Arcana.RewritersTest do
       # Verify the protocol is implemented for model strings
       model = "openai:gpt-4o-mini"
 
-      assert Arcana.LLM.impl_for(model) != nil
+      assert Arcana.LLM.impl_for(model) == Arcana.LLM.BitString
     end
   end
 end

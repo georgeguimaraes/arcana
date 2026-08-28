@@ -80,6 +80,31 @@ defmodule Arcana.Graph.RelationshipTest do
       changeset = Relationship.changeset(%Relationship{}, Map.put(base_attrs, :strength, 5))
       assert changeset.valid?
     end
+
+    test "canonicalizes metadata before fingerprinting" do
+      attrs = %{
+        type: "WORKS_FOR",
+        source_id: Ecto.UUID.generate(),
+        target_id: Ecto.UUID.generate()
+      }
+
+      atom_keys =
+        Relationship.changeset(%Relationship{}, Map.put(attrs, :metadata, %{role: "ceo"}))
+
+      string_keys =
+        Relationship.changeset(%Relationship{}, Map.put(attrs, :metadata, %{"role" => "ceo"}))
+
+      assert Ecto.Changeset.get_field(atom_keys, :metadata) == %{"role" => "ceo"}
+
+      assert Ecto.Changeset.get_field(atom_keys, :fingerprint) ==
+               Ecto.Changeset.get_field(string_keys, :fingerprint)
+    end
+
+    test "keeps metadata whose JSON encoder returns invalid iodata" do
+      metadata = %Arcana.InvalidJSONMetadata{value: "kept"}
+
+      assert Relationship.normalized_metadata(metadata) == metadata
+    end
   end
 
   describe "database operations" do

@@ -169,7 +169,7 @@ ctx.results
 
 #### Explicit Collection Selection
 
-Pass `:collection` or `:collections` to search specific collections without using `select/2`:
+Pass `:collection` to search specific collections without using `select/2`:
 
 ```elixir
 # Search a single collection
@@ -179,12 +179,19 @@ ctx
 
 # Search multiple collections
 ctx
-|> Pipeline.search(collections: ["docs", "faq"])
+|> Pipeline.search(collection: ["docs", "faq"])
 |> Pipeline.answer()
+
+# Search every collection, or deliberately search none
+Pipeline.search(ctx, collection: :all)
+Pipeline.search(ctx, collection: [])
 ```
 
+`:collection` accepts `:all`, a collection name, or a list of names. A single
+string and a one-element list mean the same thing.
+
 Collection selection priority:
-1. `:collection`/`:collections` option passed to `search/2`
+1. `:collection` option passed to `search/2`
 2. `ctx.collections` (set by `select/2`)
 3. Falls back to `"default"` collection
 

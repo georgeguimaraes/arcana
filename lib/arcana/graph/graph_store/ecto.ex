@@ -8,7 +8,18 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
   @behaviour Arcana.Graph.GraphStore
 
-  alias Arcana.Graph.{Community, Entity, EntityMention, EntityName, Relationship}
+  alias Arcana.{Chunk, Document}
+
+  alias Arcana.Graph.{
+    Community,
+    Entity,
+    EntityMention,
+    EntityName,
+    Relationship,
+    RelationshipEvidence
+  }
+
+  alias Arcana.RetrievalScope
   import Ecto.Query
 
   # Postgres-side spelling of EntityName.normalize/1, so upserts and
@@ -92,7 +103,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   end
 
   @impl true
-  def persist_relationships(relationships, entity_id_map, opts) do
+  def persist_relationships(chunk_id, relationships, entity_id_map, opts) do
     repo = Keyword.fetch!(opts, :repo)
 
     relationships
@@ -101,16 +112,28 @@ defmodule Arcana.Graph.GraphStore.Ecto do
       target_id = lookup_entity_id(entity_id_map, rel.target)
 
       if source_id && target_id && rel.type && rel.type != "" do
-        %Relationship{}
-        |> Relationship.changeset(%{
+        attrs = %{
           source_id: source_id,
           target_id: target_id,
           type: rel.type,
           description: rel[:description],
           strength: rel[:strength],
-          metadata: rel[:metadata]
+          metadata: rel[:metadata] || %{}
+        }
+
+        changeset = Relationship.changeset(%Relationship{}, attrs)
+        fingerprint = Ecto.Changeset.get_field(changeset, :fingerprint)
+
+        repo.insert!(changeset, on_conflict: :nothing, conflict_target: :fingerprint)
+
+        relationship = repo.get_by!(Relationship, fingerprint: fingerprint)
+
+        %RelationshipEvidence{}
+        |> RelationshipEvidence.changeset(%{
+          relationship_id: relationship.id,
+          chunk_id: chunk_id
         })
-        |> repo.insert!()
+        |> repo.insert!(on_conflict: :nothing)
       end
     end)
 
@@ -156,9 +179,12 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     limit = Keyword.get(opts, :limit, 10)
     threshold = Keyword.get(opts, :threshold, 0.3)
 
+    published_entity_ids =
+      from([mention: m] in RetrievalScope.mentions(), select: m.entity_id, distinct: true)
+
     base =
       from(e in Entity,
-        where: not is_nil(e.embedding),
+        where: not is_nil(e.embedding) and e.id in subquery(published_entity_ids),
         select: %{
           id: e.id,
           name: e.name,
@@ -197,7 +223,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     repo = Keyword.fetch!(opts, :repo)
 
     repo.all(
-      from(e in Entity,
+      from([entity: e] in RetrievalScope.entities(),
         where: e.collection_id == ^collection_id,
         select: %{id: e.id, name: e.name, type: e.type, description: e.description}
       )
@@ -235,7 +261,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
     repo.all(
       from(c in Community,
-        where: c.collection_id == ^collection_id,
+        where: c.collection_id == ^collection_id and not c.dirty,
         select: %{id: c.id, level: c.level, summary: c.summary, entity_ids: c.entity_ids}
       )
     )
@@ -244,10 +270,54 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   # === Deletion Callbacks ===
 
   @impl true
-  def delete_by_chunks([], _opts), do: :ok
+  def delete_by_chunks([], opts) do
+    case Keyword.get(opts, :collection_id) do
+      nil -> :ok
+      collection_id -> sweep_orphans(collection_id, opts)
+    end
+  end
 
   def delete_by_chunks(chunk_ids, opts) when is_list(chunk_ids) do
     repo = Keyword.fetch!(opts, :repo)
+
+    remaining_published_evidence =
+      from(e in RelationshipEvidence,
+        join: c in Chunk,
+        on: c.id == e.chunk_id,
+        join: d in Document,
+        on: d.id == c.document_id,
+        where:
+          e.relationship_id == parent_as(:relationship).id and
+            e.chunk_id not in ^chunk_ids and d.status == :completed
+      )
+
+    unpublished_endpoints =
+      repo.all(
+        from([relationship: r] in RetrievalScope.relationships(),
+          where: not exists(subquery(remaining_published_evidence)),
+          select: {r.source_id, r.target_id}
+        )
+      )
+
+    {_count, relationship_ids} =
+      repo.delete_all(
+        from(e in RelationshipEvidence,
+          where: e.chunk_id in ^chunk_ids,
+          select: e.relationship_id
+        )
+      )
+
+    remaining_evidence = from(e in RelationshipEvidence, select: e.relationship_id)
+
+    {_count, _removed_endpoints} =
+      repo.delete_all(
+        from(r in Relationship,
+          where:
+            r.id in ^Enum.uniq(relationship_ids) and
+              r.id not in subquery(remaining_evidence),
+          select: {r.source_id, r.target_id}
+        )
+      )
 
     # The entities come back from the delete itself rather than from a read
     # before it. Reading first leaves a window: a concurrent build can add a
@@ -261,12 +331,37 @@ defmodule Arcana.Graph.GraphStore.Ecto do
         from(m in EntityMention, where: m.chunk_id in ^chunk_ids, select: m.entity_id)
       )
 
-    # Only the collections these chunks touched: a delete in one tenant must
-    # not sweep another tenant's entities.
-    collection_ids = collections_for_entities(entity_ids, repo)
+    # Sweep collections discovered from the deleted mentions plus the
+    # caller-known document collection. The latter matters when the chunks
+    # never produced a mention, while keeping the sweep tenant-scoped.
+    collection_ids =
+      entity_ids
+      |> collections_for_entities(repo)
+      |> include_known_collection(opts)
 
     Enum.each(collection_ids, &sweep_orphans(&1, opts))
     sweep_uncollected(entity_ids, repo)
+    dirty_relationship_communities(unpublished_endpoints, repo)
+
+    :ok
+  end
+
+  defp include_known_collection(collection_ids, opts) do
+    case Keyword.get(opts, :collection_id) do
+      nil -> collection_ids
+      collection_id -> Enum.uniq([collection_id | collection_ids])
+    end
+  end
+
+  defp dirty_relationship_communities([], _repo), do: :ok
+
+  defp dirty_relationship_communities(endpoints, repo) do
+    entity_ids =
+      endpoints |> Enum.flat_map(fn {source, target} -> [source, target] end) |> Enum.uniq()
+
+    entity_ids
+    |> collections_for_entities(repo)
+    |> Enum.each(&mark_relationship_communities_dirty(&1, entity_ids, repo))
 
     :ok
   end
@@ -426,6 +521,21 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     mark_communities_dirty(dynamic([c], c.collection_id == ^collection_id), entity_ids, repo)
   end
 
+  defp mark_relationship_communities_dirty(collection_id, entity_ids, repo) do
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    repo.update_all(
+      from(c in Community,
+        where: c.collection_id == ^collection_id,
+        where: fragment("? && ?", c.entity_ids, type(^entity_ids, {:array, Ecto.UUID})),
+        update: [set: [dirty: true, updated_at: ^now]]
+      ),
+      []
+    )
+
+    :ok
+  end
+
   defp mark_communities_dirty(_scope, [], _repo), do: :ok
 
   defp mark_communities_dirty(scope, entity_ids, repo) do
@@ -458,7 +568,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   def get_entity(entity_id, opts) do
     repo = Keyword.fetch!(opts, :repo)
 
-    case repo.one(from(e in Entity, where: e.id == ^entity_id)) do
+    case repo.one(from([entity: e] in RetrievalScope.entities(), where: e.id == ^entity_id)) do
       nil ->
         {:error, :not_found}
 
@@ -480,7 +590,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     repo = Keyword.fetch!(opts, :repo)
 
     repo.all(
-      from(r in Relationship,
+      from([relationship: r] in RetrievalScope.relationships(),
         join: source in Entity,
         on: source.id == r.source_id,
         join: target in Entity,
@@ -507,7 +617,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     repo = Keyword.fetch!(opts, :repo)
 
     case repo.one(
-           from(r in Relationship,
+           from([relationship: r] in RetrievalScope.relationships(),
              join: source in Entity,
              on: source.id == r.source_id,
              join: target in Entity,
@@ -538,9 +648,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     limit = Keyword.get(opts, :limit, 5)
 
     repo.all(
-      from(m in EntityMention,
-        join: c in Arcana.Chunk,
-        on: c.id == m.chunk_id,
+      from([mention: m, chunk: c] in RetrievalScope.mentions(),
         where: m.entity_id == ^entity_id,
         limit: ^limit,
         select: %{
@@ -589,26 +697,26 @@ defmodule Arcana.Graph.GraphStore.Ecto do
 
     # Subquery for mention counts
     mention_counts =
-      from(m in EntityMention,
+      from([mention: m] in RetrievalScope.mentions(),
         group_by: m.entity_id,
         select: %{entity_id: m.entity_id, count: count(m.id)}
       )
 
     # Subquery for relationship counts (source + target)
     source_counts =
-      from(r in Relationship,
+      from([relationship: r] in RetrievalScope.relationships(),
         group_by: r.source_id,
-        select: %{entity_id: r.source_id, count: count(r.id)}
+        select: %{entity_id: r.source_id, count: count(r.id, :distinct)}
       )
 
     target_counts =
-      from(r in Relationship,
+      from([relationship: r] in RetrievalScope.relationships(),
         group_by: r.target_id,
-        select: %{entity_id: r.target_id, count: count(r.id)}
+        select: %{entity_id: r.target_id, count: count(r.id, :distinct)}
       )
 
     query =
-      from(e in Entity,
+      from([entity: e] in RetrievalScope.entities(),
         join: c in Arcana.Collection,
         on: c.id == e.collection_id,
         left_join: mc in subquery(mention_counts),
@@ -661,7 +769,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     limit = Keyword.get(opts, :limit, 50)
     offset = Keyword.get(opts, :offset, 0)
 
-    from(r in Relationship,
+    from([relationship: r] in RetrievalScope.relationships(),
       join: source in Entity,
       on: source.id == r.source_id,
       join: target in Entity,
@@ -812,7 +920,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     # limited warranty" a query-time extractor emits. Both sides normalize
     # through the same SQL for the reasons in @normalize_template.
     query =
-      from(e in Entity,
+      from([entity: e] in RetrievalScope.entities(),
         where:
           fragment(
             @normalized_names_match_sql,
@@ -835,7 +943,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   defp fetch_and_score_chunks(entity_ids, repo) do
     chunk_ids =
       repo.all(
-        from(m in EntityMention,
+        from([mention: m] in RetrievalScope.mentions(),
           where: m.entity_id in ^entity_ids,
           select: m.chunk_id,
           distinct: true
@@ -856,7 +964,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   defp score_chunk(chunk_id, entity_ids, repo) do
     mention_count =
       repo.one(
-        from(m in EntityMention,
+        from([mention: m] in RetrievalScope.mentions(),
           where: m.chunk_id == ^chunk_id and m.entity_id in ^entity_ids,
           select: count()
         )
@@ -876,7 +984,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
     # Find all entities connected to current_ids
     related_ids =
       repo.all(
-        from(r in Relationship,
+        from([relationship: r] in RetrievalScope.relationships(),
           where: r.source_id in ^current_ids or r.target_id in ^current_ids,
           select: {r.source_id, r.target_id}
         )
@@ -897,7 +1005,7 @@ defmodule Arcana.Graph.GraphStore.Ecto do
       []
     else
       repo.all(
-        from(e in Entity,
+        from([entity: e] in RetrievalScope.entities(),
           where: e.id in ^ids,
           select: %{id: e.id, name: e.name, type: e.type, description: e.description}
         )

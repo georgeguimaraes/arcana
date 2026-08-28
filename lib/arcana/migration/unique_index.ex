@@ -1,6 +1,8 @@
 defmodule Arcana.Migration.UniqueIndex do
   @moduledoc false
 
+  alias Arcana.Migration.SchemaScope
+
   # Shared by `Arcana.Migration` and `Arcana.Graph.Migration`, which each own
   # unique indexes that adoption has to verify rather than merely create.
   #
@@ -22,8 +24,8 @@ defmodule Arcana.Migration.UniqueIndex do
   Ensures `table` has a plain unique index on `columns`, rebuilding one that
   exists under the same name with a different shape.
   """
-  def converge!(repo, table, columns, prefix, qualify) do
-    name = Enum.join([table | columns] ++ ["index"], "_")
+  def converge!(repo, table, columns, prefix, qualify, opts \\ []) do
+    name = Keyword.get(opts, :name, Enum.join([table | columns] ++ ["index"], "_"))
 
     # This runs from up/1, before the version comparison, so on a fresh
     # install the table does not exist yet. Creating an index on it would
@@ -61,7 +63,7 @@ defmodule Arcana.Migration.UniqueIndex do
         "SELECT count(*) FROM pg_class c " <>
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
           "WHERE c.relname = $1 AND c.relkind IN ('r', 'p') " <>
-          "AND n.nspname = COALESCE($2, current_schema())",
+          "AND " <> SchemaScope.visible("c", "n", "$2"),
         [table, prefix]
       )
 
@@ -87,7 +89,9 @@ defmodule Arcana.Migration.UniqueIndex do
           "LEFT JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) ON true " <>
           "LEFT JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = k.attnum " <>
           "WHERE ic.relname = $1 AND tc.relname = $2 " <>
-          "AND n.nspname = COALESCE($3, current_schema()) " <>
+          "AND " <>
+          SchemaScope.visible("tc", "n", "$3") <>
+          " " <>
           "GROUP BY i.indisunique, i.indpred IS NOT NULL, i.indkey, " <>
           "i.indisvalid, i.indisready",
         [name, table, prefix]

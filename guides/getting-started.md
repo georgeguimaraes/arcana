@@ -393,11 +393,9 @@ chunk's stored `metadata`.
 
 ### Strict Collection Scoping
 
-By default, searching a collection name that doesn't exist silently searches
-across all collections, and ingesting into one creates it on the fly. In
-multi-tenant apps that's dangerous: a typo'd tenant collection becomes a
-cross-tenant search. Turn on strict mode to make unknown collection names an
-error instead:
+By default, searching a collection name that doesn't exist returns no results,
+while ingesting into one creates it on the fly. Turn on strict mode when an
+unknown collection should return an explicit error instead:
 
 ```elixir
 config :arcana, strict_collections: true
@@ -416,9 +414,8 @@ Three things to know:
 - Ingest without a `:collection` uses the implicit `"default"` collection,
   which strict mode also requires to exist. Create it once at setup:
   `Arcana.Collection.get_or_create("default", MyApp.Repo)`.
-- Without strict mode, an unknown name still searches unscoped on the
-  vector/keyword path (legacy behavior), but graph-enhanced context is
-  scoped to nothing rather than leaking across collections.
+- Without strict mode, an unknown name matches nothing on vector, keyword, and
+  graph paths.
 - Strict validation needs the repo-backed collection registry. The
   `:memory` vector store has no registry: it always fails closed for
   unknown collections (empty results) instead of returning the error.

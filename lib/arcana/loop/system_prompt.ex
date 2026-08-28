@@ -25,7 +25,7 @@ defmodule Arcana.Loop.SystemPrompt do
   @spec default(keyword()) :: String.t()
   def default(opts \\ []) do
     max_iterations = Keyword.get(opts, :max_iterations, 10)
-    collections = Keyword.get(opts, :collections, [nil])
+    collections = normalize_collection_scope(Keyword.get(opts, :collections, :all))
 
     """
     You are a research agent answering questions about a knowledge base.
@@ -102,7 +102,10 @@ defmodule Arcana.Loop.SystemPrompt do
   # and shouldn't pay the prompt tax.
   defp collections_section(collections) do
     case collections do
-      [nil] ->
+      :all ->
+        ""
+
+      [] ->
         ""
 
       [_single] ->
@@ -123,6 +126,15 @@ defmodule Arcana.Loop.SystemPrompt do
         across all of them when the question is ambiguous or spans
         multiple topics.
         """
+    end
+  end
+
+  defp normalize_collection_scope([nil]), do: :all
+
+  defp normalize_collection_scope(input) do
+    case Arcana.CollectionScope.normalize!(input) do
+      :all -> :all
+      {:only, names} -> names
     end
   end
 end

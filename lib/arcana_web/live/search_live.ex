@@ -11,7 +11,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     import ArcanaWeb.DashboardComponents
 
-    alias Arcana.Document
+    alias Arcana.{CollectionScope, Document}
+
+    import Ecto.Query
 
     @impl true
     def mount(_params, session, socket) do
@@ -76,50 +78,79 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp view_search_document(socket, id) do
       repo = socket.assigns.repo
-      import Ecto.Query
 
-      document_query = from(d in Document, where: d.id == ^id)
-
-      # Forged ids pointing outside the allowed collections resolve to
-      # nothing, same as a missing document.
-      document_query =
-        case socket.assigns.allowed_collections do
-          :all ->
-            document_query
-
-          names when is_list(names) ->
-            from(d in document_query, join: c in assoc(d, :collection), where: c.name in ^names)
-        end
-
-      case repo.one(document_query) do
-        nil ->
-          {:noreply, socket}
-
-        document ->
-          chunks =
-            repo.all(
-              from(c in Arcana.Chunk,
-                where: c.document_id == ^id,
-                order_by: c.chunk_index
-              )
-            )
+      case scoped_published_document(repo, id, socket.assigns.allowed_collections) do
+        {:ok, document} ->
+          chunks = scoped_published_chunks(repo, id, socket.assigns.allowed_collections)
 
           {:noreply, assign(socket, viewing_document: %{document: document, chunks: chunks})}
+
+        _ ->
+          {:noreply, socket}
+      end
+    end
+
+    defp scoped_published_document(repo, id, allowed) do
+      query =
+        Document
+        |> where([document], document.id == ^id and document.status == :completed)
+        |> apply_document_scope(allowed)
+        |> preload([:collection])
+
+      case repo.one(query) do
+        %Document{} = document -> {:ok, document}
+        nil -> {:error, :not_found}
+      end
+    end
+
+    defp scoped_published_chunks(repo, id, allowed) do
+      Arcana.Chunk
+      |> join(:inner, [chunk], document in assoc(chunk, :document))
+      |> where(
+        [chunk, document],
+        chunk.document_id == ^id and document.status == :completed
+      )
+      |> apply_chunk_scope(allowed)
+      |> order_by([chunk], chunk.chunk_index)
+      |> repo.all()
+    end
+
+    defp apply_document_scope(query, allowed) do
+      case CollectionScope.normalize!(allowed) do
+        :all ->
+          query
+
+        {:only, []} ->
+          where(query, [document], is_nil(document.id))
+
+        {:only, names} ->
+          query
+          |> join(:inner, [document], collection in assoc(document, :collection))
+          |> where([_document, collection], collection.name in ^names)
+      end
+    end
+
+    defp apply_chunk_scope(query, allowed) do
+      case CollectionScope.normalize!(allowed) do
+        :all ->
+          query
+
+        {:only, []} ->
+          where(query, [chunk, _document], is_nil(chunk.id))
+
+        {:only, names} ->
+          query
+          |> join(:inner, [_chunk, document], collection in assoc(document, :collection))
+          |> where([_chunk, _document, collection], collection.name in ^names)
       end
     end
 
     defp run_search("", _params, _repo, _allowed), do: []
 
     defp run_search(query, params, repo, allowed) do
-      requested = normalize_collections(params["collections"])
-
-      # Fail closed: a request naming any collection outside the allowed set
-      # refuses the whole search instead of silently narrowing it, and an
-      # empty allowed set never reaches Arcana.search/2 (where an empty
-      # collections option would mean "search everything").
-      case resolve_search_collections(requested, allowed) do
-        {:ok, collections} ->
-          opts = build_search_opts(params, repo, collections, allowed)
+      case requested_collection_scope(params["collections"], allowed) do
+        {:ok, collection_opts} ->
+          opts = build_search_opts(params, repo, collection_opts)
 
           case Arcana.search(query, opts) do
             {:ok, results} -> results
@@ -131,18 +162,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       end
     end
 
-    # Unrestricted: requested collections pass through untouched, [] keeps
-    # today's "search everything" behavior via add_collection_opt/2.
-    defp resolve_search_collections(requested, :all), do: {:ok, requested}
-
-    defp resolve_search_collections([], []), do: :error
-    defp resolve_search_collections([], allowed), do: {:ok, allowed}
-
-    defp resolve_search_collections(requested, allowed) do
-      if Enum.all?(requested, &(&1 in allowed)), do: {:ok, requested}, else: :error
-    end
-
-    defp build_search_opts(params, repo, collections, allowed) do
+    defp build_search_opts(params, repo, collection_opts) do
       [
         repo: repo,
         limit: parse_int(params["limit"], 10),
@@ -150,35 +170,41 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         mode: parse_mode(params["mode"])
       ]
       |> add_source_id_opt(params["source_id"])
-      |> add_collection_opt(collections)
-      |> add_strict_opt(allowed)
+      |> Keyword.merge(collection_opts)
     end
-
-    # Restricted dashboards search strictly. Without it an allowed name with
-    # no collection row (never created, or deleted mid-session) resolves to
-    # "no filter" and the search widens to every collection; strict turns
-    # that into {:error, {:unknown_collection, _}}, which run_search/4
-    # already renders as no results. Unrestricted dashboards keep the
-    # library default.
-    defp add_strict_opt(opts, :all), do: opts
-
-    defp add_strict_opt(opts, allowed) when is_list(allowed),
-      do: Keyword.put(opts, :strict_collections, true)
 
     defp add_source_id_opt(opts, nil), do: opts
     defp add_source_id_opt(opts, ""), do: opts
     defp add_source_id_opt(opts, source_id), do: Keyword.put(opts, :source_id, source_id)
 
-    defp add_collection_opt(opts, []), do: opts
-    defp add_collection_opt(opts, [single]), do: Keyword.put(opts, :collection, single)
-    defp add_collection_opt(opts, multiple), do: Keyword.put(opts, :collections, multiple)
+    defp requested_collection_scope(nil, allowed),
+      do: {:ok, collection_scope_opts(CollectionScope.normalize!(allowed))}
 
-    defp normalize_collections(nil), do: []
+    defp requested_collection_scope(collections, allowed) when is_list(collections) do
+      requested = Enum.reject(collections, &(&1 == ""))
 
-    defp normalize_collections(collections) when is_list(collections),
-      do: Enum.filter(collections, &(&1 != ""))
+      case requested do
+        [] ->
+          {:ok, collection_scope_opts(CollectionScope.normalize!(allowed))}
 
-    defp normalize_collections(collection), do: [collection]
+        names ->
+          requested_scope = CollectionScope.normalize!(names)
+          allowed_scope = CollectionScope.normalize!(allowed)
+
+          if CollectionScope.subset?(requested_scope, allowed_scope) do
+            {:ok, collection_scope_opts(requested_scope)}
+          else
+            :error
+          end
+      end
+    rescue
+      ArgumentError -> :error
+    end
+
+    defp requested_collection_scope(_collections, _allowed), do: :error
+
+    defp collection_scope_opts(:all), do: [collection: :all]
+    defp collection_scope_opts({:only, names}), do: [collection: names]
 
     @impl true
     def render(assigns) do

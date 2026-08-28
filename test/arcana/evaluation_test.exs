@@ -1,7 +1,7 @@
 defmodule Arcana.EvaluationTest do
   use Arcana.DataCase, async: true
 
-  alias Arcana.Evaluation
+  alias Arcana.{Chunk, Collection, Document, Evaluation}
   alias Arcana.Evaluation.TestCase
 
   describe "generate_test_cases/1" do
@@ -89,6 +89,72 @@ defmodule Arcana.EvaluationTest do
 
       assert test_cases == []
     end
+
+    test "accepts many collections and treats an empty list as no chunks" do
+      for {collection, content} <- [
+            {"generator-a", "alpha generator content"},
+            {"generator-b", "bravo generator content"},
+            {"generator-outside", "outside generator content"}
+          ] do
+        {:ok, _document} = Arcana.ingest(content, repo: Repo, collection: collection)
+      end
+
+      llm = fn _prompt, _context -> {:ok, "Generated question?"} end
+
+      assert {:ok, test_cases} =
+               Evaluation.generate_test_cases(
+                 repo: Repo,
+                 llm: llm,
+                 sample_size: 10,
+                 collection: ["generator-a", "generator-b", "missing"]
+               )
+
+      assert length(test_cases) == 2
+
+      assert {:ok, []} =
+               Evaluation.generate_test_cases(
+                 repo: Repo,
+                 llm: llm,
+                 sample_size: 10,
+                 collection: []
+               )
+    end
+
+    test "samples only chunks from completed documents" do
+      {:ok, collection} = Collection.get_or_create("evaluation-published-only", Repo)
+
+      for status <- [:completed, :processing, :failed] do
+        document =
+          %Document{}
+          |> Document.changeset(%{
+            content: "#{status} evaluation content",
+            status: status,
+            collection_id: collection.id
+          })
+          |> Repo.insert!()
+
+        %Chunk{}
+        |> Chunk.changeset(%{
+          text: "#{status} evaluation content",
+          embedding: List.duplicate(0.1, 384),
+          document_id: document.id
+        })
+        |> Repo.insert!()
+      end
+
+      llm = fn prompt, _context -> {:ok, "Question from #{prompt}"} end
+
+      assert {:ok, [test_case]} =
+               Evaluation.generate_test_cases(
+                 repo: Repo,
+                 llm: llm,
+                 sample_size: 10,
+                 collection: collection.name
+               )
+
+      [chunk] = test_case.relevant_chunks
+      assert Repo.get!(Document, chunk.document_id).status == :completed
+    end
   end
 
   describe "run/1" do
@@ -145,6 +211,14 @@ defmodule Arcana.EvaluationTest do
       Repo.delete_all(TestCase)
 
       assert {:error, :no_test_cases} = Evaluation.run(repo: Repo)
+    end
+
+    test "normalizes one and no-collection run scopes", %{test_cases: _test_cases} do
+      assert {:ok, run} = Evaluation.run(repo: Repo, collection: "default")
+      assert run.config.collections == ["default"]
+
+      assert {:error, :no_test_cases} = Evaluation.run(repo: Repo, collection: [])
+      assert {:error, :no_test_cases} = Evaluation.run(repo: Repo, collection: "missing")
     end
 
     test "saves full Arcana config in run", %{test_cases: _test_cases} do
@@ -236,6 +310,36 @@ defmodule Arcana.EvaluationTest do
       result = run.results[python_tc.id]
       assert result.hit[1] == false
       assert result.reciprocal_rank == 0.0
+    end
+
+    test "forwards scoped runs through the singular collection option" do
+      test_pid = self()
+
+      retriever = fn _question, opts ->
+        send(test_pid, {:retriever_opts, opts})
+        {:ok, []}
+      end
+
+      assert {:ok, _run} =
+               Evaluation.run(repo: Repo, collection: "default", retriever: retriever)
+
+      assert_received {:retriever_opts, opts}
+      assert opts[:collection] == ["default"]
+      assert opts[:strict_collections] == true
+      refute Keyword.has_key?(opts, :collections)
+    end
+
+    test "forwards all explicitly so search defaults cannot narrow the run" do
+      test_pid = self()
+
+      retriever = fn _question, opts ->
+        send(test_pid, {:retriever_opts, opts})
+        {:ok, []}
+      end
+
+      assert {:ok, _run} = Evaluation.run(repo: Repo, collection: :all, retriever: retriever)
+      assert_received {:retriever_opts, opts}
+      assert opts[:collection] == :all
     end
 
     test "without evaluate_answers does not include answer metrics", %{test_cases: _test_cases} do
@@ -365,6 +469,45 @@ defmodule Arcana.EvaluationTest do
       assert length(test_cases) == 1
       assert hd(test_cases).question == "Test question?"
     end
+
+    test "accepts all public collection scope shapes" do
+      for {collection, content, question} <- [
+            {"evaluation-a", "alpha evaluation content", "Alpha?"},
+            {"evaluation-b", "bravo evaluation content", "Bravo?"}
+          ] do
+        {:ok, document} = Arcana.ingest(content, repo: Repo, collection: collection)
+        chunk = Repo.get_by!(Chunk, document_id: document.id)
+
+        {:ok, _test_case} =
+          Evaluation.create_test_case(
+            repo: Repo,
+            question: question,
+            relevant_chunk_ids: [chunk.id]
+          )
+      end
+
+      assert [%{question: "Alpha?"}] =
+               Evaluation.list_test_cases(repo: Repo, collection: "evaluation-a")
+
+      assert 2 ==
+               Evaluation.count_test_cases(
+                 repo: Repo,
+                 collection: ["evaluation-a", "evaluation-b", "missing"]
+               )
+
+      assert [] == Evaluation.list_test_cases(repo: Repo, collection: [])
+      assert 2 == Evaluation.count_test_cases(repo: Repo, collection: :all)
+    end
+
+    test "rejects malformed and removed collection scopes" do
+      assert_raise ArgumentError, ~r/collection scope must be/, fn ->
+        Evaluation.list_test_cases(repo: Repo, collection: ["a", nil])
+      end
+
+      assert_raise ArgumentError, ~r/:collections is not supported/, fn ->
+        Evaluation.list_test_cases(repo: Repo, collections: ["a"])
+      end
+    end
   end
 
   describe "create_test_case/1" do
@@ -406,6 +549,14 @@ defmodule Arcana.EvaluationTest do
     test "returns error for non-existent test case" do
       assert {:error, :not_found} =
                Evaluation.delete_test_case(Ecto.UUID.generate(), repo: Repo)
+    end
+
+    test "validates collection scope before rejecting malformed IDs" do
+      for operation <- [&Evaluation.get_test_case/2, &Evaluation.delete_test_case/2] do
+        assert_raise ArgumentError, ~r/collection scope must be/, fn ->
+          operation.("not-a-uuid", repo: Repo, collection: ["a", nil])
+        end
+      end
     end
   end
 
@@ -449,6 +600,14 @@ defmodule Arcana.EvaluationTest do
       {:ok, _deleted} = Evaluation.delete_run(run.id, repo: Repo)
 
       assert Evaluation.get_run(run.id, repo: Repo) == nil
+    end
+
+    test "run reads and deletes validate scope before malformed IDs" do
+      for operation <- [&Evaluation.get_run/2, &Evaluation.delete_run/2] do
+        assert_raise ArgumentError, ~r/collection scope must be/, fn ->
+          operation.("not-a-uuid", repo: Repo, collection: ["a", nil])
+        end
+      end
     end
   end
 end

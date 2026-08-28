@@ -68,7 +68,7 @@ defmodule Arcana.Searcher do
   ## Parameters
 
   - `question` - The search query
-  - `collection` - The collection name to search in
+  - `collection` - A collection name, or `:all` to search every collection
   - `opts` - Options passed to `Pipeline.search/2`, including:
     - `:repo` - The Ecto repo (for database-backed searchers)
     - `:limit` - Maximum chunks to return (default: 5)
@@ -79,10 +79,13 @@ defmodule Arcana.Searcher do
 
   - `{:ok, chunks}` - List of chunk maps with :id, :text, :metadata, :similarity
   - `{:error, reason}` - On failure
+
+  For `:all`, the searcher is called once and must apply its global limit and
+  ranking across the full corpus.
   """
   @callback search(
               question :: String.t(),
-              collection :: String.t(),
+              collection :: String.t() | :all,
               opts :: keyword()
             ) :: {:ok, [map()]} | {:error, term()}
 end

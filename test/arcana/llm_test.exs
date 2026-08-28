@@ -60,7 +60,7 @@ defmodule Arcana.LLMTest do
     end
 
     test "model string with opts still dispatches through the tuple impl" do
-      assert LLM.impl_for({"openai:gpt-4o-mini", api_key: "k"}) != nil
+      assert LLM.impl_for({"openai:gpt-4o-mini", api_key: "k"}) == Arcana.LLM.Tuple
     end
   end
 
@@ -70,13 +70,13 @@ defmodule Arcana.LLMTest do
       model = "openai:gpt-4o-mini"
 
       # The protocol should be implemented for BitString
-      assert LLM.impl_for(model) != nil
+      assert LLM.impl_for(model) == Arcana.LLM.BitString
     end
 
     test "works with Anthropic model string" do
       model = "anthropic:claude-sonnet-4-20250514"
 
-      assert LLM.impl_for(model) != nil
+      assert LLM.impl_for(model) == Arcana.LLM.BitString
     end
   end
 end

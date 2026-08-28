@@ -2,7 +2,16 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
   use Arcana.DataCase, async: true
 
   alias Arcana.{Chunk, Collection, Document}
-  alias Arcana.Graph.{Community, Entity, EntityMention, EntityName, Relationship}
+
+  alias Arcana.Graph.{
+    Community,
+    Entity,
+    EntityMention,
+    EntityName,
+    Relationship,
+    RelationshipEvidence
+  }
+
   alias Arcana.Graph.GraphStore.Ecto, as: EctoStore
 
   defp create_collection(name \\ "test-collection") do
@@ -205,6 +214,16 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       assert :ok = EctoStore.delete_by_chunks([], repo: Repo)
 
       assert Repo.get(Entity, entity.id)
+    end
+
+    test "an empty list still sweeps an explicitly known collection" do
+      collection = create_collection("dbc-known-empty-#{System.unique_integer([:positive])}")
+      orphan = create_entity(collection, "Orphan")
+
+      assert :ok =
+               EctoStore.delete_by_chunks([], repo: Repo, collection_id: collection.id)
+
+      refute Repo.get(Entity, orphan.id)
     end
   end
 
@@ -427,8 +446,11 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
           repo: Repo
         )
 
+      chunk = collection |> create_document() |> create_chunk()
+
       :ok =
         EctoStore.persist_relationships(
+          chunk.id,
           [%{source: "İstanbul", target: decomposed, type: "spelled_as"}],
           id_map,
           repo: Repo
@@ -481,13 +503,15 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       collection = create_collection()
       alice = create_entity(collection, "Alice")
       bob = create_entity(collection, "Bob")
+      chunk = collection |> create_document() |> create_chunk()
       entity_id_map = %{"alice" => alice.id, "bob" => bob.id}
 
       relationships = [
         %{source: "Alice", target: "Bob", type: "knows"}
       ]
 
-      assert :ok = EctoStore.persist_relationships(relationships, entity_id_map, repo: Repo)
+      assert :ok =
+               EctoStore.persist_relationships(chunk.id, relationships, entity_id_map, repo: Repo)
 
       rel = Repo.get_by(Relationship, source_id: alice.id, target_id: bob.id)
       assert rel.type == "knows"
@@ -497,6 +521,7 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       collection = create_collection()
       alice = create_entity(collection, "Alice")
       bob = create_entity(collection, "Bob")
+      chunk = collection |> create_document() |> create_chunk()
       entity_id_map = %{"alice" => alice.id, "bob" => bob.id}
 
       relationships = [
@@ -509,7 +534,8 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
         }
       ]
 
-      assert :ok = EctoStore.persist_relationships(relationships, entity_id_map, repo: Repo)
+      assert :ok =
+               EctoStore.persist_relationships(chunk.id, relationships, entity_id_map, repo: Repo)
 
       rel = Repo.get_by(Relationship, source_id: alice.id, target_id: bob.id)
       assert rel.type == "knows"
@@ -524,8 +550,98 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
         %{source: "Alice", target: "Unknown", type: "knows"}
       ]
 
-      assert :ok = EctoStore.persist_relationships(relationships, entity_id_map, repo: Repo)
+      assert :ok =
+               EctoStore.persist_relationships(
+                 Ecto.UUID.generate(),
+                 relationships,
+                 entity_id_map,
+                 repo: Repo
+               )
+
       assert Repo.aggregate(Relationship, :count) == 0
+    end
+
+    test "canonicalizes facts and removes them only after their final evidence is deleted" do
+      collection = create_collection("relationship-evidence")
+      document = create_document(collection)
+      anchor = create_chunk(document, "anchor")
+      edge_a = create_chunk(document, "edge a")
+      edge_b = create_chunk(document, "edge b")
+      alice = create_entity(collection, "Alice")
+      bob = create_entity(collection, "Bob")
+      create_mention(alice, anchor)
+      create_mention(bob, anchor)
+      id_map = %{"alice" => alice.id, "bob" => bob.id}
+      fact = [%{source: "Alice", target: "Bob", type: "knows"}]
+
+      assert :ok = EctoStore.persist_relationships(edge_a.id, fact, id_map, repo: Repo)
+      assert :ok = EctoStore.persist_relationships(edge_a.id, fact, id_map, repo: Repo)
+      assert :ok = EctoStore.persist_relationships(edge_b.id, fact, id_map, repo: Repo)
+
+      assert Repo.aggregate(Relationship, :count) == 1
+      assert Repo.aggregate(RelationshipEvidence, :count) == 2
+
+      assert :ok = EctoStore.delete_by_chunks([edge_a.id], repo: Repo)
+      assert Repo.aggregate(Relationship, :count) == 1
+      assert Repo.aggregate(RelationshipEvidence, :count) == 1
+
+      assert :ok = EctoStore.delete_by_chunks([edge_b.id], repo: Repo)
+      assert Repo.aggregate(Relationship, :count) == 0
+      assert Repo.aggregate(RelationshipEvidence, :count) == 0
+      assert Repo.get(Entity, alice.id)
+      assert Repo.get(Entity, bob.id)
+    end
+
+    test "looks up the fingerprint produced from cast relationship values" do
+      collection = create_collection("relationship-cast-fingerprint")
+      document = create_document(collection)
+      chunk = create_chunk(document)
+      alice = create_entity(collection, "Alice")
+      bob = create_entity(collection, "Bob")
+      id_map = %{"alice" => alice.id, "bob" => bob.id}
+
+      fact = [%{source: "Alice", target: "Bob", type: "knows", strength: "5"}]
+
+      assert :ok = EctoStore.persist_relationships(chunk.id, fact, id_map, repo: Repo)
+
+      assert %Relationship{strength: 5} = relationship = Repo.one!(Relationship)
+
+      assert %RelationshipEvidence{relationship_id: relationship_id} =
+               Repo.one!(RelationshipEvidence)
+
+      assert relationship_id == relationship.id
+    end
+
+    test "publishes a fact only while it has completed-document evidence" do
+      collection = create_collection("relationship-publication")
+      completed_document = create_document(collection)
+
+      failed_document =
+        %Document{}
+        |> Document.changeset(%{
+          content: "failed",
+          status: :failed,
+          collection_id: collection.id
+        })
+        |> Repo.insert!()
+
+      completed_chunk = create_chunk(completed_document, "completed edge")
+      failed_chunk = create_chunk(failed_document, "failed edge")
+      alice = create_entity(collection, "Alice")
+      bob = create_entity(collection, "Bob")
+      id_map = %{"alice" => alice.id, "bob" => bob.id}
+      fact = [%{source: "Alice", target: "Bob", type: "knows"}]
+
+      assert :ok = EctoStore.persist_relationships(failed_chunk.id, fact, id_map, repo: Repo)
+      assert EctoStore.get_relationships(alice.id, repo: Repo) == []
+
+      assert :ok = EctoStore.persist_relationships(completed_chunk.id, fact, id_map, repo: Repo)
+      assert [%{type: "knows"}] = EctoStore.get_relationships(alice.id, repo: Repo)
+
+      assert :ok = EctoStore.delete_by_chunks([completed_chunk.id], repo: Repo)
+      assert EctoStore.get_relationships(alice.id, repo: Repo) == []
+      assert Repo.aggregate(Relationship, :count) == 1
+      assert Repo.aggregate(RelationshipEvidence, :count) == 1
     end
   end
 
@@ -633,12 +749,40 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       assert EctoStore.search(["Alice"], nil, repo: Repo) != []
       assert EctoStore.search(["Alice"], [], repo: Repo) == []
     end
+
+    test "ignores mentions from documents that have not completed" do
+      collection = create_collection("graph-published-only")
+      entity = create_entity(collection, "Visible")
+
+      chunks =
+        for status <- [:completed, :processing, :failed], into: %{} do
+          document =
+            %Document{}
+            |> Document.changeset(%{
+              content: "#{status}",
+              status: status,
+              collection_id: collection.id
+            })
+            |> Repo.insert!()
+
+          chunk = create_chunk(document, "#{status} graph evidence")
+          create_mention(entity, chunk)
+          {status, chunk}
+        end
+
+      assert [%{chunk_id: chunk_id}] =
+               EctoStore.search(["Visible"], [collection.id], repo: Repo)
+
+      assert chunk_id == chunks.completed.id
+    end
   end
 
   describe "search_by_embedding/3" do
     test "empty collection_ids matches nothing instead of searching globally" do
       collection = create_collection()
       entity = create_entity(collection, "Alice")
+      chunk = collection |> create_document() |> create_chunk()
+      create_mention(entity, chunk)
 
       entity
       |> Ecto.Changeset.change(embedding: Enum.map(1..384, fn _ -> 0.1 end))
@@ -648,6 +792,43 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
 
       refute EctoStore.search_by_embedding(query_embedding, nil, repo: Repo, threshold: 0.1) == []
       assert EctoStore.search_by_embedding(query_embedding, [], repo: Repo, threshold: 0.1) == []
+    end
+
+    test "ignores entities supported only by documents that have not completed" do
+      collection = create_collection("embedding-published-only")
+      embedding = Enum.map(1..384, fn _ -> 0.1 end)
+
+      entities =
+        for status <- [:completed, :processing, :failed], into: %{} do
+          document =
+            %Document{}
+            |> Document.changeset(%{
+              content: "#{status}",
+              status: status,
+              collection_id: collection.id
+            })
+            |> Repo.insert!()
+
+          chunk = create_chunk(document, "#{status} embedding evidence")
+
+          entity =
+            collection
+            |> create_entity("#{status}")
+            |> Ecto.Changeset.change(embedding: embedding)
+            |> Repo.update!()
+
+          create_mention(entity, chunk)
+          {status, entity}
+        end
+
+      assert [%{id: entity_id}] =
+               EctoStore.search_by_embedding(embedding, [collection.id],
+                 repo: Repo,
+                 threshold: 0.1,
+                 limit: 10
+               )
+
+      assert entity_id == entities.completed.id
     end
   end
 
@@ -722,13 +903,18 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
   end
 
   describe "find_entities/2" do
-    test "returns all entities in collection" do
+    test "returns completed-document entities in collection" do
       collection = create_collection("test-find")
       other_collection = create_collection("other")
+      chunk = collection |> create_document() |> create_chunk()
+      other_chunk = other_collection |> create_document() |> create_chunk()
 
-      create_entity(collection, "Alice", "person")
-      create_entity(collection, "Bob", "person")
-      create_entity(other_collection, "Other", "person")
+      alice = create_entity(collection, "Alice", "person")
+      bob = create_entity(collection, "Bob", "person")
+      other = create_entity(other_collection, "Other", "person")
+      create_mention(alice, chunk)
+      create_mention(bob, chunk)
+      create_mention(other, other_chunk)
 
       entities = EctoStore.find_entities(collection.id, repo: Repo)
 

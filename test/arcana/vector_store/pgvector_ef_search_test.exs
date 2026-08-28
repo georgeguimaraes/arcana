@@ -82,7 +82,7 @@ defmodule Arcana.VectorStore.PgvectorEfSearchTest do
       {:ok, _results} =
         Arcana.search("only chunk",
           repo: Repo,
-          collections: ["ef-through-search"],
+          collection: ["ef-through-search"],
           hnsw_ef_search: 321
         )
 
@@ -113,7 +113,7 @@ defmodule Arcana.VectorStore.PgvectorEfSearchTest do
       put_arcana_env(:search, hnsw_ef_search: 456)
 
       {:ok, _} =
-        Arcana.search("only chunk", repo: Repo, collections: ["ef-config-default"])
+        Arcana.search("only chunk", repo: Repo, collection: ["ef-config-default"])
 
       assert current_ef_search() == "456",
              "a global search default for :hnsw_ef_search never reached the backend"

@@ -11,7 +11,7 @@ defmodule Arcana.Graph.GraphStoreTest do
 
     test "defines persist_relationships callback" do
       callbacks = GraphStore.behaviour_info(:callbacks)
-      assert {:persist_relationships, 3} in callbacks
+      assert {:persist_relationships, 4} in callbacks
     end
 
     test "defines persist_mentions callback" do

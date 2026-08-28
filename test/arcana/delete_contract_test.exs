@@ -4,7 +4,7 @@ defmodule Arcana.DeleteContractTest do
 
   It used to call `repo.delete!/1`, so a foreign key violation or a
   concurrent delete escaped as an exception from a function documenting
-  `:ok | {:error, :not_found} | {:error, {:sweep_failed, _}}`. The damage was
+  `:ok | {:error, :not_found} | {:error, term()}`. The damage was
   not the exception itself but the sequencing around it: callers remove an
   external artifact and then call this, and a three-clause `case` written
   from the docs gave them no reason to expect control to leave abruptly.
@@ -15,6 +15,8 @@ defmodule Arcana.DeleteContractTest do
   whole test and would serialize every async test that writes documents.
   """
   use Arcana.DataCase, async: true
+
+  alias Arcana.Graph.GraphStore
 
   defp ingest_doc(text \\ "Elixir runs on the BEAM.") do
     {:ok, doc} = Arcana.ingest(text, repo: Repo)
@@ -50,10 +52,7 @@ defmodule Arcana.DeleteContractTest do
   end
 
   describe "inside a caller's own transaction" do
-    test "a failed sweep does not destroy the caller's transaction" do
-      # repo.rollback/1 in a nested Ecto transaction aborts the OUTERMOST one,
-      # so opening a transaction here unconditionally killed the caller's while
-      # handing back a tuple that reads like a recoverable refusal.
+    test "an external graph store refuses deletion it cannot clean after commit" do
       extractor = fn _t, _o -> {:ok, [%{name: "Alpha", type: "concept"}]} end
 
       opts = [
@@ -69,11 +68,13 @@ defmodule Arcana.DeleteContractTest do
         Repo.transaction(fn ->
           deleted = Arcana.delete(doc.id, opts)
 
-          # Still able to work: the point is the caller keeps their transaction.
-          {deleted, Repo.aggregate(Arcana.Document, :count)}
+          {deleted, Repo.get(Arcana.Document, doc.id)}
         end)
 
-      assert {:ok, {{:error, {:sweep_failed, :sweep_boom}}, _count}} = result
+      assert {:ok, {{:error, :external_graph_store_requires_post_commit_delete}, persisted}} =
+               result
+
+      assert persisted.id == doc.id
     end
   end
 
@@ -92,9 +93,7 @@ defmodule Arcana.DeleteContractTest do
       assert chunks.() == 0
     end
 
-    test "a failed sweep puts the chunks back too, not just the document" do
-      # A rollback restoring the document without its chunks would be worse
-      # than the old behaviour, which at least left nothing half-deleted.
+    test "an external cleanup failure is reported after the database delete commits" do
       extractor = fn _t, _o -> {:ok, [%{name: "Beta", type: "concept"}]} end
 
       opts = [
@@ -114,13 +113,105 @@ defmodule Arcana.DeleteContractTest do
         Repo.aggregate(from(c in Arcana.Chunk, where: c.document_id == ^doc.id), :count)
       end
 
-      before = chunks.()
-      assert before > 0
+      assert chunks.() > 0
 
-      assert {:error, {:sweep_failed, :sweep_boom}} = Arcana.delete(doc.id, opts)
+      chunk_ids = Repo.all(from(c in Arcana.Chunk, where: c.document_id == ^doc.id, select: c.id))
 
-      assert Repo.get(Arcana.Document, doc.id), "the document comes back"
-      assert chunks.() == before, "and so do its chunks"
+      assert {:error,
+              {:post_commit_graph_cleanup_failed,
+               %{
+                 reason: {:sweep_failed, :sweep_boom},
+                 chunk_ids: ^chunk_ids,
+                 published_chunk_ids: ^chunk_ids,
+                 collection_id: collection_id
+               }}} = Arcana.delete(doc.id, opts)
+
+      assert collection_id == doc.collection_id
+
+      refute Repo.get(Arcana.Document, doc.id)
+      assert chunks.() == 0
+    end
+
+    test "an external cleanup exception is not misreported as a concurrent delete" do
+      doc = ingest_doc("external cleanup raises after the delete commits")
+
+      assert {:error,
+              {:post_commit_graph_cleanup_failed,
+               %{
+                 reason: %Ecto.StaleEntryError{message: "external graph cleanup failed"},
+                 chunk_ids: chunk_ids,
+                 published_chunk_ids: chunk_ids,
+                 collection_id: collection_id
+               }}} =
+               Arcana.delete(doc.id,
+                 repo: Repo,
+                 graph: true,
+                 graph_store: Arcana.RaisingDeleteGraphStore
+               )
+
+      assert chunk_ids != []
+      assert collection_id == doc.collection_id
+      refute Repo.get(Arcana.Document, doc.id)
+    end
+
+    test "post-commit context can replay graph deletion after the document is gone" do
+      doc = ingest_doc("retry external graph cleanup")
+
+      assert {:error,
+              {:post_commit_graph_cleanup_failed,
+               %{
+                 reason: :delete_boom,
+                 chunk_ids: chunk_ids,
+                 published_chunk_ids: published_chunk_ids,
+                 collection_id: collection_id
+               }}} =
+               Arcana.delete(doc.id,
+                 repo: Repo,
+                 graph: true,
+                 graph_store: Arcana.FailingDeleteGraphStore
+               )
+
+      refute Repo.get(Arcana.Document, doc.id)
+
+      assert :ok =
+               GraphStore.delete_by_chunks(chunk_ids,
+                 repo: Repo,
+                 graph_store: {Arcana.FailingDeleteGraphStore, delete_failure: :ok},
+                 published_chunk_ids: published_chunk_ids
+               )
+
+      assert :ok =
+               GraphStore.sweep_orphans(collection_id,
+                 repo: Repo,
+                 graph_store: {Arcana.FailingDeleteGraphStore, delete_failure: :ok}
+               )
+    end
+
+    test "external cleanup exits and throws retain post-commit recovery context" do
+      for {failure, expected_reason} <- [
+            exit: :external_cleanup_exit,
+            throw: {:throw, :external_cleanup_throw}
+          ] do
+        doc = ingest_doc("external cleanup #{failure}")
+
+        assert {:error,
+                {:post_commit_graph_cleanup_failed,
+                 %{
+                   reason: ^expected_reason,
+                   chunk_ids: chunk_ids,
+                   published_chunk_ids: chunk_ids,
+                   collection_id: collection_id
+                 }}} =
+                 Arcana.delete(doc.id,
+                   repo: Repo,
+                   graph: true,
+                   graph_store: {Arcana.RaisingDeleteGraphStore, cleanup_failure: failure}
+                 )
+
+        assert chunk_ids != []
+        assert collection_id == doc.collection_id
+        refute Repo.get(Arcana.Document, doc.id)
+      end
     end
   end
 end

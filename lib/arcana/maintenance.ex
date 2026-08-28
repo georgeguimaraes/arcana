@@ -15,7 +15,7 @@ defmodule Arcana.Maintenance do
 
   """
 
-  alias Arcana.{Chunk, Chunker, Collection, Document, Embedder}
+  alias Arcana.{Chunk, Chunker, Collection, CollectionScope, Document, Embedder}
   alias Arcana.Graph.{CommunitySummarizer, EntityMention, GraphStore}
   alias Ecto.Adapters.SQL
 
@@ -29,6 +29,8 @@ defmodule Arcana.Maintenance do
 
   ## Options
 
+    * `:collection` - `:all`, one collection name, or a list of collection
+      names (default: `:all`). An empty list does no work.
     * `:batch_size` - Number of items to process at once (default: 50)
     * `:concurrency` - Number of parallel embedding requests (default: 5)
     * `:skip` - Number of chunks to skip (for resuming interrupted runs)
@@ -57,13 +59,12 @@ defmodule Arcana.Maintenance do
     concurrency = Keyword.get(opts, :concurrency, 5)
     skip = Keyword.get(opts, :skip, 0)
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
-    collection_filter = Keyword.get(opts, :collection)
-
     embedder = Arcana.embedder()
     strict? = Arcana.Config.strict_collections?(opts)
 
-    with {:ok, collection_id} <- Collection.resolve_id(collection_filter, repo, strict?) do
-      do_reembed(repo, embedder, collection_id, %{
+    with {:ok, scope} <- normalize_collection_scope(opts),
+         {:ok, collection_ids} <- resolve_collection_ids(repo, scope, strict?) do
+      do_reembed(repo, embedder, collection_ids, %{
         batch_size: batch_size,
         concurrency: concurrency,
         skip: skip,
@@ -107,19 +108,21 @@ defmodule Arcana.Maintenance do
      }}
   end
 
-  defp fetch_docs_without_chunks(repo, nil) do
+  defp fetch_docs_without_chunks(repo, :all) do
     repo.all(from(d in Document, where: d.chunk_count == 0 or d.status == :pending))
   end
 
-  defp fetch_docs_without_chunks(repo, collection_id) do
+  defp fetch_docs_without_chunks(repo, collection_ids) do
     repo.all(
       from(d in Document,
-        where: d.collection_id == ^collection_id and (d.chunk_count == 0 or d.status == :pending)
+        where:
+          d.collection_id in ^collection_ids and
+            (d.chunk_count == 0 or d.status == :pending)
       )
     )
   end
 
-  defp reembed_filtered_chunks(repo, embedder, batch_size, concurrency, skip, progress_fn, nil) do
+  defp reembed_filtered_chunks(repo, embedder, batch_size, concurrency, skip, progress_fn, :all) do
     total_chunks = repo.aggregate(Chunk, :count)
     chunks_query = from(c in Chunk, order_by: c.id, select: [:id, :text])
 
@@ -149,13 +152,13 @@ defmodule Arcana.Maintenance do
          concurrency,
          skip,
          progress_fn,
-         collection_id
+         collection_ids
        ) do
     chunks_query =
       from(c in Chunk,
         join: d in Document,
         on: d.id == c.document_id,
-        where: d.collection_id == ^collection_id,
+        where: d.collection_id in ^collection_ids,
         order_by: c.id,
         select: [:id, :text]
       )
@@ -364,7 +367,8 @@ defmodule Arcana.Maintenance do
 
   ## Options
 
-    * `:collection` - Only embed entities in this collection
+    * `:collection` - `:all`, one collection name, or a list of collection
+      names (default: `:all`). An empty list does no work.
     * `:batch_size` - Entities per batch (default: 100)
     * `:progress` - Progress callback `fn current, total -> :ok end`
     * `:force` - Re-embed all entities, not just those without embeddings (default: false)
@@ -373,7 +377,6 @@ defmodule Arcana.Maintenance do
     import Ecto.Query
     alias Arcana.Graph.Entity
 
-    collection_filter = Keyword.get(opts, :collection)
     batch_size = Keyword.get(opts, :batch_size, 100)
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
     force = Keyword.get(opts, :force, false)
@@ -382,11 +385,9 @@ defmodule Arcana.Maintenance do
     query = from(e in Entity, order_by: e.id, select: [:id, :name, :description, :embedding])
     strict? = Arcana.Config.strict_collections?(opts)
 
-    with {:ok, collection_id} <- Collection.resolve_id(collection_filter, repo, strict?) do
-      query =
-        if collection_id,
-          do: from(e in query, where: e.collection_id == ^collection_id),
-          else: query
+    with {:ok, scope} <- normalize_collection_scope(opts),
+         {:ok, collection_ids} <- resolve_collection_ids(repo, scope, strict?) do
+      query = scope_by_collection_ids(query, collection_ids)
 
       query = if force, do: query, else: from(e in query, where: is_nil(e.embedding))
 
@@ -480,12 +481,12 @@ defmodule Arcana.Maintenance do
   """
   def rebuild_graph(repo, opts \\ []) do
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
-    collection_filter = Keyword.get(opts, :collection)
 
     strict? = Arcana.Config.strict_collections?(opts)
 
     # Get collections (optionally filtered)
-    with {:ok, collections} <- fetch_collections(repo, collection_filter, strict?) do
+    with {:ok, scope} <- normalize_collection_scope(opts),
+         {:ok, collections} <- fetch_collections(repo, scope, strict?) do
       if collections == [] do
         {:ok, %{collections: 0, entities: 0, relationships: 0, skipped: 0}}
       else
@@ -623,15 +624,42 @@ defmodule Arcana.Maintenance do
     |> MapSet.new()
   end
 
-  defp fetch_collections(repo, nil, _strict?) do
+  defp normalize_collection_scope(opts) do
+    CollectionScope.from_opts(opts, :all)
+  end
+
+  defp fetch_collections(repo, :all, _strict?) do
     {:ok, repo.all(from(c in Collection, select: c))}
   end
 
-  defp fetch_collections(repo, collection_name, strict?) when is_binary(collection_name) do
-    case repo.all(from(c in Collection, where: c.name == ^collection_name, select: c)) do
-      [] when strict? -> {:error, {:unknown_collection, collection_name}}
-      collections -> {:ok, collections}
+  defp fetch_collections(repo, {:only, names}, strict?) do
+    collections = repo.all(from(c in Collection, where: c.name in ^names, select: c))
+
+    if strict? do
+      found_names = MapSet.new(collections, & &1.name)
+
+      case Enum.find(names, &(not MapSet.member?(found_names, &1))) do
+        nil -> {:ok, collections}
+        name -> {:error, {:unknown_collection, name}}
+      end
+    else
+      {:ok, collections}
     end
+  end
+
+  defp resolve_collection_ids(_repo, :all, _strict?), do: {:ok, :all}
+
+  defp resolve_collection_ids(repo, {:only, _names} = scope, strict?) do
+    case fetch_collections(repo, scope, strict?) do
+      {:ok, collections} -> {:ok, Enum.map(collections, & &1.id)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp scope_by_collection_ids(query, :all), do: query
+
+  defp scope_by_collection_ids(query, collection_ids) do
+    from(row in query, where: row.collection_id in ^collection_ids)
   end
 
   @doc """
@@ -692,7 +720,8 @@ defmodule Arcana.Maintenance do
 
   ## Options
 
-    * `:collection` - Filter to a specific collection by name (default: all collections)
+    * `:collection` - `:all`, one collection name, or a list of collection
+      names (default: `:all`). An empty list does no work.
     * `:resolution` - Community detection resolution (default: 1.0)
     * `:objective` - Quality function (default: `:cpm`)
     * `:iterations` - Optimization iterations (default: 2)
@@ -736,11 +765,11 @@ defmodule Arcana.Maintenance do
   """
   def detect_communities(repo, opts \\ []) do
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
-    collection_filter = Keyword.get(opts, :collection)
 
     strict? = Arcana.Config.strict_collections?(opts)
 
-    with {:ok, collections} <- fetch_collections(repo, collection_filter, strict?) do
+    with {:ok, scope} <- normalize_collection_scope(opts),
+         {:ok, collections} <- fetch_collections(repo, scope, strict?) do
       if collections == [] do
         {:ok, %{collections: 0, communities: 0}}
       else
@@ -860,7 +889,8 @@ defmodule Arcana.Maintenance do
          detector,
          progress_fn
        ) do
-    alias Arcana.Graph.{CommunityDetector, Entity, Relationship}
+    alias Arcana.Graph.{CommunityDetector, Entity}
+    alias Arcana.RetrievalScope
 
     # Report start
     try do
@@ -874,7 +904,7 @@ defmodule Arcana.Maintenance do
     # yields stable membership when the input order is stable too.
     entities =
       repo.all(
-        from(e in Entity,
+        from([entity: e] in RetrievalScope.entities(),
           where: e.collection_id == ^collection.id,
           order_by: e.id,
           select: %{id: e.id, name: e.name, type: e.type, description: e.description}
@@ -883,7 +913,7 @@ defmodule Arcana.Maintenance do
 
     relationships =
       repo.all(
-        from(r in Relationship,
+        from([relationship: r] in RetrievalScope.relationships(),
           join: e in Entity,
           on: r.source_id == e.id,
           where: e.collection_id == ^collection.id,
@@ -1016,7 +1046,8 @@ defmodule Arcana.Maintenance do
 
   ## Options
 
-    - `:collection` - Only summarize communities in this collection (default: all)
+    - `:collection` - `:all`, one collection name, or a list of collection
+      names (default: `:all`). An empty list does no work.
     - `:progress` - Progress callback function
     - `:force` - Regenerate all summaries even if not dirty (default: false)
     - `:concurrency` - Number of parallel summarization tasks (default: 1)
@@ -1047,7 +1078,6 @@ defmodule Arcana.Maintenance do
   """
   def summarize_communities(repo, opts \\ []) do
     progress_fn = Keyword.get(opts, :progress, fn _, _ -> :ok end)
-    collection_filter = Keyword.get(opts, :collection)
     force = Keyword.get(opts, :force, false)
     concurrency = Keyword.get(opts, :concurrency, 1)
 
@@ -1055,7 +1085,8 @@ defmodule Arcana.Maintenance do
 
     # Validate the collection filter before requiring an LLM, so strict
     # callers get {:error, {:unknown_collection, name}} consistently.
-    with {:ok, collections} <- fetch_collections(repo, collection_filter, strict?) do
+    with {:ok, scope} <- normalize_collection_scope(opts),
+         {:ok, collections} <- fetch_collections(repo, scope, strict?) do
       summarize_fetched_collections(collections, repo, %{
         opts: opts,
         force: force,
@@ -1117,7 +1148,8 @@ defmodule Arcana.Maintenance do
   end
 
   defp summarize_communities_for_collection(collection, repo, ctx) do
-    alias Arcana.Graph.{Community, CommunitySummarizer, Entity, Relationship}
+    alias Arcana.Graph.{Community, CommunitySummarizer, Entity}
+    alias Arcana.RetrievalScope
 
     %{llm: llm, force: force, concurrency: concurrency, progress_fn: progress_fn} = ctx
 
@@ -1189,13 +1221,14 @@ defmodule Arcana.Maintenance do
   defp level_filter(levels), do: dynamic([c], c.level in ^levels)
 
   defp summarize_single_community(community, repo, llm) do
-    alias Arcana.Graph.{Community, CommunitySummarizer, Entity, Relationship}
+    alias Arcana.Graph.{Community, CommunitySummarizer, Entity}
+    alias Arcana.RetrievalScope
 
     entity_ids = community.entity_ids || []
 
     entities =
       repo.all(
-        from(e in Entity,
+        from([entity: e] in RetrievalScope.entities(),
           where: e.id in ^entity_ids,
           select: %{id: e.id, name: e.name, type: e.type, description: e.description}
         )
@@ -1203,7 +1236,7 @@ defmodule Arcana.Maintenance do
 
     relationships =
       repo.all(
-        from(r in Relationship,
+        from([relationship: r] in RetrievalScope.relationships(),
           join: src in Entity,
           on: r.source_id == src.id,
           join: tgt in Entity,

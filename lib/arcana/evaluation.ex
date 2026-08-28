@@ -25,7 +25,7 @@ defmodule Arcana.Evaluation do
 
   import Ecto.Query
 
-  alias Arcana.{Collection, Document}
+  alias Arcana.{Collection, CollectionScope, Document}
   alias Arcana.Evaluation.{Generator, Metrics, Run, TestCase}
 
   @doc """
@@ -68,10 +68,11 @@ defmodule Arcana.Evaluation do
       question being evaluated, and handlers are global, so a listener that
       wants only its own run's questions has to filter on something; this
       is it.
-    * `:collections` - List of collection names to confine the run to. It
-      scopes which test cases run (see `list_test_cases/1`), is forwarded to
-      the retriever so retrieval can't reach outside those collections, and
-      is recorded on the run so scoped listings can find it again.
+    * `:collection` - `:all`, one collection name, or a list of collection
+      names to confine the run to. An empty list runs no test cases. The scope
+      controls which test cases run (see `list_test_cases/1`), is forwarded to
+      the retriever so retrieval can't reach outside those collections, and is
+      recorded on the run so scoped listings can find it again.
       Retrieval then runs with `strict_collections: true` unless
       `:strict_collections` says otherwise, so a collection name with no
       row fails the search instead of widening it to the whole corpus.
@@ -83,12 +84,12 @@ defmodule Arcana.Evaluation do
     source_id = Keyword.get(opts, :source_id)
     evaluate_answers = Keyword.get(opts, :evaluate_answers, false)
     llm = Keyword.get(opts, :llm)
-    collections = Keyword.get(opts, :collections)
+    collection_scope = normalize_collection_scope!(opts)
     run_ref = Keyword.get(opts, :run_ref)
     retriever = Keyword.get(opts, :retriever, &default_retriever/2)
 
     retriever_opts =
-      [repo: repo, mode: mode, limit: 10] ++ retrieval_scope_opts(opts, collections)
+      [repo: repo, mode: mode, limit: 10] ++ retrieval_scope_opts(opts, collection_scope)
 
     # Validate llm is provided when evaluate_answers is true
     if evaluate_answers and is_nil(llm) do
@@ -108,7 +109,7 @@ defmodule Arcana.Evaluation do
         |> Map.put(:mode, mode)
         |> Map.put(:source_id, source_id)
         |> Map.put(:evaluate_answers, evaluate_answers)
-        |> put_run_collections(collections)
+        |> put_run_collections(collection_scope)
 
       # Create a run record
       {:ok, run} =
@@ -207,21 +208,24 @@ defmodule Arcana.Evaluation do
     end
   end
 
-  # Retrieval scope for the run. Passing `:collections` without strict
+  # Retrieval scope for the run. Passing collection names without strict
   # resolution would let a collection name with no row resolve to "no
   # filter", which is the whole corpus — the opposite of what a scoped run
   # asked for.
-  defp retrieval_scope_opts(_opts, nil), do: []
+  defp retrieval_scope_opts(_opts, :all), do: [collection: :all]
 
-  defp retrieval_scope_opts(opts, collections) when is_list(collections) do
+  defp retrieval_scope_opts(opts, {:only, collections}) do
     [
-      collections: collections,
+      collection: collections,
       strict_collections: Keyword.get(opts, :strict_collections, true)
     ]
   end
 
-  defp put_run_collections(config, nil), do: config
-  defp put_run_collections(config, collections), do: Map.put(config, :collections, collections)
+  defp put_run_collections(config, :all), do: config
+
+  defp put_run_collections(config, {:only, collections}) do
+    Map.put(config, :collections, collections)
+  end
 
   defp evaluate_test_case(test_case, retriever_opts, evaluate_answers, llm, retriever) do
     {search_results, pre_generated_answer} =
@@ -364,14 +368,14 @@ defmodule Arcana.Evaluation do
 
     * `:repo` - Ecto repo (required)
     * `:source_id` - Filter by source (optional)
-    * `:collections` - List of collection names to scope the listing to.
-      See "Collection scoping" below.
+    * `:collection` - `:all`, one collection name, or a list of collection
+      names to scope the listing to. See "Collection scoping" below.
 
   ## Collection scoping
 
   A test case has no collection of its own: it reaches one through its
   chunks (the relevant chunks it is scored against, and the source chunk it
-  was generated from). When `:collections` is given, only test cases whose
+  was generated from). When a collection scope is given, only test cases whose
   every linked chunk resolves to one of those collections are returned, and
   at least one link has to resolve. Anything else — a test case straddling
   two collections, one whose chunks were deleted, one with no links at all
@@ -400,18 +404,19 @@ defmodule Arcana.Evaluation do
       end
 
     query
-    |> scope_test_cases(Keyword.get(opts, :collections))
+    |> scope_test_cases(normalize_collection_scope!(opts))
     |> repo.all()
   end
 
   @doc """
   Gets a single test case by ID.
 
-  Accepts the same `:collections` scoping option as `list_test_cases/1`;
+  Accepts the same `:collection` scoping option as `list_test_cases/1`;
   a test case outside the scope reads as missing.
   """
   def get_test_case(id, opts) do
     repo = Keyword.fetch!(opts, :repo)
+    collection_scope = normalize_collection_scope!(opts)
 
     case Ecto.UUID.cast(id) do
       :error ->
@@ -422,14 +427,14 @@ defmodule Arcana.Evaluation do
           where: tc.id == ^uuid,
           preload: [:relevant_chunks, :source_chunk]
         )
-        |> scope_test_cases(Keyword.get(opts, :collections))
+        |> scope_test_cases(collection_scope)
         |> repo.one()
     end
   end
 
-  defp scope_test_cases(query, nil), do: query
+  defp scope_test_cases(query, :all), do: query
 
-  defp scope_test_cases(query, collections) when is_list(collections) do
+  defp scope_test_cases(query, {:only, collections}) do
     from(tc in query, where: tc.id in subquery(scoped_test_case_ids(collections)))
   end
 
@@ -504,9 +509,9 @@ defmodule Arcana.Evaluation do
   # config. A scoped listing only sees runs whose recorded scope is a
   # non-empty subset of what the caller may read: unscoped runs (an
   # unrestricted dashboard's, or any run predating this) stay hidden.
-  defp scope_runs(query, nil), do: query
+  defp scope_runs(query, :all), do: query
 
-  defp scope_runs(query, collections) when is_list(collections) do
+  defp scope_runs(query, {:only, collections}) do
     from(r in query,
       where: fragment("jsonb_typeof(?->'collections') = 'array'", r.config),
       where: fragment("?->'collections' <> '[]'::jsonb", r.config),
@@ -558,17 +563,18 @@ defmodule Arcana.Evaluation do
   @doc """
   Deletes a test case.
 
-  With `:collections`, the scope predicate rides inside the DELETE, so a
+  With `:collection`, the scope predicate rides inside the DELETE, so a
   test case outside the allowed collections is rejected with
   `{:error, :not_found}` and nothing can change between the check and the
   delete. A malformed id is rejected the same way.
   """
   def delete_test_case(id, opts) do
     repo = Keyword.fetch!(opts, :repo)
+    collection_scope = normalize_collection_scope!(opts)
 
     with {:ok, uuid} <- cast_id(id) do
       from(tc in TestCase, where: tc.id == ^uuid, select: tc)
-      |> scope_test_cases(Keyword.get(opts, :collections))
+      |> scope_test_cases(collection_scope)
       |> delete_one(repo)
     end
   end
@@ -580,7 +586,7 @@ defmodule Arcana.Evaluation do
 
     * `:repo` - Ecto repo (required)
     * `:limit` - Maximum runs to return (default: 20)
-    * `:collections` - Only list runs recorded as having run under a
+    * `:collection` - Only list runs recorded as having run under a
       non-empty subset of these collection names
 
   """
@@ -592,22 +598,23 @@ defmodule Arcana.Evaluation do
       order_by: [desc: r.inserted_at, desc: r.id],
       limit: ^limit
     )
-    |> scope_runs(Keyword.get(opts, :collections))
+    |> scope_runs(normalize_collection_scope!(opts))
     |> repo.all()
   end
 
   @doc """
   Gets a single evaluation run by ID.
 
-  Accepts the same `:collections` scoping option as `list_runs/1`.
+  Accepts the same `:collection` scoping option as `list_runs/1`.
   """
   def get_run(id, opts) do
     repo = Keyword.fetch!(opts, :repo)
+    collection_scope = normalize_collection_scope!(opts)
 
     case cast_id(id) do
       {:ok, uuid} ->
         from(r in Run, where: r.id == ^uuid)
-        |> scope_runs(Keyword.get(opts, :collections))
+        |> scope_runs(collection_scope)
         |> repo.one()
 
       {:error, :not_found} ->
@@ -622,10 +629,11 @@ defmodule Arcana.Evaluation do
   """
   def delete_run(id, opts) do
     repo = Keyword.fetch!(opts, :repo)
+    collection_scope = normalize_collection_scope!(opts)
 
     with {:ok, uuid} <- cast_id(id) do
       from(r in Run, where: r.id == ^uuid, select: r)
-      |> scope_runs(Keyword.get(opts, :collections))
+      |> scope_runs(collection_scope)
       |> delete_one(repo)
     end
   end
@@ -633,13 +641,13 @@ defmodule Arcana.Evaluation do
   @doc """
   Returns count of test cases.
 
-  Accepts the same `:collections` scoping option as `list_test_cases/1`.
+  Accepts the same `:collection` scoping option as `list_test_cases/1`.
   """
   def count_test_cases(opts) do
     repo = Keyword.fetch!(opts, :repo)
 
     from(tc in TestCase, select: count(tc.id))
-    |> scope_test_cases(Keyword.get(opts, :collections))
+    |> scope_test_cases(normalize_collection_scope!(opts))
     |> repo.one() || 0
   end
 
@@ -650,6 +658,10 @@ defmodule Arcana.Evaluation do
       {:ok, uuid} -> {:ok, uuid}
       :error -> {:error, :not_found}
     end
+  end
+
+  defp normalize_collection_scope!(opts) do
+    CollectionScope.from_opts!(opts, :all)
   end
 
   defp delete_one(query, repo) do

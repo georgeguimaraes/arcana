@@ -93,8 +93,7 @@ Arcana.Loop.new(question, opts) |> Arcana.Loop.run(opts)
 | Option | Default | Description |
 |---|---|---|
 | `:repo` | `Arcana.Config.get(opts, :repo)` | Ecto repo for retrieval tools |
-| `:collection` | `nil` | Lock the loop to a single collection. The controller physically cannot search anything else: the tool schema won't even expose a collection parameter. See "Collections: lock vs pick" below. |
-| `:collections` | `[nil]` | Allowed set of collection names the controller may pick from per search call. When 2 or more, the search tool gains an optional `collection` parameter the controller uses to narrow the search. Overrides `:collection`. |
+| `:collection` | `:all` | `:all`, one collection name, or a list of names. A single name locks the loop to it. |
 
 `run/2` options:
 
@@ -125,14 +124,14 @@ Per-call options override globals.
 
 ## Collections: lock vs pick
 
-The `:collection` / `:collections` options on `Arcana.Loop.new/2` don't
-just filter searches. They shape the **tool schema** the controller
+The `:collection` option on `Arcana.Loop.new/2` doesn't
+just filter searches. It shapes the **tool schema** the controller
 sees, which determines what the controller can and can't express.
 
 Three cases, three behaviors:
 
-**Lock to a single collection.** Pass `:collection` or a one-element
-`:collections` list. The `search` tool is built without a `collection`
+**Lock to a single collection.** Pass a collection name or a one-element
+list. The `search` tool is built without a `collection`
 parameter, so the controller literally has no way to express a
 different collection. This is the strongest possible guarantee: no
 prompt-engineering workaround, no "ignore previous instructions".
@@ -144,14 +143,14 @@ Arcana.Loop.new(question, repo: Repo, collection: "docs")
 ```
 
 **Allow a set; let the controller pick per call.** Pass a
-multi-element `:collections` list. The `search` tool gains an optional
+multi-element `:collection` list. The `search` tool gains an optional
 `collection` parameter whose documentation lists the allowed values.
 The controller picks one per call, or omits it to search across all
 listed collections. The system prompt also gains a "Collections"
 section telling the controller when to narrow vs broaden.
 
 ```elixir
-Arcana.Loop.new(question, repo: Repo, collections: ["docs", "wiki", "changelog"])
+Arcana.Loop.new(question, repo: Repo, collection: ["docs", "wiki", "changelog"])
 # tool schema: search(query, collection, limit)
 # controller decides each call:
 #   search(query: "...", collection: "docs")   -- narrow
@@ -164,14 +163,21 @@ list), the search tool returns a friendly error as the tool result
 The loop doesn't crash; the controller sees the error on its next
 turn and can correct.
 
-**Unrestricted.** Pass neither option. The search tool has no
-`collection` parameter. `Arcana.search/2` is called without a
-collection filter, hitting whatever default behavior is configured.
+**Unrestricted.** Omit the option, or pass `:all` explicitly. The
+search tool has no `collection` parameter. `Arcana.search/2` receives
+`collection: :all` and searches the full corpus.
 
 ```elixir
-Arcana.Loop.new(question, repo: Repo)
+Arcana.Loop.new(question, repo: Repo, collection: :all)
+```
+
+Pass `[]` when the caller is authorized for no collections. The loop keeps
+that match-nothing scope through every tool call.
+
+```elixir
+Arcana.Loop.new(question, repo: Repo, collection: [])
 # tool schema: search(query, limit)
-# searches across whatever the default is
+# every search matches nothing
 ```
 
 ### When to use which

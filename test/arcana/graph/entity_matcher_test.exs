@@ -1,8 +1,8 @@
 defmodule Arcana.Graph.EntityMatcherTest do
   use Arcana.DataCase, async: true
 
-  alias Arcana.Collection
-  alias Arcana.Graph.Entity
+  alias Arcana.{Chunk, Collection, Document}
+  alias Arcana.Graph.{Entity, EntityMention}
   alias Arcana.Graph.EntityMatcher
 
   describe "behaviour" do
@@ -112,6 +112,49 @@ defmodule Arcana.Graph.EntityMatcherTest do
       assert ids == [alice.id]
     end
 
+    test "does not match an entity supported only by a failed document" do
+      collection = create_collection("ner-failed-#{System.unique_integer([:positive])}")
+
+      failed_entity =
+        %Entity{}
+        |> Entity.changeset(%{
+          name: "Failed Entity",
+          type: "person",
+          collection_id: collection.id
+        })
+        |> Repo.insert!()
+
+      failed_document =
+        %Document{}
+        |> Document.changeset(%{
+          content: "failed evidence",
+          status: :failed,
+          collection_id: collection.id
+        })
+        |> Repo.insert!()
+
+      failed_chunk =
+        %Chunk{}
+        |> Chunk.changeset(%{
+          text: "failed evidence",
+          embedding: List.duplicate(0.1, 384),
+          document_id: failed_document.id
+        })
+        |> Repo.insert!()
+
+      %EntityMention{}
+      |> EntityMention.changeset(%{entity_id: failed_entity.id, chunk_id: failed_chunk.id})
+      |> Repo.insert!()
+
+      extractor = fn _text, _opts -> {:ok, [%{name: "Failed Entity", type: "person"}]} end
+
+      assert {:ok, []} =
+               NER.match("Failed Entity", [collection.id],
+                 repo: Repo,
+                 entity_extractor: extractor
+               )
+    end
+
     test "scopes lookups to the given collection_ids" do
       target = create_collection("ner-target-#{System.unique_integer([:positive])}")
       other = create_collection("ner-other-#{System.unique_integer([:positive])}")
@@ -187,20 +230,41 @@ defmodule Arcana.Graph.EntityMatcherTest do
   end
 
   defp create_entity(collection, name, type) do
-    %Entity{}
-    |> Entity.changeset(%{name: name, type: type, collection_id: collection.id})
+    entity =
+      %Entity{}
+      |> Entity.changeset(%{name: name, type: type, collection_id: collection.id})
+      |> Repo.insert!()
+
+    document =
+      %Document{}
+      |> Document.changeset(%{
+        content: "evidence for #{name}",
+        status: :completed,
+        collection_id: collection.id
+      })
+      |> Repo.insert!()
+
+    chunk =
+      %Chunk{}
+      |> Chunk.changeset(%{
+        text: "evidence for #{name}",
+        embedding: List.duplicate(0.1, 384),
+        document_id: document.id
+      })
+      |> Repo.insert!()
+
+    %EntityMention{}
+    |> EntityMention.changeset(%{entity_id: entity.id, chunk_id: chunk.id})
     |> Repo.insert!()
+
+    entity
   end
 
   defp create_entity_with_embedding(collection, name, embedding) do
-    %Entity{}
-    |> Entity.changeset(%{
-      name: name,
-      type: "concept",
-      collection_id: collection.id,
-      embedding: embedding
-    })
-    |> Repo.insert!()
+    collection
+    |> create_entity(name, "concept")
+    |> Ecto.Changeset.change(embedding: embedding)
+    |> Repo.update!()
   end
 
   defp random_unit_vector(dims \\ 384) do

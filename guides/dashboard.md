@@ -75,7 +75,7 @@ arcana_dashboard "/arcana",
   on_mount: [MyAppWeb.Auth],                   # Add authentication
   live_socket_path: "/live",                   # Custom LiveView socket path
   live_session_name: :arcana_dashboard,        # Unique per mount in one router
-  collections: {MyAppWeb.Access, :collections} # Scope to a collection subset
+  collection: {MyAppWeb.Access, :collection_scope} # Scope to a collection subset
 ```
 
 ### Authentication
@@ -90,14 +90,14 @@ arcana_dashboard "/arcana",
 ### Collection scoping
 
 By default the dashboard sees (and can mutate) every collection, so it's
-superuser territory. The `collections:` option lets you expose it below
+superuser territory. The `collection:` option lets you expose it below
 that level: a `{module, function}` pair that gets the `%Plug.Conn{}` of
-the page request and returns either `:all` or the list of collection
-names that user may touch.
+the page request and returns `:all`, one collection name, a list of names,
+or `[]` when the user may touch none.
 
 ```elixir
 arcana_dashboard "/arcana",
-  collections: {MyAppWeb.ArcanaAccess, :allowed_collections}
+  collection: {MyAppWeb.ArcanaAccess, :allowed_collections}
 ```
 
 ```elixir
@@ -156,7 +156,7 @@ long a stale scope can survive without that broadcast.
 It's a plain `{module, function}` tuple rather than a function capture
 so the router metadata stays serializable. The option composes with
 `on_mount:` auth hooks: use `on_mount` to decide who gets in, and
-`collections:` to decide what they see once inside. It scopes the
+`collection:` to decide what they see once inside. It scopes the
 dashboard only, not `Arcana.search/2` or other API calls your app makes.
 
 To mount two dashboards in one router (say a superuser one plus a scoped

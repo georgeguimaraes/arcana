@@ -1,7 +1,7 @@
 defmodule Arcana.AskTest do
   use Arcana.DataCase, async: true
 
-  alias Arcana.Graph.{Community, Entity, EntityMention, Relationship}
+  alias Arcana.Graph.{Community, Entity, EntityMention, Relationship, RelationshipEvidence}
 
   setup do
     {:ok, doc} =
@@ -63,6 +63,16 @@ defmodule Arcana.AskTest do
                  llm: llm,
                  collection: "strict-nope",
                  strict_collections: true
+               )
+    end
+
+    test "an empty collection scope returns no context", %{llm: llm} do
+      assert {:ok, _answer, []} =
+               Arcana.ask("What are the Daleks?",
+                 repo: Repo,
+                 llm: llm,
+                 collection: [],
+                 graph: true
                )
     end
 
@@ -160,6 +170,29 @@ defmodule Arcana.AskTest do
 
       assert system_prompt =~ "Background knowledge:"
       assert system_prompt =~ "greatest enemies"
+    end
+
+    test "does not inject a dirty community summary" do
+      Repo.update_all(Community, set: [dirty: true])
+      received = :ets.new(:received, [:set, :public])
+
+      capturing_llm = fn _prompt, _context, opts ->
+        :ets.insert(received, {:system_prompt, opts[:system_prompt]})
+        {:ok, "answer"}
+      end
+
+      {:ok, _, _} =
+        Arcana.ask("Who are the Daleks?",
+          repo: Repo,
+          llm: capturing_llm,
+          collection: "ask-test",
+          graph: true
+        )
+
+      [{:system_prompt, system_prompt}] = :ets.lookup(received, :system_prompt)
+      :ets.delete(received)
+
+      refute system_prompt =~ "greatest enemies"
     end
   end
 
@@ -355,21 +388,47 @@ defmodule Arcana.AskTest do
         |> Entity.changeset(%{name: "Carol", type: "person", collection_id: collection.id})
         |> Repo.insert!()
 
-      %Relationship{}
-      |> Relationship.changeset(%{
-        source_id: alice.id,
-        target_id: bob.id,
-        type: "knows"
-      })
-      |> Repo.insert!()
+      document =
+        %Arcana.Document{}
+        |> Arcana.Document.changeset(%{
+          content: "Alice evidence",
+          status: :completed,
+          collection_id: collection.id
+        })
+        |> Repo.insert!()
 
-      %Relationship{}
-      |> Relationship.changeset(%{
-        source_id: bob.id,
-        target_id: carol.id,
-        type: "mentors"
-      })
-      |> Repo.insert!()
+      chunk =
+        %Arcana.Chunk{}
+        |> Arcana.Chunk.changeset(%{
+          text: "Alice evidence",
+          document_id: document.id,
+          embedding: embedding
+        })
+        |> Repo.insert!()
+
+      for entity <- [alice, bob, carol] do
+        %EntityMention{}
+        |> EntityMention.changeset(%{entity_id: entity.id, chunk_id: chunk.id})
+        |> Repo.insert!()
+      end
+
+      for {source, target, type} <- [{alice, bob, "knows"}, {bob, carol, "mentors"}] do
+        relationship =
+          %Relationship{}
+          |> Relationship.changeset(%{
+            source_id: source.id,
+            target_id: target.id,
+            type: type
+          })
+          |> Repo.insert!()
+
+        %RelationshipEvidence{}
+        |> RelationshipEvidence.changeset(%{
+          relationship_id: relationship.id,
+          chunk_id: chunk.id
+        })
+        |> Repo.insert!()
+      end
 
       llm = fn _prompt, _context, _opts -> {:ok, "answer"} end
 
@@ -433,6 +492,47 @@ defmodule Arcana.AskTest do
 
       types = graph_context.relationships |> Enum.map(& &1.type) |> Enum.sort()
       assert types == ["knows", "mentors"]
+    end
+
+    test "graph context excludes entities supported only by incomplete documents", %{llm: llm} do
+      collection = Repo.get_by!(Arcana.Collection, name: "ask-graph-depth")
+      {:ok, embedding} = Arcana.Embedder.embed(Arcana.Config.embedder(), "Alice", intent: :query)
+
+      failed =
+        %Entity{}
+        |> Entity.changeset(%{
+          name: "Failed Alice",
+          type: "person",
+          collection_id: collection.id,
+          embedding: embedding
+        })
+        |> Repo.insert!()
+
+      document =
+        %Arcana.Document{}
+        |> Arcana.Document.changeset(%{
+          content: "failed evidence",
+          status: :failed,
+          collection_id: collection.id
+        })
+        |> Repo.insert!()
+
+      chunk =
+        %Arcana.Chunk{}
+        |> Arcana.Chunk.changeset(%{
+          text: "failed evidence",
+          document_id: document.id,
+          embedding: embedding
+        })
+        |> Repo.insert!()
+
+      %EntityMention{}
+      |> EntityMention.changeset(%{entity_id: failed.id, chunk_id: chunk.id})
+      |> Repo.insert!()
+
+      graph_context = captured_graph_context(llm, [])
+
+      assert Enum.map(graph_context.entities, & &1.name) == ["Alice"]
     end
   end
 end

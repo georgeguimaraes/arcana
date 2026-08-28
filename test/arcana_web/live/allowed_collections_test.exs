@@ -4,10 +4,10 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
   import Ecto.Query
   import Phoenix.LiveViewTest
 
-  alias Arcana.Collection
+  alias Arcana.{Collection, Document}
   alias Arcana.Evaluation
   alias Arcana.Graph.Community
-  alias Arcana.Graph.{Community, Entity, Relationship}
+  alias Arcana.Graph.{Community, Entity, Relationship, RelationshipEvidence}
 
   # These tests exercise the /scoped dashboard from the test router, whose
   # :collections MFA reads the allowed list from the conn's session. Each
@@ -200,6 +200,25 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       refute html =~ ~s(<option value="">default</option>)
     end
 
+    test "lists and filters across several allowed collections", %{conn: conn} do
+      {:ok, _} = Arcana.ingest("First allowed document", repo: Repo, collection: "tenant-a")
+      {:ok, _} = Arcana.ingest("Second allowed document", repo: Repo, collection: "tenant-b")
+      {:ok, _} = Arcana.ingest("Outside document", repo: Repo, collection: "other")
+
+      {:ok, view, html} =
+        conn |> restrict(["tenant-a", "tenant-b"]) |> live("/scoped/documents")
+
+      assert html =~ "First allowed document"
+      assert html =~ "Second allowed document"
+      refute html =~ "Outside document"
+
+      html = render_click(view, "filter_by_collection", %{"collection" => "tenant-b"})
+
+      refute html =~ "First allowed document"
+      assert html =~ "Second allowed document"
+      refute html =~ "Outside document"
+    end
+
     test "rejects a forged ingest event naming a disallowed collection", %{conn: conn} do
       {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/documents")
 
@@ -238,6 +257,13 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       html = render_click(view, "view_document", %{"id" => doc.id})
 
       refute html =~ "Hidden tenant content"
+    end
+
+    test "ignores a malformed document id in the URL", %{conn: conn} do
+      assert {:ok, _view, html} =
+               conn |> restrict(["tenant-a"]) |> live("/scoped/documents?doc=not-a-uuid")
+
+      refute html =~ "Document Details"
     end
 
     # The delete carries the allowed-collection predicate in the DELETE
@@ -304,12 +330,57 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       refute html =~ "Elixir content for others"
     end
 
+    test "rejects the whole search when a selection mixes allowed and disallowed collections",
+         %{conn: conn} do
+      {:ok, _} = Arcana.ingest("Visible mixed-scope content", repo: Repo, collection: "tenant-a")
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/search")
+
+      html =
+        render_submit(view, "search", %{
+          "query" => "mixed-scope",
+          "collections" => ["tenant-a", "other"]
+        })
+
+      refute html =~ "Visible mixed-scope content"
+    end
+
     test "a malformed document id is rejected instead of crashing", %{conn: conn} do
       {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/search")
 
       render_click(view, "view_search_document", %{"id" => "not-a-uuid"})
 
       assert render(view) =~ "Search"
+    end
+
+    test "a forged detail id cannot open a document outside the allowed scope", %{conn: conn} do
+      {:ok, doc} =
+        Arcana.ingest("Hidden search detail", repo: Repo, collection: "other")
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/search")
+
+      html = render_click(view, "view_search_document", %{"id" => doc.id})
+
+      refute html =~ "Hidden search detail"
+    end
+
+    test "a forged detail id cannot open an unpublished document", %{conn: conn} do
+      {:ok, collection} = Collection.get_or_create("tenant-a", Repo)
+
+      pending =
+        %Document{}
+        |> Document.changeset(%{
+          content: "Pending search detail",
+          status: :pending,
+          collection_id: collection.id
+        })
+        |> Repo.insert!()
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/search")
+
+      html = render_click(view, "view_search_document", %{"id" => pending.id})
+
+      refute html =~ "Pending search detail"
     end
 
     test "an empty allowed set never searches anything", %{conn: conn} do
@@ -361,6 +432,20 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
           "question" => "What is hidden?",
           "sub_tab" => "advanced",
           "collections" => ["other"]
+        })
+
+      assert html =~ "not allowed"
+    end
+
+    test "rejects the whole ask when a selection mixes allowed and disallowed collections",
+         %{conn: conn} do
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/ask")
+
+      html =
+        render_submit(view, "ask_submit", %{
+          "question" => "What is hidden?",
+          "sub_tab" => "advanced",
+          "collections" => ["tenant-a", "other"]
         })
 
       assert html =~ "not allowed"
@@ -432,6 +517,104 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
 
       assert html =~ "tenant-a"
       refute html =~ ~s(value="other")
+    end
+
+    test "title hydration uses the completed documents in the run's effective scope", %{
+      conn: conn
+    } do
+      {:ok, allowed} =
+        Arcana.ingest("Allowed title content",
+          repo: Repo,
+          collection: "tenant-a",
+          metadata: %{"title" => "Allowed title"}
+        )
+
+      {:ok, hidden} =
+        Arcana.ingest("Hidden title content",
+          repo: Repo,
+          collection: "other",
+          metadata: %{"title" => "Hidden title"}
+        )
+
+      {:ok, collection} = Collection.get_or_create("tenant-a", Repo)
+
+      pending =
+        %Document{}
+        |> Document.changeset(%{
+          content: "Pending title content",
+          status: :pending,
+          collection_id: collection.id,
+          metadata: %{"title" => "Pending title"}
+        })
+        |> Repo.insert!()
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/ask")
+
+      result = %{
+        question: "Which titles?",
+        answer: "Three chunks",
+        results: [
+          %{id: "one", text: "one", score: 0.9, document_id: allowed.id, chunk_index: 0},
+          %{id: "two", text: "two", score: 0.8, document_id: hidden.id, chunk_index: 0},
+          %{id: "three", text: "three", score: 0.7, document_id: pending.id, chunk_index: 0}
+        ],
+        collection_scope: :all,
+        selected_collections: nil
+      }
+
+      send(view.pid, {:ask_complete, {:ok, result}})
+      html = render(view)
+
+      assert html =~ "Allowed title"
+      refute html =~ "Hidden title"
+      refute html =~ "Pending title"
+    end
+
+    test "title hydration preserves a multi-collection run scope", %{conn: conn} do
+      documents =
+        for {collection, title} <- [
+              {"tenant-a", "Tenant A title"},
+              {"tenant-b", "Tenant B title"},
+              {"tenant-c", "Tenant C title"}
+            ] do
+          {:ok, document} =
+            Arcana.ingest("Content for #{collection}",
+              repo: Repo,
+              collection: collection,
+              metadata: %{"title" => title}
+            )
+
+          document
+        end
+
+      {:ok, view, _html} =
+        conn
+        |> restrict(["tenant-a", "tenant-b", "tenant-c"])
+        |> live("/scoped/ask")
+
+      result = %{
+        question: "Which titles?",
+        answer: "Three chunks",
+        results:
+          Enum.map(documents, fn document ->
+            %{
+              id: document.id,
+              text: "chunk",
+              score: 0.9,
+              document_id: document.id,
+              chunk_index: 0
+            }
+          end),
+        collection_scope: ["tenant-a", "tenant-b"],
+        selected_collections: ["tenant-a", "tenant-b"]
+      }
+
+      send(view.pid, {:ask_complete, {:ok, result}})
+      html = render(view)
+
+      assert html =~ "Tenant A title"
+      assert html =~ "Tenant B title"
+      refute html =~ "Tenant C title"
     end
   end
 
@@ -521,12 +704,32 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       source = Repo.get_by!(Entity, name: "SecretSource", collection_id: other.id)
       target = Repo.get_by!(Entity, name: "SecretTarget", collection_id: other.id)
 
-      Repo.insert!(%Relationship{
-        source_id: source.id,
-        target_id: target.id,
-        type: "knows",
-        strength: 8
+      relationship =
+        %Relationship{}
+        |> Relationship.changeset(%{
+          source_id: source.id,
+          target_id: target.id,
+          type: "knows",
+          strength: 8
+        })
+        |> Repo.insert!()
+
+      chunk =
+        Repo.one!(
+          from(c in Arcana.Chunk,
+            join: d in Arcana.Document,
+            on: c.document_id == d.id,
+            where: d.collection_id == ^other.id,
+            limit: 1
+          )
+        )
+
+      %RelationshipEvidence{}
+      |> RelationshipEvidence.changeset(%{
+        relationship_id: relationship.id,
+        chunk_id: chunk.id
       })
+      |> Repo.insert!()
 
       {:ok, view, _html} =
         conn |> restrict(["ghost", "tenant-a"]) |> live("/scoped/graph?tab=relationships")
@@ -743,6 +946,7 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       )
 
       refute render(view) =~ "ForeignProgressQuestionZulu"
+      render_until(view, "Evaluation completed!")
     end
 
     test "a restricted Loop evaluation runs scoped and strict", %{conn: conn} do
@@ -773,6 +977,7 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       assert_receive {:loop_scope, collections, search_opts}, 2_000
       assert collections == ["tenant-a"]
       assert search_opts[:strict_collections] == true
+      render_until(view, "Evaluation completed!")
     end
   end
 

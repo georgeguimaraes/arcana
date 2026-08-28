@@ -548,12 +548,12 @@ defmodule Arcana.Pipeline do
 
   ## Collection Selection
 
-  Collections are determined in this priority order:
-  1. `:collection` or `:collections` option passed to this function
+  Collection scope is determined in this priority order:
+  1. `:collection` option passed to this function
   2. `ctx.collections` (set by `select/2` if LLM selection was used)
   3. Falls back to `"default"` collection
 
-  The resolved list is recorded on `ctx.collections`, so later steps that
+  The resolved scope is recorded on `ctx.collections`, so later steps that
   retrieve (like `reason/2`) search the same scope instead of picking one
   of their own.
 
@@ -563,13 +563,12 @@ defmodule Arcana.Pipeline do
       ctx |> Pipeline.search(collection: "technical_docs")
 
       # Search multiple specific collections
-      ctx |> Pipeline.search(collections: ["docs", "faq"])
+      ctx |> Pipeline.search(collection: ["docs", "faq"])
 
   ## Options
 
   - `:searcher` - Custom searcher module or function (default: `Arcana.Searcher.Arcana`)
-  - `:collection` - Single collection name to search (string)
-  - `:collections` - List of collection names to search
+  - `:collection` - `:all`, a collection name, or a list of collection names
   - `:self_correct` - Enable self-correcting search (default: false)
   - `:max_iterations` - Max retry attempts for self-correct (default: 3)
   - `:sufficient_prompt` - Custom prompt function `fn question, chunks -> prompt_string end`
@@ -616,7 +615,8 @@ defmodule Arcana.Pipeline do
   def search(%Context{} = ctx, opts) do
     searcher = Keyword.get(opts, :searcher, Arcana.Searcher.Arcana)
 
-    collections = resolve_collections(ctx, opts)
+    collection_scope = resolve_collection_scope(ctx, opts)
+    collections = collection_targets(collection_scope)
 
     start_metadata = %{
       question: ctx.question,
@@ -627,7 +627,11 @@ defmodule Arcana.Pipeline do
 
     :telemetry.span([:arcana, :pipeline, :search], start_metadata, fn ->
       questions = ctx.sub_questions || [ctx.expanded_query || ctx.question]
-      searcher_opts = [repo: ctx.repo, limit: ctx.limit, threshold: ctx.threshold]
+
+      searcher_opts =
+        opts
+        |> Keyword.drop([:searcher, :collection, :collections])
+        |> Keyword.merge(repo: ctx.repo, limit: ctx.limit, threshold: ctx.threshold)
 
       results =
         for question <- questions,
@@ -636,7 +640,14 @@ defmodule Arcana.Pipeline do
           %{question: question, collection: collection, chunks: chunks}
         end
 
-      updated_ctx = %{ctx | results: results, searcher: searcher, collections: collections}
+      updated_ctx = %{
+        ctx
+        | results: results,
+          searcher: searcher,
+          searcher_opts: searcher_opts,
+          collections: collection_scope_input(collection_scope)
+      }
+
       total_chunks = results |> Enum.flat_map(& &1.chunks) |> length()
 
       stop_metadata = %{
@@ -654,14 +665,16 @@ defmodule Arcana.Pipeline do
   # search/2 records what this returns on the context, so every later step
   # that retrieves resolves the same scope by calling this with no options
   # instead of guessing one from whatever results survived.
-  defp resolve_collections(ctx, opts) do
-    cond do
-      Keyword.has_key?(opts, :collections) -> Keyword.get(opts, :collections)
-      Keyword.has_key?(opts, :collection) -> [Keyword.get(opts, :collection)]
-      ctx.collections != nil -> ctx.collections
-      true -> ["default"]
-    end
+  defp resolve_collection_scope(ctx, opts) do
+    default = if is_nil(ctx.collections), do: "default", else: ctx.collections
+    Arcana.CollectionScope.from_opts!(opts, default)
   end
+
+  defp collection_targets(:all), do: [:all]
+  defp collection_targets({:only, names}), do: names
+
+  defp collection_scope_input(:all), do: :all
+  defp collection_scope_input({:only, names}), do: names
 
   defp searcher_name(searcher) when is_atom(searcher), do: searcher
   defp searcher_name(_searcher), do: :custom_function
@@ -699,6 +712,10 @@ defmodule Arcana.Pipeline do
     `search/2` used, so a scoped searcher keeps applying without repeating
     the option. Falls back to `Arcana.Searcher.Arcana` when `search/2` never
     ran.
+  - `:searcher_opts` - Extra options for follow-up searches. These merge over
+    the original search options when the searcher is inherited. Replacing the
+    searcher starts from repo, limit, and threshold so backend-specific options
+    do not leak between implementations.
 
   Follow-up searches run against `ctx.collections`, which `search/2` records,
   so the collection scope keeps applying too.
@@ -737,11 +754,22 @@ defmodule Arcana.Pipeline do
           :error -> ctx.searcher || Arcana.Searcher.Arcana
         end
 
+      searcher_opts = reason_searcher_opts(ctx, opts)
+
       # Initialize queries_tried if not set
       queries_tried = ctx.queries_tried || MapSet.new([ctx.question])
 
       updated_ctx =
-        do_reason_loop(ctx, llm, custom_prompt_fn, max_iterations, queries_tried, 0, searcher)
+        do_reason_loop(
+          ctx,
+          llm,
+          custom_prompt_fn,
+          max_iterations,
+          queries_tried,
+          0,
+          searcher,
+          searcher_opts
+        )
 
       stop_metadata = %{iterations: updated_ctx.reason_iterations}
 
@@ -749,14 +777,54 @@ defmodule Arcana.Pipeline do
     end)
   end
 
-  defp do_reason_loop(ctx, llm, prompt_fn, max_iterations, queries_tried, iteration, searcher)
+  defp reason_searcher_opts(ctx, opts) do
+    defaults = [repo: ctx.repo, limit: ctx.limit, threshold: ctx.threshold]
 
-  defp do_reason_loop(ctx, _llm, _prompt_fn, max_iterations, queries_tried, iteration, _searcher)
+    base =
+      if Keyword.has_key?(opts, :searcher) do
+        defaults
+      else
+        ctx.searcher_opts || defaults
+      end
+
+    Keyword.merge(base, Keyword.get(opts, :searcher_opts, []))
+  end
+
+  defp do_reason_loop(
+         ctx,
+         llm,
+         prompt_fn,
+         max_iterations,
+         queries_tried,
+         iteration,
+         searcher,
+         searcher_opts
+       )
+
+  defp do_reason_loop(
+         ctx,
+         _llm,
+         _prompt_fn,
+         max_iterations,
+         queries_tried,
+         iteration,
+         _searcher,
+         _searcher_opts
+       )
        when iteration >= max_iterations do
     %{ctx | queries_tried: queries_tried, reason_iterations: iteration}
   end
 
-  defp do_reason_loop(ctx, llm, prompt_fn, max_iterations, queries_tried, iteration, searcher) do
+  defp do_reason_loop(
+         ctx,
+         llm,
+         prompt_fn,
+         max_iterations,
+         queries_tried,
+         iteration,
+         searcher,
+         searcher_opts
+       ) do
     all_chunks =
       (ctx.results || [])
       |> Enum.flat_map(& &1.chunks)
@@ -773,7 +841,7 @@ defmodule Arcana.Pipeline do
           # Search with follow-up query
           updated_queries = MapSet.put(queries_tried, follow_up_query)
 
-          new_results = do_additional_search(ctx, follow_up_query, searcher)
+          new_results = do_additional_search(ctx, follow_up_query, searcher, searcher_opts)
           merged_results = merge_results(ctx.results, new_results)
           updated_ctx = %{ctx | results: merged_results}
 
@@ -784,7 +852,8 @@ defmodule Arcana.Pipeline do
             max_iterations,
             updated_queries,
             iteration + 1,
-            searcher
+            searcher,
+            searcher_opts
           )
         end
 
@@ -845,20 +914,15 @@ defmodule Arcana.Pipeline do
     end
   end
 
-  defp do_additional_search(ctx, query, searcher) do
+  defp do_additional_search(ctx, query, searcher, search_opts) do
     # Follow-ups search exactly what search/2 searched. Deriving the scope
     # from ctx.results instead would drift: merge_results drops results
     # whose chunks came back empty, so one dry follow-up leaves nothing to
     # derive from and the next one widens past what the caller asked for.
-    collections = resolve_collections(ctx, [])
+    collection_scope = resolve_collection_scope(ctx, [])
+    collections = collection_targets(collection_scope)
 
     Enum.map(collections, fn collection ->
-      search_opts = [
-        repo: ctx.repo,
-        limit: ctx.limit,
-        threshold: ctx.threshold
-      ]
-
       chunks = do_simple_search(searcher, query, collection, search_opts)
 
       %{question: query, collection: collection, chunks: chunks}

@@ -56,7 +56,7 @@ defmodule Arcana.VectorStore.Pgvector do
   Raising it finds more of the true nearest neighbours, at the cost of more work
   per query:
 
-      Arcana.search("question", collections: ["docs"], hnsw_ef_search: 200)
+      Arcana.search("question", collection: ["docs"], hnsw_ef_search: 200)
 
   It can also be a global search default:
 
@@ -97,7 +97,7 @@ defmodule Arcana.VectorStore.Pgvector do
 
   @behaviour Arcana.VectorStore
 
-  alias Arcana.{Chunk, Collection, Document}
+  alias Arcana.{Chunk, Collection, Document, RetrievalScope}
 
   import Ecto.Query
 
@@ -186,9 +186,7 @@ defmodule Arcana.VectorStore.Pgvector do
 
       {:ok, collection_id} ->
         base_query =
-          from(c in Chunk,
-            join: d in Document,
-            on: c.document_id == d.id,
+          from([chunk: c] in RetrievalScope.chunks(),
             select: %{
               id: c.id,
               metadata:
@@ -225,9 +223,7 @@ defmodule Arcana.VectorStore.Pgvector do
 
       {:ok, collection_id} ->
         base_query =
-          from(c in Chunk,
-            join: d in Document,
-            on: c.document_id == d.id,
+          from([chunk: c] in RetrievalScope.chunks(),
             where:
               fragment(
                 "to_tsvector('english', ?) @@ plainto_tsquery('english', ?)",
@@ -387,6 +383,7 @@ defmodule Arcana.VectorStore.Pgvector do
       CROSS JOIN LATERAL (SELECT to_tsvector('english', c.text) AS tsv OFFSET 0) v
       WHERE ($3::uuid IS NULL OR d.collection_id = $3::uuid)
         AND ($4::text IS NULL OR d.source_id = $4::text)
+        AND d.status = 'completed'
     ),
     score_bounds AS (
       SELECT MAX(keyword_score) AS max_kw
@@ -570,11 +567,9 @@ defmodule Arcana.VectorStore.Pgvector do
     end
   end
 
-  # Prefer a pre-resolved :collection_id (set by Arcana.Search under strict
-  # mode so the query is pinned to the validated id); otherwise resolve the
-  # name. For unknown names: under strict mode return :unknown so callers
-  # match nothing (direct backend calls bypass Arcana.Search's up-front
-  # validation), otherwise keep the historical no-filter fallback.
+  # Prefer a pre-resolved :collection_id so the query is pinned to the ID
+  # resolved by Arcana.Search. Only nil and :all are unscoped. An unknown
+  # explicit name always matches nothing, including direct backend calls.
   defp resolve_filter_collection_id(collection, repo, opts) do
     case Keyword.get(opts, :collection_id) do
       nil -> resolve_filter_by_name(collection, repo, opts)
@@ -583,10 +578,11 @@ defmodule Arcana.VectorStore.Pgvector do
   end
 
   defp resolve_filter_by_name(nil, _repo, _opts), do: {:ok, nil}
+  defp resolve_filter_by_name(:all, _repo, _opts), do: {:ok, nil}
 
-  defp resolve_filter_by_name(collection, repo, opts) do
+  defp resolve_filter_by_name(collection, repo, _opts) do
     case repo.get_by(Collection, name: collection) do
-      nil -> if Arcana.Config.strict_collections?(opts), do: :unknown, else: {:ok, nil}
+      nil -> :unknown
       coll -> {:ok, coll.id}
     end
   end

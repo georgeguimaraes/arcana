@@ -1,7 +1,15 @@
 defmodule Arcana.GraphIntegrationTest do
   use Arcana.DataCase, async: true
 
-  alias Arcana.Graph.{Community, Entity, EntityMention, Relationship}
+  alias Arcana.Graph.{
+    Community,
+    Entity,
+    EntityMention,
+    GraphStore,
+    Relationship,
+    RelationshipEvidence
+  }
+
   alias Ecto.Adapters.SQL.Sandbox
 
   # Scoped to the collection under test: the documents table is shared with
@@ -62,10 +70,17 @@ defmodule Arcana.GraphIntegrationTest do
     |> Repo.insert!()
   end
 
-  defp create_relationship(source, target, type \\ "knows") do
-    %Relationship{}
-    |> Relationship.changeset(%{source_id: source.id, target_id: target.id, type: type})
+  defp create_relationship(source, target, chunk, type \\ "knows") do
+    relationship =
+      %Relationship{}
+      |> Relationship.changeset(%{source_id: source.id, target_id: target.id, type: type})
+      |> Repo.insert!()
+
+    %RelationshipEvidence{}
+    |> RelationshipEvidence.changeset(%{relationship_id: relationship.id, chunk_id: chunk.id})
     |> Repo.insert!()
+
+    relationship
   end
 
   describe "graph_enabled?/1" do
@@ -483,9 +498,9 @@ defmodule Arcana.GraphIntegrationTest do
       create_mention(carol, chunk_c)
       create_mention(dave, chunk_d)
 
-      create_relationship(alice, bob)
-      create_relationship(bob, carol)
-      create_relationship(alice, dave)
+      create_relationship(alice, bob, chunk_a)
+      create_relationship(bob, carol, chunk_b)
+      create_relationship(alice, dave, chunk_a)
 
       opts = [
         repo: Repo,
@@ -579,6 +594,43 @@ defmodule Arcana.GraphIntegrationTest do
   end
 
   describe "delete/2 with graph enabled" do
+    test "sweeps the document collection when its chunks have no graph mentions" do
+      collection = create_collection("mentionless-delete-#{System.unique_integer()}")
+      document = create_document(collection)
+      _chunk = create_chunk(document, "no extracted entities")
+      orphan = create_entity(collection, "AlreadyOrphaned")
+
+      assert :ok = Arcana.delete(document.id, repo: Repo, graph: true)
+
+      refute Repo.get(Entity, orphan.id)
+    end
+
+    test "removes a fact's last evidence without deleting surviving community members" do
+      collection = create_collection("edge-delete-#{System.unique_integer()}")
+      edge_document = create_document(collection, %{content: "edge evidence"})
+      anchor_document = create_document(collection, %{content: "entity anchors"})
+      edge_chunk = create_chunk(edge_document, "Alice knows Bob")
+      anchor_chunk = create_chunk(anchor_document, "Alice and Bob")
+      alice = create_entity(collection, "Alice")
+      bob = create_entity(collection, "Bob")
+      create_mention(alice, anchor_chunk)
+      create_mention(bob, anchor_chunk)
+      relationship = create_relationship(alice, bob, edge_chunk)
+      community = insert_community(collection.id, [alice.id, bob.id])
+
+      assert :ok = Arcana.delete(edge_document.id, repo: Repo, graph: true)
+
+      assert Repo.get(Relationship, relationship.id) == nil
+      assert Repo.get(Entity, alice.id)
+      assert Repo.get(Entity, bob.id)
+
+      community = Repo.get!(Community, community.id)
+      assert community.dirty
+      assert community.entity_ids == [alice.id, bob.id]
+
+      assert GraphStore.get_community_summaries(collection.id, repo: Repo) == []
+    end
+
     test "sweeps zero-mention entities in the document's collection and dirties overlapping communities" do
       extractor = fn text, _opts ->
         cond do
@@ -662,7 +714,83 @@ defmodule Arcana.GraphIntegrationTest do
       refute "OldEntity" in names
     end
 
-    test "a failing sweep rolls the delete back rather than half-finishing" do
+    test "replace: true removes predecessor-only relationship evidence" do
+      entity_extractor = fn _text, _opts ->
+        {:ok, [%{name: "Alice", type: "person"}, %{name: "Bob", type: "person"}]}
+      end
+
+      relationship_extractor = fn text, _entities, _opts ->
+        if text =~ "v1" do
+          {:ok, [%{source: "Alice", target: "Bob", type: "knows"}]}
+        else
+          {:ok, []}
+        end
+      end
+
+      opts = [
+        repo: Repo,
+        graph: true,
+        entity_extractor: entity_extractor,
+        relationship_extractor: relationship_extractor,
+        collection: "replace-edge-#{System.unique_integer()}",
+        source_id: "doc-1",
+        replace: true
+      ]
+
+      {:ok, _v1} = Arcana.ingest("v1 relationship", opts)
+      relationship = Repo.one!(Relationship)
+      alice = Repo.one!(from(e in Entity, where: e.name == "Alice"))
+      bob = Repo.one!(from(e in Entity, where: e.name == "Bob"))
+      community = insert_community(alice.collection_id, [alice.id, bob.id])
+
+      {:ok, _v2} = Arcana.ingest("v2 without the relationship", opts)
+
+      assert Repo.get(Relationship, relationship.id) == nil
+      assert Repo.get(Entity, alice.id)
+      assert Repo.get(Entity, bob.id)
+
+      community = Repo.get!(Community, community.id)
+      assert community.dirty
+      assert community.entity_ids == [alice.id, bob.id]
+    end
+
+    test "replace: true keeps an identical relationship's community clean" do
+      entity_extractor = fn _text, _opts ->
+        {:ok, [%{name: "Alice", type: "person"}, %{name: "Bob", type: "person"}]}
+      end
+
+      relationship_extractor = fn _text, _entities, _opts ->
+        {:ok, [%{source: "Alice", target: "Bob", type: "knows"}]}
+      end
+
+      opts = [
+        repo: Repo,
+        graph: true,
+        entity_extractor: entity_extractor,
+        relationship_extractor: relationship_extractor,
+        collection: "replace-same-edge-#{System.unique_integer()}",
+        source_id: "doc-1",
+        replace: true
+      ]
+
+      {:ok, _v1} = Arcana.ingest("v1 relationship", opts)
+      relationship = Repo.one!(Relationship)
+      alice = Repo.one!(from(e in Entity, where: e.name == "Alice"))
+      bob = Repo.one!(from(e in Entity, where: e.name == "Bob"))
+      community = insert_community(alice.collection_id, [alice.id, bob.id])
+
+      {:ok, _v2} = Arcana.ingest("v2 same relationship", opts)
+
+      assert Repo.get(Relationship, relationship.id)
+      refute Repo.get!(Community, community.id).dirty
+
+      assert [%{id: community_id}] =
+               GraphStore.get_community_summaries(alice.collection_id, repo: Repo)
+
+      assert community_id == community.id
+    end
+
+    test "a failing external sweep reports post-commit cleanup failure" do
       extractor = fn _text, _opts -> {:ok, [%{name: "Delta", type: "concept"}]} end
 
       {:ok, doc} =
@@ -674,18 +802,69 @@ defmodule Arcana.GraphIntegrationTest do
           collection: "sweep-fails"
         )
 
-      assert {:error, {:sweep_failed, :sweep_boom}} =
+      assert {:error,
+              {:post_commit_graph_cleanup_failed, %{reason: {:sweep_failed, :sweep_boom}}}} =
                Arcana.delete(doc.id,
                  repo: Repo,
                  graph: true,
                  graph_store: Arcana.FailingSweepGraphStore
                )
 
-      # The sweep shares the delete's transaction, so a failed cleanup takes
-      # the delete with it. This used to report the failure *after* deleting
-      # the document, which left the caller an error it could not retry.
-      assert Repo.get(Arcana.Document, doc.id),
-             "a failed sweep must leave the document in place"
+      # External stores cannot join the Ecto transaction. The document commits
+      # first so a later caller rollback can never restore published DB data
+      # after the external graph has already been removed.
+      assert Repo.get(Arcana.Document, doc.id) == nil
+    end
+
+    test "replace reports an external predecessor cleanup failure after committing the swap" do
+      extractor = fn _text, _opts -> {:ok, [%{name: "Theta", type: "concept"}]} end
+      collection = "replace-cleanup-fails-#{System.unique_integer()}"
+
+      opts = [
+        repo: Repo,
+        graph: true,
+        entity_extractor: extractor,
+        graph_store: Arcana.FailingDeleteGraphStore,
+        collection: collection,
+        source_id: "doc-1",
+        replace: true
+      ]
+
+      {:ok, old} = Arcana.ingest("v1", opts)
+
+      assert {:error,
+              {:post_commit_graph_cleanup_failed,
+               %{
+                 reason: :delete_boom,
+                 chunk_ids: chunk_ids,
+                 published_chunk_ids: chunk_ids,
+                 collection_id: collection_id
+               } = cleanup}} = Arcana.ingest("v2", opts)
+
+      assert [%{id: replacement_id, content: "v2", status: :completed}] =
+               documents_in(collection)
+
+      refute replacement_id == old.id
+      assert collection_id == old.collection_id
+      assert chunk_ids != []
+
+      assert :ok =
+               GraphStore.delete_by_chunks(chunk_ids,
+                 repo: Repo,
+                 graph_store: {Arcana.FailingDeleteGraphStore, delete_failure: :ok},
+                 published_chunk_ids: cleanup.published_chunk_ids
+               )
+
+      assert :ok =
+               GraphStore.sweep_orphans(collection_id,
+                 repo: Repo,
+                 graph_store: {Arcana.FailingDeleteGraphStore, delete_failure: :ok}
+               )
+    end
+
+    test "replace wraps external predecessor cleanup exceptions and exits after committing" do
+      assert %RuntimeError{message: "delete_boom"} = replace_cleanup_failure(:raise)
+      assert :delete_boom = replace_cleanup_failure(:exit)
     end
 
     test "build and sweep use the same per-call graph store" do
@@ -756,6 +935,40 @@ defmodule Arcana.GraphIntegrationTest do
       # Entity survives (stranded, but sweeping requires graph enabled)
       assert Repo.get(Entity, gamma.id)
     end
+  end
+
+  defp replace_cleanup_failure(failure) do
+    extractor = fn _text, _opts -> {:ok, [%{name: "Iota", type: "concept"}]} end
+    collection = "replace-cleanup-#{failure}-#{System.unique_integer()}"
+
+    opts = [
+      repo: Repo,
+      graph: true,
+      entity_extractor: extractor,
+      graph_store: {Arcana.FailingDeleteGraphStore, delete_failure: failure},
+      collection: collection,
+      source_id: "doc-1",
+      replace: true
+    ]
+
+    {:ok, old} = Arcana.ingest("v1", opts)
+
+    assert {:error,
+            {:post_commit_graph_cleanup_failed,
+             %{
+               reason: reason,
+               chunk_ids: chunk_ids,
+               published_chunk_ids: chunk_ids,
+               collection_id: collection_id
+             }}} = Arcana.ingest("v2", opts)
+
+    assert [%{id: replacement_id, content: "v2", status: :completed}] =
+             documents_in(collection)
+
+    refute replacement_id == old.id
+    assert collection_id == old.collection_id
+    assert chunk_ids != []
+    reason
   end
 
   describe "config/0" do

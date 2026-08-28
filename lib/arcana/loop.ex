@@ -138,24 +138,13 @@ defmodule Arcana.Loop do
   ## Options
 
     * `:repo` - Ecto repo for retrieval tools. Falls back to `:repo` global config.
-    * `:collection` - Single collection name (becomes `[collection]`).
-    * `:collections` - List of collection names. Takes precedence over `:collection`.
+    * `:collection` - Collection scope as `:all`, a name, or a list of names.
   """
   @spec new(String.t(), keyword()) :: Context.t()
   def new(question, opts \\ []) when is_binary(question) do
     repo = Arcana.Config.get(opts, :repo)
 
-    collections =
-      case Keyword.fetch(opts, :collections) do
-        {:ok, list} ->
-          list
-
-        :error ->
-          case Keyword.fetch(opts, :collection) do
-            {:ok, name} -> [name]
-            :error -> [nil]
-          end
-      end
+    collections = opts |> Arcana.CollectionScope.from_opts!(:all) |> collection_scope_input()
 
     %Context{
       question: question,
@@ -163,6 +152,9 @@ defmodule Arcana.Loop do
       collections: collections
     }
   end
+
+  defp collection_scope_input(:all), do: :all
+  defp collection_scope_input({:only, names}), do: names
 
   @doc """
   Runs the agent loop until it terminates.

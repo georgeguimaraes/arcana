@@ -1,6 +1,8 @@
 defmodule Arcana.SearchTest do
   use Arcana.DataCase, async: true
 
+  alias Arcana.Searcher.Arcana, as: ArcanaSearcher
+
   describe "search/2" do
     setup do
       # Ingest some documents for searching
@@ -147,7 +149,7 @@ defmodule Arcana.SearchTest do
 
       # Search only in collections a and b
       {:ok, results} =
-        Arcana.search("language", repo: Repo, collections: ["search-coll-a", "search-coll-b"])
+        Arcana.search("language", repo: Repo, collection: ["search-coll-a", "search-coll-b"])
 
       refute Enum.empty?(results)
       texts = Enum.map(results, & &1.text)
@@ -156,6 +158,47 @@ defmodule Arcana.SearchTest do
       assert Enum.any?(texts, &String.contains?(&1, "Go"))
       assert Enum.any?(texts, &String.contains?(&1, "Rust"))
       refute Enum.any?(texts, &String.contains?(&1, "JavaScript"))
+    end
+
+    test "accepts a single collection name" do
+      {:ok, _} =
+        Arcana.ingest("Ruby belongs in the selected collection",
+          repo: Repo,
+          collection: "single-scope"
+        )
+
+      {:ok, _} =
+        Arcana.ingest("Python belongs elsewhere", repo: Repo, collection: "other-scope")
+
+      assert {:ok, [%{text: text}]} =
+               Arcana.search("belongs", repo: Repo, mode: :keyword, collection: "single-scope")
+
+      assert text =~ "Ruby"
+    end
+
+    test ":all is unscoped and an empty list matches nothing" do
+      {:ok, _} = Arcana.ingest("Alpha scope marker", repo: Repo, collection: "scope-alpha")
+      {:ok, _} = Arcana.ingest("Beta scope marker", repo: Repo, collection: "scope-beta")
+
+      assert {:ok, all_results} =
+               Arcana.search("scope marker", repo: Repo, mode: :keyword, collection: :all)
+
+      assert Enum.sort(Enum.map(all_results, & &1.text)) ==
+               ["Alpha scope marker", "Beta scope marker"]
+
+      assert {:ok, []} =
+               Arcana.search("scope marker", repo: Repo, mode: :keyword, collection: [])
+    end
+
+    test "rejects the removed collections alias instead of widening" do
+      assert {:error, {:unsupported_collection_option, :collections}} =
+               Arcana.search("anything", repo: Repo, collections: ["scope-a"])
+
+      assert {:error, {:unsupported_collection_option, :collections}} =
+               ArcanaSearcher.search("anything", :all,
+                 repo: Repo,
+                 collections: ["scope-a"]
+               )
     end
   end
 
@@ -206,17 +249,17 @@ defmodule Arcana.SearchTest do
       end
     end
 
-    test "unknown collection still searches unscoped when strict is off" do
+    test "unknown collection matches nothing when strict is off" do
       {:ok, results} = Arcana.search("Elixir", repo: Repo, collection: "strict-nope")
 
-      refute Enum.empty?(results)
+      assert results == []
     end
 
     test "a single unknown name in a collections list fails the whole search" do
       assert {:error, {:unknown_collection, "strict-nope"}} =
                Arcana.search("Elixir",
                  repo: Repo,
-                 collections: ["strict-known", "strict-nope"],
+                 collection: ["strict-known", "strict-nope"],
                  strict_collections: true
                )
     end

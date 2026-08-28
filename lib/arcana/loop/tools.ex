@@ -65,16 +65,18 @@ defmodule Arcana.Loop.Tools do
   When called with a list of collection names longer than one, the
   `search` tool gains an optional `collection` parameter that the
   controller can use to narrow the search per call. When called with
-  no collections, `[nil]`, or a single-element list, the parameter is
+  `:all`, no collections, or a single-element list, the parameter is
   omitted and the caller-supplied collection (if any) is always used.
 
   That way, `Arcana.Loop.new(collection: "docs")` locks the controller
   to a single collection programmatically (the tool can't even express
-  a different one), while `Arcana.Loop.new(collections: ["a", "b"])`
+  a different one), while `Arcana.Loop.new(collection: ["a", "b"])`
   lets the controller pick per call.
   """
-  @spec default(collections :: [String.t() | nil]) :: [Tool.t()]
-  def default(collections \\ [nil]) do
+  @spec default(Arcana.CollectionScope.input() | [nil]) :: [Tool.t()]
+  def default(collections \\ :all) do
+    collections = normalize_collection_scope(collections)
+
     [
       search_tool(collections),
       answer_tool(),
@@ -234,15 +236,18 @@ defmodule Arcana.Loop.Tools do
   def execute(%Context{} = ctx, "search", %{query: query} = args, opts) do
     limit = Map.get(args, :limit, 5)
 
-    case resolve_search_collection(ctx.collections, Map.get(args, :collection)) do
+    collection_scope = normalize_collection_scope(ctx.collections)
+
+    case resolve_search_collection(collection_scope, Map.get(args, :collection)) do
       {:error, message} ->
         {:continue, ctx, "search error: #{message}", %{returned_chunk_ids: []}}
 
       {:ok, collection_opts} ->
         search_opts =
           [repo: ctx.repo, limit: limit]
-          |> Keyword.merge(collection_opts)
           |> Keyword.merge(Keyword.get(opts, :search_opts, []))
+          |> Keyword.drop([:collection, :collections])
+          |> Keyword.merge(collection_opts)
 
         search_fn = Keyword.get(opts, :search_fn, &Arcana.search/2)
 
@@ -308,23 +313,24 @@ defmodule Arcana.Loop.Tools do
   # pass a `collection` arg. The resolution table:
   #
   #   ctx.collections    tool arg    result
-  #   [nil]              nil         unconstrained
-  #   [nil]              "x"         collection: "x" (no restriction to validate against)
+  #   :all               nil         collection: :all
+  #   :all               "x"         collection: "x" (no restriction to validate against)
   #   [single]           nil         collection: single
   #   [single]           _           collection: single (arg ignored, lock wins)
-  #   [a, b]             nil         collections: [a, b]
+  #   [a, b]             nil         collection: [a, b]
   #   [a, b]             "a"         collection: "a"
   #   [a, b]             "c"         error: not in allowed list
   defp resolve_search_collection(ctx_collections, tool_arg)
 
-  defp resolve_search_collection([nil], nil), do: {:ok, []}
-  defp resolve_search_collection([nil], name) when is_binary(name), do: {:ok, [collection: name]}
+  defp resolve_search_collection(:all, nil), do: {:ok, [collection: :all]}
+  defp resolve_search_collection(:all, name) when is_binary(name), do: {:ok, [collection: name]}
+  defp resolve_search_collection([nil], tool_arg), do: resolve_search_collection(:all, tool_arg)
 
   defp resolve_search_collection([single], _arg) when is_binary(single),
     do: {:ok, [collection: single]}
 
   defp resolve_search_collection(list, nil) when is_list(list),
-    do: {:ok, [collections: list]}
+    do: {:ok, [collection: list]}
 
   defp resolve_search_collection(list, name) when is_list(list) and is_binary(name) do
     if name in list do
@@ -332,6 +338,15 @@ defmodule Arcana.Loop.Tools do
     else
       {:error,
        "collection #{inspect(name)} is not in the allowed list (#{Enum.map_join(list, ", ", &inspect/1)})"}
+    end
+  end
+
+  defp normalize_collection_scope([nil]), do: :all
+
+  defp normalize_collection_scope(input) do
+    case Arcana.CollectionScope.normalize!(input) do
+      :all -> :all
+      {:only, names} -> names
     end
   end
 

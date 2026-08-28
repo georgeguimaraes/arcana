@@ -340,21 +340,31 @@ defmodule Arcana.Graph do
   def expand_entity_ids(entity_ids, depth, collection_ids, opts)
       when is_integer(depth) and depth > 0 do
     repo = Keyword.fetch!(opts, :repo)
+    source_id = Keyword.get(opts, :source_id)
     frontier = Enum.uniq(entity_ids)
 
-    do_expand(frontier, MapSet.new(frontier), %{0 => frontier}, 1, depth, collection_ids, repo)
+    do_expand(
+      frontier,
+      MapSet.new(frontier),
+      %{0 => frontier},
+      1,
+      depth,
+      collection_ids,
+      repo,
+      source_id
+    )
   end
 
-  defp do_expand(frontier, visited, acc, hop, depth, collection_ids, repo)
+  defp do_expand(frontier, visited, acc, hop, depth, collection_ids, repo, source_id)
 
-  defp do_expand(_frontier, _visited, acc, hop, depth, _collection_ids, _repo)
+  defp do_expand(_frontier, _visited, acc, hop, depth, _collection_ids, _repo, _source_id)
        when hop > depth,
        do: acc
 
-  defp do_expand(frontier, visited, acc, hop, depth, collection_ids, repo) do
+  defp do_expand(frontier, visited, acc, hop, depth, collection_ids, repo, source_id) do
     neighbors =
       frontier
-      |> neighbor_entity_ids(collection_ids, repo)
+      |> neighbor_entity_ids(collection_ids, repo, source_id)
       |> Enum.reject(&MapSet.member?(visited, &1))
 
     case neighbors do
@@ -363,25 +373,45 @@ defmodule Arcana.Graph do
 
       ids ->
         visited = MapSet.union(visited, MapSet.new(ids))
-        do_expand(ids, visited, Map.put(acc, hop, ids), hop + 1, depth, collection_ids, repo)
+
+        do_expand(
+          ids,
+          visited,
+          Map.put(acc, hop, ids),
+          hop + 1,
+          depth,
+          collection_ids,
+          repo,
+          source_id
+        )
     end
   end
 
   # One query per hop: joining both endpoints carries each neighbor's
   # collection along, so scoping needs no second round trip.
-  defp neighbor_entity_ids(frontier, collection_ids, repo) do
+  defp neighbor_entity_ids(frontier, collection_ids, repo, source_id) do
     import Ecto.Query
 
-    repo.all(
-      from(r in Arcana.Graph.Relationship,
+    published_entity_ids =
+      from([mention: m] in Arcana.RetrievalScope.mentions(),
+        select: m.entity_id,
+        distinct: true
+      )
+
+    relationship_query =
+      from([relationship: r] in Arcana.RetrievalScope.relationships(source_id),
         join: s in Arcana.Graph.Entity,
         on: s.id == r.source_id,
         join: t in Arcana.Graph.Entity,
         on: t.id == r.target_id,
-        where: r.source_id in ^frontier or r.target_id in ^frontier,
+        where:
+          (r.source_id in ^frontier or r.target_id in ^frontier) and
+            r.source_id in subquery(published_entity_ids) and
+            r.target_id in subquery(published_entity_ids),
         select: {r.source_id, s.collection_id, r.target_id, t.collection_id}
       )
-    )
+
+    repo.all(relationship_query)
     |> Enum.flat_map(fn {source, source_collection, target, target_collection} ->
       [{source, source_collection}, {target, target_collection}]
     end)
@@ -640,7 +670,7 @@ defmodule Arcana.Graph do
         # here; nothing short of an unlinked task covers that.
         try do
           {entities, mentions, relationships} = extract_fn.(chunk)
-          {:extracted, index, entities, mentions, relationships}
+          {:extracted, index, chunk.id, entities, mentions, relationships}
         catch
           kind, reason -> {:extract_failed, kind, reason, __STACKTRACE__}
         end
@@ -655,15 +685,17 @@ defmodule Arcana.Graph do
         # leaves no half-written chunk behind.
         :erlang.raise(kind, reason, stacktrace)
 
-      {:ok, {:extracted, index, entities, mentions, relationships}}, {entity_id_map, rel_count} ->
+      {:ok, {:extracted, index, chunk_id, entities, mentions, relationships}},
+      {entity_id_map, rel_count} ->
         # Embed entity descriptions for GraphRAG-style entity search.
         # Stays outside the write lock: it can hit a model, and the lock is
         # for DB writes only.
         entities = maybe_embed_entities(entities)
 
-        merged_entity_id_map =
+        {merged_entity_id_map, persisted_relationship_count} =
           persist_chunk_graph(
             collection_id,
+            chunk_id,
             entities,
             mentions,
             relationships,
@@ -674,7 +706,7 @@ defmodule Arcana.Graph do
         # Report progress
         progress_fn.(index, total_chunks)
 
-        {merged_entity_id_map, rel_count + length(relationships)}
+        {merged_entity_id_map, rel_count + persisted_relationship_count}
     end)
   end
 
@@ -685,14 +717,12 @@ defmodule Arcana.Graph do
   #
   # Atomicity here is store-dependent (see GraphStore.with_write_lock/3).
   # The :ecto backend holds the lock inside a transaction, so a failure
-  # anywhere in the trio rolls the whole chunk back. The :memory backend
-  # and custom stores that skip the optional callback just run the trio,
-  # so a failure mid-trio leaves that chunk's graph data half-persisted;
-  # the raise then aborts the build. Nothing downstream cleans that up,
-  # and no caller of build_and_persist/4 treats a failed build as having
-  # left the graph untouched.
+  # anywhere in the trio rolls the whole chunk back. Other backends provide
+  # the same serialization, but may leave partial graph data if their lock
+  # does not also provide transactional rollback.
   defp persist_chunk_graph(
          collection_id,
+         chunk_id,
          entities,
          mentions,
          relationships,
@@ -700,14 +730,27 @@ defmodule Arcana.Graph do
          store_opts
        ) do
     GraphStore.with_write_lock(collection_id, store_opts, fn ->
-      {:ok, new_entity_ids} = GraphStore.persist_entities(collection_id, entities, store_opts)
+      repo = Keyword.fetch!(store_opts, :repo)
 
-      merged_entity_id_map = Map.merge(entity_id_map, new_entity_ids)
+      if repo.get(Arcana.Chunk, chunk_id) do
+        {:ok, new_entity_ids} = GraphStore.persist_entities(collection_id, entities, store_opts)
 
-      :ok = GraphStore.persist_mentions(mentions, merged_entity_id_map, store_opts)
-      :ok = GraphStore.persist_relationships(relationships, merged_entity_id_map, store_opts)
+        merged_entity_id_map = Map.merge(entity_id_map, new_entity_ids)
 
-      merged_entity_id_map
+        :ok = GraphStore.persist_mentions(mentions, merged_entity_id_map, store_opts)
+
+        :ok =
+          GraphStore.persist_relationships(
+            chunk_id,
+            relationships,
+            merged_entity_id_map,
+            store_opts
+          )
+
+        {merged_entity_id_map, length(relationships)}
+      else
+        {entity_id_map, 0}
+      end
     end)
   end
 

@@ -286,7 +286,7 @@ defmodule MyApp.Neo4jGraphStore do
   end
 
   @impl true
-  def persist_relationships(relationships, entity_id_map, opts) do
+  def persist_relationships(chunk_id, relationships, entity_id_map, opts) do
     # Store relationships between entities
     :ok
   end

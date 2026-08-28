@@ -454,6 +454,75 @@ defmodule ArcanaWeb.AskLiveTest do
   end
 
   describe "Loop execution handler" do
+    test "concurrent asks only render telemetry emitted by their own worker", %{conn: conn} do
+      test_pid = self()
+      put_arcana_env(:llm, "zai:test-stub")
+
+      put_arcana_env(:loop_runner, fn ctx, _opts ->
+        send(test_pid, {:loop_worker, ctx.question, self()})
+
+        receive do
+          {:emit_tool_call, query, observer} ->
+            :telemetry.execute(
+              [:arcana, :loop, :tool_call],
+              %{count: 1, history_size: 1},
+              %{
+                tool: :search,
+                args: %{query: query},
+                iteration: 1,
+                summary: "searched",
+                returned_chunk_ids: []
+              }
+            )
+
+            :sys.get_state(observer)
+            send(test_pid, {:tool_call_emitted, self()})
+        end
+
+        receive do
+          :finish ->
+            {:ok,
+             %Arcana.Loop.Context{
+               question: ctx.question,
+               answer: "done",
+               tool_history: [],
+               iterations: 1,
+               terminated_by: :answered,
+               chunks: [],
+               grounding: nil
+             }}
+        end
+      end)
+
+      {:ok, first_view, _html} = live(conn, "/arcana/ask/loop")
+      {:ok, second_view, _html} = live(conn, "/arcana/ask/loop")
+
+      first_view |> form("#ask-form", %{"question" => "first"}) |> render_submit()
+      second_view |> form("#ask-form", %{"question" => "second"}) |> render_submit()
+
+      workers =
+        for _ <- 1..2, into: %{} do
+          assert_receive {:loop_worker, question, worker}
+          {question, worker}
+        end
+
+      send(workers["first"], {:emit_tool_call, "only-first-run", second_view.pid})
+      assert_receive {:tool_call_emitted, first_worker}
+      assert first_worker == workers["first"]
+
+      assert render_until(first_view, "only-first-run") =~ "only-first-run"
+      refute render(second_view) =~ "only-first-run"
+
+      send(workers["first"], :finish)
+      send(workers["second"], {:emit_tool_call, "only-second-run", first_view.pid})
+      assert_receive {:tool_call_emitted, second_worker}
+      assert second_worker == workers["second"]
+
+      assert render_until(second_view, "only-second-run") =~ "only-second-run"
+      refute render(second_view) =~ "only-first-run"
+      send(workers["second"], :finish)
+    end
+
     test "submitting the Loop form with an injected controller runs Loop.run/2", %{conn: conn} do
       # The handle_event for submit checks that :arcana, :llm is configured
       # before running anything. Set a placeholder so the handler proceeds;

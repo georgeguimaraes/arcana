@@ -317,6 +317,37 @@ defmodule Arcana.Pipeline.ReasonTest do
       assert_received {:searched, "Elixir concurrency actors"}
     end
 
+    test "inherits arbitrary backend and auth options from search/2" do
+      test_pid = self()
+
+      searcher = fn question, _collection, opts ->
+        send(test_pid, {:searched_with_opts, question, opts})
+        {:ok, [%{id: question, text: "scoped chunk", score: 0.9}]}
+      end
+
+      ctx =
+        "How does Elixir handle concurrency?"
+        |> Pipeline.new(repo: Arcana.TestRepo, llm: insufficient_then_sufficient_llm())
+        |> Pipeline.search(
+          searcher: searcher,
+          collection: "tenant-a",
+          tenant_id: "tenant-a",
+          auth_token: "signed-token",
+          backend_timeout: 321
+        )
+        |> Pipeline.reason()
+
+      assert ctx.reason_iterations == 1
+
+      assert_received {:searched_with_opts, "Elixir concurrency actors", opts}
+      assert opts[:tenant_id] == "tenant-a"
+      assert opts[:auth_token] == "signed-token"
+      assert opts[:backend_timeout] == 321
+      assert opts[:repo] == Arcana.TestRepo
+      assert opts[:limit] == 5
+      assert opts[:threshold] == 0.5
+    end
+
     test "an explicit searcher on reason/2 beats the inherited one" do
       test_pid = self()
 
@@ -324,19 +355,29 @@ defmodule Arcana.Pipeline.ReasonTest do
         {:ok, [%{id: "1", text: "from search", score: 0.9}]}
       end
 
-      reason_searcher = fn question, _collection, _opts ->
-        send(test_pid, {:reason_searched, question})
+      reason_searcher = fn question, _collection, opts ->
+        send(test_pid, {:reason_searched, question, opts})
         {:ok, [%{id: "2", text: "from reason", score: 0.9}]}
       end
 
       ctx =
         "How does Elixir handle concurrency?"
         |> Pipeline.new(repo: Arcana.TestRepo, llm: insufficient_then_sufficient_llm())
-        |> Pipeline.search(searcher: search_searcher, collection: "explicit-searcher-test")
-        |> Pipeline.reason(searcher: reason_searcher)
+        |> Pipeline.search(
+          searcher: search_searcher,
+          collection: "explicit-searcher-test",
+          original_backend_token: "do-not-forward"
+        )
+        |> Pipeline.reason(
+          searcher: reason_searcher,
+          searcher_opts: [replacement_backend_token: "forward-this"]
+        )
 
       assert ctx.reason_iterations == 1
-      assert_received {:reason_searched, "Elixir concurrency actors"}
+
+      assert_received {:reason_searched, "Elixir concurrency actors", opts}
+      assert opts[:replacement_backend_token] == "forward-this"
+      refute Keyword.has_key?(opts, :original_backend_token)
     end
 
     # search/2 resolved ["tenant-a"], so every follow-up has to stay there.
@@ -359,7 +400,7 @@ defmodule Arcana.Pipeline.ReasonTest do
       ctx =
         "What is the tenant policy?"
         |> Pipeline.new(repo: Arcana.TestRepo, llm: llm)
-        |> Pipeline.search(searcher: searcher, collections: ["tenant-a"])
+        |> Pipeline.search(searcher: searcher, collection: ["tenant-a"])
         |> Pipeline.reason()
 
       assert ctx.reason_iterations == 2
@@ -382,7 +423,7 @@ defmodule Arcana.Pipeline.ReasonTest do
       ctx =
         "What is the Zorblax blueprint?"
         |> Pipeline.new(repo: Arcana.TestRepo, llm: llm, threshold: 0.1)
-        |> Pipeline.search(collections: ["probe-tenant-a"])
+        |> Pipeline.search(collection: ["probe-tenant-a"])
         |> Pipeline.reason()
 
       assert Enum.all?(ctx.results, &(&1.collection == "probe-tenant-a"))

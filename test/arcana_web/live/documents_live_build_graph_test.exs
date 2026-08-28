@@ -18,6 +18,7 @@ defmodule ArcanaWeb.DocumentsLiveBuildGraphTest do
   import Phoenix.LiveViewTest
   import Arcana.ConfigCase, only: [put_arcana_env: 2]
 
+  alias Arcana.Collection
   alias Ecto.Adapters.SQL
 
   defp open_document(conn, doc), do: live(conn, "/arcana/documents?doc=#{doc.id}")
@@ -217,6 +218,26 @@ defmodule ArcanaWeb.DocumentsLiveBuildGraphTest do
 
       assert render(view) =~ "Building...",
              "the first build must still be running"
+    end
+  end
+
+  describe "the open document leaves the allowed scope" do
+    test "the build reauthorizes the document and chunks before starting", %{conn: conn} do
+      {:ok, doc} =
+        Arcana.ingest("Scoped graph content", repo: Repo, collection: "tenant-a")
+
+      put_arcana_env(:graph, enabled: true)
+
+      conn = Plug.Test.init_test_session(conn, allowed_collections: ["tenant-a"])
+      {:ok, view, _html} = live(conn, "/scoped/documents?doc=#{doc.id}")
+
+      collection = Repo.get_by!(Collection, name: "tenant-a")
+      Repo.update!(Collection.changeset(collection, %{name: "renamed-away"}))
+
+      html = click_build_graph(view)
+
+      assert html =~ "This document is no longer available."
+      refute html =~ "Building..."
     end
   end
 

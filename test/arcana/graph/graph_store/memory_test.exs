@@ -143,14 +143,51 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
         %{source: "Alice", target: "Bob", type: "knows"}
       ]
 
-      assert :ok = Memory.persist_relationships(relationships, id_map, pid: pid)
+      assert :ok = Memory.persist_relationships("chunk-1", relationships, id_map, pid: pid)
     end
 
     test "skips relationships with missing entities", %{pid: pid} do
       id_map = %{"Alice" => Ecto.UUID.generate()}
       relationships = [%{source: "Alice", target: "Unknown", type: "knows"}]
 
-      assert :ok = Memory.persist_relationships(relationships, id_map, pid: pid)
+      assert :ok = Memory.persist_relationships("chunk-1", relationships, id_map, pid: pid)
+    end
+
+    test "canonicalizes facts and removes them only after their final evidence is deleted", %{
+      pid: pid
+    } do
+      {:ok, id_map} =
+        Memory.persist_entities(
+          "col-1",
+          [%{name: "Alice", type: "person"}, %{name: "Bob", type: "person"}],
+          pid: pid
+        )
+
+      :ok =
+        Memory.persist_mentions(
+          [
+            %{entity_name: "Alice", chunk_id: "anchor"},
+            %{entity_name: "Bob", chunk_id: "anchor"}
+          ],
+          id_map,
+          pid: pid
+        )
+
+      fact = [%{source: "Alice", target: "Bob", type: "knows"}]
+
+      assert :ok = Memory.persist_relationships("edge-a", fact, id_map, pid: pid)
+      assert :ok = Memory.persist_relationships("edge-a", fact, id_map, pid: pid)
+      assert :ok = Memory.persist_relationships("edge-b", fact, id_map, pid: pid)
+
+      assert [_] = Memory.get_relationships(id_map["alice"], pid: pid)
+
+      assert :ok = Memory.delete_by_chunks(["edge-a"], pid: pid)
+      assert [_] = Memory.get_relationships(id_map["alice"], pid: pid)
+
+      assert :ok = Memory.delete_by_chunks(["edge-b"], pid: pid)
+      assert Memory.get_relationships(id_map["alice"], pid: pid) == []
+      assert {:ok, _} = Memory.get_entity(id_map["alice"], pid: pid)
+      assert {:ok, _} = Memory.get_entity(id_map["bob"], pid: pid)
     end
   end
 
@@ -267,7 +304,7 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
         %{source: "Bob", target: "Charlie", type: "knows"}
       ]
 
-      :ok = Memory.persist_relationships(relationships, id_map, pid: pid)
+      :ok = Memory.persist_relationships("chunk-1", relationships, id_map, pid: pid)
 
       # From Alice, depth 1 should find Bob
       alice_id = id_map["alice"]
@@ -326,6 +363,7 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
 
       :ok =
         Memory.persist_relationships(
+          "chunk-orphan",
           [%{source: "Orphan", target: "Kept", type: "RELATED"}],
           id_map,
           pid: pid
@@ -418,5 +456,69 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       refute comm2.dirty
       assert comm2.entity_ids == [id_map["kept"]]
     end
+  end
+
+  test "with_write_lock serializes the full function per collection", %{pid: pid} do
+    parent = self()
+    collection_id = Ecto.UUID.generate()
+
+    first =
+      Task.async(fn ->
+        Memory.with_write_lock(collection_id, [pid: pid], fn ->
+          send(parent, :first_entered)
+
+          receive do
+            :release_first -> :ok
+          end
+        end)
+      end)
+
+    assert_receive :first_entered
+
+    second =
+      Task.async(fn ->
+        Memory.with_write_lock(collection_id, [pid: pid], fn ->
+          send(parent, :second_entered)
+        end)
+      end)
+
+    refute_receive :second_entered, 50
+    send(first.pid, :release_first)
+    assert :ok = Task.await(first)
+    assert_receive :second_entered, 1_000
+    assert :second_entered = Task.await(second)
+  end
+
+  test "with_write_lock canonicalizes named and pid references" do
+    parent = self()
+    collection_id = Ecto.UUID.generate()
+    name = {:global, {__MODULE__, make_ref()}}
+    pid = start_supervised!({Memory, name: name})
+
+    first =
+      Task.async(fn ->
+        Memory.with_write_lock(collection_id, [name: name], fn ->
+          send(parent, :named_entered)
+
+          receive do
+            :release_named -> :ok
+          end
+        end)
+      end)
+
+    assert_receive :named_entered
+
+    second =
+      Task.async(fn ->
+        Memory.with_write_lock(collection_id, [pid: pid], fn ->
+          send(parent, :pid_entered)
+        end)
+      end)
+
+    refute_receive :pid_entered, 50
+    send(first.pid, :release_named)
+    assert :ok = Task.await(first)
+    assert_receive :pid_entered, 1_000
+    assert :pid_entered = Task.await(second)
   end
 end

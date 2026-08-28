@@ -9,7 +9,8 @@ defmodule Arcana.Loop.Context do
 
     * `:question` - The original user question.
     * `:repo` - Ecto repo to use for retrieval tools.
-    * `:collections` - Collections to scope retrieval tools to (list of names).
+    * `:collections` - Collection scope for retrieval tools. Either `:all`, one
+      name, or a list of names, where `[]` matches no collections.
     * `:messages` - The `ReqLLM.Context` carrying the running conversation.
     * `:chunks` - Accumulated chunks from `search` tool calls (capped via `:chunk_cap`).
     * `:tool_history` - List of `%{tool, args, iteration, summary}` entries in call order.
@@ -32,7 +33,7 @@ defmodule Arcana.Loop.Context do
   @type t :: %__MODULE__{
           question: String.t(),
           repo: module() | nil,
-          collections: [String.t() | nil],
+          collections: Arcana.CollectionScope.input(),
           messages: term() | nil,
           chunks: [map()],
           tool_history: [tool_history_entry()],
@@ -45,7 +46,7 @@ defmodule Arcana.Loop.Context do
 
   defstruct question: nil,
             repo: nil,
-            collections: [nil],
+            collections: :all,
             messages: nil,
             chunks: [],
             tool_history: [],

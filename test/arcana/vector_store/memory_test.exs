@@ -34,6 +34,20 @@ defmodule Arcana.VectorStore.MemoryTest do
       assert :ok = Memory.store(pid, "docs", "chunk-1", embedding, %{text: "doc"})
       assert :ok = Memory.store(pid, "products", "chunk-2", embedding, %{text: "product"})
     end
+
+    test "rejects a different embedding dimension across collections", %{pid: pid} do
+      embedding = List.duplicate(0.5, 384)
+
+      assert :ok = Memory.store(pid, "docs", "chunk-1", embedding, %{text: "doc"})
+
+      assert {:error, {:dimension_mismatch, expected: 384, actual: 768}} =
+               Memory.store(pid, "products", "chunk-2", List.duplicate(0.5, 768), %{
+                 text: "product"
+               })
+
+      assert [%{id: "chunk-1"}] = Memory.search(pid, :all, embedding)
+      assert Process.alive?(pid)
+    end
   end
 
   describe "search/4" do
@@ -106,6 +120,39 @@ defmodule Arcana.VectorStore.MemoryTest do
       assert length(prod_results) == 1
       assert hd(prod_results).id == "prod-1"
     end
+
+    test "searches all collections with a global limit", %{pid: pid} do
+      exact = normalize([1.0, 0.0] ++ List.duplicate(0.0, 382))
+      close = normalize([0.9, 0.1] ++ List.duplicate(0.0, 382))
+      far = normalize([0.0, 1.0] ++ List.duplicate(0.0, 382))
+
+      :ok = Memory.store(pid, "docs", "exact", exact, %{text: "exact match"})
+      :ok = Memory.store(pid, "products", "close", close, %{text: "close match"})
+      :ok = Memory.store(pid, "products", "far", far, %{text: "far match"})
+
+      assert [%{id: "exact"}, %{id: "close"}] = Memory.search(pid, :all, exact, limit: 2)
+    end
+
+    test "returns no results when the query dimension differs", %{pid: pid} do
+      embedding = List.duplicate(0.5, 384)
+      :ok = Memory.store(pid, "docs", "doc", embedding, %{text: "doc"})
+
+      assert [] = Memory.search(pid, :all, List.duplicate(0.5, 768))
+      assert [] = Memory.search(pid, "docs", List.duplicate(0.5, 768))
+      assert Process.alive?(pid)
+    end
+  end
+
+  describe "search_text/4" do
+    test "searches all collections", %{pid: pid} do
+      embedding = List.duplicate(0.5, 384)
+      :ok = Memory.store(pid, "docs", "doc", embedding, %{text: "shared docs term"})
+      :ok = Memory.store(pid, "products", "product", embedding, %{text: "shared product term"})
+      :ok = Memory.store(pid, "other", "other", embedding, %{text: "unrelated"})
+
+      assert results = Memory.search_text(pid, :all, "shared term", limit: 10)
+      assert Enum.sort(Enum.map(results, & &1.id)) == ["doc", "product"]
+    end
   end
 
   describe "delete/3" do
@@ -131,6 +178,14 @@ defmodule Arcana.VectorStore.MemoryTest do
   end
 
   describe "clear/2" do
+    test "does not guess dimensions before the first store", %{pid: pid} do
+      assert :ok = Memory.clear(pid, "docs")
+
+      embedding = List.duplicate(0.5, 768)
+      assert :ok = Memory.store(pid, "docs", "doc-1", embedding, %{text: "doc"})
+      assert [%{id: "doc-1"}] = Memory.search(pid, :all, embedding)
+    end
+
     test "removes all vectors from collection", %{pid: pid} do
       embedding = List.duplicate(0.5, 384)
       :ok = Memory.store(pid, "default", "chunk-1", embedding, %{text: "hello"})
