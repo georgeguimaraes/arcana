@@ -20,7 +20,7 @@ defmodule Arcana.Searcher.Arcana do
   ## Options
 
   - `:repo` - The Ecto repo (required)
-  - `:collection` - Collection name to search
+  - `:collection` - A collection name, or `:all`
   - `:limit` - Maximum chunks to return (default: 5)
   - `:threshold` - Minimum similarity threshold (default: 0.5)
   """
@@ -33,11 +33,14 @@ defmodule Arcana.Searcher.Arcana do
     limit = Keyword.get(opts, :limit, 5)
     threshold = Keyword.get(opts, :threshold, 0.5)
 
-    Arcana.search(question,
+    opts
+    |> Keyword.drop([:collections])
+    |> Keyword.merge(
       repo: repo,
       collection: collection,
       limit: limit,
       threshold: threshold
     )
+    |> then(&Arcana.search(question, &1))
   end
 end

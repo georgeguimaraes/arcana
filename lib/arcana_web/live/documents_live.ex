@@ -13,7 +13,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     import ArcanaWeb.DashboardComponents
 
-    alias Arcana.Document
+    alias Arcana.{CollectionScope, Document}
 
     import Ecto.Query
 
@@ -68,14 +68,18 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       |> load_documents()
     end
 
-    defp load_documents(%{assigns: %{allowed_collections: :all}} = socket) do
+    defp load_documents(socket) do
       page = socket.assigns.page
       per_page = socket.assigns.per_page
 
-      filters = [
-        repo: socket.assigns.repo,
-        collection: socket.assigns.filter_collection
-      ]
+      filters =
+        [repo: socket.assigns.repo]
+        |> Keyword.merge(
+          collection_scope_opts(
+            socket.assigns.allowed_collections,
+            socket.assigns.filter_collection || :all
+          )
+        )
 
       {:ok, total_count} = Arcana.count_documents(filters)
       total_pages = max(1, ceil(total_count / per_page))
@@ -90,77 +94,88 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       )
     end
 
-    # Restricted listing: Arcana.list_documents/1 only takes a single
-    # :collection, so scope by the allowed name list here. Ordering mirrors
-    # Arcana.Documents so pagination behaves identically across modes.
-    defp load_documents(%{assigns: %{allowed_collections: allowed}} = socket) do
-      repo = socket.assigns.repo
-      page = socket.assigns.page
-      per_page = socket.assigns.per_page
-
-      names =
-        case socket.assigns.filter_collection do
-          nil -> allowed
-          name -> Enum.filter([name], &(&1 in allowed))
-        end
-
-      base = from(d in Document, join: c in assoc(d, :collection), where: c.name in ^names)
-
-      total_count = repo.aggregate(base, :count)
-      total_pages = max(1, ceil(total_count / per_page))
-
-      documents =
-        base
-        |> order_by([d], desc: d.inserted_at, desc: d.id)
-        |> limit(^per_page)
-        |> offset(^((page - 1) * per_page))
-        |> preload([:collection])
-        |> repo.all()
-
-      assign(socket,
-        documents: documents,
-        total_pages: total_pages,
-        total_count: total_count
-      )
-    end
-
     defp load_document_detail(socket, doc_id) do
       repo = socket.assigns.repo
+      allowed = socket.assigns.allowed_collections
 
-      query = from(d in Document, where: d.id == ^doc_id, preload: [:collection])
+      case scoped_document(repo, doc_id, allowed) do
+        {:ok, document} -> load_document_chunks(socket, document, doc_id)
+        {:error, :not_found} -> socket
+      end
+    end
 
-      # Forged or bookmarked ids pointing outside the allowed collections
-      # resolve to nothing, same as a missing document.
-      query =
-        case socket.assigns.allowed_collections do
-          :all ->
-            query
+    defp collection_scope_opts(allowed, requested) do
+      requested_scope = CollectionScope.normalize!(requested)
+      allowed_scope = CollectionScope.normalize!(allowed)
 
-          names when is_list(names) ->
-            from(d in query, join: c in assoc(d, :collection), where: c.name in ^names)
-        end
-
-      document = repo.one(query)
-
-      if document do
-        load_document_chunks(socket, document, doc_id)
-      else
-        socket
+      case CollectionScope.intersect(requested_scope, allowed_scope) do
+        :all -> [collection: :all]
+        {:only, names} -> [collections: names]
       end
     end
 
     defp load_document_chunks(socket, document, doc_id) do
       repo = socket.assigns.repo
-
-      chunks =
-        repo.all(
-          from(c in Arcana.Chunk,
-            where: c.document_id == ^doc_id,
-            order_by: c.chunk_index
-          )
-        )
+      chunks = scoped_chunks(repo, doc_id, socket.assigns.allowed_collections)
 
       assign(socket, viewing_document: %{document: document, chunks: chunks})
+    end
+
+    defp scoped_document(repo, doc_id, allowed) do
+      case Ecto.UUID.cast(doc_id) do
+        {:ok, uuid} -> fetch_scoped_document(repo, uuid, allowed)
+        :error -> {:error, :not_found}
+      end
+    end
+
+    defp fetch_scoped_document(repo, document_id, allowed) do
+      document =
+        Document
+        |> where([row], row.id == ^document_id)
+        |> apply_document_scope(allowed)
+        |> preload([:collection])
+        |> repo.one()
+
+      if document, do: {:ok, document}, else: {:error, :not_found}
+    end
+
+    defp scoped_chunks(repo, doc_id, allowed) do
+      Arcana.Chunk
+      |> join(:inner, [chunk], document in assoc(chunk, :document))
+      |> where([chunk], chunk.document_id == ^doc_id)
+      |> apply_chunk_scope(allowed)
+      |> order_by([chunk], chunk.chunk_index)
+      |> repo.all()
+    end
+
+    defp apply_document_scope(query, allowed) do
+      case CollectionScope.normalize!(allowed) do
+        :all ->
+          query
+
+        {:only, []} ->
+          where(query, [document], is_nil(document.id))
+
+        {:only, names} ->
+          query
+          |> join(:inner, [document], collection in assoc(document, :collection))
+          |> where([_document, collection], collection.name in ^names)
+      end
+    end
+
+    defp apply_chunk_scope(query, allowed) do
+      case CollectionScope.normalize!(allowed) do
+        :all ->
+          query
+
+        {:only, []} ->
+          where(query, [chunk, _document], is_nil(chunk.id))
+
+        {:only, names} ->
+          query
+          |> join(:inner, [_chunk, document], collection in assoc(document, :collection))
+          |> where([_chunk, _document, collection], collection.name in ^names)
+      end
     end
 
     # A forged id that isn't a UUID can't match anything, so it's rejected
@@ -299,7 +314,32 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     def handle_event("build_graph", _params, socket) do
-      %{document: document, chunks: chunks} = socket.assigns.viewing_document
+      document_id = socket.assigns.viewing_document.document.id
+
+      case scoped_document(
+             socket.assigns.repo,
+             document_id,
+             socket.assigns.allowed_collections
+           ) do
+        {:ok, document} ->
+          chunks =
+            scoped_chunks(
+              socket.assigns.repo,
+              document_id,
+              socket.assigns.allowed_collections
+            )
+
+          start_graph_build(socket, document, chunks)
+
+        {:error, :not_found} ->
+          {:noreply,
+           socket
+           |> assign(viewing_document: nil)
+           |> put_flash(:error, "This document is no longer available.")}
+      end
+    end
+
+    defp start_graph_build(socket, document, chunks) do
       collection = document.collection
       repo = socket.assigns.repo
       parent = self()

@@ -93,21 +93,32 @@ defmodule Arcana.Collection do
 
   def resolve_ids([nil], _repo, _opts), do: {:ok, nil}
 
+  def resolve_ids([], _repo, _opts), do: {:ok, []}
+
   def resolve_ids(names, repo, opts) when is_list(names) do
     strict? = Keyword.get(opts, :strict, false)
 
-    names
-    |> Enum.reject(&is_nil/1)
-    |> Enum.reduce_while({:ok, []}, fn name, {:ok, acc} ->
-      case resolve_id(name, repo, strict?) do
-        {:ok, nil} -> {:cont, {:ok, acc}}
-        {:ok, id} -> {:cont, {:ok, [id | acc]}}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, ids} -> {:ok, Enum.reverse(ids)}
-      error -> error
+    names = Enum.reject(names, &is_nil/1)
+
+    resolve_collection_ids(names, repo, strict?)
+  end
+
+  defp resolve_collection_ids([], _repo, _strict?), do: {:ok, []}
+
+  defp resolve_collection_ids(names, repo, strict?) do
+    import Ecto.Query
+
+    ids_by_name =
+      from(c in __MODULE__, where: c.name in ^names, select: {c.name, c.id})
+      |> repo.all()
+      |> Map.new()
+
+    case strict? && Enum.find(names, &(not Map.has_key?(ids_by_name, &1))) do
+      missing when is_binary(missing) ->
+        {:error, {:unknown_collection, missing}}
+
+      _ ->
+        {:ok, names |> Enum.map(&Map.get(ids_by_name, &1)) |> Enum.reject(&is_nil/1)}
     end
   end
 

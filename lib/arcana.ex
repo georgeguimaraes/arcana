@@ -119,6 +119,12 @@ defmodule Arcana do
   defdelegate get_document(id, opts), to: Arcana.Documents
 
   @doc """
+  Fetches sparse metadata for published documents in one explicitly scoped read.
+  See `Arcana.Documents.get_document_metadata/2`.
+  """
+  defdelegate get_document_metadata(ids, opts), to: Arcana.Documents
+
+  @doc """
   Deletes a document and all its chunks.
 
   When the graph is enabled, also sweeps the document's collection for

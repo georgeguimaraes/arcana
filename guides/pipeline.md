@@ -181,7 +181,14 @@ ctx
 ctx
 |> Pipeline.search(collections: ["docs", "faq"])
 |> Pipeline.answer()
+
+# Search every collection, or deliberately search none
+Pipeline.search(ctx, collection: :all)
+Pipeline.search(ctx, collections: [])
 ```
+
+`:collection` and `:collections` accept the same scope shapes and are mutually
+exclusive. A single string and a one-element list mean the same thing.
 
 Collection selection priority:
 1. `:collection`/`:collections` option passed to `search/2`

@@ -15,7 +15,7 @@ defmodule Arcana.Search do
 
   require Logger
 
-  alias Arcana.{Collection, Embedder, SearchResult, VectorStore}
+  alias Arcana.{Collection, CollectionScope, Embedder, SearchResult, VectorStore}
   alias Arcana.VectorStore.Pgvector
 
   @valid_modes [:vector, :keyword, :hybrid]
@@ -60,10 +60,13 @@ defmodule Arcana.Search do
     * `:threshold` - Minimum similarity score (default: 0.0)
     * `:mode` - Search mode: `:vector` (default), `:keyword`, or `:hybrid`.
       `:semantic` and `:fulltext` are deprecated aliases.
-    * `:collection` - Filter results to a specific collection by name
+    * `:collection` - Collection scope as `:all`, a collection name, or a list
+      of collection names
+    * `:collections` - Alias for `:collection`. The two options are mutually
+      exclusive.
     * `:strict_collections` - When `true`, an unknown collection name
-      returns `{:error, {:unknown_collection, name}}` instead of searching
-      unscoped. Defaults to `config :arcana, strict_collections: false`.
+      returns `{:error, {:unknown_collection, name}}` instead of matching
+      nothing. Defaults to `config :arcana, strict_collections: false`.
     * `:vector_store` - Override the configured vector store backend
     * `:vector_weight` - Weight for vector scores in hybrid mode (default: 0.5)
     * `:keyword_weight` - Weight for keyword scores in hybrid mode (default: 0.5)
@@ -98,50 +101,59 @@ defmodule Arcana.Search do
     rewriter = Keyword.get(opts, :rewriter)
     vector_store_opt = Keyword.get(opts, :vector_store)
 
-    collections = Collection.names_from_opts(opts)
-
     unless mode in @valid_modes do
       raise ArgumentError,
             "invalid search mode: #{inspect(mode)}. Must be one of #{inspect(@valid_modes)}"
     end
 
-    with {:ok, id_by_name} <- resolve_strict_ids(collections, repo, opts) do
-      do_search_with_telemetry(query, collections, mode, repo, opts, %{
+    with {:ok, scope} <- CollectionScope.from_opts(opts, :all),
+         {:ok, resolved_scope} <- resolve_scope(scope, repo, opts) do
+      do_search_with_telemetry(query, resolved_scope, mode, repo, opts, %{
         reranker: reranker,
         limit: limit,
         source_id: source_id,
         threshold: threshold,
         rewriter: rewriter,
         vector_store_opt: vector_store_opt,
-        id_by_name: id_by_name
+        collection_scope: scope
       })
     end
   end
 
-  # Under strict mode, resolve every named collection up front and keep the
-  # name => id map so backends query by the validated id instead of
-  # re-resolving the name (which could silently widen to a global search if
-  # the collection disappeared in between). Returns {:ok, nil} when strict
-  # is off or the search is unscoped.
-  defp resolve_strict_ids(collections, repo, opts) do
-    if repo && Arcana.Config.strict_collections?(opts) do
-      case Collection.resolve_ids(collections, repo, strict: true) do
-        {:ok, nil} ->
-          {:ok, nil}
+  defp resolve_scope(:all, _repo, _opts), do: {:ok, %{targets: [{:all, nil}], ids: nil}}
 
-        {:ok, ids} ->
-          names = Enum.reject(collections, &is_nil/1)
-          {:ok, names |> Enum.zip(ids) |> Map.new()}
+  defp resolve_scope({:only, names}, nil, _opts) do
+    {:ok, %{targets: Enum.map(names, &{&1, nil}), ids: []}}
+  end
 
-        {:error, _} = error ->
-          error
-      end
-    else
-      {:ok, nil}
+  defp resolve_scope({:only, []}, _repo, _opts), do: {:ok, %{targets: [], ids: []}}
+
+  defp resolve_scope({:only, names}, repo, opts) do
+    import Ecto.Query
+
+    strict? = Arcana.Config.strict_collections?(opts)
+
+    ids_by_name =
+      from(c in Collection, where: c.name in ^names, select: {c.name, c.id})
+      |> repo.all()
+      |> Map.new()
+
+    case strict? && Enum.find(names, &(not Map.has_key?(ids_by_name, &1))) do
+      missing when is_binary(missing) ->
+        {:error, {:unknown_collection, missing}}
+
+      _ ->
+        targets =
+          for name <- names,
+              id = Map.get(ids_by_name, name),
+              not is_nil(id),
+              do: {name, id}
+
+        {:ok, %{targets: targets, ids: Enum.map(targets, &elem(&1, 1))}}
     end
   end
 
-  defp do_search_with_telemetry(query, collections, mode, repo, opts, config) do
+  defp do_search_with_telemetry(query, resolved_scope, mode, repo, opts, config) do
     %{
       reranker: reranker,
       limit: limit,
@@ -149,14 +161,15 @@ defmodule Arcana.Search do
       threshold: threshold,
       rewriter: rewriter,
       vector_store_opt: vector_store_opt,
-      id_by_name: id_by_name
+      collection_scope: collection_scope
     } = config
 
     start_metadata = %{
       query: query,
       repo: repo,
       mode: mode,
-      limit: limit
+      limit: limit,
+      collections: collection_scope
     }
 
     :telemetry.span([:arcana, :search], start_metadata, fn ->
@@ -174,7 +187,6 @@ defmodule Arcana.Search do
         vector_store: vector_store_opt,
         vector_weight: Keyword.get(opts, :vector_weight, 0.5),
         keyword_weight: Keyword.get(opts, :keyword_weight, 0.5),
-        id_by_name: id_by_name,
         # Original opts so backends can pick up their own knobs, such as
         # :hnsw_ef_search for pgvector
         opts: opts
@@ -182,14 +194,14 @@ defmodule Arcana.Search do
 
       retrieval_opts = Keyword.put(opts, :limit, retrieval_limit)
 
-      collection_results = search_collections(collections, mode, search_query, params)
+      collection_results = search_collections(resolved_scope.targets, mode, search_query, params)
 
       search_result =
         if Arcana.Config.graph_enabled?(opts) and repo do
           enhance_with_graph_search(
             collection_results,
             search_query,
-            {collections, id_by_name},
+            resolved_scope.ids,
             repo,
             retrieval_opts
           )
@@ -265,15 +277,13 @@ defmodule Arcana.Search do
     fun.(query, chunks, opts)
   end
 
-  defp search_collections(collections, mode, search_query, params) do
-    Enum.reduce_while(collections, {:ok, []}, fn collection_name, {:ok, acc} ->
-      search_single_collection(mode, search_query, params, collection_name, acc)
+  defp search_collections(targets, mode, search_query, params) do
+    Enum.reduce_while(targets, {:ok, []}, fn target, {:ok, acc} ->
+      search_single_collection(mode, search_query, params, target, acc)
     end)
   end
 
-  defp search_single_collection(mode, search_query, params, collection_name, acc) do
-    collection_id = params.id_by_name && Map.get(params.id_by_name, collection_name)
-
+  defp search_single_collection(mode, search_query, params, {collection_name, collection_id}, acc) do
     params =
       params
       |> Map.put(:collection, collection_name)
@@ -303,10 +313,14 @@ defmodule Arcana.Search do
     {{:error, reason}, %{error: reason}}
   end
 
+  defp enhance_with_graph_search({:ok, _results}, _query, [], _repo, opts) do
+    format_search_results({:ok, []}, Keyword.get(opts, :limit, 10))
+  end
+
   defp enhance_with_graph_search(
          {:ok, vector_results},
          query,
-         {collections, id_by_name},
+         collection_ids,
          repo,
          opts
        ) do
@@ -314,11 +328,6 @@ defmodule Arcana.Search do
     graph_config = Arcana.Graph.config()
     rrf_k = graph_config[:rrf_k] || 60
     rrf_pool = graph_config[:rrf_pool_multiplier] || 2
-
-    # Reuse the ids validated up front under strict mode instead of
-    # re-resolving names (which could pick up a recreated collection).
-    collection_ids =
-      if id_by_name, do: Map.values(id_by_name), else: resolve_collection_ids(collections, repo)
 
     {matcher, matcher_opts} = resolve_entity_matcher(opts, graph_config)
     matcher_opts = matcher_opts |> Keyword.put(:repo, repo) |> Keyword.merge(opts)
@@ -478,14 +487,6 @@ defmodule Arcana.Search do
       end)
     end)
     |> Enum.map(fn {chunk_id, score} -> %{chunk_id: chunk_id, score: score} end)
-  end
-
-  # Strict validation already ran at the entry point, so unknown names can
-  # only appear here in non-strict mode; they resolve to [] which downstream
-  # graph queries treat as "match nothing".
-  defp resolve_collection_ids(collections, repo) do
-    {:ok, ids} = Collection.resolve_ids(collections, repo)
-    ids
   end
 
   defp do_search(:vector, query, params) do

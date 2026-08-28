@@ -157,6 +157,36 @@ defmodule Arcana.SearchTest do
       assert Enum.any?(texts, &String.contains?(&1, "Rust"))
       refute Enum.any?(texts, &String.contains?(&1, "JavaScript"))
     end
+
+    test "accepts a single name through :collections" do
+      {:ok, _} =
+        Arcana.ingest("Ruby belongs in the selected collection",
+          repo: Repo,
+          collection: "single-scope"
+        )
+
+      {:ok, _} =
+        Arcana.ingest("Python belongs elsewhere", repo: Repo, collection: "other-scope")
+
+      assert {:ok, [%{text: text}]} =
+               Arcana.search("belongs", repo: Repo, mode: :keyword, collections: "single-scope")
+
+      assert text =~ "Ruby"
+    end
+
+    test ":all is unscoped and an empty list matches nothing" do
+      {:ok, _} = Arcana.ingest("Alpha scope marker", repo: Repo, collection: "scope-alpha")
+      {:ok, _} = Arcana.ingest("Beta scope marker", repo: Repo, collection: "scope-beta")
+
+      assert {:ok, all_results} =
+               Arcana.search("scope marker", repo: Repo, mode: :keyword, collections: :all)
+
+      assert Enum.sort(Enum.map(all_results, & &1.text)) ==
+               ["Alpha scope marker", "Beta scope marker"]
+
+      assert {:ok, []} =
+               Arcana.search("scope marker", repo: Repo, mode: :keyword, collections: [])
+    end
   end
 
   describe "search/2 result shape" do
@@ -206,10 +236,10 @@ defmodule Arcana.SearchTest do
       end
     end
 
-    test "unknown collection still searches unscoped when strict is off" do
+    test "unknown collection matches nothing when strict is off" do
       {:ok, results} = Arcana.search("Elixir", repo: Repo, collection: "strict-nope")
 
-      refute Enum.empty?(results)
+      assert results == []
     end
 
     test "a single unknown name in a collections list fails the whole search" do

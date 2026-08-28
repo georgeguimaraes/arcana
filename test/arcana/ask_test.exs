@@ -66,6 +66,16 @@ defmodule Arcana.AskTest do
                )
     end
 
+    test "an empty collection scope returns no context", %{llm: llm} do
+      assert {:ok, _answer, []} =
+               Arcana.ask("What are the Daleks?",
+                 repo: Repo,
+                 llm: llm,
+                 collections: [],
+                 graph: true
+               )
+    end
+
     test "uses custom prompt function", %{llm: llm} do
       custom_prompt = fn _question, _context ->
         "Custom system prompt"

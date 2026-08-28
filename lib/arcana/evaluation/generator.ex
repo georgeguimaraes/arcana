@@ -8,8 +8,8 @@ defmodule Arcana.Evaluation.Generator do
 
   import Ecto.Query
 
+  alias Arcana.{CollectionScope, LLM, RetrievalScope}
   alias Arcana.Evaluation.TestCase
-  alias Arcana.{LLM, RetrievalScope}
 
   @default_prompt """
   Given this text chunk from a document, generate a natural question that can ONLY be answered using information in this chunk.
@@ -32,7 +32,9 @@ defmodule Arcana.Evaluation.Generator do
     * `:llm` - LLM implementing Arcana.LLM protocol (required)
     * `:sample_size` - Number of chunks to sample (default: 50)
     * `:source_id` - Limit to chunks from specific source
-    * `:collection` - Limit to chunks from specific collection
+    * `:collection` / `:collections` - `:all`, one collection name, or a list
+      of collection names. The options are mutually exclusive. An empty list
+      samples no chunks.
     * `:prompt` - Custom prompt template (must include {chunk_text})
 
   """
@@ -41,10 +43,10 @@ defmodule Arcana.Evaluation.Generator do
     llm = Keyword.fetch!(opts, :llm)
     sample_size = Keyword.get(opts, :sample_size, 50)
     source_id = Keyword.get(opts, :source_id)
-    collection = Keyword.get(opts, :collection)
+    collection_scope = CollectionScope.from_opts!(opts, :all)
     prompt_template = Keyword.get(opts, :prompt, @default_prompt)
 
-    chunks = sample_chunks(repo, sample_size, source_id, collection)
+    chunks = sample_chunks(repo, sample_size, source_id, collection_scope)
 
     test_cases =
       chunks
@@ -67,7 +69,7 @@ defmodule Arcana.Evaluation.Generator do
   """
   def default_prompt, do: @default_prompt
 
-  defp sample_chunks(repo, sample_size, source_id, collection) do
+  defp sample_chunks(repo, sample_size, source_id, collection_scope) do
     query =
       from([chunk: c] in RetrievalScope.chunks(),
         order_by: fragment("RANDOM()"),
@@ -81,17 +83,18 @@ defmodule Arcana.Evaluation.Generator do
         query
       end
 
-    query =
-      if collection do
-        from([document: d] in query,
-          join: col in assoc(d, :collection),
-          where: col.name == ^collection
-        )
-      else
-        query
-      end
+    query = scope_chunks(query, collection_scope)
 
     repo.all(query)
+  end
+
+  defp scope_chunks(query, :all), do: query
+
+  defp scope_chunks(query, {:only, collection_names}) do
+    from([document: d] in query,
+      join: col in assoc(d, :collection),
+      where: col.name in ^collection_names
+    )
   end
 
   defp generate_question(llm, chunk, prompt_template) do

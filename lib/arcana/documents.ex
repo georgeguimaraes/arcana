@@ -13,7 +13,7 @@ defmodule Arcana.Documents do
 
   import Ecto.Query
 
-  alias Arcana.Document
+  alias Arcana.{CollectionScope, Document, DocumentMetadata, RetrievalScope}
 
   @doc """
   Lists documents, newest first.
@@ -21,8 +21,9 @@ defmodule Arcana.Documents do
   ## Options
 
     * `:repo` - The Ecto repo to use (required unless configured globally)
-    * `:collection` - Filter by collection name. A name that doesn't
-      exist matches nothing.
+    * `:collection` - Filter by one collection name, or use `:all`
+    * `:collections` - Filter by several collection names, or use `:all`.
+      An empty list matches nothing and unknown names never widen the query.
     * `:status` - Filter by status (`:pending`, `:processing`,
       `:completed`, `:failed`)
     * `:source_id` - Filter by source id
@@ -76,18 +77,28 @@ defmodule Arcana.Documents do
   ## Options
 
     * `:repo` - The Ecto repo to use (required unless configured globally)
+    * `:collection` - Limit the lookup to one collection name, or use `:all`
+    * `:collections` - Limit the lookup to several collection names, or use
+      `:all`. An empty list matches nothing.
 
   ## Examples
 
       {:ok, document} = Arcana.get_document(id, repo: MyApp.Repo)
+      {:ok, document} =
+        Arcana.get_document(id, repo: MyApp.Repo, collections: ["support", "api"])
 
   """
   def get_document(id, opts) do
     repo = require_repo!(opts)
+    collection_scope = CollectionScope.from_opts!(opts, :all)
 
     with {:ok, uuid} <- Ecto.UUID.cast(id),
          %Document{} = document <-
-           repo.one(from(d in Document, where: d.id == ^uuid, preload: [:collection])) do
+           Document
+           |> apply_collection_scope(collection_scope)
+           |> where([d], d.id == ^uuid)
+           |> preload([:collection])
+           |> repo.one() do
       {:ok, document}
     else
       # Malformed ids can't match anything, same outcome as a missing row
@@ -95,19 +106,58 @@ defmodule Arcana.Documents do
     end
   end
 
+  @doc """
+  Fetches sparse metadata for several published documents in one query.
+
+  A collection scope is required. Pass `collection: "support"`,
+  `collections: ["support", "api"]`, or an explicit `collection: :all`.
+  Missing IDs, documents outside the scope, and documents that have not
+  completed ingestion are omitted from the returned ID-keyed map. Duplicate
+  IDs are queried once.
+
+  Returns `{:error, {:invalid_document_id, id}}` without querying when any ID
+  is not a valid UUID.
+
+  ## Options
+
+    * `:repo` - The Ecto repo to use (required unless configured globally)
+    * `:collection` - One collection name, or `:all`
+    * `:collections` - Several collection names, or `:all`
+
+  """
+  @spec get_document_metadata([Ecto.UUID.t()], keyword()) ::
+          {:ok, %{optional(Ecto.UUID.t()) => DocumentMetadata.t()}}
+          | {:error, {:invalid_document_id, term()}}
+  def get_document_metadata(ids, opts) when is_list(ids) do
+    repo = require_repo!(opts)
+    require_collection_scope!(opts)
+    collection_scope = CollectionScope.from_opts!(opts, :all)
+
+    with {:ok, ids} <- cast_document_ids(ids) do
+      fetch_document_metadata(ids, collection_scope, repo)
+    end
+  end
+
+  def get_document_metadata(ids, _opts) do
+    raise ArgumentError, ":document_ids must be a list, got: #{inspect(ids)}"
+  end
+
   defp base_query(opts) do
+    collection_scope = CollectionScope.from_opts!(opts, :all)
+
     Document
-    |> filter_collection(Keyword.get(opts, :collection))
+    |> apply_collection_scope(collection_scope)
     |> filter_status(Keyword.get(opts, :status))
     |> filter_source_id(Keyword.get(opts, :source_id))
   end
 
-  defp filter_collection(query, nil), do: query
+  defp apply_collection_scope(query, :all), do: query
+  defp apply_collection_scope(query, {:only, []}), do: from(d in query, where: false)
 
-  defp filter_collection(query, collection_name) do
+  defp apply_collection_scope(query, {:only, collection_names}) do
     from(d in query,
       join: c in assoc(d, :collection),
-      where: c.name == ^collection_name
+      where: c.name in ^collection_names
     )
   end
 
@@ -118,6 +168,44 @@ defmodule Arcana.Documents do
   defp filter_source_id(query, source_id), do: from(d in query, where: d.source_id == ^source_id)
 
   defp require_repo!(opts), do: Arcana.Config.require_repo!(opts)
+
+  defp fetch_document_metadata([], _collection_scope, _repo), do: {:ok, %{}}
+
+  defp fetch_document_metadata(ids, collection_scope, repo) do
+    metadata =
+      RetrievalScope.documents()
+      |> apply_collection_scope(collection_scope)
+      |> where([document: d], d.id in ^ids)
+      |> select([document: d], %{id: d.id, source_id: d.source_id, metadata: d.metadata})
+      |> repo.all()
+      |> Map.new(fn attributes ->
+        document = struct!(DocumentMetadata, attributes)
+        {document.id, document}
+      end)
+
+    {:ok, metadata}
+  end
+
+  defp require_collection_scope!(opts) do
+    unless Keyword.has_key?(opts, :collection) or Keyword.has_key?(opts, :collections) do
+      raise ArgumentError,
+            "get_document_metadata/2 requires an explicit :collection or :collections scope"
+    end
+  end
+
+  defp cast_document_ids(ids) do
+    ids
+    |> Enum.reduce_while({:ok, []}, fn id, {:ok, cast_ids} ->
+      case Ecto.UUID.cast(id) do
+        {:ok, uuid} -> {:cont, {:ok, [uuid | cast_ids]}}
+        :error -> {:halt, {:error, {:invalid_document_id, id}}}
+      end
+    end)
+    |> case do
+      {:ok, cast_ids} -> {:ok, cast_ids |> Enum.reverse() |> Enum.uniq()}
+      {:error, _reason} = error -> error
+    end
+  end
 
   defp validate_non_neg_integer!(opts, key, default) do
     case Keyword.get(opts, key, default) do

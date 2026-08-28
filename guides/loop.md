@@ -93,8 +93,8 @@ Arcana.Loop.new(question, opts) |> Arcana.Loop.run(opts)
 | Option | Default | Description |
 |---|---|---|
 | `:repo` | `Arcana.Config.get(opts, :repo)` | Ecto repo for retrieval tools |
-| `:collection` | `nil` | Lock the loop to a single collection. The controller physically cannot search anything else: the tool schema won't even expose a collection parameter. See "Collections: lock vs pick" below. |
-| `:collections` | `[nil]` | Allowed set of collection names the controller may pick from per search call. When 2 or more, the search tool gains an optional `collection` parameter the controller uses to narrow the search. Overrides `:collection`. |
+| `:collection` | `:all` | `:all`, one collection name, or a list of names. A single name locks the loop to it. |
+| `:collections` | `:all` | Alias for `:collection`. When 2 or more names are present, the search tool gains an optional `collection` parameter the controller uses to narrow the search. The two options are mutually exclusive. An empty list searches nothing. |
 
 `run/2` options:
 
@@ -164,9 +164,16 @@ list), the search tool returns a friendly error as the tool result
 The loop doesn't crash; the controller sees the error on its next
 turn and can correct.
 
-**Unrestricted.** Pass neither option. The search tool has no
-`collection` parameter. `Arcana.search/2` is called without a
-collection filter, hitting whatever default behavior is configured.
+**Unrestricted.** Pass neither option, or pass `:all` explicitly. The
+search tool has no `collection` parameter. `Arcana.search/2` receives
+`collection: :all` and searches the full corpus.
+
+```elixir
+Arcana.Loop.new(question, repo: Repo, collection: :all)
+```
+
+Pass `[]` when the caller is authorized for no collections. The loop keeps
+that match-nothing scope through every tool call.
 
 ```elixir
 Arcana.Loop.new(question, repo: Repo)

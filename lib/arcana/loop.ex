@@ -138,30 +138,42 @@ defmodule Arcana.Loop do
   ## Options
 
     * `:repo` - Ecto repo for retrieval tools. Falls back to `:repo` global config.
-    * `:collection` - Single collection name (becomes `[collection]`).
-    * `:collections` - List of collection names. Takes precedence over `:collection`.
+    * `:collection` - Collection scope as `:all`, a name, or a list of names.
+    * `:collections` - Alias for `:collection`. The two options are mutually exclusive.
   """
   @spec new(String.t(), keyword()) :: Context.t()
   def new(question, opts \\ []) when is_binary(question) do
     repo = Arcana.Config.get(opts, :repo)
 
-    collections =
-      case Keyword.fetch(opts, :collections) do
-        {:ok, list} ->
-          list
-
-        :error ->
-          case Keyword.fetch(opts, :collection) do
-            {:ok, name} -> [name]
-            :error -> [nil]
-          end
-      end
+    collections = normalize_collection_scope(opts)
 
     %Context{
       question: question,
       repo: repo,
       collections: collections
     }
+  end
+
+  # `[nil]` was the old internal marker for unrestricted retrieval. Keep
+  # accepting it at this boundary so existing stored contexts and callers do
+  # not become accidentally narrower while the public contract moves to :all.
+  defp normalize_collection_scope(opts) do
+    opts =
+      opts
+      |> normalize_legacy_scope(:collection)
+      |> normalize_legacy_scope(:collections)
+
+    case Arcana.CollectionScope.from_opts!(opts, :all) do
+      :all -> :all
+      {:only, names} -> names
+    end
+  end
+
+  defp normalize_legacy_scope(opts, key) do
+    case Keyword.fetch(opts, key) do
+      {:ok, [nil]} -> Keyword.put(opts, key, :all)
+      _ -> opts
+    end
   end
 
   @doc """

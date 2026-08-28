@@ -12,7 +12,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     import Ecto.Query
     import ArcanaWeb.DashboardComponents
 
-    alias Arcana.Document
+    alias Arcana.CollectionScope
     alias Arcana.Graph.Entity
     alias ArcanaWeb.ChunkResultsComponent
 
@@ -262,22 +262,28 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       end
     end
 
-    # Resolves the user's collection selection against the allowed set.
-    # Unrestricted dashboards pass the selection through untouched ([] keeps
-    # today's semantics). Restricted ones fail closed: an empty allowed set
-    # refuses every ask, no selection means "all allowed collections", and a
-    # selection naming anything outside the allowed set is rejected whole.
-    #
-    # The non-list clause comes first so a forged scalar or map selection is
-    # rejected rather than blowing up in Enum.all?/2 (or slipping through
-    # the :all clause untouched).
     defp resolve_ask_collections(requested, _allowed) when not is_list(requested), do: :error
-    defp resolve_ask_collections(requested, :all), do: {:ok, requested}
-    defp resolve_ask_collections(_requested, []), do: :error
-    defp resolve_ask_collections([], allowed), do: {:ok, allowed}
 
     defp resolve_ask_collections(requested, allowed) do
-      if Enum.all?(requested, &(&1 in allowed)), do: {:ok, requested}, else: :error
+      requested = Enum.reject(requested, &(&1 == ""))
+      requested = if requested == [], do: :all, else: requested
+
+      case effective_collection_scope(allowed, requested) do
+        [] -> :error
+        scope -> {:ok, scope}
+      end
+    rescue
+      ArgumentError -> :error
+    end
+
+    defp effective_collection_scope(allowed, requested) do
+      requested_scope = CollectionScope.normalize!(requested)
+      allowed_scope = CollectionScope.normalize!(allowed)
+
+      case CollectionScope.intersect(requested_scope, allowed_scope) do
+        :all -> :all
+        {:only, names} -> names
+      end
     end
 
     defp ask_loading_label(:advanced, _step, _phase), do: "Generating answer..."
@@ -372,12 +378,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         :telemetry.detach(loop_handler_id)
       end
 
-      # Carries both halves of the scoping decision into the task: what the
-      # user picked, and whether this dashboard is restricted at all (which
-      # decides whether retrieval runs under :strict_collections).
       scope = %{
         collections: selected_collections,
-        allowed: socket.assigns.allowed_collections
+        allowed: selected_collections
       }
 
       task_context = %{
@@ -432,8 +435,15 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       attach_pipeline_progress(handler_id, parent, worker, run_ref, pipeline_steps, params)
       attach_trace_progress(trace_handler_id, parent, worker, run_ref, pipeline_steps)
       attach_loop_progress(loop_handler_id, parent, worker, run_ref)
+
       run_ask(sub_tab, question, repo, llm, collections, params, scope)
+      |> attach_collection_scope(scope.collections)
     end
+
+    defp attach_collection_scope({:ok, context}, collection_scope),
+      do: {:ok, Map.put(context, :collection_scope, collection_scope)}
+
+    defp attach_collection_scope(result, _collection_scope), do: result
 
     defp pipeline_steps do
       [
@@ -773,7 +783,16 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       do: {:noreply, socket}
 
     defp finish_ask(socket, {:ok, ctx}) do
-      ctx = Map.put(ctx, :document_titles, load_document_titles(ctx, socket.assigns.repo))
+      collection_scope =
+        socket.assigns.allowed_collections
+        |> effective_collection_scope(Map.get(ctx, :collection_scope, :all))
+
+      ctx =
+        Map.put(
+          ctx,
+          :document_titles,
+          load_document_titles(ctx, socket.assigns.repo, collection_scope)
+        )
 
       assign(socket,
         ask_running: false,
@@ -797,7 +816,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     # sub-tabs put chunks under :results, so one helper covers everything.
     # Falls back to an empty map on any error — the component already
     # degrades to a shortened UUID when a title is missing.
-    defp load_document_titles(%{results: chunks}, repo)
+    defp load_document_titles(%{results: chunks}, repo, collection_scope)
          when is_list(chunks) and not is_nil(repo) do
       ids =
         chunks
@@ -811,16 +830,29 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
         ids ->
           try do
-            from(d in Document, where: d.id in ^ids, select: {d.id, d.metadata})
-            |> repo.all()
-            |> Map.new(fn {id, metadata} -> {id, extract_title(metadata)} end)
+            opts =
+              [repo: repo]
+              |> Keyword.merge(collection_scope_opts(collection_scope))
+
+            case Arcana.get_document_metadata(ids, opts) do
+              {:ok, metadata_by_id} ->
+                Map.new(metadata_by_id, fn {id, document} ->
+                  {id, extract_title(document.metadata)}
+                end)
+
+              {:error, _reason} ->
+                %{}
+            end
           rescue
             _ -> %{}
           end
       end
     end
 
-    defp load_document_titles(_ctx, _repo), do: %{}
+    defp load_document_titles(_ctx, _repo, _collection_scope), do: %{}
+
+    defp collection_scope_opts(:all), do: [collection: :all]
+    defp collection_scope_opts(names) when is_list(names), do: [collections: names]
 
     defp extract_title(nil), do: nil
 
@@ -916,17 +948,13 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       Arcana.Config.get_env(:loop_runner) || (&Arcana.Loop.run/2)
     end
 
-    # Arcana.Loop.new/2 (and Arcana.search, Arcana.ask, Arcana.Pipeline.new)
-    # all normalize `:collection` and `:collections` to the same internal
-    # representation, so we can always pass the plural form and let the
-    # library sort it out.
-    defp maybe_put_collection_opt(opts, []), do: opts
+    # Pass every run's effective scope explicitly. In particular, [] must
+    # stay "no collections" and :all must stay unrestricted.
+    defp maybe_put_collection_opt(opts, :all), do: Keyword.put(opts, :collection, :all)
     defp maybe_put_collection_opt(opts, list), do: Keyword.put(opts, :collections, list)
 
-    # Restricted dashboards retrieve strictly: an allowed collection that
-    # doesn't exist (never created, or deleted mid-session) has to error out
-    # instead of resolving to "no filter", which would widen retrieval to
-    # every collection. Unrestricted dashboards keep the library default.
+    # Restricted dashboards keep strict resolution so a collection deleted
+    # mid-run is reported instead of quietly producing a partial answer.
     defp maybe_put_strict_opt(opts, :all), do: opts
 
     defp maybe_put_strict_opt(opts, allowed) when is_list(allowed),
@@ -992,13 +1020,17 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp run_pipeline_ask(question, repo, llm, all_collections, opts) do
       alias Arcana.Pipeline
 
-      all_collection_names = Enum.map(all_collections, & &1.name)
-      search_opts = build_search_opts(opts, all_collection_names)
+      available_collection_names =
+        all_collections
+        |> Enum.map(& &1.name)
+        |> collection_names_in_scope(Keyword.fetch!(opts, :collections))
+
+      search_opts = build_search_opts(opts, available_collection_names)
 
       Pipeline.new(question, repo: repo, llm: llm)
       |> maybe_gate(opts)
       |> maybe_rewrite(opts)
-      |> maybe_select(opts, all_collection_names)
+      |> maybe_select(opts, available_collection_names)
       |> maybe_expand(opts)
       |> maybe_decompose(opts)
       |> Pipeline.search(search_opts)
@@ -1010,6 +1042,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     rescue
       e -> {:error, Exception.message(e)}
     end
+
+    defp collection_names_in_scope(names, :all), do: names
+    defp collection_names_in_scope(names, scope), do: Enum.filter(names, &(&1 in scope))
 
     defp maybe_gate(ctx, opts) do
       if Keyword.get(opts, :use_gate, false), do: Arcana.Pipeline.gate(ctx), else: ctx
@@ -1118,15 +1153,12 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       end
     end
 
-    defp add_collection_opts(opts, []), do: opts
+    defp add_collection_opts(opts, :all), do: Keyword.put(opts, :collection, :all)
     defp add_collection_opts(opts, list), do: Keyword.put(opts, :collections, list)
 
-    # `Arcana.Pipeline.search/2` builds its own searcher opts and drops
-    # everything else, so :strict_collections can't just ride along like it
-    # does on the advanced and loop paths. Swapping in an explicit searcher
-    # is the supported hook: it re-checks the collection against the allowed
-    # set (the LLM-select step can name anything) and searches strictly, so
-    # a missing collection returns an error instead of widening.
+    # Keep an authorization check around LLM-selected collection names. The
+    # selector can return a name outside the offered set, so this fence checks
+    # it again before strict retrieval.
     defp maybe_put_strict_searcher(opts, :all), do: opts
 
     defp maybe_put_strict_searcher(opts, allowed) when is_list(allowed) do

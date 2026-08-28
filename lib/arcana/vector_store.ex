@@ -69,6 +69,8 @@ defmodule Arcana.VectorStore do
 
   alias Arcana.VectorStore.{Memory, Pgvector}
 
+  @type search_scope :: :all | String.t()
+
   @doc """
   Stores a vector with its id and metadata in a collection.
   """
@@ -78,17 +80,22 @@ defmodule Arcana.VectorStore do
   @doc """
   Searches for similar vectors in a collection (semantic search).
 
+  The scope is either one collection name or `:all`. Implementations must
+  return no results for an unknown name rather than widening it to `:all`.
+
   Returns a list of results with `:id`, `:metadata`, and `:score` keys.
   """
-  @callback search(binary(), list(), opts :: keyword()) :: [map()]
+  @callback search(search_scope(), list(), opts :: keyword()) :: [map()]
 
   @doc """
   Searches for matching text in a collection (fulltext search).
 
+  The scope has the same `:all` and unknown-name semantics as `search/3`.
+
   Returns a list of results with `:id`, `:metadata`, and `:score` keys.
   Score represents relevance based on term matching.
   """
-  @callback search_text(binary(), query :: String.t(), opts :: keyword()) :: [map()]
+  @callback search_text(search_scope(), query :: String.t(), opts :: keyword()) :: [map()]
 
   @doc """
   Deletes a vector from a collection.
@@ -163,6 +170,9 @@ defmodule Arcana.VectorStore do
 
       # Use global config
       VectorStore.search("products", query_embedding, limit: 10)
+
+      # Search every collection. Custom backends must implement this scope.
+      VectorStore.search(:all, query_embedding, limit: 10)
 
       # Override with memory backend
       VectorStore.search("products", query_embedding,

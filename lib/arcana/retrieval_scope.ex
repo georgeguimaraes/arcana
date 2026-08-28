@@ -7,6 +7,14 @@ defmodule Arcana.RetrievalScope do
   alias Arcana.Graph.{Community, Entity, EntityMention, Relationship, RelationshipEvidence}
 
   @doc false
+  def documents do
+    from(d in Document,
+      as: :document,
+      where: d.status == :completed
+    )
+  end
+
+  @doc false
   def chunks do
     from(c in Chunk,
       as: :chunk,

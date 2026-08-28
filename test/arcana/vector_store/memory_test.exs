@@ -106,6 +106,30 @@ defmodule Arcana.VectorStore.MemoryTest do
       assert length(prod_results) == 1
       assert hd(prod_results).id == "prod-1"
     end
+
+    test "searches all collections with a global limit", %{pid: pid} do
+      exact = normalize([1.0, 0.0] ++ List.duplicate(0.0, 382))
+      close = normalize([0.9, 0.1] ++ List.duplicate(0.0, 382))
+      far = normalize([0.0, 1.0] ++ List.duplicate(0.0, 382))
+
+      :ok = Memory.store(pid, "docs", "exact", exact, %{text: "exact match"})
+      :ok = Memory.store(pid, "products", "close", close, %{text: "close match"})
+      :ok = Memory.store(pid, "products", "far", far, %{text: "far match"})
+
+      assert [%{id: "exact"}, %{id: "close"}] = Memory.search(pid, :all, exact, limit: 2)
+    end
+  end
+
+  describe "search_text/4" do
+    test "searches all collections", %{pid: pid} do
+      embedding = List.duplicate(0.5, 384)
+      :ok = Memory.store(pid, "docs", "doc", embedding, %{text: "shared docs term"})
+      :ok = Memory.store(pid, "products", "product", embedding, %{text: "shared product term"})
+      :ok = Memory.store(pid, "other", "other", embedding, %{text: "unrelated"})
+
+      assert results = Memory.search_text(pid, :all, "shared term", limit: 10)
+      assert Enum.sort(Enum.map(results, & &1.id)) == ["doc", "product"]
+    end
   end
 
   describe "delete/3" do

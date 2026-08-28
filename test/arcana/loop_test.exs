@@ -141,6 +141,15 @@ defmodule Arcana.LoopTest do
       refute :collection in param_names
     end
 
+    test "canonical public inputs build the expected search tool" do
+      for scope <- [:all, "docs", []] do
+        search = Enum.find(Tools.default(scope), &(&1.name == "search"))
+        param_names = Enum.map(search.parameter_schema, &elem(&1, 0))
+
+        refute :collection in param_names
+      end
+    end
+
     test "multi-collection context: search tool gains :collection param listing choices" do
       tools = Tools.default(["docs", "wiki", "changelog"])
       search = Enum.find(tools, &(&1.name == "search"))
@@ -162,6 +171,66 @@ defmodule Arcana.LoopTest do
   end
 
   describe "Tools.execute search collection arg" do
+    test ":all context explicitly searches every collection" do
+      search_fn = fn _q, opts ->
+        send(self(), {:search_opts, opts})
+        {:ok, []}
+      end
+
+      ctx = %Context{repo: nil, collections: :all}
+
+      Tools.execute(ctx, "search", %{query: "q"}, search_fn: search_fn)
+
+      assert_received {:search_opts, opts}
+      assert opts[:collection] == :all
+    end
+
+    test "legacy [nil] context still searches every collection" do
+      search_fn = fn _q, opts ->
+        send(self(), {:search_opts, opts})
+        {:ok, []}
+      end
+
+      ctx = %Context{repo: nil, collections: [nil]}
+
+      Tools.execute(ctx, "search", %{query: "q"}, search_fn: search_fn)
+
+      assert_received {:search_opts, opts}
+      assert opts[:collection] == :all
+    end
+
+    test "extra search options cannot override the context scope" do
+      search_fn = fn _q, opts ->
+        send(self(), {:search_opts, opts})
+        {:ok, []}
+      end
+
+      ctx = %Context{repo: nil, collections: ["allowed"]}
+
+      Tools.execute(ctx, "search", %{query: "q"},
+        search_fn: search_fn,
+        search_opts: [collection: :all, tenant_id: "tenant-a"]
+      )
+
+      assert_received {:search_opts, opts}
+      assert opts[:collection] == "allowed"
+      assert opts[:tenant_id] == "tenant-a"
+    end
+
+    test "empty context preserves the match-nothing scope" do
+      search_fn = fn _q, opts ->
+        send(self(), {:search_opts, opts})
+        {:ok, []}
+      end
+
+      ctx = %Context{repo: nil, collections: []}
+
+      Tools.execute(ctx, "search", %{query: "q"}, search_fn: search_fn)
+
+      assert_received {:search_opts, opts}
+      assert opts[:collections] == []
+    end
+
     test "multi-collection ctx + no collection arg → searches across all" do
       search_fn = fn _q, opts ->
         send(self(), {:search_opts, opts})
@@ -227,6 +296,20 @@ defmodule Arcana.LoopTest do
       assert_received {:search_opts, opts}
       assert opts[:collection] == "locked"
     end
+
+    test "a context carrying the public string shape locks that collection" do
+      search_fn = fn _q, opts ->
+        send(self(), {:search_opts, opts})
+        {:ok, []}
+      end
+
+      ctx = %Context{repo: nil, collections: "locked"}
+
+      Tools.execute(ctx, "search", %{query: "q"}, search_fn: search_fn)
+
+      assert_received {:search_opts, opts}
+      assert opts[:collection] == "locked"
+    end
   end
 
   describe "SystemPrompt.default/1 collections section" do
@@ -252,6 +335,11 @@ defmodule Arcana.LoopTest do
 
       refute prompt =~ "# Collections"
     end
+
+    test "canonical unrestricted and empty scopes omit the Collections section" do
+      refute SystemPrompt.default(collections: :all) =~ "# Collections"
+      refute SystemPrompt.default(collections: []) =~ "# Collections"
+    end
   end
 
   describe "new/2" do
@@ -268,6 +356,24 @@ defmodule Arcana.LoopTest do
     test "stores collections list when given" do
       ctx = Loop.new("question", collections: ["a", "b"])
       assert ctx.collections == ["a", "b"]
+    end
+
+    test "normalizes every public collection scope shape" do
+      assert Loop.new("question").collections == :all
+      assert Loop.new("question", collection: :all).collections == :all
+      assert Loop.new("question", collection: "a").collections == ["a"]
+      assert Loop.new("question", collection: ["a", "b"]).collections == ["a", "b"]
+      assert Loop.new("question", collections: []).collections == []
+      assert Loop.new("question", collections: [nil]).collections == :all
+      assert Loop.new("question", collection: [nil]).collections == :all
+    end
+
+    test "rejects conflicting or invalid collection scopes" do
+      assert_raise ArgumentError, fn ->
+        Loop.new("question", collection: "a", collections: ["b"])
+      end
+
+      assert_raise ArgumentError, fn -> Loop.new("question", collection: nil) end
     end
   end
 
@@ -373,6 +479,28 @@ defmodule Arcana.LoopTest do
   end
 
   describe "run/2 search tool" do
+    test "an unrestricted loop forwards the explicit all scope" do
+      test_pid = self()
+
+      search_fn = fn "anything", opts ->
+        send(test_pid, {:unrestricted_search_opts, opts})
+        {:ok, []}
+      end
+
+      controller =
+        scripted_controller([
+          tool_call_response([tool_call("search", %{"query" => "anything"}, "c1")]),
+          tool_call_response([tool_call("answer", %{"text" => "done"}, "c2")])
+        ])
+
+      {:ok, _ctx} =
+        Loop.new("question")
+        |> Loop.run(controller_llm: controller, search_fn: search_fn)
+
+      assert_received {:unrestricted_search_opts, opts}
+      assert opts[:collection] == :all
+    end
+
     test "search tool calls a stub search_fn and accumulates chunks" do
       search_fn = fn "ren and stimpy", _opts ->
         {:ok,

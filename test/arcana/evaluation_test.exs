@@ -90,6 +90,36 @@ defmodule Arcana.EvaluationTest do
       assert test_cases == []
     end
 
+    test "accepts many collections and treats an empty list as no chunks" do
+      for {collection, content} <- [
+            {"generator-a", "alpha generator content"},
+            {"generator-b", "bravo generator content"},
+            {"generator-outside", "outside generator content"}
+          ] do
+        {:ok, _document} = Arcana.ingest(content, repo: Repo, collection: collection)
+      end
+
+      llm = fn _prompt, _context -> {:ok, "Generated question?"} end
+
+      assert {:ok, test_cases} =
+               Evaluation.generate_test_cases(
+                 repo: Repo,
+                 llm: llm,
+                 sample_size: 10,
+                 collections: ["generator-a", "generator-b", "missing"]
+               )
+
+      assert length(test_cases) == 2
+
+      assert {:ok, []} =
+               Evaluation.generate_test_cases(
+                 repo: Repo,
+                 llm: llm,
+                 sample_size: 10,
+                 collections: []
+               )
+    end
+
     test "samples only chunks from completed documents" do
       {:ok, collection} = Collection.get_or_create("evaluation-published-only", Repo)
 
@@ -181,6 +211,14 @@ defmodule Arcana.EvaluationTest do
       Repo.delete_all(TestCase)
 
       assert {:error, :no_test_cases} = Evaluation.run(repo: Repo)
+    end
+
+    test "normalizes one and no-collection run scopes", %{test_cases: _test_cases} do
+      assert {:ok, run} = Evaluation.run(repo: Repo, collection: "default")
+      assert run.config.collections == ["default"]
+
+      assert {:error, :no_test_cases} = Evaluation.run(repo: Repo, collections: [])
+      assert {:error, :no_test_cases} = Evaluation.run(repo: Repo, collection: "missing")
     end
 
     test "saves full Arcana config in run", %{test_cases: _test_cases} do
@@ -400,6 +438,48 @@ defmodule Arcana.EvaluationTest do
 
       assert length(test_cases) == 1
       assert hd(test_cases).question == "Test question?"
+    end
+
+    test "accepts all public collection scope shapes" do
+      for {collection, content, question} <- [
+            {"evaluation-a", "alpha evaluation content", "Alpha?"},
+            {"evaluation-b", "bravo evaluation content", "Bravo?"}
+          ] do
+        {:ok, document} = Arcana.ingest(content, repo: Repo, collection: collection)
+        chunk = Repo.get_by!(Chunk, document_id: document.id)
+
+        {:ok, _test_case} =
+          Evaluation.create_test_case(
+            repo: Repo,
+            question: question,
+            relevant_chunk_ids: [chunk.id]
+          )
+      end
+
+      assert [%{question: "Alpha?"}] =
+               Evaluation.list_test_cases(repo: Repo, collection: "evaluation-a")
+
+      assert [%{question: "Alpha?"}] =
+               Evaluation.list_test_cases(repo: Repo, collections: "evaluation-a")
+
+      assert 2 ==
+               Evaluation.count_test_cases(
+                 repo: Repo,
+                 collection: ["evaluation-a", "evaluation-b", "missing"]
+               )
+
+      assert [] == Evaluation.list_test_cases(repo: Repo, collections: [])
+      assert 2 == Evaluation.count_test_cases(repo: Repo, collection: :all)
+    end
+
+    test "rejects conflicting and malformed collection scopes" do
+      assert_raise ArgumentError, ~r/cannot be used together/, fn ->
+        Evaluation.list_test_cases(repo: Repo, collection: "a", collections: ["b"])
+      end
+
+      assert_raise ArgumentError, ~r/collection scope must be/, fn ->
+        Evaluation.list_test_cases(repo: Repo, collections: ["a", nil])
+      end
     end
   end
 

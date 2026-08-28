@@ -90,7 +90,7 @@ defmodule Arcana.VectorStore.Memory do
   ## Parameters
 
     * `server` - The GenServer pid or name
-    * `collection` - The collection name to search in
+    * `collection` - A collection name, or `:all` to search every collection
     * `query_embedding` - The query vector as a list of floats
     * `opts` - Search options
       * `:limit` - Maximum number of results to return (default: 10)
@@ -115,7 +115,7 @@ defmodule Arcana.VectorStore.Memory do
   ## Parameters
 
     * `server` - The GenServer pid or name
-    * `collection` - The collection name to search in
+    * `collection` - A collection name, or `:all` to search every collection
     * `query_text` - The query string
     * `opts` - Search options
       * `:limit` - Maximum number of results to return (default: 10)
@@ -215,10 +215,11 @@ defmodule Arcana.VectorStore.Memory do
     limit = Keyword.get(opts, :limit, 10)
 
     results =
-      case get_in(state, [:collections, collection]) do
-        nil -> []
-        collection_data -> search_collection(collection_data, query_embedding, limit)
-      end
+      state.collections
+      |> collections_for_search(collection)
+      |> Enum.flat_map(&search_collection(&1, query_embedding, limit))
+      |> Enum.sort_by(& &1.score, :desc)
+      |> Enum.take(limit)
 
     {:reply, results, state}
   end
@@ -228,10 +229,11 @@ defmodule Arcana.VectorStore.Memory do
     limit = Keyword.get(opts, :limit, 10)
 
     results =
-      case get_in(state, [:collections, collection]) do
-        nil -> []
-        collection_data -> search_text_collection(collection_data, query_text, limit)
-      end
+      state.collections
+      |> collections_for_search(collection)
+      |> Enum.flat_map(&search_text_collection(&1, query_text, limit))
+      |> Enum.sort_by(& &1.score, :desc)
+      |> Enum.take(limit)
 
     {:reply, results, state}
   end
@@ -271,6 +273,17 @@ defmodule Arcana.VectorStore.Memory do
   end
 
   # Private Functions
+
+  defp collections_for_search(collections, collection) when collection in [:all, nil] do
+    Map.values(collections)
+  end
+
+  defp collections_for_search(collections, collection) do
+    case Map.fetch(collections, collection) do
+      {:ok, collection_data} -> [collection_data]
+      :error -> []
+    end
+  end
 
   defp ensure_dimensions(%{dimensions: nil} = state, dims) do
     %{state | dimensions: dims}

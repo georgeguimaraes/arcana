@@ -120,6 +120,41 @@ defmodule Arcana.Pipeline.SearchTest do
       assert "rust-docs" in collections
     end
 
+    test "supports all and none while forwarding retrieval options" do
+      test_pid = self()
+
+      searcher = fn _question, collection, opts ->
+        send(test_pid, {:search_call, collection, opts})
+        {:ok, []}
+      end
+
+      all_ctx =
+        Pipeline.new("anything", repo: Arcana.TestRepo, llm: &mock_llm/1)
+        |> Pipeline.search(
+          searcher: searcher,
+          collections: :all,
+          strict_collections: true,
+          hnsw_ef_search: 123
+        )
+
+      assert all_ctx.collections == :all
+      assert all_ctx.searcher_opts[:strict_collections] == true
+      assert all_ctx.searcher_opts[:hnsw_ef_search] == 123
+
+      assert_received {:search_call, :all, opts}
+      assert opts[:strict_collections] == true
+      assert opts[:hnsw_ef_search] == 123
+
+      none_ctx =
+        Pipeline.new("anything", repo: Arcana.TestRepo, llm: &mock_llm/1)
+        |> Pipeline.search(searcher: searcher, collections: [])
+
+      assert none_ctx.collections == []
+      assert none_ctx.results == []
+      assert is_list(none_ctx.searcher_opts)
+      refute_received {:search_call, _, _}
+    end
+
     test "option takes priority over ctx.collections" do
       {:ok, _} =
         Arcana.ingest("Haskell is purely functional.",

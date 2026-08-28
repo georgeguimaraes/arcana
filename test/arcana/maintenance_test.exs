@@ -97,4 +97,54 @@ defmodule Arcana.MaintenanceTest do
       assert {:ok, %{collections: 0}} = Maintenance.rebuild_graph(Repo, collection: "nope")
     end
   end
+
+  describe "collection scopes" do
+    test "graph maintenance accepts one or many collection names" do
+      {:ok, _} = Collection.get_or_create("maintenance-a", Repo)
+      {:ok, _} = Collection.get_or_create("maintenance-b", Repo)
+      {:ok, _} = Collection.get_or_create("maintenance-outside", Repo)
+
+      assert {:ok, %{collections: 1}} =
+               Maintenance.rebuild_graph(Repo, collection: "maintenance-a")
+
+      assert {:ok, %{collections: 1}} =
+               Maintenance.rebuild_graph(Repo, collections: "maintenance-a")
+
+      assert {:ok, %{collections: 2}} =
+               Maintenance.rebuild_graph(Repo,
+                 collection: ["maintenance-a", "maintenance-b", "missing"]
+               )
+    end
+
+    test "empty and unknown scopes never widen re-embedding to every collection" do
+      {:ok, collection} = Collection.get_or_create("maintenance-existing", Repo)
+
+      document =
+        %Document{}
+        |> Document.changeset(%{
+          content: "must remain untouched",
+          status: :pending,
+          chunk_count: 0,
+          collection_id: collection.id
+        })
+        |> Repo.insert!()
+
+      assert {:ok, %{rechunked_documents: 0, total_chunks: 0}} =
+               Maintenance.reembed(Repo, collections: [])
+
+      assert {:ok, %{rechunked_documents: 0, total_chunks: 0}} =
+               Maintenance.reembed(Repo, collection: "missing")
+
+      assert Repo.get!(Document, document.id).chunk_count == 0
+      assert Repo.aggregate(Chunk, :count) == 0
+    end
+
+    test "conflicting and malformed collection options are rejected" do
+      assert {:error, :conflicting_collection_options} =
+               Maintenance.rebuild_graph(Repo, collection: "a", collections: ["b"])
+
+      assert {:error, {:invalid_collection_scope, ["a", nil]}} =
+               Maintenance.rebuild_graph(Repo, collections: ["a", nil])
+    end
+  end
 end

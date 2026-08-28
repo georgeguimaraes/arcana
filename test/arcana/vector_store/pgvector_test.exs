@@ -275,7 +275,7 @@ defmodule Arcana.VectorStore.PgvectorTest do
       assert [%{metadata: %{text: "pinned chunk"}}] = results
     end
 
-    test "under strict mode a direct backend call with an unknown name matches nothing" do
+    test "a direct backend call only searches globally for an explicit all scope" do
       repo = Arcana.TestRepo
 
       {:ok, collection} = Collection.get_or_create("strict-direct", repo)
@@ -293,10 +293,11 @@ defmodule Arcana.VectorStore.PgvectorTest do
       })
       |> repo.insert!()
 
-      # Non-strict keeps the historical fail-open (global) behavior
-      refute Pgvector.search("strict-nope", List.duplicate(0.5, 384), repo: repo) == []
+      assert Pgvector.search("strict-nope", List.duplicate(0.5, 384), repo: repo) == []
 
-      # Strict fails closed instead of widening to a global search
+      assert [%{metadata: %{text: "in collection"}}] =
+               Pgvector.search(:all, List.duplicate(0.5, 384), repo: repo)
+
       assert Pgvector.search("strict-nope", List.duplicate(0.5, 384),
                repo: repo,
                strict_collections: true

@@ -16,6 +16,7 @@ defmodule Arcana.Ask do
 
   """
 
+  alias Arcana.{Collection, CollectionScope}
   alias Arcana.Graph.GraphStore
   alias Arcana.LLM
 
@@ -37,8 +38,10 @@ defmodule Arcana.Ask do
     * `:threshold` - Minimum similarity score for context (default: 0.0)
     * `:mode` - Search mode: `:vector` (default), `:keyword`, or `:hybrid`.
       `:semantic` and `:fulltext` are deprecated aliases and log a warning.
-    * `:collection` - Filter to a specific collection
-    * `:collections` - Filter to multiple collections
+    * `:collection` - Collection scope as `:all`, a collection name, or a list
+      of collection names
+    * `:collections` - Alias for `:collection`. The two options are mutually
+      exclusive.
     * `:prompt` - Custom prompt function. Supports arity 2 `(question, context)` or
       arity 3 `(question, context, graph_context)`
     * `:reranker` - Reranker module/function (passed through to search)
@@ -203,13 +206,16 @@ defmodule Arcana.Ask do
     repo = Arcana.Config.get(opts, :repo)
 
     if Arcana.Config.graph_enabled?(opts) and repo do
-      fetch_graph_context(question, repo, opts)
+      case resolve_collection_ids(opts, repo) do
+        [] -> %{}
+        collection_ids -> fetch_graph_context(question, repo, opts, collection_ids)
+      end
     else
       %{}
     end
   end
 
-  defp fetch_graph_context(question, repo, opts) do
+  defp fetch_graph_context(question, repo, opts, collection_ids) do
     import Ecto.Query
     alias Arcana.Graph.Community
 
@@ -220,7 +226,6 @@ defmodule Arcana.Ask do
     summary_limit = graph_config[:community_summary_limit] || 5
     threshold = graph_config[:entity_embedding_threshold] || 0.3
 
-    collection_ids = resolve_collection_ids(opts, repo)
     embedder = Arcana.Config.embedder()
 
     matched_entities =
@@ -413,14 +418,14 @@ defmodule Arcana.Ask do
     end)
   end
 
-  # `nil` means unscoped; `[]` means the named collections resolved to
-  # nothing and downstream graph queries must match nothing. Strict
-  # validation already happened in Arcana.Search.search/2.
   defp resolve_collection_ids(opts, repo) do
-    {:ok, ids} =
-      Arcana.Collection.names_from_opts(opts)
-      |> Arcana.Collection.resolve_ids(repo)
+    case CollectionScope.from_opts!(opts, :all) do
+      :all ->
+        nil
 
-    ids
+      {:only, names} ->
+        {:ok, ids} = Collection.resolve_ids(names, repo)
+        ids
+    end
   end
 end
