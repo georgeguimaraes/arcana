@@ -12,7 +12,9 @@ defmodule Arcana.Graph.Migration do
         def down, do: Arcana.Graph.Migration.down()
       end
 
-  Upgrading needs no new DDL, only another migration calling `up/1`.
+  Upgrade by adding another host migration that calls `up/1`. Version 2 adds
+  relationship provenance DDL and clears legacy relationship facts that have
+  no source chunk.
 
   ## Options
 
@@ -70,17 +72,30 @@ defmodule Arcana.Graph.Migration do
     * 1 - entities, relationships, mentions and communities, including the
       entity-mention unique index and `communities.summary_fingerprint` that
       earlier releases shipped as separate upgrade migrations
+    * 2 - canonical relationship facts with per-chunk evidence. Existing
+      relationships are cleared because their source chunks cannot be inferred;
+      rebuild the graph after upgrading
+
+  ## Uninstall ownership
+
+  Target version 0 removes only Arcana's graph tables and table-contained
+  objects. It leaves the core tables, Postgres schema, and `vector` extension in
+  place. Foreign keys, views, and materialized views owned by the host
+  application block uninstall with their schema-qualified identities. Arcana
+  never uses `DROP ... CASCADE`, because that would delete host-owned objects.
 
   """
 
   use Ecto.Migration
 
+  alias Arcana.Migration.Dependencies
   alias Arcana.Migration.Dimensions
+  alias Arcana.Migration.Registry
+  alias Arcana.Migration.SchemaScope
   alias Arcana.Migration.UniqueIndex
 
-  @current_version 1
-
-  @version_table "arcana_graph_entities"
+  @current_version Registry.current_version(:graph)
+  @version_table Registry.version_table(:graph)
 
   @doc """
   Migrates up to `:version`, or to the latest version.
@@ -89,7 +104,8 @@ defmodule Arcana.Graph.Migration do
     target = Keyword.get(opts, :version, @current_version)
     validate_target!(target)
 
-    prefix = Keyword.get(opts, :prefix)
+    prefix = SchemaScope.resolve(repo(), :graph, Keyword.get(opts, :prefix))
+    opts = Keyword.put(opts, :prefix, prefix)
     current = recorded_version(repo(), prefix: prefix)
     validate_recorded!(current)
 
@@ -105,7 +121,6 @@ defmodule Arcana.Graph.Migration do
     if current < target do
       maybe_create_schema(prefix, opts)
       for version <- (current + 1)..target//1, do: change(version, :up, opts)
-      record_version(target, prefix)
     end
 
     # Mentions are the one exception, so this sits after the steps: converge_v1
@@ -115,21 +130,43 @@ defmodule Arcana.Graph.Migration do
     # target gets repaired too.
     converge_mentions_index!(prefix)
 
+    if target >= 2 do
+      converge_v2_indexes!(prefix)
+      verify_v2_schema!(prefix)
+    end
+
+    if current < target, do: record_version(target, prefix)
+
     :ok
   end
 
   @doc """
-  Migrates down to `:version`, or removes the graph tables entirely.
+  Migrates down to `:version`, or removes the graph tables entirely after
+  checking for host-owned dependents.
   """
   def down(opts \\ []) do
     target = Keyword.get(opts, :version, 0)
     validate_rollback_target!(target)
 
-    prefix = Keyword.get(opts, :prefix)
+    prefix = SchemaScope.resolve(repo(), :graph, Keyword.get(opts, :prefix))
+    opts = Keyword.put(opts, :prefix, prefix)
     current = recorded_version(repo(), prefix: prefix)
     validate_recorded!(current)
 
     if current == 0, do: refuse_blind_rollback!(prefix)
+
+    if current >= 2 and target == 1 do
+      raise """
+      Arcana graph migration v2 cannot be rolled back to v1 safely.
+
+      Version 2 stores relationship provenance in arcana_graph_relationship_evidence.
+      Dropping that table loses the information needed to reconstruct v2 on a later
+      upgrade. Roll back to version 0 to uninstall all graph tables, or restore a
+      pre-v2 database backup.
+      """
+    end
+
+    if current > target and target == 0, do: preflight_uninstall!(prefix)
 
     if current > target do
       for version <- current..(target + 1)//-1, do: change(version, :down, opts)
@@ -204,25 +241,27 @@ defmodule Arcana.Graph.Migration do
   #
   # relkind is constrained to ordinary and partitioned tables, so a view or
   # sequence that happens to share a name is not mistaken for an install.
-  defp owned_tables_present(prefix) do
-    %{rows: rows} =
-      repo().query!(
-        "SELECT c.relname FROM pg_class c " <>
-          "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
-          "WHERE c.relname = ANY($1) AND c.relkind IN ('r', 'p') " <>
-          "AND n.nspname = COALESCE($2, current_schema())",
-        [
-          ~w(
-                   arcana_graph_entities
-                   arcana_graph_entity_mentions
-                   arcana_graph_relationships
-                   arcana_graph_communities
-          ),
-          prefix
-        ]
-      )
+  defp owned_tables_present(prefix), do: Registry.present(repo(), :graph, prefix)
 
-    List.flatten(rows)
+  defp preflight_uninstall!(prefix) do
+    execute(fn ->
+      case Dependencies.external(repo(), :graph, prefix) do
+        [] ->
+          :ok
+
+        dependents ->
+          listed = Enum.map_join(dependents, "\n", &"    #{&1}")
+          retry_scope = if prefix, do: "with prefix: #{inspect(prefix)}", else: "without a prefix"
+
+          raise """
+          Arcana.Graph.Migration.down/1 can't remove the graph schema because objects Arcana does not own depend on it:
+
+          #{listed}
+
+          Drop or repoint these objects, then retry #{retry_scope}. Nothing was changed. Arcana will not use DROP ... CASCADE because that would delete host-owned objects.
+          """
+      end
+    end)
   end
 
   @doc """
@@ -250,7 +289,7 @@ defmodule Arcana.Graph.Migration do
       repo.query!(
         "SELECT obj_description(c.oid) FROM pg_class c " <>
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
-          "WHERE c.relname = $1 AND n.nspname = COALESCE($2, current_schema())",
+          "WHERE c.relname = $1 AND " <> SchemaScope.visible("c", "n", "$2"),
         [@version_table, prefix]
       )
 
@@ -268,24 +307,19 @@ defmodule Arcana.Graph.Migration do
       0
   end
 
-  defp parse_version(nil), do: 0
-
   # Anchored, so only a comment that is exactly the marker counts. An
   # unanchored match read a version out of any prose that happened to
   # contain "arcana_graph:2", and a bare integer (what Oban stores) would read a
   # host's own "1" as version 1. Anything we don't recognise reads as 0,
   # which is the same answer as "never installed" - see the moduledoc.
-  defp parse_version(comment) do
-    case Regex.run(~r/\Aarcana_graph:(\d+)\z/, String.trim(comment)) do
-      [_, version] -> String.to_integer(version)
-      _ -> 0
-    end
-  end
+  defp parse_version(comment), do: Registry.parse_marker(:graph, comment)
 
   defp record_version(0, _prefix), do: :ok
 
   defp record_version(version, prefix) do
-    execute("COMMENT ON TABLE #{qualify(@version_table, prefix)} IS 'arcana_graph:#{version}'")
+    execute(
+      "COMMENT ON TABLE #{qualify(@version_table, prefix)} IS '#{Registry.marker(:graph, version)}'"
+    )
   end
 
   # Raw SQL gets none of Ecto's prefix handling, so anything that doesn't go
@@ -348,6 +382,27 @@ defmodule Arcana.Graph.Migration do
         ["entity_id", "chunk_id"],
         prefix,
         &qualify(&1, prefix)
+      )
+    end)
+  end
+
+  defp converge_v2_indexes!(prefix) do
+    execute(fn ->
+      UniqueIndex.converge!(
+        repo(),
+        "arcana_graph_relationships",
+        ["fingerprint"],
+        prefix,
+        &qualify(&1, prefix)
+      )
+
+      UniqueIndex.converge!(
+        repo(),
+        "arcana_graph_relationship_evidence",
+        ["relationship_id", "chunk_id"],
+        prefix,
+        &qualify(&1, prefix),
+        name: "arcana_graph_relationship_evidence_rel_chunk_index"
       )
     end)
   end
@@ -529,10 +584,265 @@ defmodule Arcana.Graph.Migration do
   defp change(1, :down, opts) do
     prefix = Keyword.get(opts, :prefix)
 
-    drop_if_exists(table(:arcana_graph_communities, prefix: prefix))
-    drop_if_exists(table(:arcana_graph_entity_mentions, prefix: prefix))
-    drop_if_exists(table(:arcana_graph_relationships, prefix: prefix))
-    drop_if_exists(table(:arcana_graph_entities, prefix: prefix))
+    for table_name <- Registry.tables_added_in(:graph, 1) |> Enum.reverse() do
+      drop_if_exists(table(String.to_atom(table_name), prefix: prefix))
+    end
+  end
+
+  # === Version 2 ===
+
+  defp change(2, :up, opts) do
+    prefix = Keyword.get(opts, :prefix)
+
+    # Legacy rows carry no chunk provenance. Guessing would let failed or
+    # replaced documents keep influencing retrieval, so v2 deliberately
+    # discards them and requires a graph rebuild.
+    execute(fn ->
+      case v2_install_state(prefix) do
+        :legacy ->
+          repo().query!("DELETE FROM #{qualify("arcana_graph_relationships", prefix)}", [])
+
+          repo().query!(
+            "UPDATE #{qualify("arcana_graph_communities", prefix)} " <>
+              "SET dirty = true, summary = NULL, summary_fingerprint = NULL",
+            []
+          )
+
+        :v2 ->
+          verify_v2_data!(prefix)
+
+        :partial ->
+          raise """
+          Arcana found a partial graph migration v2 install.
+
+          The fingerprint column and arcana_graph_relationship_evidence table must
+          either both be absent (v1) or both be present with valid provenance (v2).
+          Nothing was changed. Restore the schema to one of those states and rerun.
+          """
+      end
+    end)
+
+    execute(
+      "ALTER TABLE #{qualify("arcana_graph_relationships", prefix)} " <>
+        "ADD COLUMN IF NOT EXISTS fingerprint varchar(64)"
+    )
+
+    execute(
+      "ALTER TABLE #{qualify("arcana_graph_relationships", prefix)} " <>
+        "ALTER COLUMN fingerprint SET NOT NULL"
+    )
+
+    create_if_not_exists(
+      unique_index(:arcana_graph_relationships, [:fingerprint], prefix: prefix)
+    )
+
+    create_if_not_exists table(:arcana_graph_relationship_evidence,
+                           primary_key: false,
+                           prefix: prefix
+                         ) do
+      add(:id, :binary_id, primary_key: true)
+
+      add(
+        :relationship_id,
+        references(:arcana_graph_relationships,
+          type: :binary_id,
+          on_delete: :delete_all,
+          prefix: prefix
+        ),
+        null: false
+      )
+
+      add(
+        :chunk_id,
+        references(:arcana_chunks, type: :binary_id, on_delete: :delete_all, prefix: prefix),
+        null: false
+      )
+
+      timestamps(updated_at: false)
+    end
+
+    create_if_not_exists(
+      unique_index(:arcana_graph_relationship_evidence, [:relationship_id, :chunk_id],
+        prefix: prefix,
+        name: :arcana_graph_relationship_evidence_rel_chunk_index
+      )
+    )
+
+    create_if_not_exists(index(:arcana_graph_relationship_evidence, [:chunk_id], prefix: prefix))
+  end
+
+  defp change(2, :down, opts) do
+    prefix = Keyword.get(opts, :prefix)
+
+    for table_name <- Registry.tables_added_in(:graph, 2) |> Enum.reverse() do
+      drop_if_exists(table(String.to_atom(table_name), prefix: prefix))
+    end
+
+    drop_if_exists(index(:arcana_graph_relationships, [:fingerprint], prefix: prefix))
+
+    execute(
+      "ALTER TABLE #{qualify("arcana_graph_relationships", prefix)} " <>
+        "DROP COLUMN IF EXISTS fingerprint"
+    )
+  end
+
+  defp v2_install_state(prefix) do
+    fingerprint? = column_exists?("arcana_graph_relationships", "fingerprint", prefix)
+    evidence? = table_exists?("arcana_graph_relationship_evidence", prefix)
+
+    evidence_columns? =
+      evidence? and
+        column_exists?("arcana_graph_relationship_evidence", "relationship_id", prefix) and
+        column_exists?("arcana_graph_relationship_evidence", "chunk_id", prefix)
+
+    case {fingerprint?, evidence?, evidence_columns?} do
+      {false, false, false} -> :legacy
+      {true, true, true} -> :v2
+      _mixed -> :partial
+    end
+  end
+
+  defp verify_v2_data!(prefix) do
+    %{rows: [[null_fingerprints, missing_evidence]]} =
+      repo().query!(
+        "SELECT " <>
+          "count(*) FILTER (WHERE r.fingerprint IS NULL), " <>
+          "count(*) FILTER (WHERE NOT EXISTS (" <>
+          "SELECT 1 FROM #{qualify("arcana_graph_relationship_evidence", prefix)} e " <>
+          "WHERE e.relationship_id = r.id)) " <>
+          "FROM #{qualify("arcana_graph_relationships", prefix)} r",
+        []
+      )
+
+    if null_fingerprints > 0 or missing_evidence > 0 do
+      raise """
+      Arcana found relationship rows that are not valid graph migration v2 data.
+
+      NULL fingerprints: #{null_fingerprints}
+      Relationships without chunk evidence: #{missing_evidence}
+
+      Nothing was changed. Repair or remove those rows and rerun the migration.
+      """
+    end
+  end
+
+  defp verify_v2_schema!(prefix) do
+    execute(fn ->
+      verify_fingerprint_column!(prefix)
+      verify_evidence_columns!(prefix)
+      verify_evidence_foreign_keys!(prefix)
+    end)
+  end
+
+  defp verify_fingerprint_column!(prefix) do
+    %{rows: rows} =
+      repo().query!(
+        "SELECT format_type(a.atttypid, a.atttypmod), a.attnotnull " <>
+          "FROM pg_attribute a " <>
+          "JOIN pg_class c ON c.oid = a.attrelid " <>
+          "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
+          "WHERE c.relname = 'arcana_graph_relationships' " <>
+          "AND a.attname = 'fingerprint' AND NOT a.attisdropped " <>
+          "AND " <> SchemaScope.visible("c", "n", "$1"),
+        [prefix]
+      )
+
+    unless rows == [["character varying(64)", true]] do
+      raise "Arcana graph v2 requires fingerprint varchar(64) NOT NULL, got: #{inspect(rows)}"
+    end
+  end
+
+  defp verify_evidence_columns!(prefix) do
+    %{rows: rows} =
+      repo().query!(
+        "SELECT a.attname, format_type(a.atttypid, a.atttypmod), a.attnotnull " <>
+          "FROM pg_attribute a " <>
+          "JOIN pg_class c ON c.oid = a.attrelid " <>
+          "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
+          "WHERE c.relname = 'arcana_graph_relationship_evidence' " <>
+          "AND a.attname IN ('relationship_id', 'chunk_id') AND NOT a.attisdropped " <>
+          "AND " <> SchemaScope.visible("c", "n", "$1") <> " ORDER BY a.attname",
+        [prefix]
+      )
+
+    expected = [["chunk_id", "uuid", true], ["relationship_id", "uuid", true]]
+
+    unless rows == expected do
+      raise "Arcana graph v2 evidence columns have the wrong shape: #{inspect(rows)}"
+    end
+  end
+
+  defp verify_evidence_foreign_keys!(prefix) do
+    %{rows: rows} =
+      repo().query!(
+        "SELECT source_attr.attname, target.relname, target_ns.nspname, " <>
+          "source_ns.nspname, con.confdeltype " <>
+          "FROM pg_constraint con " <>
+          "JOIN pg_class source ON source.oid = con.conrelid " <>
+          "JOIN pg_namespace source_ns ON source_ns.oid = source.relnamespace " <>
+          "JOIN pg_class target ON target.oid = con.confrelid " <>
+          "JOIN pg_namespace target_ns ON target_ns.oid = target.relnamespace " <>
+          "JOIN LATERAL unnest(con.conkey) WITH ORDINALITY sk(attnum, ord) ON true " <>
+          "JOIN pg_attribute source_attr ON source_attr.attrelid = source.oid " <>
+          "AND source_attr.attnum = sk.attnum " <>
+          "WHERE con.contype = 'f' AND source.relname = 'arcana_graph_relationship_evidence' " <>
+          "AND " <>
+          SchemaScope.visible("source", "source_ns", "$1") <>
+          " " <>
+          "ORDER BY source_attr.attname",
+        [prefix]
+      )
+
+    valid? =
+      case rows do
+        [
+          ["chunk_id", "arcana_chunks", chunk_schema, source_schema, "c"],
+          [
+            "relationship_id",
+            "arcana_graph_relationships",
+            relationship_schema,
+            source_schema,
+            "c"
+          ]
+        ] ->
+          chunk_schema == source_schema and relationship_schema == source_schema
+
+        _ ->
+          false
+      end
+
+    unless valid? do
+      raise "Arcana graph v2 evidence foreign keys have the wrong shape: #{inspect(rows)}"
+    end
+  end
+
+  defp table_exists?(table, prefix) do
+    %{rows: [[exists?]]} =
+      repo().query!(
+        "SELECT EXISTS (" <>
+          "SELECT 1 FROM pg_class c " <>
+          "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
+          "WHERE c.relname = $1 AND c.relkind IN ('r', 'p') " <>
+          "AND " <> SchemaScope.visible("c", "n", "$2") <> ")",
+        [table, prefix]
+      )
+
+    exists?
+  end
+
+  defp column_exists?(table, column, prefix) do
+    %{rows: [[exists?]]} =
+      repo().query!(
+        "SELECT EXISTS (" <>
+          "SELECT 1 FROM pg_attribute a " <>
+          "JOIN pg_class c ON c.oid = a.attrelid " <>
+          "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
+          "WHERE c.relname = $1 AND a.attname = $2 AND NOT a.attisdropped " <>
+          "AND " <> SchemaScope.visible("c", "n", "$3") <> ")",
+        [table, column, prefix]
+      )
+
+    exists?
   end
 
   # Everything a release added after the tables first shipped. An install

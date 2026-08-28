@@ -860,7 +860,8 @@ defmodule Arcana.Maintenance do
          detector,
          progress_fn
        ) do
-    alias Arcana.Graph.{CommunityDetector, Entity, Relationship}
+    alias Arcana.Graph.{CommunityDetector, Entity}
+    alias Arcana.RetrievalScope
 
     # Report start
     try do
@@ -874,7 +875,7 @@ defmodule Arcana.Maintenance do
     # yields stable membership when the input order is stable too.
     entities =
       repo.all(
-        from(e in Entity,
+        from([entity: e] in RetrievalScope.entities(),
           where: e.collection_id == ^collection.id,
           order_by: e.id,
           select: %{id: e.id, name: e.name, type: e.type, description: e.description}
@@ -883,7 +884,7 @@ defmodule Arcana.Maintenance do
 
     relationships =
       repo.all(
-        from(r in Relationship,
+        from([relationship: r] in RetrievalScope.relationships(),
           join: e in Entity,
           on: r.source_id == e.id,
           where: e.collection_id == ^collection.id,
@@ -1117,7 +1118,8 @@ defmodule Arcana.Maintenance do
   end
 
   defp summarize_communities_for_collection(collection, repo, ctx) do
-    alias Arcana.Graph.{Community, CommunitySummarizer, Entity, Relationship}
+    alias Arcana.Graph.{Community, CommunitySummarizer, Entity}
+    alias Arcana.RetrievalScope
 
     %{llm: llm, force: force, concurrency: concurrency, progress_fn: progress_fn} = ctx
 
@@ -1189,13 +1191,14 @@ defmodule Arcana.Maintenance do
   defp level_filter(levels), do: dynamic([c], c.level in ^levels)
 
   defp summarize_single_community(community, repo, llm) do
-    alias Arcana.Graph.{Community, CommunitySummarizer, Entity, Relationship}
+    alias Arcana.Graph.{Community, CommunitySummarizer, Entity}
+    alias Arcana.RetrievalScope
 
     entity_ids = community.entity_ids || []
 
     entities =
       repo.all(
-        from(e in Entity,
+        from([entity: e] in RetrievalScope.entities(),
           where: e.id in ^entity_ids,
           select: %{id: e.id, name: e.name, type: e.type, description: e.description}
         )
@@ -1203,7 +1206,7 @@ defmodule Arcana.Maintenance do
 
     relationships =
       repo.all(
-        from(r in Relationship,
+        from([relationship: r] in RetrievalScope.relationships(),
           join: src in Entity,
           on: r.source_id == src.id,
           join: tgt in Entity,

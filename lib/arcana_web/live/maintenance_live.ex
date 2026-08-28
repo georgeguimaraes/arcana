@@ -27,17 +27,21 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
        |> assign(graph_installed: Arcana.Graph.installed?(repo))
        |> assign(
          reembed_running: false,
+         reembed_task: nil,
          reembed_progress: nil,
          reembed_collection: nil,
          embedding_info: get_embedding_info(),
          rebuild_graph_running: false,
+         rebuild_graph_task: nil,
          rebuild_graph_progress: nil,
          rebuild_graph_collection: nil,
          graph_info: get_graph_info(),
          detect_communities_running: false,
+         detect_communities_task: nil,
          detect_communities_progress: nil,
          detect_communities_collection: nil,
          summarize_communities_running: false,
+         summarize_communities_task: nil,
          summarize_communities_progress: nil,
          summarize_communities_collection: nil,
          llm_configured?: not is_nil(Arcana.Config.get_env(:llm)),
@@ -202,6 +206,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       end
     end
 
+    def handle_event("reembed", _params, %{assigns: %{reembed_running: true}} = socket) do
+      {:noreply, socket}
+    end
+
     def handle_event("reembed", _params, socket) do
       case validate_maintenance_collection(socket, socket.assigns.reembed_collection) do
         {:ok, collection} -> {:noreply, start_reembed(socket, collection)}
@@ -216,6 +224,14 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         {:ok, collection} -> {:noreply, assign(socket, rebuild_graph_collection: collection)}
         :error -> {:noreply, socket}
       end
+    end
+
+    def handle_event(
+          "rebuild_graph",
+          _params,
+          %{assigns: %{rebuild_graph_running: true}} = socket
+        ) do
+      {:noreply, socket}
     end
 
     def handle_event("rebuild_graph", _params, socket) do
@@ -239,6 +255,14 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         :error ->
           {:noreply, socket}
       end
+    end
+
+    def handle_event(
+          "detect_communities",
+          _params,
+          %{assigns: %{detect_communities_running: true}} = socket
+        ) do
+      {:noreply, socket}
     end
 
     def handle_event("detect_communities", _params, socket) do
@@ -265,6 +289,14 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         :error ->
           {:noreply, socket}
       end
+    end
+
+    def handle_event(
+          "summarize_communities",
+          _params,
+          %{assigns: %{summarize_communities_running: true}} = socket
+        ) do
+      {:noreply, socket}
     end
 
     def handle_event("summarize_communities", _params, socket) do
@@ -346,25 +378,37 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp start_reembed(socket, collection) do
       repo = socket.assigns.repo
       parent = self()
+      run_ref = make_ref()
 
       socket = assign(socket, reembed_running: true, reembed_progress: %{current: 0, total: 0})
 
-      ArcanaWeb.TaskSupervisor.start_child(fn ->
-        progress_fn = fn current, total ->
-          send(parent, {:reembed_progress, current, total})
-        end
+      case ArcanaWeb.BackgroundTask.start(
+             parent,
+             :reembed_complete,
+             fn ->
+               progress_fn = progress_sender(parent, :reembed_progress, run_ref)
 
-        opts = maintenance_collection_opts([batch_size: 50, progress: progress_fn], collection)
-        result = safely(fn -> Arcana.Maintenance.reembed(repo, opts) end)
-        send(parent, {:reembed_complete, result})
-      end)
+               opts =
+                 maintenance_collection_opts([batch_size: 50, progress: progress_fn], collection)
 
-      socket
+               safely(fn -> Arcana.Maintenance.reembed(repo, opts) end)
+             end,
+             run_ref: run_ref
+           ) do
+        {:ok, task} ->
+          assign(socket, reembed_task: task)
+
+        {:error, reason} ->
+          socket
+          |> assign(reembed_running: false, reembed_task: nil, reembed_progress: nil)
+          |> put_flash(:error, "Could not start re-embedding: #{inspect(reason)}")
+      end
     end
 
     defp start_rebuild_graph(socket, collection) do
       repo = socket.assigns.repo
       parent = self()
+      run_ref = make_ref()
 
       socket =
         assign(socket,
@@ -372,20 +416,35 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           rebuild_graph_progress: %{current: 0, total: 0}
         )
 
-      ArcanaWeb.TaskSupervisor.start_child(fn ->
-        progress_fn = progress_sender(parent, :rebuild_graph_progress)
+      case ArcanaWeb.BackgroundTask.start(
+             parent,
+             :rebuild_graph_complete,
+             fn ->
+               progress_fn = progress_sender(parent, :rebuild_graph_progress, run_ref)
 
-        opts = maintenance_collection_opts([progress: progress_fn], collection)
-        result = safely(fn -> Arcana.Maintenance.rebuild_graph(repo, opts) end)
-        send(parent, {:rebuild_graph_complete, result})
-      end)
+               opts = maintenance_collection_opts([progress: progress_fn], collection)
+               safely(fn -> Arcana.Maintenance.rebuild_graph(repo, opts) end)
+             end,
+             run_ref: run_ref
+           ) do
+        {:ok, task} ->
+          assign(socket, rebuild_graph_task: task)
 
-      socket
+        {:error, reason} ->
+          socket
+          |> assign(
+            rebuild_graph_running: false,
+            rebuild_graph_task: nil,
+            rebuild_graph_progress: nil
+          )
+          |> put_flash(:error, "Could not start graph rebuild: #{inspect(reason)}")
+      end
     end
 
     defp start_detect_communities(socket, collection) do
       repo = socket.assigns.repo
       parent = self()
+      run_ref = make_ref()
 
       socket =
         assign(socket,
@@ -393,15 +452,29 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           detect_communities_progress: %{current: 0, total: 0}
         )
 
-      ArcanaWeb.TaskSupervisor.start_child(fn ->
-        progress_fn = progress_sender(parent, :detect_communities_progress)
+      case ArcanaWeb.BackgroundTask.start(
+             parent,
+             :detect_communities_complete,
+             fn ->
+               progress_fn = progress_sender(parent, :detect_communities_progress, run_ref)
 
-        opts = maintenance_collection_opts([progress: progress_fn], collection)
-        result = safely(fn -> Arcana.Maintenance.detect_communities(repo, opts) end)
-        send(parent, {:detect_communities_complete, result})
-      end)
+               opts = maintenance_collection_opts([progress: progress_fn], collection)
+               safely(fn -> Arcana.Maintenance.detect_communities(repo, opts) end)
+             end,
+             run_ref: run_ref
+           ) do
+        {:ok, task} ->
+          assign(socket, detect_communities_task: task)
 
-      socket
+        {:error, reason} ->
+          socket
+          |> assign(
+            detect_communities_running: false,
+            detect_communities_task: nil,
+            detect_communities_progress: nil
+          )
+          |> put_flash(:error, "Could not start community detection: #{inspect(reason)}")
+      end
     end
 
     # A collection name with no row resolves to "no filter", which silently
@@ -430,31 +503,48 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp start_summarize_communities(socket, collection) do
       repo = socket.assigns.repo
       parent = self()
+      run_ref = make_ref()
 
-      ArcanaWeb.TaskSupervisor.start_child(fn ->
-        progress_fn = progress_sender(parent, :summarize_communities_progress)
+      socket =
+        assign(socket,
+          summarize_communities_running: true,
+          summarize_communities_progress: %{current: 0, total: 0}
+        )
 
-        opts = maintenance_collection_opts([progress: progress_fn], collection)
+      case ArcanaWeb.BackgroundTask.start(
+             parent,
+             :summarize_communities_complete,
+             fn ->
+               progress_fn = progress_sender(parent, :summarize_communities_progress, run_ref)
 
-        result = safely(fn -> Arcana.Maintenance.summarize_communities(repo, opts) end)
+               opts = maintenance_collection_opts([progress: progress_fn], collection)
 
-        send(parent, {:summarize_communities_complete, result})
-      end)
+               safely(fn -> Arcana.Maintenance.summarize_communities(repo, opts) end)
+             end,
+             run_ref: run_ref
+           ) do
+        {:ok, task} ->
+          assign(socket, summarize_communities_task: task)
 
-      assign(socket,
-        summarize_communities_running: true,
-        summarize_communities_progress: %{current: 0, total: 0}
-      )
+        {:error, reason} ->
+          socket
+          |> assign(
+            summarize_communities_running: false,
+            summarize_communities_task: nil,
+            summarize_communities_progress: nil
+          )
+          |> put_flash(:error, "Could not start community summarization: #{inspect(reason)}")
+      end
     end
 
     # Maintenance progress callbacks are called both with numeric
     # `current, total` and with `stage, payload` pairs (`:collection_start`
     # and friends). Only the numeric form drives the progress bar; the
     # stage form is ignored so the callers fall back to numeric progress.
-    defp progress_sender(parent, tag) do
+    defp progress_sender(parent, tag, run_ref) do
       fn
         current, total when is_integer(current) and is_integer(total) ->
-          send(parent, {tag, current, total})
+          send(parent, {tag, run_ref, current, total})
 
         _stage, _payload ->
           :ok
@@ -499,37 +589,59 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     @impl true
-    def handle_info({:reembed_progress, current, total}, socket) do
+    def handle_info(
+          {:reembed_progress, run_ref, current, total},
+          %{assigns: %{reembed_task: %{run_ref: run_ref}}} = socket
+        ) do
       {:noreply, assign(socket, reembed_progress: %{current: current, total: total})}
     end
 
-    def handle_info({:reembed_complete, result}, socket) do
+    def handle_info(
+          {:reembed_complete, run_ref, result},
+          %{assigns: %{reembed_task: %{run_ref: run_ref, monitor_ref: monitor_ref}}} = socket
+        ) do
+      Process.demonitor(monitor_ref, [:flush])
+
       socket =
         case result do
           {:ok, %{reembedded: count}} ->
             socket
-            |> assign(reembed_running: false, reembed_progress: nil)
+            |> assign(reembed_running: false, reembed_task: nil, reembed_progress: nil)
             |> put_flash(:info, "Re-embedded #{count} chunks successfully!")
 
           {:error, reason} ->
             socket
-            |> assign(reembed_running: false, reembed_progress: nil)
+            |> assign(reembed_running: false, reembed_task: nil, reembed_progress: nil)
             |> put_flash(:error, "Re-embedding failed: #{inspect(reason)}")
         end
 
       {:noreply, socket}
     end
 
-    def handle_info({:rebuild_graph_progress, current, total}, socket) do
+    def handle_info(
+          {:rebuild_graph_progress, run_ref, current, total},
+          %{assigns: %{rebuild_graph_task: %{run_ref: run_ref}}} = socket
+        ) do
       {:noreply, assign(socket, rebuild_graph_progress: %{current: current, total: total})}
     end
 
-    def handle_info({:rebuild_graph_complete, result}, socket) do
+    def handle_info(
+          {:rebuild_graph_complete, run_ref, result},
+          %{
+            assigns: %{rebuild_graph_task: %{run_ref: run_ref, monitor_ref: monitor_ref}}
+          } = socket
+        ) do
+      Process.demonitor(monitor_ref, [:flush])
+
       socket =
         case result do
           {:ok, %{entities: entities, relationships: relationships}} ->
             socket
-            |> assign(rebuild_graph_running: false, rebuild_graph_progress: nil)
+            |> assign(
+              rebuild_graph_running: false,
+              rebuild_graph_task: nil,
+              rebuild_graph_progress: nil
+            )
             |> load_data()
             |> put_flash(
               :info,
@@ -538,57 +650,171 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
           {:error, reason} ->
             socket
-            |> assign(rebuild_graph_running: false, rebuild_graph_progress: nil)
+            |> assign(
+              rebuild_graph_running: false,
+              rebuild_graph_task: nil,
+              rebuild_graph_progress: nil
+            )
             |> put_flash(:error, "Rebuild graph failed: #{inspect(reason)}")
         end
 
       {:noreply, socket}
     end
 
-    def handle_info({:detect_communities_progress, current, total}, socket) do
+    def handle_info(
+          {:detect_communities_progress, run_ref, current, total},
+          %{assigns: %{detect_communities_task: %{run_ref: run_ref}}} = socket
+        ) do
       {:noreply, assign(socket, detect_communities_progress: %{current: current, total: total})}
     end
 
-    def handle_info({:detect_communities_complete, result}, socket) do
+    def handle_info(
+          {:detect_communities_complete, run_ref, result},
+          %{
+            assigns: %{
+              detect_communities_task: %{run_ref: run_ref, monitor_ref: monitor_ref}
+            }
+          } = socket
+        ) do
+      Process.demonitor(monitor_ref, [:flush])
+
       socket =
         case result do
           {:ok, %{communities: communities}} ->
             socket
-            |> assign(detect_communities_running: false, detect_communities_progress: nil)
+            |> assign(
+              detect_communities_running: false,
+              detect_communities_task: nil,
+              detect_communities_progress: nil
+            )
             |> load_data()
             |> put_flash(:info, "Detected #{communities} communities successfully!")
 
           {:error, reason} ->
             socket
-            |> assign(detect_communities_running: false, detect_communities_progress: nil)
+            |> assign(
+              detect_communities_running: false,
+              detect_communities_task: nil,
+              detect_communities_progress: nil
+            )
             |> put_flash(:error, "Community detection failed: #{inspect(reason)}")
         end
 
       {:noreply, socket}
     end
 
-    def handle_info({:summarize_communities_progress, current, total}, socket) do
+    def handle_info(
+          {:summarize_communities_progress, run_ref, current, total},
+          %{assigns: %{summarize_communities_task: %{run_ref: run_ref}}} = socket
+        ) do
       {:noreply,
        assign(socket, summarize_communities_progress: %{current: current, total: total})}
     end
 
-    def handle_info({:summarize_communities_complete, result}, socket) do
+    def handle_info(
+          {:summarize_communities_complete, run_ref, result},
+          %{
+            assigns: %{
+              summarize_communities_task: %{run_ref: run_ref, monitor_ref: monitor_ref}
+            }
+          } = socket
+        ) do
+      Process.demonitor(monitor_ref, [:flush])
+
       socket =
         case result do
           {:ok, %{summaries: summaries}} ->
             socket
-            |> assign(summarize_communities_running: false, summarize_communities_progress: nil)
+            |> assign(
+              summarize_communities_running: false,
+              summarize_communities_task: nil,
+              summarize_communities_progress: nil
+            )
             |> load_data()
             |> put_flash(:info, "Summarized #{summaries} communities successfully!")
 
           {:error, reason} ->
             socket
-            |> assign(summarize_communities_running: false, summarize_communities_progress: nil)
+            |> assign(
+              summarize_communities_running: false,
+              summarize_communities_task: nil,
+              summarize_communities_progress: nil
+            )
             |> put_flash(:error, "Community summarization failed: #{inspect(reason)}")
         end
 
       {:noreply, socket}
     end
+
+    def handle_info(
+          {:DOWN, monitor_ref, :process, _pid, reason},
+          %{assigns: %{reembed_task: %{monitor_ref: monitor_ref}}} = socket
+        ) do
+      {:noreply,
+       socket
+       |> assign(reembed_running: false, reembed_task: nil, reembed_progress: nil)
+       |> put_flash(:error, "Re-embedding task stopped: #{inspect(reason)}")}
+    end
+
+    def handle_info(
+          {:DOWN, monitor_ref, :process, _pid, reason},
+          %{assigns: %{rebuild_graph_task: %{monitor_ref: monitor_ref}}} = socket
+        ) do
+      {:noreply,
+       socket
+       |> assign(
+         rebuild_graph_running: false,
+         rebuild_graph_task: nil,
+         rebuild_graph_progress: nil
+       )
+       |> put_flash(:error, "Graph rebuild task stopped: #{inspect(reason)}")}
+    end
+
+    def handle_info(
+          {:DOWN, monitor_ref, :process, _pid, reason},
+          %{assigns: %{detect_communities_task: %{monitor_ref: monitor_ref}}} = socket
+        ) do
+      {:noreply,
+       socket
+       |> assign(
+         detect_communities_running: false,
+         detect_communities_task: nil,
+         detect_communities_progress: nil
+       )
+       |> put_flash(:error, "Community detection task stopped: #{inspect(reason)}")}
+    end
+
+    def handle_info(
+          {:DOWN, monitor_ref, :process, _pid, reason},
+          %{assigns: %{summarize_communities_task: %{monitor_ref: monitor_ref}}} = socket
+        ) do
+      {:noreply,
+       socket
+       |> assign(
+         summarize_communities_running: false,
+         summarize_communities_task: nil,
+         summarize_communities_progress: nil
+       )
+       |> put_flash(:error, "Community summarization task stopped: #{inspect(reason)}")}
+    end
+
+    def handle_info({tag, _run_ref, _result}, socket)
+        when tag in [
+               :reembed_complete,
+               :rebuild_graph_complete,
+               :detect_communities_complete,
+               :summarize_communities_complete
+             ],
+        do: {:noreply, socket}
+
+    def handle_info({tag, _run_ref, _current, _total}, socket)
+        when tag in [
+               :reembed_progress,
+               :rebuild_graph_progress,
+               :detect_communities_progress,
+               :summarize_communities_progress
+             ],
+        do: {:noreply, socket}
 
     @impl true
     def render(assigns) do

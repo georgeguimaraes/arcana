@@ -151,6 +151,70 @@ defmodule Arcana.VectorStore.PgvectorTest do
       assert results == []
     end
 
+    test "only completed documents are visible through every retrieval mode" do
+      repo = Arcana.TestRepo
+      {:ok, collection} = Collection.get_or_create("published-only", repo)
+      embedding = normalize([1.0] ++ List.duplicate(0.0, 383))
+
+      candidates =
+        for status <- [:completed, :processing, :failed], into: %{} do
+          document =
+            %Document{}
+            |> Document.changeset(%{
+              content: "publication invariant",
+              status: status,
+              collection_id: collection.id
+            })
+            |> repo.insert!()
+
+          chunk =
+            %Chunk{}
+            |> Chunk.changeset(%{
+              text: "publication invariant #{status}",
+              embedding: embedding,
+              document_id: document.id
+            })
+            |> repo.insert!()
+
+          {status, %{document: document, chunk: chunk}}
+        end
+
+      searches = [
+        vector: fn ->
+          Pgvector.search("published-only", embedding,
+            repo: repo,
+            limit: 10,
+            threshold: -1.0
+          )
+        end,
+        keyword: fn ->
+          Pgvector.search_text("published-only", "publication invariant", repo: repo, limit: 10)
+        end,
+        hybrid: fn ->
+          Pgvector.search_hybrid(
+            "published-only",
+            embedding,
+            "publication invariant",
+            repo: repo,
+            limit: 10,
+            threshold: -1.0
+          )
+        end
+      ]
+
+      for {mode, search} <- searches do
+        results = search.()
+        document_ids = Enum.map(results, &normalize_uuid(&1.metadata.document_id))
+        chunk_ids = Enum.map(results, &normalize_uuid(&1.id))
+
+        assert document_ids == [candidates.completed.document.id],
+               "#{mode} exposed a document that has not been published"
+
+        refute candidates.processing.chunk.id in chunk_ids
+        refute candidates.failed.chunk.id in chunk_ids
+      end
+    end
+
     test "search_text handles tsquery special characters safely" do
       repo = Arcana.TestRepo
 
@@ -580,6 +644,9 @@ defmodule Arcana.VectorStore.PgvectorTest do
   end
 
   # Helper to normalize a vector to unit length
+  defp normalize_uuid(<<_::128>> = uuid), do: Ecto.UUID.load!(uuid)
+  defp normalize_uuid(uuid), do: uuid
+
   defp normalize(vector) do
     magnitude = :math.sqrt(Enum.reduce(vector, 0.0, fn x, sum -> sum + x * x end))
 

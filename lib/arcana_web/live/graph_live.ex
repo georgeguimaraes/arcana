@@ -17,7 +17,8 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     import ArcanaWeb.DashboardComponents
     import Ecto.Query
 
-    alias Arcana.Graph.{Community, Entity, GraphStore, Relationship}
+    alias Arcana.Graph.{Community, Entity, GraphStore}
+    alias Arcana.RetrievalScope
 
     @page_size 50
 
@@ -209,7 +210,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     defp count_entities(repo, collection_id, name_filter, type_filter) do
-      query = from(e in Entity, select: count(e.id))
+      query = from([entity: e] in RetrievalScope.entities(), select: count(e.id))
 
       query =
         if collection_id, do: where(query, [e], e.collection_id == ^collection_id), else: query
@@ -231,7 +232,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp load_entity_types(repo, collection_id) do
       query =
-        from(e in Entity,
+        from([entity: e] in RetrievalScope.entities(),
           group_by: e.type,
           select: %{type: e.type, count: count(e.id)},
           order_by: [desc: count(e.id), asc: e.type]
@@ -248,7 +249,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp load_relationship_types(repo, collection_id) do
       query =
-        from(r in Relationship,
+        from([relationship: r] in RetrievalScope.relationships(),
           join: source in Entity,
           on: source.id == r.source_id,
           group_by: r.type,
@@ -314,7 +315,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp count_relationships(repo, collection_id, search_filter, type_filter, strength_filter) do
       query =
-        from(r in Relationship,
+        from([relationship: r] in RetrievalScope.relationships(),
           join: source in Entity,
           on: source.id == r.source_id,
           select: count(r.id)

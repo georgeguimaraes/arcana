@@ -89,7 +89,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp add_graph_stats(repo, collections) do
       entity_counts =
         repo.all(
-          from(e in Arcana.Graph.Entity,
+          from([entity: e] in Arcana.RetrievalScope.entities(),
             group_by: e.collection_id,
             select: {e.collection_id, count(e.id)}
           )
@@ -99,7 +99,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       # Relationships don't have collection_id directly - join through source entity
       relationship_counts =
         repo.all(
-          from(r in Arcana.Graph.Relationship,
+          from([relationship: r] in Arcana.RetrievalScope.relationships(),
             join: e in Arcana.Graph.Entity,
             on: r.source_id == e.id,
             group_by: e.collection_id,

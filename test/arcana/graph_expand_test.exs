@@ -1,9 +1,9 @@
 defmodule Arcana.GraphExpandTest do
   use Arcana.DataCase, async: true
 
-  alias Arcana.Collection
+  alias Arcana.{Chunk, Collection, Document}
   alias Arcana.Graph
-  alias Arcana.Graph.{Entity, Relationship}
+  alias Arcana.Graph.{Entity, EntityMention, Relationship, RelationshipEvidence}
 
   defp create_collection(name) do
     %Collection{}
@@ -12,15 +12,60 @@ defmodule Arcana.GraphExpandTest do
   end
 
   defp create_entity(collection, name, type \\ "person") do
-    %Entity{}
-    |> Entity.changeset(%{name: name, type: type, collection_id: collection.id})
+    entity =
+      %Entity{}
+      |> Entity.changeset(%{name: name, type: type, collection_id: collection.id})
+      |> Repo.insert!()
+
+    add_evidence(entity, collection, :completed)
+    entity
+  end
+
+  defp add_evidence(entity, collection, status) do
+    document =
+      %Document{}
+      |> Document.changeset(%{
+        content: "#{status} evidence",
+        status: status,
+        collection_id: collection.id
+      })
+      |> Repo.insert!()
+
+    chunk =
+      %Chunk{}
+      |> Chunk.changeset(%{
+        text: "#{status} evidence",
+        embedding: List.duplicate(0.1, 384),
+        document_id: document.id
+      })
+      |> Repo.insert!()
+
+    %EntityMention{}
+    |> EntityMention.changeset(%{entity_id: entity.id, chunk_id: chunk.id})
     |> Repo.insert!()
   end
 
   defp create_relationship(source, target, type \\ "knows") do
-    %Relationship{}
-    |> Relationship.changeset(%{source_id: source.id, target_id: target.id, type: type})
+    relationship =
+      %Relationship{}
+      |> Relationship.changeset(%{source_id: source.id, target_id: target.id, type: type})
+      |> Repo.insert!()
+
+    chunk_id =
+      Repo.one!(
+        from(m in EntityMention,
+          where: m.entity_id == ^source.id,
+          order_by: m.inserted_at,
+          limit: 1,
+          select: m.chunk_id
+        )
+      )
+
+    %RelationshipEvidence{}
+    |> RelationshipEvidence.changeset(%{relationship_id: relationship.id, chunk_id: chunk_id})
     |> Repo.insert!()
+
+    relationship
   end
 
   describe "query_depth/1" do
@@ -122,6 +167,29 @@ defmodule Arcana.GraphExpandTest do
 
     test "empty input returns empty map" do
       assert Graph.expand_entity_ids([], 2, nil, repo: Repo) == %{}
+    end
+
+    test "does not traverse through an entity supported only by a failed document", ctx do
+      %{collection: collection, alice: alice} = ctx
+      published_target = create_entity(collection, "Published target")
+
+      failed_bridge =
+        %Entity{}
+        |> Entity.changeset(%{
+          name: "Failed bridge",
+          type: "person",
+          collection_id: collection.id
+        })
+        |> Repo.insert!()
+
+      add_evidence(failed_bridge, collection, :failed)
+      create_relationship(alice, failed_bridge)
+      create_relationship(failed_bridge, published_target)
+
+      expanded = Graph.expand_entity_ids([alice.id], 2, nil, repo: Repo)
+
+      refute failed_bridge.id in Map.get(expanded, 1, [])
+      refute published_target.id in Map.get(expanded, 2, [])
     end
   end
 end

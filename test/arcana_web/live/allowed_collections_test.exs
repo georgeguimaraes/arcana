@@ -7,7 +7,7 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
   alias Arcana.Collection
   alias Arcana.Evaluation
   alias Arcana.Graph.Community
-  alias Arcana.Graph.{Community, Entity, Relationship}
+  alias Arcana.Graph.{Community, Entity, Relationship, RelationshipEvidence}
 
   # These tests exercise the /scoped dashboard from the test router, whose
   # :collections MFA reads the allowed list from the conn's session. Each
@@ -521,12 +521,32 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       source = Repo.get_by!(Entity, name: "SecretSource", collection_id: other.id)
       target = Repo.get_by!(Entity, name: "SecretTarget", collection_id: other.id)
 
-      Repo.insert!(%Relationship{
-        source_id: source.id,
-        target_id: target.id,
-        type: "knows",
-        strength: 8
+      relationship =
+        %Relationship{}
+        |> Relationship.changeset(%{
+          source_id: source.id,
+          target_id: target.id,
+          type: "knows",
+          strength: 8
+        })
+        |> Repo.insert!()
+
+      chunk =
+        Repo.one!(
+          from(c in Arcana.Chunk,
+            join: d in Arcana.Document,
+            on: c.document_id == d.id,
+            where: d.collection_id == ^other.id,
+            limit: 1
+          )
+        )
+
+      %RelationshipEvidence{}
+      |> RelationshipEvidence.changeset(%{
+        relationship_id: relationship.id,
+        chunk_id: chunk.id
       })
+      |> Repo.insert!()
 
       {:ok, view, _html} =
         conn |> restrict(["ghost", "tenant-a"]) |> live("/scoped/graph?tab=relationships")
@@ -743,6 +763,7 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       )
 
       refute render(view) =~ "ForeignProgressQuestionZulu"
+      render_until(view, "Evaluation completed!")
     end
 
     test "a restricted Loop evaluation runs scoped and strict", %{conn: conn} do
@@ -773,6 +794,7 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       assert_receive {:loop_scope, collections, search_opts}, 2_000
       assert collections == ["tenant-a"]
       assert search_opts[:strict_collections] == true
+      render_until(view, "Evaluation completed!")
     end
   end
 

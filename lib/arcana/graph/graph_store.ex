@@ -34,9 +34,9 @@ defmodule Arcana.Graph.GraphStore do
               {:ok, map()} | {:error, term()}
 
   @doc """
-  Persists relationships between entities.
+  Persists relationships between entities with the chunk that supports them.
   """
-  @callback persist_relationships([map()], map(), opts :: keyword()) ::
+  @callback persist_relationships(binary(), [map()], map(), opts :: keyword()) ::
               :ok | {:error, term()}
 
   @doc """
@@ -315,18 +315,19 @@ defmodule Arcana.Graph.GraphStore do
   @doc """
   Persists relationships using the configured backend.
   """
-  def persist_relationships(relationships, entity_id_map, opts \\ []) do
+  def persist_relationships(chunk_id, relationships, entity_id_map, opts \\ [])
+      when is_binary(chunk_id) do
     {backend, backend_opts, opts} = extract_backend(opts)
 
     :telemetry.span(
       [:arcana, :graph_store, :persist_relationships],
-      %{relationship_count: length(relationships)},
+      %{chunk_id: chunk_id, relationship_count: length(relationships)},
       fn ->
         result =
           dispatch(
             :persist_relationships,
             backend,
-            [relationships, entity_id_map],
+            [chunk_id, relationships, entity_id_map],
             backend_opts,
             opts
           )
@@ -606,9 +607,15 @@ defmodule Arcana.Graph.GraphStore do
     __MODULE__.Ecto.persist_entities(collection_id, entities, opts)
   end
 
-  defp dispatch(:persist_relationships, :ecto, [relationships, entity_id_map], backend_opts, opts) do
+  defp dispatch(
+         :persist_relationships,
+         :ecto,
+         [chunk_id, relationships, entity_id_map],
+         backend_opts,
+         opts
+       ) do
     opts = Keyword.merge(backend_opts, opts)
-    __MODULE__.Ecto.persist_relationships(relationships, entity_id_map, opts)
+    __MODULE__.Ecto.persist_relationships(chunk_id, relationships, entity_id_map, opts)
   end
 
   defp dispatch(:persist_mentions, :ecto, [mentions, entity_id_map], backend_opts, opts) do
@@ -716,12 +723,12 @@ defmodule Arcana.Graph.GraphStore do
   defp dispatch(
          :persist_relationships,
          :memory,
-         [relationships, entity_id_map],
+         [chunk_id, relationships, entity_id_map],
          backend_opts,
          opts
        ) do
     opts = Keyword.merge(backend_opts, opts)
-    __MODULE__.Memory.persist_relationships(relationships, entity_id_map, opts)
+    __MODULE__.Memory.persist_relationships(chunk_id, relationships, entity_id_map, opts)
   end
 
   defp dispatch(:persist_mentions, :memory, [mentions, entity_id_map], backend_opts, opts) do
@@ -829,12 +836,12 @@ defmodule Arcana.Graph.GraphStore do
   defp dispatch(
          :persist_relationships,
          module,
-         [relationships, entity_id_map],
+         [chunk_id, relationships, entity_id_map],
          backend_opts,
          opts
        ) do
     opts = Keyword.merge(backend_opts, opts)
-    module.persist_relationships(relationships, entity_id_map, opts)
+    module.persist_relationships(chunk_id, relationships, entity_id_map, opts)
   end
 
   defp dispatch(:persist_mentions, module, [mentions, entity_id_map], backend_opts, opts) do

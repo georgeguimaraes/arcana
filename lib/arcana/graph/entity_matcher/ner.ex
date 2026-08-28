@@ -22,6 +22,7 @@ defmodule Arcana.Graph.EntityMatcher.NER do
   import Ecto.Query
 
   alias Arcana.Graph.{Entity, EntityExtractor}
+  alias Arcana.RetrievalScope
 
   @impl Arcana.Graph.EntityMatcher
   def match(query, collection_ids, opts) do
@@ -39,7 +40,14 @@ defmodule Arcana.Graph.EntityMatcher.NER do
   end
 
   defp lookup_ids_by_name(entity_names, collection_ids, repo) do
-    query = from(e in Entity, where: e.name in ^entity_names, select: e.id)
+    published_entity_ids =
+      from([mention: m] in RetrievalScope.mentions(), select: m.entity_id, distinct: true)
+
+    query =
+      from(e in Entity,
+        where: e.name in ^entity_names and e.id in subquery(published_entity_ids),
+        select: e.id
+      )
 
     # nil means unscoped; a list scopes the query, and an empty list must
     # match nothing (`in []` compiles to false) — never fall back to global.

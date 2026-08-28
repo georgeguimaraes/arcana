@@ -97,7 +97,7 @@ defmodule Arcana.VectorStore.Pgvector do
 
   @behaviour Arcana.VectorStore
 
-  alias Arcana.{Chunk, Collection, Document}
+  alias Arcana.{Chunk, Collection, Document, RetrievalScope}
 
   import Ecto.Query
 
@@ -186,9 +186,7 @@ defmodule Arcana.VectorStore.Pgvector do
 
       {:ok, collection_id} ->
         base_query =
-          from(c in Chunk,
-            join: d in Document,
-            on: c.document_id == d.id,
+          from([chunk: c] in RetrievalScope.chunks(),
             select: %{
               id: c.id,
               metadata:
@@ -225,9 +223,7 @@ defmodule Arcana.VectorStore.Pgvector do
 
       {:ok, collection_id} ->
         base_query =
-          from(c in Chunk,
-            join: d in Document,
-            on: c.document_id == d.id,
+          from([chunk: c] in RetrievalScope.chunks(),
             where:
               fragment(
                 "to_tsvector('english', ?) @@ plainto_tsquery('english', ?)",
@@ -387,6 +383,7 @@ defmodule Arcana.VectorStore.Pgvector do
       CROSS JOIN LATERAL (SELECT to_tsvector('english', c.text) AS tsv OFFSET 0) v
       WHERE ($3::uuid IS NULL OR d.collection_id = $3::uuid)
         AND ($4::text IS NULL OR d.source_id = $4::text)
+        AND d.status = 'completed'
     ),
     score_bounds AS (
       SELECT MAX(keyword_score) AS max_kw

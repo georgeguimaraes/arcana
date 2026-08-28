@@ -4,7 +4,7 @@ defmodule Arcana.DeleteContractTest do
 
   It used to call `repo.delete!/1`, so a foreign key violation or a
   concurrent delete escaped as an exception from a function documenting
-  `:ok | {:error, :not_found} | {:error, {:sweep_failed, _}}`. The damage was
+  `:ok | {:error, :not_found} | {:error, term()}`. The damage was
   not the exception itself but the sequencing around it: callers remove an
   external artifact and then call this, and a three-clause `case` written
   from the docs gave them no reason to expect control to leave abruptly.
@@ -50,10 +50,7 @@ defmodule Arcana.DeleteContractTest do
   end
 
   describe "inside a caller's own transaction" do
-    test "a failed sweep does not destroy the caller's transaction" do
-      # repo.rollback/1 in a nested Ecto transaction aborts the OUTERMOST one,
-      # so opening a transaction here unconditionally killed the caller's while
-      # handing back a tuple that reads like a recoverable refusal.
+    test "an external graph store refuses deletion it cannot clean after commit" do
       extractor = fn _t, _o -> {:ok, [%{name: "Alpha", type: "concept"}]} end
 
       opts = [
@@ -69,11 +66,13 @@ defmodule Arcana.DeleteContractTest do
         Repo.transaction(fn ->
           deleted = Arcana.delete(doc.id, opts)
 
-          # Still able to work: the point is the caller keeps their transaction.
-          {deleted, Repo.aggregate(Arcana.Document, :count)}
+          {deleted, Repo.get(Arcana.Document, doc.id)}
         end)
 
-      assert {:ok, {{:error, {:sweep_failed, :sweep_boom}}, _count}} = result
+      assert {:ok, {{:error, :external_graph_store_requires_post_commit_delete}, persisted}} =
+               result
+
+      assert persisted.id == doc.id
     end
   end
 
@@ -92,9 +91,7 @@ defmodule Arcana.DeleteContractTest do
       assert chunks.() == 0
     end
 
-    test "a failed sweep puts the chunks back too, not just the document" do
-      # A rollback restoring the document without its chunks would be worse
-      # than the old behaviour, which at least left nothing half-deleted.
+    test "an external cleanup failure is reported after the database delete commits" do
       extractor = fn _t, _o -> {:ok, [%{name: "Beta", type: "concept"}]} end
 
       opts = [
@@ -114,13 +111,13 @@ defmodule Arcana.DeleteContractTest do
         Repo.aggregate(from(c in Arcana.Chunk, where: c.document_id == ^doc.id), :count)
       end
 
-      before = chunks.()
-      assert before > 0
+      assert chunks.() > 0
 
-      assert {:error, {:sweep_failed, :sweep_boom}} = Arcana.delete(doc.id, opts)
+      assert {:error, {:post_commit_graph_cleanup_failed, {:sweep_failed, :sweep_boom}}} =
+               Arcana.delete(doc.id, opts)
 
-      assert Repo.get(Arcana.Document, doc.id), "the document comes back"
-      assert chunks.() == before, "and so do its chunks"
+      refute Repo.get(Arcana.Document, doc.id)
+      assert chunks.() == 0
     end
   end
 end

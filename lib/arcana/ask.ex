@@ -16,6 +16,7 @@ defmodule Arcana.Ask do
 
   """
 
+  alias Arcana.Graph.GraphStore
   alias Arcana.LLM
 
   @doc """
@@ -210,7 +211,7 @@ defmodule Arcana.Ask do
 
   defp fetch_graph_context(question, repo, opts) do
     import Ecto.Query
-    alias Arcana.Graph.{Community, GraphStore}
+    alias Arcana.Graph.Community
 
     graph_config = Arcana.Graph.config()
     entity_limit = graph_config[:context_entity_limit] || 10
@@ -242,7 +243,7 @@ defmodule Arcana.Ask do
     # its summary can describe entities from other sources in the same
     # collection. Collections, not sources, are the isolation boundary.
     source_id = Keyword.get(opts, :source_id)
-    matched_entities = scope_entities_by_source(matched_entities, source_id, repo)
+    matched_entities = scope_entities_by_evidence(matched_entities, source_id, repo, opts)
 
     if matched_entities == [] do
       %{}
@@ -252,12 +253,16 @@ defmodule Arcana.Ask do
 
       expanded_ids =
         entity_ids
-        |> Arcana.Graph.expand_entity_ids(graph_depth, collection_ids, repo: repo)
+        |> Arcana.Graph.expand_entity_ids(graph_depth, collection_ids,
+          repo: repo,
+          source_id: source_id
+        )
         |> Map.values()
         |> List.flatten()
-        |> entity_ids_in_source(source_id, repo)
+        |> entity_ids_with_evidence(source_id, repo, opts)
 
-      relationships = fetch_relationships(expanded_ids, entity_ids, graph_depth, rel_limit, repo)
+      relationships =
+        fetch_relationships(expanded_ids, entity_ids, graph_depth, rel_limit, source_id, repo)
 
       level_filter =
         case summary_levels do
@@ -280,7 +285,7 @@ defmodule Arcana.Ask do
           from(c in Community,
             where:
               fragment("? && ?", c.entity_ids, ^matched_binary) and
-                not is_nil(c.summary) and c.summary != "",
+                not c.dirty and not is_nil(c.summary) and c.summary != "",
             where: ^level_filter,
             order_by: [
               desc:
@@ -309,12 +314,13 @@ defmodule Arcana.Ask do
   # source AND target both matched the query. With graph_depth > 0 the edge
   # closure runs over the expanded entity set, ordered so edges touching a
   # directly matched entity win the limit over neighbor-to-neighbor edges.
-  defp fetch_relationships(expanded_ids, _matched_ids, 0, rel_limit, repo) do
+  defp fetch_relationships(expanded_ids, _matched_ids, 0, rel_limit, source_id, repo) do
     import Ecto.Query
-    alias Arcana.Graph.{Entity, Relationship}
+    alias Arcana.Graph.Entity
+    alias Arcana.RetrievalScope
 
-    repo.all(
-      from(r in Relationship,
+    query =
+      from([relationship: r] in RetrievalScope.relationships(source_id),
         join: src in Entity,
         on: r.source_id == src.id,
         join: tgt in Entity,
@@ -323,15 +329,17 @@ defmodule Arcana.Ask do
         select: %{source: src.name, target: tgt.name, type: r.type},
         limit: ^rel_limit
       )
-    )
+
+    repo.all(query)
   end
 
-  defp fetch_relationships(expanded_ids, matched_ids, _depth, rel_limit, repo) do
+  defp fetch_relationships(expanded_ids, matched_ids, _depth, rel_limit, source_id, repo) do
     import Ecto.Query
-    alias Arcana.Graph.{Entity, Relationship}
+    alias Arcana.Graph.Entity
+    alias Arcana.RetrievalScope
 
-    repo.all(
-      from(r in Relationship,
+    query =
+      from([relationship: r] in RetrievalScope.relationships(source_id),
         join: src in Entity,
         on: r.source_id == src.id,
         join: tgt in Entity,
@@ -341,43 +349,61 @@ defmodule Arcana.Ask do
         select: %{source: src.name, target: tgt.name, type: r.type},
         limit: ^rel_limit
       )
-    )
+
+    repo.all(query)
   end
 
-  defp scope_entities_by_source(entities, nil, _repo), do: entities
-  defp scope_entities_by_source([], _source_id, _repo), do: []
+  defp scope_entities_by_evidence([], _source_id, _repo, _opts), do: []
 
-  defp scope_entities_by_source(entities, source_id, repo) do
+  defp scope_entities_by_evidence(entities, source_id, repo, opts) do
     in_source =
       entities
       |> Enum.map(& &1.id)
-      |> entity_ids_in_source(source_id, repo)
+      |> entity_ids_with_evidence(source_id, repo, opts)
       |> MapSet.new()
 
     Enum.filter(entities, &MapSet.member?(in_source, &1.id))
   end
 
-  # An entity belongs to a source when at least one of its mentions sits
-  # on a chunk of a document with that source_id.
-  defp entity_ids_in_source(ids, nil, _repo), do: ids
-  defp entity_ids_in_source([], _source_id, _repo), do: []
+  # An entity is visible when at least one mention belongs to a completed
+  # document. A source filter narrows that evidence further.
+  defp entity_ids_with_evidence([], _source_id, _repo, _opts), do: []
 
-  defp entity_ids_in_source(ids, source_id, repo) do
+  defp entity_ids_with_evidence(ids, nil, repo, opts) do
+    if ecto_graph_store?(opts), do: published_entity_ids(ids, nil, repo), else: ids
+  end
+
+  defp entity_ids_with_evidence(ids, source_id, repo, _opts) do
+    published_entity_ids(ids, source_id, repo)
+  end
+
+  defp published_entity_ids(ids, source_id, repo) do
     import Ecto.Query
-    alias Arcana.{Chunk, Document}
-    alias Arcana.Graph.EntityMention
+    alias Arcana.RetrievalScope
 
-    repo.all(
-      from(m in EntityMention,
-        join: c in Chunk,
-        on: c.id == m.chunk_id,
-        join: d in Document,
-        on: d.id == c.document_id,
-        where: m.entity_id in ^ids and d.source_id == ^source_id,
+    query =
+      from([mention: m] in RetrievalScope.mentions(),
+        where: m.entity_id in ^ids,
         select: m.entity_id,
         distinct: true
       )
-    )
+
+    query =
+      if source_id do
+        from([document: d] in query, where: d.source_id == ^source_id)
+      else
+        query
+      end
+
+    repo.all(query)
+  end
+
+  defp ecto_graph_store?(opts) do
+    case Keyword.get(opts, :graph_store, GraphStore.backend()) do
+      :ecto -> true
+      {:ecto, _opts} -> true
+      _other -> false
+    end
   end
 
   defp entity_ids_to_binary(entity_ids) do

@@ -78,16 +78,27 @@ defmodule Arcana.Migration do
 
     * 1 - collections, documents, chunks and the evaluation tables
 
+  ## Uninstall ownership
+
+  Target version 0 removes only the core tables listed above. It leaves the
+  Postgres schema and `vector` extension in place. GraphRAG is a separate,
+  downstream migration stream whose tables reference the core tables, so a
+  same-prefix graph install must be removed with `Arcana.Graph.Migration.down/1`
+  before the core stream. Arcana refuses that ordering mistake before changing
+  the schema instead of exposing Postgres's dependency error.
+
   """
 
   use Ecto.Migration
 
+  alias Arcana.Migration.Dependencies
   alias Arcana.Migration.Dimensions
+  alias Arcana.Migration.Registry
+  alias Arcana.Migration.SchemaScope
   alias Arcana.Migration.UniqueIndex
 
-  @current_version 1
-
-  @version_table "arcana_documents"
+  @current_version Registry.current_version(:core)
+  @version_table Registry.version_table(:core)
 
   @doc """
   Migrates up to `:version`, or to the latest version.
@@ -96,7 +107,8 @@ defmodule Arcana.Migration do
     target = Keyword.get(opts, :version, @current_version)
     validate_target!(target)
 
-    prefix = Keyword.get(opts, :prefix)
+    prefix = SchemaScope.resolve(repo(), :core, Keyword.get(opts, :prefix))
+    opts = Keyword.put(opts, :prefix, prefix)
     current = recorded_version(repo(), prefix: prefix)
     validate_recorded!(current)
 
@@ -122,17 +134,21 @@ defmodule Arcana.Migration do
   @doc """
   Migrates down to `:version`, or removes Arcana's tables entirely.
 
-  Defaults to version 0, which drops everything this module created.
+  Defaults to version 0, which drops everything this module created. A
+  same-prefix GraphRAG install must be removed first.
   """
   def down(opts \\ []) do
     target = Keyword.get(opts, :version, 0)
     validate_rollback_target!(target)
 
-    prefix = Keyword.get(opts, :prefix)
+    prefix = SchemaScope.resolve(repo(), :core, Keyword.get(opts, :prefix))
+    opts = Keyword.put(opts, :prefix, prefix)
     current = recorded_version(repo(), prefix: prefix)
     validate_recorded!(current)
 
     if current == 0, do: refuse_blind_rollback!(prefix)
+
+    if current > target and target == 0, do: preflight_uninstall!(prefix)
 
     if current > target do
       for version <- current..(target + 1)//-1, do: change(version, :down, opts)
@@ -207,27 +223,43 @@ defmodule Arcana.Migration do
   #
   # relkind is constrained to ordinary and partitioned tables, so a view or
   # sequence that happens to share a name is not mistaken for an install.
-  defp owned_tables_present(prefix) do
-    %{rows: rows} =
-      repo().query!(
-        "SELECT c.relname FROM pg_class c " <>
-          "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
-          "WHERE c.relname = ANY($1) AND c.relkind IN ('r', 'p') " <>
-          "AND n.nspname = COALESCE($2, current_schema())",
-        [
-          ~w(
-                   arcana_collections
-                   arcana_documents
-                   arcana_chunks
-                   arcana_evaluation_test_cases
-                   arcana_evaluation_test_case_chunks
-                   arcana_evaluation_runs
-          ),
-          prefix
-        ]
-      )
+  defp owned_tables_present(prefix), do: Registry.present(repo(), :core, prefix)
 
-    List.flatten(rows)
+  defp preflight_uninstall!(prefix) do
+    execute(fn ->
+      graph_tables = Registry.present(repo(), :graph, prefix)
+
+      if graph_tables != [] do
+        tables = graph_tables
+        listed = tables |> Enum.sort() |> Enum.map_join("\n", &"    #{&1}")
+        prefix_opt = if prefix, do: "prefix: #{inspect(prefix)}", else: ""
+
+        raise """
+        Arcana.Migration.down/1 can't remove the core schema while GraphRAG is installed in the same prefix:
+
+        #{listed}
+
+        Run Arcana.Graph.Migration.down(#{prefix_opt}) first, then retry Arcana.Migration.down(#{prefix_opt}). Nothing was changed.
+        """
+      end
+
+      case Dependencies.external(repo(), :core, prefix) do
+        [] ->
+          :ok
+
+        dependents ->
+          listed = Enum.map_join(dependents, "\n", &"    #{&1}")
+          retry_scope = if prefix, do: "with prefix: #{inspect(prefix)}", else: "without a prefix"
+
+          raise """
+          Arcana.Migration.down/1 can't remove the core schema because objects Arcana does not own depend on it:
+
+          #{listed}
+
+          Drop or repoint these objects, then retry #{retry_scope}. Nothing was changed. Arcana will not use DROP ... CASCADE because that would delete host-owned objects.
+          """
+      end
+    end)
   end
 
   @doc """
@@ -255,7 +287,7 @@ defmodule Arcana.Migration do
       repo.query!(
         "SELECT obj_description(c.oid) FROM pg_class c " <>
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
-          "WHERE c.relname = $1 AND n.nspname = COALESCE($2, current_schema())",
+          "WHERE c.relname = $1 AND " <> SchemaScope.visible("c", "n", "$2"),
         [@version_table, prefix]
       )
 
@@ -273,25 +305,20 @@ defmodule Arcana.Migration do
       0
   end
 
-  defp parse_version(nil), do: 0
-
   # Anchored, so only a comment that is exactly the marker counts. An
   # unanchored match read a version out of any prose that happened to
   # contain "arcana:2", and a bare integer (what Oban stores) would read a
   # host's own "1" as version 1. Anything we don't recognise reads as 0,
   # which is the same answer as "never installed" - see the moduledoc.
-  defp parse_version(comment) do
-    case Regex.run(~r/\Aarcana:(\d+)\z/, String.trim(comment)) do
-      [_, version] -> String.to_integer(version)
-      _ -> 0
-    end
-  end
+  defp parse_version(comment), do: Registry.parse_marker(:core, comment)
 
   # Everything is gone, so there is nothing left to comment on.
   defp record_version(0, _prefix), do: :ok
 
   defp record_version(version, prefix) do
-    execute("COMMENT ON TABLE #{qualify(@version_table, prefix)} IS 'arcana:#{version}'")
+    execute(
+      "COMMENT ON TABLE #{qualify(@version_table, prefix)} IS '#{Registry.marker(:core, version)}'"
+    )
   end
 
   # Raw SQL gets none of Ecto's prefix handling, so anything that doesn't go
@@ -518,12 +545,10 @@ defmodule Arcana.Migration do
   defp change(1, :down, opts) do
     prefix = Keyword.get(opts, :prefix)
 
-    drop_if_exists(table(:arcana_evaluation_runs, prefix: prefix))
-    drop_if_exists(table(:arcana_evaluation_test_case_chunks, prefix: prefix))
-    drop_if_exists(table(:arcana_evaluation_test_cases, prefix: prefix))
-    drop_if_exists(table(:arcana_chunks, prefix: prefix))
-    drop_if_exists(table(:arcana_documents, prefix: prefix))
-    drop_if_exists(table(:arcana_collections, prefix: prefix))
+    for table_name <- Registry.tables_added_in(:core, 1) |> Enum.reverse() do
+      drop_if_exists(table(String.to_atom(table_name), prefix: prefix))
+    end
+
     # The vector extension stays: other tables in the database may use it.
   end
 
@@ -568,7 +593,7 @@ defmodule Arcana.Migration do
             "JOIN pg_namespace n ON n.oid = t.relnamespace " <>
             "WHERE con.conname = 'arcana_documents_collection_id_fkey' " <>
             "AND t.relname = 'arcana_documents' " <>
-            "AND n.nspname = COALESCE($1, current_schema())",
+            "AND " <> SchemaScope.visible("t", "n", "$1"),
           [prefix]
         )
 

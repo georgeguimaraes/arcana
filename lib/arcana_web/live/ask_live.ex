@@ -41,6 +41,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
          ask_sub_tab: :advanced,
          ask_question: "",
          ask_running: false,
+         ask_task: nil,
          ask_context: nil,
          ask_error: nil,
          stats: nil,
@@ -147,6 +148,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     @impl true
+    def handle_event("ask_submit", _params, %{assigns: %{ask_running: true}} = socket) do
+      {:noreply, socket}
+    end
+
     def handle_event("ask_submit", params, socket) do
       question = params["question"] || ""
       requested = params["collections"] || []
@@ -253,8 +258,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
               trace_history: []
             )
 
-          start_ask_task(socket, params, llm, question, collections)
-          {:noreply, socket}
+          {:noreply, start_ask_task(socket, params, llm, question, collections)}
       end
     end
 
@@ -356,6 +360,17 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       repo = socket.assigns.repo
       sub_tab = params["sub_tab"] || "advanced"
       parent = self()
+      run_ref = make_ref()
+      suffix = inspect(run_ref)
+      handler_id = "pipeline-progress-#{suffix}"
+      trace_handler_id = "trace-progress-#{suffix}"
+      loop_handler_id = "loop-progress-#{suffix}"
+
+      cleanup = fn ->
+        :telemetry.detach(handler_id)
+        :telemetry.detach(trace_handler_id)
+        :telemetry.detach(loop_handler_id)
+      end
 
       # Carries both halves of the scoping decision into the task: what the
       # user picked, and whether this dashboard is restricted at all (which
@@ -365,147 +380,260 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         allowed: socket.assigns.allowed_collections
       }
 
-      ArcanaWeb.TaskSupervisor.start_child(fn ->
-        handler_id = "pipeline-progress-#{inspect(parent)}"
-        trace_handler_id = "trace-progress-#{inspect(parent)}"
-        loop_handler_id = "loop-progress-#{inspect(parent)}"
+      task_context = %{
+        parent: parent,
+        run_ref: run_ref,
+        handler_ids: {handler_id, trace_handler_id, loop_handler_id},
+        sub_tab: sub_tab,
+        question: question,
+        repo: repo,
+        llm: llm,
+        collections: socket.assigns.collections,
+        params: params,
+        scope: scope
+      }
 
-        graph_enabled = params["graph_search"] == "true"
-
-        pipeline_steps = [
-          :gate,
-          :rewrite,
-          :expand,
-          :decompose,
-          :select,
-          :search,
-          :reason,
-          :self_correct,
-          :rerank,
-          :answer,
-          :ground
-        ]
-
-        # Pipeline progress label events (the old "Running X..." text that
-        # updates the spinner label).
-        label_events =
-          Enum.map(pipeline_steps, &[:arcana, :pipeline, &1, :start]) ++
-            [[:arcana, :graph, :search, :start]]
-
-        :telemetry.attach_many(
-          handler_id,
-          label_events,
-          fn
-            [:arcana, :graph, :search, :start], _measurements, _metadata, _config ->
-              send(parent, {:pipeline_progress, "Searching with graph connections..."})
-
-            [:arcana, :pipeline, step, :start], _measurements, _metadata, _config ->
-              label =
-                if step == :search and graph_enabled,
-                  do: "Searching with graph connections...",
-                  else: pipeline_step_label(step)
-
-              if label, do: send(parent, {:pipeline_progress, label})
-          end,
-          nil
+      started =
+        ArcanaWeb.BackgroundTask.start(
+          parent,
+          :ask_complete,
+          fn -> run_ask_task(task_context) end,
+          run_ref: run_ref,
+          cleanup: cleanup
         )
 
-        # Trace events for the live step-by-step panel. Every sub-tab
-        # subscribes, the handler normalizes the event path to a
-        # `{:trace_step_start, atom}` / `{:trace_step_stop, atom, ms, meta}`
-        # tuple. Pipeline and Advanced both flow through this pathway.
-        trace_events =
-          Enum.flat_map(pipeline_steps, fn step ->
-            [
-              [:arcana, :pipeline, step, :start],
-              [:arcana, :pipeline, step, :stop]
-            ]
-          end) ++
-            [
-              [:arcana, :search, :start],
-              [:arcana, :search, :stop],
-              [:arcana, :graph, :search, :start],
-              [:arcana, :graph, :search, :stop],
-              [:arcana, :llm, :complete, :start],
-              [:arcana, :llm, :complete, :stop]
-            ]
+      case started do
+        {:ok, task} ->
+          assign(socket, ask_task: task)
 
-        :telemetry.attach_many(
-          trace_handler_id,
-          trace_events,
-          fn event, measurements, metadata, _config ->
-            case {event, measurements} do
-              {[:arcana, :pipeline, step, :start], _} ->
-                send(parent, {:trace_step_start, step})
-
-              {[:arcana, :pipeline, step, :stop], %{duration: d}} ->
-                send(parent, {:trace_step_stop, step, native_to_ms(d), metadata})
-
-              {[:arcana, :search, :start], _} ->
-                send(parent, {:trace_step_start, :search})
-
-              {[:arcana, :search, :stop], %{duration: d}} ->
-                send(parent, {:trace_step_stop, :search, native_to_ms(d), metadata})
-
-              {[:arcana, :graph, :search, :start], _} ->
-                send(parent, {:trace_step_start, :graph_search})
-
-              {[:arcana, :graph, :search, :stop], %{duration: d}} ->
-                send(parent, {:trace_step_stop, :graph_search, native_to_ms(d), metadata})
-
-              {[:arcana, :llm, :complete, :start], _} ->
-                send(parent, {:trace_step_start, :llm_complete})
-
-              {[:arcana, :llm, :complete, :stop], %{duration: d}} ->
-                send(parent, {:trace_step_stop, :llm_complete, native_to_ms(d), metadata})
-
-              _ ->
-                :ok
-            end
-          end,
-          nil
-        )
-
-        # Per-tool-call telemetry for the Loop sub-tab. Each event carries
-        # the same shape as a tool_history entry, so the LV can render
-        # the live trace incrementally as the loop unfolds.
-        :telemetry.attach_many(
-          loop_handler_id,
-          [
-            [:arcana, :loop, :tool_call],
-            [:arcana, :loop, :ground, :start],
-            [:arcana, :loop, :ground, :stop]
-          ],
-          fn
-            [:arcana, :loop, :tool_call], _measurements, metadata, _config ->
-              send(parent, {:loop_progress, metadata})
-
-            [:arcana, :loop, :ground, :start], _measurements, _metadata, _config ->
-              send(parent, {:loop_phase, :grounding})
-
-            [:arcana, :loop, :ground, :stop], _measurements, _metadata, _config ->
-              send(parent, {:loop_phase, :idle})
-          end,
-          nil
-        )
-
-        result =
-          run_ask(
-            sub_tab,
-            question,
-            repo,
-            llm,
-            socket.assigns.collections,
-            params,
-            scope
+        {:error, reason} ->
+          assign(socket,
+            ask_running: false,
+            ask_task: nil,
+            ask_error: "Could not start ask task: #{inspect(reason)}"
           )
-
-        :telemetry.detach(handler_id)
-        :telemetry.detach(trace_handler_id)
-        :telemetry.detach(loop_handler_id)
-        send(parent, {:ask_complete, result})
-      end)
+      end
     end
+
+    defp run_ask_task(%{
+           parent: parent,
+           run_ref: run_ref,
+           handler_ids: {handler_id, trace_handler_id, loop_handler_id},
+           sub_tab: sub_tab,
+           question: question,
+           repo: repo,
+           llm: llm,
+           collections: collections,
+           params: params,
+           scope: scope
+         }) do
+      pipeline_steps = pipeline_steps()
+      attach_pipeline_progress(handler_id, parent, run_ref, pipeline_steps, params)
+      attach_trace_progress(trace_handler_id, parent, run_ref, pipeline_steps)
+      attach_loop_progress(loop_handler_id, parent, run_ref)
+      run_ask(sub_tab, question, repo, llm, collections, params, scope)
+    end
+
+    defp pipeline_steps do
+      [
+        :gate,
+        :rewrite,
+        :expand,
+        :decompose,
+        :select,
+        :search,
+        :reason,
+        :self_correct,
+        :rerank,
+        :answer,
+        :ground
+      ]
+    end
+
+    # Pipeline progress label events (the old "Running X..." text that updates
+    # the spinner label).
+    defp attach_pipeline_progress(handler_id, parent, run_ref, pipeline_steps, params) do
+      graph_enabled = params["graph_search"] == "true"
+      events = Enum.map(pipeline_steps, &[:arcana, :pipeline, &1, :start])
+      events = events ++ [[:arcana, :graph, :search, :start]]
+
+      :telemetry.attach_many(
+        handler_id,
+        events,
+        fn event, measurements, metadata, config ->
+          handle_pipeline_progress(
+            event,
+            measurements,
+            metadata,
+            config,
+            parent,
+            run_ref,
+            graph_enabled
+          )
+        end,
+        nil
+      )
+    end
+
+    defp handle_pipeline_progress(
+           [:arcana, :graph, :search, :start],
+           _measurements,
+           _metadata,
+           _config,
+           parent,
+           run_ref,
+           _graph_enabled
+         ) do
+      send(parent, {:pipeline_progress, run_ref, "Searching with graph connections..."})
+    end
+
+    defp handle_pipeline_progress(
+           [:arcana, :pipeline, step, :start],
+           _measurements,
+           _metadata,
+           _config,
+           parent,
+           run_ref,
+           graph_enabled
+         ) do
+      label =
+        if step == :search and graph_enabled,
+          do: "Searching with graph connections...",
+          else: pipeline_step_label(step)
+
+      if label, do: send(parent, {:pipeline_progress, run_ref, label})
+    end
+
+    # Every sub-tab subscribes to the live step-by-step trace. The callback
+    # normalizes pipeline and direct search events to the same message shape.
+    defp attach_trace_progress(handler_id, parent, run_ref, pipeline_steps) do
+      events =
+        Enum.flat_map(pipeline_steps, fn step ->
+          [[:arcana, :pipeline, step, :start], [:arcana, :pipeline, step, :stop]]
+        end) ++
+          [
+            [:arcana, :search, :start],
+            [:arcana, :search, :stop],
+            [:arcana, :graph, :search, :start],
+            [:arcana, :graph, :search, :stop],
+            [:arcana, :llm, :complete, :start],
+            [:arcana, :llm, :complete, :stop]
+          ]
+
+      :telemetry.attach_many(
+        handler_id,
+        events,
+        fn event, measurements, metadata, _config ->
+          handle_trace_progress(event, measurements, metadata, parent, run_ref)
+        end,
+        nil
+      )
+    end
+
+    defp handle_trace_progress([:arcana, :pipeline, step, :start], _, _, parent, run_ref),
+      do: send(parent, {:trace_step_start, run_ref, step})
+
+    defp handle_trace_progress(
+           [:arcana, :pipeline, step, :stop],
+           %{duration: duration},
+           metadata,
+           parent,
+           run_ref
+         ),
+         do: send(parent, {:trace_step_stop, run_ref, step, native_to_ms(duration), metadata})
+
+    defp handle_trace_progress([:arcana, :search, :start], _, _, parent, run_ref),
+      do: send(parent, {:trace_step_start, run_ref, :search})
+
+    defp handle_trace_progress(
+           [:arcana, :search, :stop],
+           %{duration: duration},
+           metadata,
+           parent,
+           run_ref
+         ),
+         do: send(parent, {:trace_step_stop, run_ref, :search, native_to_ms(duration), metadata})
+
+    defp handle_trace_progress([:arcana, :graph, :search, :start], _, _, parent, run_ref),
+      do: send(parent, {:trace_step_start, run_ref, :graph_search})
+
+    defp handle_trace_progress(
+           [:arcana, :graph, :search, :stop],
+           %{duration: duration},
+           metadata,
+           parent,
+           run_ref
+         ),
+         do:
+           send(
+             parent,
+             {:trace_step_stop, run_ref, :graph_search, native_to_ms(duration), metadata}
+           )
+
+    defp handle_trace_progress([:arcana, :llm, :complete, :start], _, _, parent, run_ref),
+      do: send(parent, {:trace_step_start, run_ref, :llm_complete})
+
+    defp handle_trace_progress(
+           [:arcana, :llm, :complete, :stop],
+           %{duration: duration},
+           metadata,
+           parent,
+           run_ref
+         ),
+         do:
+           send(
+             parent,
+             {:trace_step_stop, run_ref, :llm_complete, native_to_ms(duration), metadata}
+           )
+
+    defp handle_trace_progress(_event, _measurements, _metadata, _parent, _run_ref), do: :ok
+
+    # Loop tool events carry the same metadata shape as a tool_history entry,
+    # so the LiveView can append them without another transformation.
+    defp attach_loop_progress(handler_id, parent, run_ref) do
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:arcana, :loop, :tool_call],
+          [:arcana, :loop, :ground, :start],
+          [:arcana, :loop, :ground, :stop]
+        ],
+        fn event, measurements, metadata, config ->
+          handle_loop_progress(event, measurements, metadata, config, parent, run_ref)
+        end,
+        nil
+      )
+    end
+
+    defp handle_loop_progress(
+           [:arcana, :loop, :tool_call],
+           _measurements,
+           metadata,
+           _config,
+           parent,
+           run_ref
+         ),
+         do: send(parent, {:loop_progress, run_ref, metadata})
+
+    defp handle_loop_progress(
+           [:arcana, :loop, :ground, :start],
+           _measurements,
+           _metadata,
+           _config,
+           parent,
+           run_ref
+         ),
+         do: send(parent, {:loop_phase, run_ref, :grounding})
+
+    defp handle_loop_progress(
+           [:arcana, :loop, :ground, :stop],
+           _measurements,
+           _metadata,
+           _config,
+           parent,
+           run_ref
+         ),
+         do: send(parent, {:loop_phase, run_ref, :idle})
 
     defp native_to_ms(duration) do
       System.convert_time_unit(duration, :native, :millisecond)
@@ -542,27 +670,42 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     @impl true
-    def handle_info({:pipeline_progress, step}, socket) do
+    def handle_info(
+          {:pipeline_progress, run_ref, step},
+          %{assigns: %{ask_task: %{run_ref: run_ref}}} = socket
+        ) do
       {:noreply, assign(socket, pipeline_step: step)}
     end
 
-    def handle_info({:loop_progress, entry}, socket) do
+    def handle_info(
+          {:loop_progress, run_ref, entry},
+          %{assigns: %{ask_task: %{run_ref: run_ref}}} = socket
+        ) do
       # Append, not prepend: render order matches iteration order so the
       # newest entry visually lands at the bottom of the trace.
       {:noreply, assign(socket, loop_live_history: socket.assigns.loop_live_history ++ [entry])}
     end
 
-    def handle_info({:loop_phase, phase}, socket) do
+    def handle_info(
+          {:loop_phase, run_ref, phase},
+          %{assigns: %{ask_task: %{run_ref: run_ref}}} = socket
+        ) do
       {:noreply, assign(socket, loop_phase: phase)}
     end
 
-    def handle_info({:trace_step_start, step}, socket) do
+    def handle_info(
+          {:trace_step_start, run_ref, step},
+          %{assigns: %{ask_task: %{run_ref: run_ref}}} = socket
+        ) do
       entry = %{step: step, status: :running, duration_ms: nil, meta: nil}
 
       {:noreply, assign(socket, trace_history: socket.assigns.trace_history ++ [entry])}
     end
 
-    def handle_info({:trace_step_stop, step, duration_ms, metadata}, socket) do
+    def handle_info(
+          {:trace_step_stop, run_ref, step, duration_ms, metadata},
+          %{assigns: %{ask_task: %{run_ref: run_ref}}} = socket
+        ) do
       history =
         socket.assigns.trace_history
         |> Enum.reverse()
@@ -572,24 +715,69 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       {:noreply, assign(socket, trace_history: history)}
     end
 
-    def handle_info({:ask_complete, result}, socket) do
-      socket =
-        case result do
-          {:ok, ctx} ->
-            ctx = Map.put(ctx, :document_titles, load_document_titles(ctx, socket.assigns.repo))
+    def handle_info(
+          {:ask_complete, run_ref, result},
+          %{assigns: %{ask_task: %{run_ref: run_ref, monitor_ref: monitor_ref}}} = socket
+        ) do
+      Process.demonitor(monitor_ref, [:flush])
+      {:noreply, finish_ask(socket, result)}
+    end
 
-            assign(socket,
-              ask_running: false,
-              ask_context: ctx,
-              ask_error: nil,
-              pipeline_step: nil
-            )
+    # Some callers use this message to render a completed result without
+    # starting background work. Keep that path only while idle so an old,
+    # uncorrelated message can never overwrite an active run.
+    def handle_info(
+          {:ask_complete, result},
+          %{assigns: %{ask_running: false, ask_task: nil}} = socket
+        ) do
+      {:noreply, finish_ask(socket, result)}
+    end
 
-          {:error, reason} ->
-            assign(socket, ask_running: false, ask_error: inspect(reason), pipeline_step: nil)
-        end
+    def handle_info(
+          {:DOWN, monitor_ref, :process, _pid, reason},
+          %{assigns: %{ask_task: %{monitor_ref: monitor_ref}}} = socket
+        ) do
+      {:noreply,
+       assign(socket,
+         ask_running: false,
+         ask_task: nil,
+         ask_error: "Ask task stopped: #{inspect(reason)}",
+         pipeline_step: nil
+       )}
+    end
 
-      {:noreply, socket}
+    def handle_info({tag, _run_ref, _payload}, socket)
+        when tag in [
+               :pipeline_progress,
+               :loop_progress,
+               :loop_phase,
+               :trace_step_start,
+               :ask_complete
+             ],
+        do: {:noreply, socket}
+
+    def handle_info({:trace_step_stop, _run_ref, _step, _duration_ms, _metadata}, socket),
+      do: {:noreply, socket}
+
+    defp finish_ask(socket, {:ok, ctx}) do
+      ctx = Map.put(ctx, :document_titles, load_document_titles(ctx, socket.assigns.repo))
+
+      assign(socket,
+        ask_running: false,
+        ask_task: nil,
+        ask_context: ctx,
+        ask_error: nil,
+        pipeline_step: nil
+      )
+    end
+
+    defp finish_ask(socket, {:error, reason}) do
+      assign(socket,
+        ask_running: false,
+        ask_task: nil,
+        ask_error: inspect(reason),
+        pipeline_step: nil
+      )
     end
 
     # Batch-loads document titles for every chunk in the result. All three

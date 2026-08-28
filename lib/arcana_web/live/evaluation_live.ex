@@ -23,7 +23,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
        |> assign(
          eval_view: :test_cases,
          eval_running: false,
+         eval_run_task: nil,
          eval_generating: false,
+         eval_generate_task: nil,
          eval_progress: nil,
          eval_tick: 0,
          eval_message: nil,
@@ -81,6 +83,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       {:noreply, assign(socket, eval_view: parse_eval_view(view))}
     end
 
+    def handle_event("eval_run", _params, %{assigns: %{eval_running: true}} = socket) do
+      {:noreply, socket}
+    end
+
     def handle_event("eval_run", params, socket) do
       mode = parse_mode(params["mode"])
       retriever_name = params["retriever"] || "pipeline"
@@ -106,6 +112,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         true ->
           {:noreply, start_eval_run(socket, mode, evaluate_answers, llm, retriever_name)}
       end
+    end
+
+    def handle_event("eval_generate", _params, %{assigns: %{eval_generating: true}} = socket) do
+      {:noreply, socket}
     end
 
     def handle_event("eval_generate", params, socket) do
@@ -175,7 +185,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       opts = Keyword.put(opts, :run_ref, run_ref)
 
       parent = self()
-      handler_id = "eval-progress-#{inspect(parent)}"
+      handler_id = "eval-progress-#{inspect(run_ref)}"
 
       :telemetry.attach_many(
         handler_id,
@@ -185,25 +195,36 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         ],
         fn event, measurements, metadata, _config ->
           if metadata[:run_ref] == run_ref do
-            send(parent, {:eval_progress, event, measurements, metadata})
+            send(parent, {:eval_progress, run_ref, event, measurements, metadata})
           end
         end,
         nil
       )
 
-      Task.Supervisor.start_child(ArcanaWeb.TaskSupervisor, fn ->
-        result = Evaluation.run(opts)
-        :telemetry.detach(handler_id)
-        send(parent, {:eval_run_complete, result})
-      end)
+      cleanup = fn -> :telemetry.detach(handler_id) end
 
-      # Self-tick every second so the elapsed-time counter updates live
-      # while a test case is in flight. LiveView only re-renders on
-      # messages; without a tick the elapsed-time label freezes at
-      # whatever it was when the last telemetry event fired.
-      Process.send_after(self(), :eval_tick, 1000)
+      case ArcanaWeb.BackgroundTask.start(
+             parent,
+             :eval_run_complete,
+             fn -> Evaluation.run(opts) end,
+             run_ref: run_ref,
+             cleanup: cleanup
+           ) do
+        {:ok, task} ->
+          # Self-tick every second so the elapsed-time counter updates live
+          # while a test case is in flight. LiveView only re-renders on
+          # messages; without a tick the elapsed display freezes.
+          Process.send_after(self(), :eval_tick, 1000)
+          assign(socket, eval_run_task: task)
 
-      socket
+        {:error, reason} ->
+          assign(socket,
+            eval_running: false,
+            eval_run_task: nil,
+            eval_progress: nil,
+            eval_message: {:error, "Could not start evaluation: #{inspect(reason)}"}
+          )
+      end
     end
 
     # nil means "sample from every collection", which restricted dashboards
@@ -228,11 +249,25 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
           parent = self()
           opts = build_generate_opts(repo, llm, sample_size, collection)
+          run_ref = make_ref()
 
-          Task.Supervisor.start_child(ArcanaWeb.TaskSupervisor, fn ->
-            result = Evaluation.generate_test_cases(opts)
-            send(parent, {:eval_generate_complete, result})
-          end)
+          socket =
+            case ArcanaWeb.BackgroundTask.start(
+                   parent,
+                   :eval_generate_complete,
+                   fn -> Evaluation.generate_test_cases(opts) end,
+                   run_ref: run_ref
+                 ) do
+              {:ok, task} ->
+                assign(socket, eval_generate_task: task)
+
+              {:error, reason} ->
+                assign(socket,
+                  eval_generating: false,
+                  eval_generate_task: nil,
+                  eval_message: {:error, "Could not start generation: #{inspect(reason)}"}
+                )
+            end
 
           {:noreply, socket}
       end
@@ -251,7 +286,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       end
     end
 
-    def handle_info({:eval_progress, event, _measurements, metadata}, socket) do
+    def handle_info(
+          {:eval_progress, run_ref, event, _measurements, metadata},
+          %{assigns: %{eval_run_task: %{run_ref: run_ref}}} = socket
+        ) do
       %{index: index, total: total, question: question} = metadata
 
       base =
@@ -275,13 +313,19 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       {:noreply, assign(socket, eval_progress: progress)}
     end
 
-    def handle_info({:eval_run_complete, result}, socket) do
+    def handle_info(
+          {:eval_run_complete, run_ref, result},
+          %{assigns: %{eval_run_task: %{run_ref: run_ref, monitor_ref: monitor_ref}}} = socket
+        ) do
+      Process.demonitor(monitor_ref, [:flush])
+
       socket =
         case result do
           {:ok, _run} ->
             socket
             |> assign(
               eval_running: false,
+              eval_run_task: nil,
               eval_progress: nil,
               eval_message: {:success, "Evaluation completed!"}
             )
@@ -291,6 +335,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           {:error, :no_test_cases} ->
             assign(socket,
               eval_running: false,
+              eval_run_task: nil,
               eval_progress: nil,
               eval_message: {:error, "No test cases. Generate some first."}
             )
@@ -304,6 +349,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
             assign(socket,
               eval_running: false,
+              eval_run_task: nil,
               eval_progress: nil,
               eval_message: {:error, "Evaluation failed: #{inspect(other)}"}
             )
@@ -312,13 +358,23 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       {:noreply, socket}
     end
 
-    def handle_info({:eval_generate_complete, result}, socket) do
+    def handle_info(
+          {:eval_generate_complete, run_ref, result},
+          %{
+            assigns: %{
+              eval_generate_task: %{run_ref: run_ref, monitor_ref: monitor_ref}
+            }
+          } = socket
+        ) do
+      Process.demonitor(monitor_ref, [:flush])
+
       socket =
         case result do
           {:ok, test_cases} ->
             socket
             |> assign(
               eval_generating: false,
+              eval_generate_task: nil,
               eval_message: {:success, "Generated #{length(test_cases)} test case(s)!"}
             )
             |> load_evaluation_data()
@@ -326,12 +382,45 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           {:error, reason} ->
             assign(socket,
               eval_generating: false,
+              eval_generate_task: nil,
               eval_message: {:error, "Generation failed: #{inspect(reason)}"}
             )
         end
 
       {:noreply, socket}
     end
+
+    def handle_info(
+          {:DOWN, monitor_ref, :process, _pid, reason},
+          %{assigns: %{eval_run_task: %{monitor_ref: monitor_ref}}} = socket
+        ) do
+      {:noreply,
+       assign(socket,
+         eval_running: false,
+         eval_run_task: nil,
+         eval_progress: nil,
+         eval_message: {:error, "Evaluation task stopped: #{inspect(reason)}"}
+       )}
+    end
+
+    def handle_info(
+          {:DOWN, monitor_ref, :process, _pid, reason},
+          %{assigns: %{eval_generate_task: %{monitor_ref: monitor_ref}}} = socket
+        ) do
+      {:noreply,
+       assign(socket,
+         eval_generating: false,
+         eval_generate_task: nil,
+         eval_message: {:error, "Generation task stopped: #{inspect(reason)}"}
+       )}
+    end
+
+    def handle_info({tag, _run_ref, _result}, socket)
+        when tag in [:eval_run_complete, :eval_generate_complete],
+        do: {:noreply, socket}
+
+    def handle_info({:eval_progress, _run_ref, _event, _measurements, _metadata}, socket),
+      do: {:noreply, socket}
 
     defp build_run_opts(socket, mode, evaluate_answers, llm, retriever_name) do
       repo = socket.assigns.repo

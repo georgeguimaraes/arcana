@@ -1,7 +1,7 @@
 defmodule Arcana.EvaluationTest do
   use Arcana.DataCase, async: true
 
-  alias Arcana.Evaluation
+  alias Arcana.{Chunk, Collection, Document, Evaluation}
   alias Arcana.Evaluation.TestCase
 
   describe "generate_test_cases/1" do
@@ -88,6 +88,42 @@ defmodule Arcana.EvaluationTest do
         )
 
       assert test_cases == []
+    end
+
+    test "samples only chunks from completed documents" do
+      {:ok, collection} = Collection.get_or_create("evaluation-published-only", Repo)
+
+      for status <- [:completed, :processing, :failed] do
+        document =
+          %Document{}
+          |> Document.changeset(%{
+            content: "#{status} evaluation content",
+            status: status,
+            collection_id: collection.id
+          })
+          |> Repo.insert!()
+
+        %Chunk{}
+        |> Chunk.changeset(%{
+          text: "#{status} evaluation content",
+          embedding: List.duplicate(0.1, 384),
+          document_id: document.id
+        })
+        |> Repo.insert!()
+      end
+
+      llm = fn prompt, _context -> {:ok, "Question from #{prompt}"} end
+
+      assert {:ok, [test_case]} =
+               Evaluation.generate_test_cases(
+                 repo: Repo,
+                 llm: llm,
+                 sample_size: 10,
+                 collection: collection.name
+               )
+
+      [chunk] = test_case.relevant_chunks
+      assert Repo.get!(Document, chunk.document_id).status == :completed
     end
   end
 

@@ -8,8 +8,8 @@ defmodule Arcana.Evaluation.Generator do
 
   import Ecto.Query
 
-  alias Arcana.{Chunk, LLM}
   alias Arcana.Evaluation.TestCase
+  alias Arcana.{LLM, RetrievalScope}
 
   @default_prompt """
   Given this text chunk from a document, generate a natural question that can ONLY be answered using information in this chunk.
@@ -69,22 +69,21 @@ defmodule Arcana.Evaluation.Generator do
 
   defp sample_chunks(repo, sample_size, source_id, collection) do
     query =
-      from(c in Chunk,
-        join: d in assoc(c, :document),
+      from([chunk: c] in RetrievalScope.chunks(),
         order_by: fragment("RANDOM()"),
         limit: ^sample_size
       )
 
     query =
       if source_id do
-        from([c, d] in query, where: d.source_id == ^source_id)
+        from([document: d] in query, where: d.source_id == ^source_id)
       else
         query
       end
 
     query =
       if collection do
-        from([c, d] in query,
+        from([document: d] in query,
           join: col in assoc(d, :collection),
           where: col.name == ^collection
         )

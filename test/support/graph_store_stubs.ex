@@ -11,13 +11,18 @@ defmodule Arcana.SpyGraphStore do
     {:ok, Map.new(entities, fn e -> {EntityName.normalize(e.name), e.name} end)}
   end
 
-  def persist_relationships(relationships, _entity_id_map, opts) do
-    notify(opts, {:persist_relationships, length(relationships)})
+  def persist_relationships(chunk_id, relationships, _entity_id_map, opts) do
+    notify(opts, {:persist_relationships, chunk_id, length(relationships)})
     :ok
   end
 
   def persist_mentions(mentions, _entity_id_map, opts) do
     notify(opts, {:persist_mentions, length(mentions)})
+    :ok
+  end
+
+  def delete_by_chunks(chunk_ids, opts) do
+    notify(opts, {:delete_by_chunks, chunk_ids})
     :ok
   end
 
@@ -44,8 +49,9 @@ defmodule Arcana.FailingSweepGraphStore do
     {:ok, Map.new(entities, fn e -> {EntityName.normalize(e.name), e.name} end)}
   end
 
-  def persist_relationships(_relationships, _entity_id_map, _opts), do: :ok
+  def persist_relationships(_chunk_id, _relationships, _entity_id_map, _opts), do: :ok
   def persist_mentions(_mentions, _entity_id_map, _opts), do: :ok
+  def delete_by_chunks(_chunk_ids, _opts), do: :ok
 
   def sweep_orphans(_collection_id, _opts), do: {:error, :sweep_boom}
 end
@@ -61,8 +67,9 @@ defmodule Arcana.LegacyGraphStore do
     {:ok, Map.new(entities, fn e -> {EntityName.normalize(e.name), e.name} end)}
   end
 
-  def persist_relationships(_relationships, _entity_id_map, _opts), do: :ok
+  def persist_relationships(_chunk_id, _relationships, _entity_id_map, _opts), do: :ok
   def persist_mentions(_mentions, _entity_id_map, _opts), do: :ok
+  def delete_by_chunks(_chunk_ids, _opts), do: :ok
 end
 
 defmodule Arcana.RaisingGraphStore do
@@ -70,7 +77,7 @@ defmodule Arcana.RaisingGraphStore do
   # Graph store that blows up mid-build, for the partial-document path.
 
   def persist_entities(_collection_id, _entities, _opts), do: raise("graph store exploded")
-  def persist_relationships(_relationships, _entity_id_map, _opts), do: :ok
+  def persist_relationships(_chunk_id, _relationships, _entity_id_map, _opts), do: :ok
   def persist_mentions(_mentions, _entity_id_map, _opts), do: :ok
   def sweep_orphans(_collection_id, _opts), do: :ok
 end

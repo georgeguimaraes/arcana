@@ -257,7 +257,9 @@ defmodule Arcana.Ingest do
     build_graph_or_fail_document(document, chunk_records, collection, repo, opts)
 
     if Keyword.get(opts, :replace, false) do
-      with {:ok, document} <- finalize_replace(document, chunk_records, repo) do
+      with {:ok, {document, replaced_chunk_ids}} <-
+             finalize_replace(document, chunk_records, repo, opts) do
+        cleanup_replaced_graph(replaced_chunk_ids, repo, opts)
         sweep_graph_orphans(document.collection_id, repo, opts)
         {:ok, document}
       end
@@ -321,7 +323,17 @@ defmodule Arcana.Ingest do
   # concurrent replaces serialize HERE, at the fast DB-only step, never
   # around chunking/embedding. A run whose document was already deleted by a
   # faster concurrent replace loses cleanly.
-  defp finalize_replace(document, chunk_records, repo) do
+  defp finalize_replace(document, chunk_records, repo, opts) do
+    replace = fn -> do_finalize_replace(document, chunk_records, repo, opts) end
+
+    if Arcana.Config.graph_enabled?(opts) and ecto_graph_store?(opts) do
+      GraphStore.with_write_lock(document.collection_id, Keyword.put(opts, :repo, repo), replace)
+    else
+      replace.()
+    end
+  end
+
+  defp do_finalize_replace(document, chunk_records, repo, opts) do
     repo.transaction(fn ->
       repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
         "arcana:replace:#{document.collection_id}:#{document.source_id}"
@@ -329,6 +341,30 @@ defmodule Arcana.Ingest do
 
       if repo.get(Document, document.id) do
         import Ecto.Query, only: [from: 2]
+
+        replaced_chunk_ids =
+          repo.all(
+            from(c in Chunk,
+              join: d in Document,
+              on: c.document_id == d.id,
+              where:
+                d.collection_id == ^document.collection_id and
+                  d.source_id == ^document.source_id and d.id != ^document.id,
+              select: c.id
+            )
+          )
+
+        {:ok, document} =
+          document
+          |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
+          |> repo.update()
+
+        # Publish the replacement before retiring predecessor evidence. Graph
+        # cleanup can then see identical facts supported by the new document
+        # and won't dirty their communities during the handoff. The whole
+        # sequence is still one transaction, so a later failure rolls the
+        # publication back too.
+        maybe_delete_replaced_graph(replaced_chunk_ids, repo, opts)
 
         repo.delete_all(
           from(d in Document,
@@ -339,16 +375,45 @@ defmodule Arcana.Ingest do
           )
         )
 
-        {:ok, document} =
-          document
-          |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
-          |> repo.update()
-
-        document
+        {document, replaced_chunk_ids}
       else
         repo.rollback(:replaced_by_concurrent_ingest)
       end
     end)
+  end
+
+  defp maybe_delete_replaced_graph(replaced_chunk_ids, repo, opts) do
+    if Arcana.Config.graph_enabled?(opts) and ecto_graph_store?(opts) do
+      case GraphStore.delete_by_chunks(replaced_chunk_ids, Keyword.put(opts, :repo, repo)) do
+        :ok -> :ok
+        {:error, reason} -> repo.rollback({:graph_cleanup_failed, reason})
+      end
+    end
+  end
+
+  defp cleanup_replaced_graph([], _repo, _opts), do: :ok
+
+  defp cleanup_replaced_graph(chunk_ids, repo, opts) do
+    if Arcana.Config.graph_enabled?(opts) and not ecto_graph_store?(opts) do
+      case GraphStore.delete_by_chunks(chunk_ids, Keyword.put(opts, :repo, repo)) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("Arcana: replaced graph cleanup failed: #{inspect(reason)}")
+          :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp ecto_graph_store?(opts) do
+    case Keyword.get(opts, :graph_store, GraphStore.backend()) do
+      :ecto -> true
+      {:ecto, _opts} -> true
+      _other -> false
+    end
   end
 
   defp maybe_build_graph(chunk_records, collection, repo, opts) do

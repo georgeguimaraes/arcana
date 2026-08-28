@@ -1,8 +1,17 @@
 defmodule Arcana.MaintenanceCommunitiesTest do
   use Arcana.DataCase, async: true
 
-  alias Arcana.Collection
-  alias Arcana.Graph.{Community, CommunitySummarizer, Entity, Relationship}
+  alias Arcana.{Chunk, Collection, Document}
+
+  alias Arcana.Graph.{
+    Community,
+    CommunitySummarizer,
+    Entity,
+    EntityMention,
+    Relationship,
+    RelationshipEvidence
+  }
+
   alias Arcana.Maintenance
 
   defmodule TwoLevelDetector do
@@ -31,6 +40,24 @@ defmodule Arcana.MaintenanceCommunitiesTest do
     name = "communities-#{System.unique_integer([:positive])}"
     {:ok, collection} = Collection.get_or_create(name, Repo)
 
+    document =
+      %Document{}
+      |> Document.changeset(%{
+        content: "community evidence",
+        collection_id: collection.id,
+        status: :completed
+      })
+      |> Repo.insert!()
+
+    chunk =
+      %Chunk{}
+      |> Chunk.changeset(%{
+        text: "community evidence",
+        embedding: Enum.map(1..384, fn _ -> 0.0 end),
+        document_id: document.id
+      })
+      |> Repo.insert!()
+
     # Two tight clusters joined by a weak bridge.
     entities =
       for entity_name <- ~w(a b c d e f) do
@@ -45,6 +72,12 @@ defmodule Arcana.MaintenanceCommunitiesTest do
 
     [a, b, c, d, e, f] = entities
 
+    for entity <- entities do
+      %EntityMention{}
+      |> EntityMention.changeset(%{entity_id: entity.id, chunk_id: chunk.id})
+      |> Repo.insert!()
+    end
+
     for {source, target, strength} <- [
           {a, b, 10},
           {b, c, 10},
@@ -54,17 +87,31 @@ defmodule Arcana.MaintenanceCommunitiesTest do
           {d, f, 10},
           {c, d, 1}
         ] do
+      persist_relationship(source, target, chunk, "RELATED", strength)
+    end
+
+    %{collection: collection, entities: entities, chunk: chunk}
+  end
+
+  defp persist_relationship(source, target, chunk, type, strength) do
+    relationship =
       %Relationship{}
       |> Relationship.changeset(%{
-        type: "RELATED",
+        type: type,
         source_id: source.id,
         target_id: target.id,
         strength: strength
       })
       |> Repo.insert!()
-    end
 
-    %{collection: collection, entities: entities}
+    %RelationshipEvidence{}
+    |> RelationshipEvidence.changeset(%{
+      relationship_id: relationship.id,
+      chunk_id: chunk.id
+    })
+    |> Repo.insert!()
+
+    relationship
   end
 
   defp summarized_as_a_real_run_would(community, summary) do
@@ -280,7 +327,8 @@ defmodule Arcana.MaintenanceCommunitiesTest do
 
     test "a relationship added between existing members invalidates the summary", %{
       collection: collection,
-      entities: entities
+      entities: entities,
+      chunk: chunk
     } do
       # The case membership can't see: ingesting another document adds
       # relationships between entities that are already in the community, so
@@ -295,14 +343,7 @@ defmodule Arcana.MaintenanceCommunitiesTest do
 
       [a, b | _] = entities
 
-      %Relationship{}
-      |> Relationship.changeset(%{
-        source_id: a.id,
-        target_id: b.id,
-        type: "newly-discovered",
-        strength: 1
-      })
-      |> Repo.insert!()
+      persist_relationship(a, b, chunk, "newly-discovered", 1)
 
       assert {:ok, _} =
                Maintenance.detect_communities(Repo, collection: collection.name, seed: 42)
@@ -319,7 +360,10 @@ defmodule Arcana.MaintenanceCommunitiesTest do
       end
     end
 
-    test "new memberships come back dirty with no summary", %{collection: collection} do
+    test "new memberships come back dirty with no summary", %{
+      collection: collection,
+      chunk: chunk
+    } do
       assert {:ok, _} =
                Maintenance.detect_communities(Repo, collection: collection.name, seed: 42)
 
@@ -327,12 +371,17 @@ defmodule Arcana.MaintenanceCommunitiesTest do
         summarized_as_a_real_run_would(community, "old")
       end
 
-      %Entity{}
-      |> Entity.changeset(%{
-        name: "loner-#{collection.name}",
-        type: "thing",
-        collection_id: collection.id
-      })
+      entity =
+        %Entity{}
+        |> Entity.changeset(%{
+          name: "loner-#{collection.name}",
+          type: "thing",
+          collection_id: collection.id
+        })
+        |> Repo.insert!()
+
+      %EntityMention{}
+      |> EntityMention.changeset(%{entity_id: entity.id, chunk_id: chunk.id})
       |> Repo.insert!()
 
       assert {:ok, _} =

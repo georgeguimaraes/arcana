@@ -32,6 +32,8 @@ defmodule Arcana do
   alias Arcana.Document
   alias Arcana.Graph.GraphStore
 
+  import Ecto.Query, only: [from: 2]
+
   # === Configuration ===
 
   @doc """
@@ -231,19 +233,27 @@ defmodule Arcana do
   # tuple that reads like a recoverable refusal. Their transaction already
   # provides the atomicity, and the error is theirs to act on.
   defp delete_document(document, repo, opts) do
-    if repo.in_transaction?() do
-      locked_delete(document, repo, opts)
-    else
-      repo.transaction(fn ->
-        case locked_delete(document, repo, opts) do
-          :ok -> :ok
-          {:error, reason} -> repo.rollback(reason)
+    cond do
+      repo.in_transaction?() and external_graph_cleanup?(document, opts) ->
+        {:error, :external_graph_store_requires_post_commit_delete}
+
+      repo.in_transaction?() ->
+        locked_delete(document, repo, opts)
+
+      external_graph_cleanup?(document, opts) ->
+        delete_before_external_cleanup(document, repo, opts)
+
+      true ->
+        repo.transaction(fn ->
+          case locked_delete(document, repo, opts) do
+            :ok -> :ok
+            {:error, reason} -> repo.rollback(reason)
+          end
+        end)
+        |> case do
+          {:ok, :ok} -> :ok
+          {:error, reason} -> {:error, reason}
         end
-      end)
-      |> case do
-        {:ok, :ok} -> :ok
-        {:error, reason} -> {:error, reason}
-      end
     end
   rescue
     # The row went away between the get and the delete. A concurrent deleter
@@ -268,6 +278,34 @@ defmodule Arcana do
     # connection or a pool timeout is a different struct and still raises.
     error in Postgrex.Error ->
       {:error, error}
+  end
+
+  defp external_graph_cleanup?(document, opts) do
+    sweeping?(document, opts) and not ecto_graph_store?(opts)
+  end
+
+  defp delete_before_external_cleanup(document, repo, opts) do
+    repo.transaction(fn ->
+      chunk_ids =
+        repo.all(from(c in Arcana.Chunk, where: c.document_id == ^document.id, select: c.id))
+
+      case repo.delete(document) do
+        {:ok, _deleted} -> chunk_ids
+        {:error, reason} -> repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, chunk_ids} ->
+        with :ok <- GraphStore.delete_by_chunks(chunk_ids, Keyword.put(opts, :repo, repo)),
+             :ok <- sweep(document, repo, opts) do
+          :ok
+        else
+          {:error, reason} -> {:error, {:post_commit_graph_cleanup_failed, reason}}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   # The advisory lock goes first, before any row locks, because that is the
@@ -315,14 +353,25 @@ defmodule Arcana do
   end
 
   defp delete_and_sweep(document, repo, opts) do
-    case repo.delete(document) do
-      {:ok, _deleted} ->
-        sweep(document, repo, opts)
+    chunk_ids =
+      repo.all(from(c in Arcana.Chunk, where: c.document_id == ^document.id, select: c.id))
 
-      {:error, changeset} ->
-        {:error, changeset}
+    with :ok <- cleanup_graph_before_delete(chunk_ids, document, repo, opts),
+         {:ok, _deleted} <- repo.delete(document),
+         :ok <- cleanup_graph_after_delete(chunk_ids, document, repo, opts) do
+      sweep(document, repo, opts)
     end
   end
+
+  defp cleanup_graph_before_delete(chunk_ids, document, repo, opts) do
+    if sweeping?(document, opts) and ecto_graph_store?(opts) do
+      GraphStore.delete_by_chunks(chunk_ids, Keyword.put(opts, :repo, repo))
+    else
+      :ok
+    end
+  end
+
+  defp cleanup_graph_after_delete(_chunk_ids, _document, _repo, _opts), do: :ok
 
   # :sweep_failed is for a store that *returns* an error. One that raises is
   # deliberately not folded into it: the exception happens inside the write

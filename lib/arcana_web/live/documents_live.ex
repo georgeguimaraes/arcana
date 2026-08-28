@@ -39,7 +39,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
        # otherwise. When the graph is off the button does not render, so the
        # guard below is only reachable by a forged event either way.
        |> assign(graph_installed: graph_enabled and Arcana.Graph.installed?(repo))
-       |> assign(graph_indexing: false, graph_task_ref: nil)
+       |> assign(graph_indexing: false, graph_task: nil)
        |> assign(stats: nil, collections: [], documents: [], total_pages: 1, total_count: 0)
        |> allow_upload(:files,
          accept: ~w(.txt .md .markdown .pdf),
@@ -281,8 +281,8 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     # A build already running. The button renders disabled while graph_indexing
     # is true so this is not reachable by clicking, but a forged or raced event
-    # would otherwise start a second task and overwrite graph_task_ref: the
-    # first completion would then demonitor the *second* task, dropping its
+    # would otherwise start a second task and overwrite graph_task: the first
+    # completion would then demonitor the *second* task, dropping its
     # failure monitoring and clearing the spinner out from under it.
     def handle_event("build_graph", _params, %{assigns: %{graph_indexing: true}} = socket) do
       {:noreply, socket}
@@ -303,36 +303,42 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       collection = document.collection
       repo = socket.assigns.repo
       parent = self()
+      run_ref = make_ref()
 
       started =
-        ArcanaWeb.TaskSupervisor.start_child(fn ->
-          # The task is supervised, not linked to this LiveView, so a failure
-          # in here dies silently: no {:graph_complete, _} arrives and
-          # graph_indexing stays true, spinning forever. Report it instead.
-          #
-          # `catch` rather than `rescue`, for the reason Arcana.Ingest gives at
-          # build_graph_or_fail_document/5: an extractor or store is as free to
-          # throw or exit as to raise, and a GenServer.call timeout exits. A
-          # rescue here left an exiting extractor stranding the spinner exactly
-          # the way the missing schema did.
-          result =
-            try do
-              Arcana.Graph.build_and_persist(chunks, collection, repo, [])
-            catch
-              kind, reason ->
-                Logger.error(
-                  "Arcana: graph build failed for document #{document.id}: " <>
-                    Exception.format(kind, reason, __STACKTRACE__)
-                )
+        ArcanaWeb.BackgroundTask.start(
+          parent,
+          :graph_complete,
+          fn ->
+            # The task is supervised, not linked to this LiveView, so a failure
+            # in here dies silently: no {:graph_complete, _} arrives and
+            # graph_indexing stays true, spinning forever. Report it instead.
+            #
+            # `catch` rather than `rescue`, for the reason Arcana.Ingest gives at
+            # build_graph_or_fail_document/5: an extractor or store is as free to
+            # throw or exit as to raise, and a GenServer.call timeout exits. A
+            # rescue here left an exiting extractor stranding the spinner exactly
+            # the way the missing schema did.
+            result =
+              try do
+                Arcana.Graph.build_and_persist(chunks, collection, repo, [])
+              catch
+                kind, reason ->
+                  Logger.error(
+                    "Arcana: graph build failed for document #{document.id}: " <>
+                      Exception.format(kind, reason, __STACKTRACE__)
+                  )
 
-                {:error, Exception.format_banner(kind, reason)}
-            end
+                  {:error, Exception.format_banner(kind, reason)}
+              end
 
-          send(parent, {:graph_complete, result})
-        end)
+            result
+          end,
+          run_ref: run_ref
+        )
 
       case started do
-        {:ok, task_pid} ->
+        {:ok, task} ->
           # The catch above enumerates the ways the build itself fails. A
           # monitor covers the ways it stops without running our code at all -
           # the supervisor shutting the task down, an external kill, the node
@@ -342,8 +348,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           # The ref is kept so the DOWN clause can tell this task's death from
           # any other monitor's: clearing the spinner on someone else's DOWN
           # would flash a graph error for an unrelated process.
-          {:noreply,
-           assign(socket, graph_indexing: true, graph_task_ref: Process.monitor(task_pid))}
+          {:noreply, assign(socket, graph_indexing: true, graph_task: task)}
 
         {:error, reason} ->
           # The supervisor can refuse (max_children, or it is not running).
@@ -353,7 +358,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           Logger.error("Arcana: could not start the graph build task: #{inspect(reason)}")
 
           {:noreply,
-           put_flash(socket, :error, "Could not start the graph build: #{inspect(reason)}")}
+           socket
+           |> assign(graph_indexing: false, graph_task: nil)
+           |> put_flash(:error, "Could not start the graph build: #{inspect(reason)}")}
       end
     end
 
@@ -395,12 +402,11 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     @impl true
     def handle_info(
           {:DOWN, ref, :process, _pid, reason},
-          %{assigns: %{graph_task_ref: ref}} = socket
-        )
-        when reason != :normal do
+          %{assigns: %{graph_task: %{monitor_ref: ref}}} = socket
+        ) do
       {:noreply,
        socket
-       |> assign(graph_indexing: false, graph_task_ref: nil)
+       |> assign(graph_indexing: false, graph_task: nil)
        |> put_flash(:error, "Graph build stopped: #{inspect(reason)}")}
     end
 
@@ -408,12 +414,15 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     def handle_info({:DOWN, _ref, :process, _pid, _reason}, socket), do: {:noreply, socket}
 
     @impl true
-    def handle_info({:graph_complete, result}, socket) do
+    def handle_info(
+          {:graph_complete, run_ref, result},
+          %{assigns: %{graph_task: %{run_ref: run_ref, monitor_ref: monitor_ref}}} = socket
+        ) do
       # The task reported, so its DOWN carries no information. Flush it rather
       # than leaving a stale message to be matched against a later build's ref.
-      if ref = socket.assigns.graph_task_ref, do: Process.demonitor(ref, [:flush])
+      Process.demonitor(monitor_ref, [:flush])
 
-      socket = assign(socket, graph_task_ref: nil)
+      socket = assign(socket, graph_task: nil)
 
       socket =
         case result do
@@ -433,6 +442,8 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
       {:noreply, socket}
     end
+
+    def handle_info({:graph_complete, _run_ref, _result}, socket), do: {:noreply, socket}
 
     @impl true
     def render(assigns) do

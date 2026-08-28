@@ -332,7 +332,10 @@ defmodule Arcana.Search do
           %{query: query, entity_count: length(entity_ids), matcher: matcher},
           fn ->
             ids_by_hop =
-              Arcana.Graph.expand_entity_ids(entity_ids, graph_depth, collection_ids, repo: repo)
+              Arcana.Graph.expand_entity_ids(entity_ids, graph_depth, collection_ids,
+                repo: repo,
+                source_id: Keyword.get(opts, :source_id)
+              )
 
             graph_results =
               graph_search_by_entity_ids(
@@ -381,8 +384,7 @@ defmodule Arcana.Search do
 
   defp graph_search_by_entity_ids(ids_by_hop, repo, depth_decay, source_id) do
     import Ecto.Query
-    alias Arcana.Chunk
-    alias Arcana.Graph.EntityMention
+    alias Arcana.RetrievalScope
 
     all_entity_ids = ids_by_hop |> Map.values() |> List.flatten()
 
@@ -390,7 +392,7 @@ defmodule Arcana.Search do
     # do; without this a source-scoped search leaks chunks from other
     # documents that happen to mention a matched entity.
     mentions_query =
-      from(m in EntityMention,
+      from([mention: m] in RetrievalScope.mentions(),
         where: m.entity_id in ^all_entity_ids,
         select: m.chunk_id,
         distinct: true
@@ -406,7 +408,12 @@ defmodule Arcana.Search do
       scored = score_chunks_by_hop(chunk_ids, ids_by_hop, depth_decay, repo)
 
       chunk_map =
-        repo.all(from(c in Chunk, where: c.id in ^chunk_ids, select: {c.id, c}))
+        repo.all(
+          from([chunk: c] in RetrievalScope.chunks(),
+            where: c.id in ^chunk_ids,
+            select: {c.id, c}
+          )
+        )
         |> Map.new()
 
       Enum.flat_map(scored, fn %{chunk_id: cid, score: score} ->
@@ -440,13 +447,8 @@ defmodule Arcana.Search do
 
   defp filter_mentions_by_source(query, source_id) do
     import Ecto.Query
-    alias Arcana.{Chunk, Document}
 
-    from(m in query,
-      join: c in Chunk,
-      on: c.id == m.chunk_id,
-      join: d in Document,
-      on: d.id == c.document_id,
+    from([document: d] in query,
       where: d.source_id == ^source_id
     )
   end
