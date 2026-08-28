@@ -84,9 +84,10 @@ defmodule Arcana.Graph.Relationship do
   def normalized_metadata(nil), do: %{}
 
   def normalized_metadata(metadata) do
-    case Jason.encode(metadata) do
-      {:ok, json} -> Jason.decode!(json)
-      {:error, _reason} -> metadata
-    end
+    metadata
+    |> JSON.encode!()
+    |> JSON.decode!()
+  rescue
+    Protocol.UndefinedError -> metadata
   end
 end

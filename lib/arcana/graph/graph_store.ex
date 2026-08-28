@@ -124,6 +124,9 @@ defmodule Arcana.Graph.GraphStore do
 
   The memory backend has no such window, since the whole operation is one
   `GenServer` call.
+
+  Implementations must be idempotent. Post-commit recovery can replay the
+  same chunk IDs after a backend applied only part of an earlier attempt.
   """
   @callback delete_by_chunks(chunk_ids :: [binary()], opts :: keyword()) ::
               :ok | {:error, term()}
@@ -161,10 +164,8 @@ defmodule Arcana.Graph.GraphStore do
 
   The `:ecto` backend serializes both sides through `with_write_lock/3`
   (a transaction-scoped Postgres advisory lock keyed on the collection).
-  The `:memory` backend serializes individual calls through its GenServer
-  but leaves the window between the entity and mention calls open, which
-  is fine for a test backend. Custom backends get the full guarantee only
-  if they implement `with_write_lock/3`.
+  The `:memory` backend uses a per-server, per-collection lock around the
+  full write sequence. Custom backends must provide the same exclusion.
   """
   @callback sweep_orphans(binary(), opts :: keyword()) ::
               :ok | {:error, term()}
@@ -174,9 +175,9 @@ defmodule Arcana.Graph.GraphStore do
   @doc """
   Runs `fun` while holding the collection's graph write lock.
 
-  Optional. Backends that can serialize concurrent graph writes implement
-  this so `sweep_orphans/2` and the entity/mention persist path cannot
-  interleave. Backends that don't implement it simply run `fun`.
+  Required for every backend. It serializes graph persistence with document
+  deletion and replacement, so a chunk cannot gain graph evidence after its
+  database row has been retired.
 
   The lock is meant to cover DB writes only, never extraction, so callers
   keep the wrapped work short.
@@ -187,10 +188,9 @@ defmodule Arcana.Graph.GraphStore do
   Atomicity is best-effort and store-dependent: callers must not assume
   that a failure inside `fun` rolls back the writes it already made.
 
-  The `:ecto` backend does give both, because it takes the advisory lock
-  inside a transaction. The `:memory` backend implements neither (it
-  falls through to running `fun`), so a mid-`fun` failure leaves partial
-  graph data behind, which is fine for a test backend.
+  The `:ecto` backend gives both because it takes the advisory lock inside a
+  transaction. The `:memory` backend provides mutual exclusion but cannot
+  roll back writes already applied inside the function.
 
   A custom store that wants the full guarantee has to do what the `:ecto`
   backend does: hold a per-collection exclusive lock *and* run `fun`
@@ -201,7 +201,7 @@ defmodule Arcana.Graph.GraphStore do
   @callback with_write_lock(binary(), opts :: keyword(), (-> result)) :: result
             when result: term()
 
-  @optional_callbacks with_write_lock: 3, sweep_orphans: 2
+  @optional_callbacks sweep_orphans: 2
 
   # === Detail Query Callbacks ===
 
@@ -436,6 +436,11 @@ defmodule Arcana.Graph.GraphStore do
 
   `Arcana.delete/2` is usually what you want: it removes the document, its
   chunks and their graph data together.
+
+  `:published_chunk_ids` may be passed when replaying cleanup after the
+  database rows have already committed away. It records which deleted chunks
+  were published before deletion so backends can preserve publication-aware
+  invalidation even though the repo can no longer answer that question.
   """
   def delete_by_chunks(chunk_ids, opts \\ []) do
     {backend, backend_opts, opts} = extract_backend(opts)
@@ -501,9 +506,8 @@ defmodule Arcana.Graph.GraphStore do
   @doc """
   Runs `fun` holding the collection's graph write lock on the configured backend.
 
-  Backends that don't implement `c:with_write_lock/3` just run `fun`, with
-  no locking and no rollback. See `c:with_write_lock/3` for what each
-  backend actually guarantees.
+  Every backend must implement `c:with_write_lock/3`. See that callback for
+  the required serialization and backend-specific rollback guarantees.
   """
   def with_write_lock(collection_id, opts, fun) when is_function(fun, 0) do
     {backend, backend_opts, opts} = extract_backend(opts)
@@ -513,14 +517,16 @@ defmodule Arcana.Graph.GraphStore do
   defp lock(:ecto, collection_id, opts, fun),
     do: __MODULE__.Ecto.with_write_lock(collection_id, opts, fun)
 
-  defp lock(:memory, _collection_id, _opts, fun), do: fun.()
+  defp lock(:memory, collection_id, opts, fun),
+    do: __MODULE__.Memory.with_write_lock(collection_id, opts, fun)
 
   defp lock(module, collection_id, opts, fun) do
-    if Code.ensure_loaded?(module) and function_exported?(module, :with_write_lock, 3) do
-      module.with_write_lock(collection_id, opts, fun)
-    else
-      fun.()
+    unless Code.ensure_loaded?(module) and function_exported?(module, :with_write_lock, 3) do
+      raise ArgumentError,
+            "custom graph store #{inspect(module)} must implement with_write_lock/3"
     end
+
+    module.with_write_lock(collection_id, opts, fun)
   end
 
   @doc """
@@ -895,9 +901,8 @@ defmodule Arcana.Graph.GraphStore do
     module.delete_by_collection(collection_id, opts)
   end
 
-  # sweep_orphans/2 is optional, like with_write_lock/3: a store written
-  # against the behaviour before the callback existed keeps working, and
-  # skipping the sweep is what those callers already did.
+  # sweep_orphans/2 remains optional: a store written before that callback
+  # keeps working, and skipping the sweep is what those callers already did.
   defp dispatch(:sweep_orphans, module, [collection_id], backend_opts, opts) do
     if Code.ensure_loaded?(module) and function_exported?(module, :sweep_orphans, 2) do
       module.sweep_orphans(collection_id, Keyword.merge(backend_opts, opts))

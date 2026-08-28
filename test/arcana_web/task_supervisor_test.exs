@@ -9,6 +9,8 @@ defmodule ArcanaWeb.TaskSupervisorTest do
   """
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   test "start_child works under the current registered name" do
     parent = self()
 
@@ -23,15 +25,27 @@ defmodule ArcanaWeb.TaskSupervisorTest do
   test "the deprecated module's own helpers still delegate" do
     parent = self()
 
-    assert {:ok, _} = Arcana.TaskSupervisor.start_child(fn -> send(parent, :ran_via_shim) end)
+    assert {:ok, _} =
+             :erlang.apply(Arcana.TaskSupervisor, :start_child, [
+               fn -> send(parent, :ran_via_shim) end
+             ])
+
     assert_receive :ran_via_shim, 1_000
   end
 
   test "the old module's child_spec still starts the supervisor under the new name" do
-    spec = Arcana.TaskSupervisor.child_spec([])
+    parent = self()
+
+    log =
+      capture_log(fn ->
+        send(parent, {:spec, :erlang.apply(Arcana.TaskSupervisor, :child_spec, [[]])})
+      end)
+
+    assert_receive {:spec, spec}
 
     assert spec.id == ArcanaWeb.TaskSupervisor
     assert {Task.Supervisor, :start_link, [[name: ArcanaWeb.TaskSupervisor]]} = spec.start
+    assert log =~ "Arcana.TaskSupervisor is deprecated"
   end
 
   test "the legacy name holds no process, so start_child on it exits" do

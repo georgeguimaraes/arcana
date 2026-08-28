@@ -806,7 +806,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp entities_view(assigns) do
       ~H"""
       <div class="arcana-entities-view">
-        <form phx-change="filter_entities" class="arcana-filter-bar">
+        <form id="graph-entity-filter-form" phx-change="filter_entities" class="arcana-filter-bar">
           <input
             type="text"
             name="name"
@@ -934,7 +934,11 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp relationships_view(assigns) do
       ~H"""
       <div class="arcana-relationships-view">
-        <form phx-change="filter_relationships" class="arcana-filter-bar">
+        <form
+          id="graph-relationship-filter-form"
+          phx-change="filter_relationships"
+          class="arcana-filter-bar"
+        >
           <input
             type="text"
             name="search"
@@ -1037,7 +1041,11 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp communities_view(assigns) do
       ~H"""
       <div class="arcana-communities-view">
-        <form phx-change="filter_communities" class="arcana-filter-bar">
+        <form
+          id="graph-community-filter-form"
+          phx-change="filter_communities"
+          class="arcana-filter-bar"
+        >
           <input
             type="text"
             name="search"

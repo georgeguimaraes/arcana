@@ -428,9 +428,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
            scope: scope
          }) do
       pipeline_steps = pipeline_steps()
-      attach_pipeline_progress(handler_id, parent, run_ref, pipeline_steps, params)
-      attach_trace_progress(trace_handler_id, parent, run_ref, pipeline_steps)
-      attach_loop_progress(loop_handler_id, parent, run_ref)
+      worker = self()
+      attach_pipeline_progress(handler_id, parent, worker, run_ref, pipeline_steps, params)
+      attach_trace_progress(trace_handler_id, parent, worker, run_ref, pipeline_steps)
+      attach_loop_progress(loop_handler_id, parent, worker, run_ref)
       run_ask(sub_tab, question, repo, llm, collections, params, scope)
     end
 
@@ -452,7 +453,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     # Pipeline progress label events (the old "Running X..." text that updates
     # the spinner label).
-    defp attach_pipeline_progress(handler_id, parent, run_ref, pipeline_steps, params) do
+    defp attach_pipeline_progress(handler_id, parent, worker, run_ref, pipeline_steps, params) do
       graph_enabled = params["graph_search"] == "true"
       events = Enum.map(pipeline_steps, &[:arcana, :pipeline, &1, :start])
       events = events ++ [[:arcana, :graph, :search, :start]]
@@ -461,15 +462,17 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         handler_id,
         events,
         fn event, measurements, metadata, config ->
-          handle_pipeline_progress(
-            event,
-            measurements,
-            metadata,
-            config,
-            parent,
-            run_ref,
-            graph_enabled
-          )
+          if telemetry_owned_by?(worker) do
+            handle_pipeline_progress(
+              event,
+              measurements,
+              metadata,
+              config,
+              parent,
+              run_ref,
+              graph_enabled
+            )
+          end
         end,
         nil
       )
@@ -506,7 +509,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     # Every sub-tab subscribes to the live step-by-step trace. The callback
     # normalizes pipeline and direct search events to the same message shape.
-    defp attach_trace_progress(handler_id, parent, run_ref, pipeline_steps) do
+    defp attach_trace_progress(handler_id, parent, worker, run_ref, pipeline_steps) do
       events =
         Enum.flat_map(pipeline_steps, fn step ->
           [[:arcana, :pipeline, step, :start], [:arcana, :pipeline, step, :stop]]
@@ -524,7 +527,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         handler_id,
         events,
         fn event, measurements, metadata, _config ->
-          handle_trace_progress(event, measurements, metadata, parent, run_ref)
+          if telemetry_owned_by?(worker) do
+            handle_trace_progress(event, measurements, metadata, parent, run_ref)
+          end
         end,
         nil
       )
@@ -590,7 +595,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     # Loop tool events carry the same metadata shape as a tool_history entry,
     # so the LiveView can append them without another transformation.
-    defp attach_loop_progress(handler_id, parent, run_ref) do
+    defp attach_loop_progress(handler_id, parent, worker, run_ref) do
       :telemetry.attach_many(
         handler_id,
         [
@@ -599,7 +604,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           [:arcana, :loop, :ground, :stop]
         ],
         fn event, measurements, metadata, config ->
-          handle_loop_progress(event, measurements, metadata, config, parent, run_ref)
+          if telemetry_owned_by?(worker) do
+            handle_loop_progress(event, measurements, metadata, config, parent, run_ref)
+          end
         end,
         nil
       )
@@ -634,6 +641,12 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
            run_ref
          ),
          do: send(parent, {:loop_phase, run_ref, :idle})
+
+    defp telemetry_owned_by?(worker) do
+      self() == worker or
+        worker in Process.get(:"$callers", []) or
+        worker in Process.get(:"$ancestors", [])
+    end
 
     defp native_to_ms(duration) do
       System.convert_time_unit(duration, :native, :millisecond)

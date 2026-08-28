@@ -30,7 +30,7 @@ defmodule ArcanaTest do
       model = "openai:gpt-4o-mini"
 
       # This should not raise - the protocol implementation exists
-      assert Arcana.LLM.impl_for(model) != nil
+      assert Arcana.LLM.impl_for(model) == Arcana.LLM.BitString
     end
 
     test "returns answer using retrieved context" do

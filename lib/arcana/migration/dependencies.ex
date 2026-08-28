@@ -114,7 +114,7 @@ defmodule Arcana.Migration.Dependencies do
           "FROM pg_depend dependency " <>
           "CROSS JOIN LATERAL pg_identify_object(" <>
           "dependency.classid, dependency.objid, dependency.objsubid) identified " <>
-          "WHERE dependency.deptype = 'n' AND (" <>
+          "WHERE dependency.deptype IN ('n', 'a') AND (" <>
           "(dependency.refclassid = 'pg_class'::regclass " <>
           "AND dependency.refobjid IN (SELECT oid FROM owned)) OR " <>
           "(dependency.refclassid = 'pg_type'::regclass " <>
@@ -125,6 +125,14 @@ defmodule Arcana.Migration.Dependencies do
           "AND NOT (dependency.classid = 'pg_rewrite'::regclass " <>
           "AND dependency.objid IN (SELECT rewrite.oid FROM pg_rewrite rewrite " <>
           "WHERE rewrite.ev_class IN (SELECT oid FROM owned))) " <>
+          "AND NOT (dependency.deptype = 'a' " <>
+          "AND dependency.classid = 'pg_attrdef'::regclass " <>
+          "AND dependency.objid IN (SELECT def.oid FROM pg_attrdef def " <>
+          "WHERE def.adrelid IN (SELECT oid FROM owned))) " <>
+          "AND NOT (dependency.deptype = 'a' " <>
+          "AND dependency.classid = 'pg_class'::regclass " <>
+          "AND dependency.objid IN (SELECT idx.indexrelid FROM pg_index idx " <>
+          "WHERE idx.indrelid IN (SELECT oid FROM owned))) " <>
           "AND NOT (dependency.classid = 'pg_class'::regclass " <>
           "AND dependency.objid IN (SELECT oid FROM owned))",
         [tables, prefix]

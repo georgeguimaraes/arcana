@@ -582,6 +582,26 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
       assert Repo.get(Entity, bob.id)
     end
 
+    test "looks up the fingerprint produced from cast relationship values" do
+      collection = create_collection("relationship-cast-fingerprint")
+      document = create_document(collection)
+      chunk = create_chunk(document)
+      alice = create_entity(collection, "Alice")
+      bob = create_entity(collection, "Bob")
+      id_map = %{"alice" => alice.id, "bob" => bob.id}
+
+      fact = [%{source: "Alice", target: "Bob", type: "knows", strength: "5"}]
+
+      assert :ok = EctoStore.persist_relationships(chunk.id, fact, id_map, repo: Repo)
+
+      assert %Relationship{strength: 5} = relationship = Repo.one!(Relationship)
+
+      assert %RelationshipEvidence{relationship_id: relationship_id} =
+               Repo.one!(RelationshipEvidence)
+
+      assert relationship_id == relationship.id
+    end
+
     test "publishes a fact only while it has completed-document evidence" do
       collection = create_collection("relationship-publication")
       completed_document = create_document(collection)

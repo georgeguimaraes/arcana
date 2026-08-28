@@ -50,7 +50,7 @@ defmodule ArcanaWeb.DocumentsGraphLiveTest do
 
       # After clicking, button shows loading state
       assert html =~ "Building..."
-      assert wait_until(fn -> not (render(view) =~ "Building...") end)
+      assert wait_until(fn -> not (render(view) =~ "Building...") end, 300)
     end
 
     test "resets loading state after graph build completes", %{conn: conn} do
@@ -62,7 +62,7 @@ defmodule ArcanaWeb.DocumentsGraphLiveTest do
       html = view |> element("button[phx-click='build_graph']") |> render_click()
       assert html =~ "Building..."
 
-      assert wait_until(fn -> not (render(view) =~ "Building...") end)
+      assert wait_until(fn -> not (render(view) =~ "Building...") end, 300)
 
       # After the real task completes, button should be back to normal.
       html = render(view)

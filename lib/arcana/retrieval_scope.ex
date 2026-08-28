@@ -4,7 +4,7 @@ defmodule Arcana.RetrievalScope do
   import Ecto.Query
 
   alias Arcana.{Chunk, Document}
-  alias Arcana.Graph.{Entity, EntityMention, Relationship, RelationshipEvidence}
+  alias Arcana.Graph.{Community, Entity, EntityMention, Relationship, RelationshipEvidence}
 
   @doc false
   def chunks do
@@ -67,6 +67,19 @@ defmodule Arcana.RetrievalScope do
     from(r in Relationship,
       as: :relationship,
       where: exists(subquery(evidence))
+    )
+  end
+
+  @doc false
+  def communities do
+    published_entity =
+      from([entity: e] in entities(),
+        where: fragment("? = ANY(?)", e.id, parent_as(:community).entity_ids)
+      )
+
+    from(c in Community,
+      as: :community,
+      where: exists(subquery(published_entity))
     )
   end
 end

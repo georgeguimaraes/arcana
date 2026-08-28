@@ -251,7 +251,9 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           from([relationship: r] in Arcana.RetrievalScope.relationships(), select: count(r.id))
         ) || 0
 
-      community_count = repo.one(from(c in Arcana.Graph.Community, select: count(c.id))) || 0
+      community_count =
+        repo.one(from([community: c] in Arcana.RetrievalScope.communities(), select: count(c.id))) ||
+          0
 
       %{entities: entity_count, relationships: relationship_count, communities: community_count}
     rescue
@@ -285,7 +287,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
       community_count =
         repo.one(
-          from(c in Arcana.Graph.Community,
+          from([community: c] in Arcana.RetrievalScope.communities(),
             where: c.collection_id in subquery(collection_ids),
             select: count(c.id)
           )

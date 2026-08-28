@@ -121,11 +121,10 @@ defmodule Arcana.Graph.GraphStore.Ecto do
           metadata: rel[:metadata] || %{}
         }
 
-        fingerprint = Relationship.fingerprint(attrs)
+        changeset = Relationship.changeset(%Relationship{}, attrs)
+        fingerprint = Ecto.Changeset.get_field(changeset, :fingerprint)
 
-        %Relationship{}
-        |> Relationship.changeset(Map.put(attrs, :fingerprint, fingerprint))
-        |> repo.insert!(on_conflict: :nothing, conflict_target: :fingerprint)
+        repo.insert!(changeset, on_conflict: :nothing, conflict_target: :fingerprint)
 
         relationship = repo.get_by!(Relationship, fingerprint: fingerprint)
 

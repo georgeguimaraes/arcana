@@ -692,7 +692,7 @@ defmodule Arcana.Graph do
         # for DB writes only.
         entities = maybe_embed_entities(entities)
 
-        merged_entity_id_map =
+        {merged_entity_id_map, persisted_relationship_count} =
           persist_chunk_graph(
             collection_id,
             chunk_id,
@@ -706,7 +706,7 @@ defmodule Arcana.Graph do
         # Report progress
         progress_fn.(index, total_chunks)
 
-        {merged_entity_id_map, rel_count + length(relationships)}
+        {merged_entity_id_map, rel_count + persisted_relationship_count}
     end)
   end
 
@@ -717,12 +717,9 @@ defmodule Arcana.Graph do
   #
   # Atomicity here is store-dependent (see GraphStore.with_write_lock/3).
   # The :ecto backend holds the lock inside a transaction, so a failure
-  # anywhere in the trio rolls the whole chunk back. The :memory backend
-  # and custom stores that skip the optional callback just run the trio,
-  # so a failure mid-trio leaves that chunk's graph data half-persisted;
-  # the raise then aborts the build. Nothing downstream cleans that up,
-  # and no caller of build_and_persist/4 treats a failed build as having
-  # left the graph untouched.
+  # anywhere in the trio rolls the whole chunk back. Other backends provide
+  # the same serialization, but may leave partial graph data if their lock
+  # does not also provide transactional rollback.
   defp persist_chunk_graph(
          collection_id,
          chunk_id,
@@ -733,21 +730,27 @@ defmodule Arcana.Graph do
          store_opts
        ) do
     GraphStore.with_write_lock(collection_id, store_opts, fn ->
-      {:ok, new_entity_ids} = GraphStore.persist_entities(collection_id, entities, store_opts)
+      repo = Keyword.fetch!(store_opts, :repo)
 
-      merged_entity_id_map = Map.merge(entity_id_map, new_entity_ids)
+      if repo.get(Arcana.Chunk, chunk_id) do
+        {:ok, new_entity_ids} = GraphStore.persist_entities(collection_id, entities, store_opts)
 
-      :ok = GraphStore.persist_mentions(mentions, merged_entity_id_map, store_opts)
+        merged_entity_id_map = Map.merge(entity_id_map, new_entity_ids)
 
-      :ok =
-        GraphStore.persist_relationships(
-          chunk_id,
-          relationships,
-          merged_entity_id_map,
-          store_opts
-        )
+        :ok = GraphStore.persist_mentions(mentions, merged_entity_id_map, store_opts)
 
-      merged_entity_id_map
+        :ok =
+          GraphStore.persist_relationships(
+            chunk_id,
+            relationships,
+            merged_entity_id_map,
+            store_opts
+          )
+
+        {merged_entity_id_map, length(relationships)}
+      else
+        {entity_id_map, 0}
+      end
     end)
   end
 

@@ -137,9 +137,12 @@ defmodule Arcana do
   skips changeset constraint mapping, so a host row referencing an entity the
   sweep wants to remove arrives that way.
 
-  Any other exception from a graph store propagates. A custom store raising
-  `RuntimeError` is a bug in that store, not a failure mode with a return
-  value, and swallowing it into `{:error, _}` would hide it.
+  When an external graph store is cleaned after the database delete commits,
+  a returned error or exception is wrapped as
+  `{:error, {:post_commit_graph_cleanup_failed, context}}`. The context carries
+  `:reason`, `:chunk_ids`, `:published_chunk_ids`, and `:collection_id`, so the
+  graph deletion and sweep can be retried even though the document row is
+  already gone.
 
   A concurrent delete reports `{:error, :not_found}`, the same as losing that
   race by a moment more would have.
@@ -285,28 +288,93 @@ defmodule Arcana do
   end
 
   defp delete_before_external_cleanup(document, repo, opts) do
-    repo.transaction(fn ->
-      chunk_ids =
-        repo.all(from(c in Arcana.Chunk, where: c.document_id == ^document.id, select: c.id))
+    GraphStore.with_write_lock(
+      document.collection_id,
+      Keyword.put(opts, :repo, repo),
+      fn -> delete_and_cleanup_external_graph(document, repo, opts) end
+    )
+    |> case do
+      {:ok, {chunk_ids, locked_document}} ->
+        sweep_external_graph(chunk_ids, locked_document, repo, opts)
 
-      case repo.delete(document) do
-        {:ok, _deleted} -> chunk_ids
-        {:error, reason} -> repo.rollback(reason)
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp delete_and_cleanup_external_graph(document, repo, opts) do
+    repo.transaction(fn ->
+      locked_document =
+        repo.one(from(d in Document, where: d.id == ^document.id, lock: "FOR UPDATE"))
+
+      if locked_document do
+        chunk_ids =
+          repo.all(
+            from(c in Arcana.Chunk, where: c.document_id == ^locked_document.id, select: c.id)
+          )
+
+        case repo.delete(locked_document) do
+          {:ok, deleted} -> {chunk_ids, deleted}
+          {:error, reason} -> repo.rollback(reason)
+        end
+      else
+        repo.rollback(:not_found)
       end
     end)
     |> case do
-      {:ok, chunk_ids} ->
-        with :ok <- GraphStore.delete_by_chunks(chunk_ids, Keyword.put(opts, :repo, repo)),
-             :ok <- sweep(document, repo, opts) do
-          :ok
-        else
-          {:error, reason} -> {:error, {:post_commit_graph_cleanup_failed, reason}}
+      {:ok, {chunk_ids, locked_document}} ->
+        case delete_external_graph_chunks(chunk_ids, locked_document, repo, opts) do
+          :ok -> {:ok, {chunk_ids, locked_document}}
+          {:error, _reason} = error -> error
         end
 
       {:error, reason} ->
         {:error, reason}
     end
   end
+
+  defp delete_external_graph_chunks(chunk_ids, document, repo, opts) do
+    graph_opts =
+      opts
+      |> Keyword.put(:repo, repo)
+      |> Keyword.put(:published_chunk_ids, published_chunk_ids(document, chunk_ids))
+
+    case GraphStore.delete_by_chunks(chunk_ids, graph_opts) do
+      :ok -> :ok
+      {:error, reason} -> post_commit_graph_cleanup_error(reason, document, chunk_ids)
+    end
+  rescue
+    exception -> post_commit_graph_cleanup_error(exception, document, chunk_ids)
+  catch
+    :exit, reason -> post_commit_graph_cleanup_error(reason, document, chunk_ids)
+    kind, reason -> post_commit_graph_cleanup_error({kind, reason}, document, chunk_ids)
+  end
+
+  defp sweep_external_graph(chunk_ids, document, repo, opts) do
+    case sweep(document, repo, opts) do
+      :ok -> :ok
+      {:error, reason} -> post_commit_graph_cleanup_error(reason, document, chunk_ids)
+    end
+  rescue
+    exception -> post_commit_graph_cleanup_error(exception, document, chunk_ids)
+  catch
+    :exit, reason -> post_commit_graph_cleanup_error(reason, document, chunk_ids)
+    kind, reason -> post_commit_graph_cleanup_error({kind, reason}, document, chunk_ids)
+  end
+
+  defp post_commit_graph_cleanup_error(reason, document, chunk_ids) do
+    {:error,
+     {:post_commit_graph_cleanup_failed,
+      %{
+        reason: reason,
+        chunk_ids: chunk_ids,
+        published_chunk_ids: published_chunk_ids(document, chunk_ids),
+        collection_id: document.collection_id
+      }}}
+  end
+
+  defp published_chunk_ids(%Document{status: :completed}, chunk_ids), do: chunk_ids
+  defp published_chunk_ids(_document, _chunk_ids), do: []
 
   # The advisory lock goes first, before any row locks, because that is the
   # order the build side takes them (Arcana.Graph.persist_chunk_graph/6 holds
@@ -335,15 +403,9 @@ defmodule Arcana do
     !is_nil(document.collection_id) and Arcana.Config.graph_enabled?(opts)
   end
 
-  # Only the :ecto store. The lock is hoisted here to fix an ordering hazard
-  # between *that* store's advisory lock and the row locks the FK cascade
-  # takes, and pg_advisory_xact_lock is re-entrant within a transaction, so
-  # sweep_orphans/2 taking it again is free.
-  #
-  # A custom store's lock has no such hazard to fix - it does not contend with
-  # arcana_chunks row locks - and nothing says its with_write_lock/3 has to be
-  # re-entrant. Hoisting it there would buy nothing and could deadlock every
-  # graph-enabled delete against the sweep's own acquisition.
+  # Only the :ecto store reaches this in-transaction lock path. External stores
+  # lock around the transaction before calling locked_delete/3, then sweep
+  # after releasing that non-reentrant lock.
   defp ecto_graph_store?(opts) do
     case Keyword.get(opts, :graph_store, GraphStore.backend()) do
       :ecto -> true
@@ -359,6 +421,17 @@ defmodule Arcana do
     with :ok <- cleanup_graph_before_delete(chunk_ids, document, repo, opts),
          {:ok, _deleted} <- repo.delete(document),
          :ok <- cleanup_graph_after_delete(chunk_ids, document, repo, opts) do
+      maybe_sweep_after_delete(document, repo, opts)
+    end
+  end
+
+  defp maybe_sweep_after_delete(document, repo, opts) do
+    # Ecto's delete_by_chunks/2 already sweeps the affected collections in
+    # the transaction that removes their mentions. External stores keep the
+    # explicit pass because their delete callback does not own that contract.
+    if sweeping?(document, opts) and ecto_graph_store?(opts) do
+      :ok
+    else
       sweep(document, repo, opts)
     end
   end

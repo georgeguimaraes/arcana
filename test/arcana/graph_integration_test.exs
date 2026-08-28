@@ -791,7 +791,8 @@ defmodule Arcana.GraphIntegrationTest do
           collection: "sweep-fails"
         )
 
-      assert {:error, {:post_commit_graph_cleanup_failed, {:sweep_failed, :sweep_boom}}} =
+      assert {:error,
+              {:post_commit_graph_cleanup_failed, %{reason: {:sweep_failed, :sweep_boom}}}} =
                Arcana.delete(doc.id,
                  repo: Repo,
                  graph: true,
@@ -802,6 +803,57 @@ defmodule Arcana.GraphIntegrationTest do
       # first so a later caller rollback can never restore published DB data
       # after the external graph has already been removed.
       assert Repo.get(Arcana.Document, doc.id) == nil
+    end
+
+    test "replace reports an external predecessor cleanup failure after committing the swap" do
+      extractor = fn _text, _opts -> {:ok, [%{name: "Theta", type: "concept"}]} end
+      collection = "replace-cleanup-fails-#{System.unique_integer()}"
+
+      opts = [
+        repo: Repo,
+        graph: true,
+        entity_extractor: extractor,
+        graph_store: Arcana.FailingDeleteGraphStore,
+        collection: collection,
+        source_id: "doc-1",
+        replace: true
+      ]
+
+      {:ok, old} = Arcana.ingest("v1", opts)
+
+      assert {:error,
+              {:post_commit_graph_cleanup_failed,
+               %{
+                 reason: :delete_boom,
+                 chunk_ids: chunk_ids,
+                 published_chunk_ids: chunk_ids,
+                 collection_id: collection_id
+               } = cleanup}} = Arcana.ingest("v2", opts)
+
+      assert [%{id: replacement_id, content: "v2", status: :completed}] =
+               documents_in(collection)
+
+      refute replacement_id == old.id
+      assert collection_id == old.collection_id
+      assert chunk_ids != []
+
+      assert :ok =
+               GraphStore.delete_by_chunks(chunk_ids,
+                 repo: Repo,
+                 graph_store: {Arcana.FailingDeleteGraphStore, delete_failure: :ok},
+                 published_chunk_ids: cleanup.published_chunk_ids
+               )
+
+      assert :ok =
+               GraphStore.sweep_orphans(collection_id,
+                 repo: Repo,
+                 graph_store: {Arcana.FailingDeleteGraphStore, delete_failure: :ok}
+               )
+    end
+
+    test "replace wraps external predecessor cleanup exceptions and exits after committing" do
+      assert %RuntimeError{message: "delete_boom"} = replace_cleanup_failure(:raise)
+      assert :delete_boom = replace_cleanup_failure(:exit)
     end
 
     test "build and sweep use the same per-call graph store" do
@@ -872,6 +924,40 @@ defmodule Arcana.GraphIntegrationTest do
       # Entity survives (stranded, but sweeping requires graph enabled)
       assert Repo.get(Entity, gamma.id)
     end
+  end
+
+  defp replace_cleanup_failure(failure) do
+    extractor = fn _text, _opts -> {:ok, [%{name: "Iota", type: "concept"}]} end
+    collection = "replace-cleanup-#{failure}-#{System.unique_integer()}"
+
+    opts = [
+      repo: Repo,
+      graph: true,
+      entity_extractor: extractor,
+      graph_store: {Arcana.FailingDeleteGraphStore, delete_failure: failure},
+      collection: collection,
+      source_id: "doc-1",
+      replace: true
+    ]
+
+    {:ok, old} = Arcana.ingest("v1", opts)
+
+    assert {:error,
+            {:post_commit_graph_cleanup_failed,
+             %{
+               reason: reason,
+               chunk_ids: chunk_ids,
+               published_chunk_ids: chunk_ids,
+               collection_id: collection_id
+             }}} = Arcana.ingest("v2", opts)
+
+    assert [%{id: replacement_id, content: "v2", status: :completed}] =
+             documents_in(collection)
+
+    refute replacement_id == old.id
+    assert collection_id == old.collection_id
+    assert chunk_ids != []
+    reason
   end
 
   describe "config/0" do

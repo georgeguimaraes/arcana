@@ -110,7 +110,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
       community_counts =
         repo.all(
-          from(c in Arcana.Graph.Community,
+          from([community: c] in Arcana.RetrievalScope.communities(),
             group_by: c.collection_id,
             select: {c.collection_id, count(c.id)}
           )

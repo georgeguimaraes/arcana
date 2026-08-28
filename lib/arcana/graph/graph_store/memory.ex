@@ -112,7 +112,12 @@ defmodule Arcana.Graph.GraphStore.Memory do
   @impl Arcana.Graph.GraphStore
   def delete_by_chunks(chunk_ids, opts) do
     server = get_server(opts)
-    GenServer.call(server, {:delete_by_chunks, chunk_ids, visible_chunk_ids(server, opts)})
+
+    GenServer.call(
+      server,
+      {:delete_by_chunks, chunk_ids, visible_chunk_ids(server, opts),
+       MapSet.new(Keyword.get(opts, :published_chunk_ids, []))}
+    )
   end
 
   @impl Arcana.Graph.GraphStore
@@ -123,8 +128,18 @@ defmodule Arcana.Graph.GraphStore.Memory do
 
   @impl Arcana.Graph.GraphStore
   def sweep_orphans(collection_id, opts) do
+    with_write_lock(collection_id, opts, fn ->
+      server = get_server(opts)
+      GenServer.call(server, {:sweep_orphans, collection_id})
+    end)
+  end
+
+  @impl Arcana.Graph.GraphStore
+  def with_write_lock(collection_id, opts, fun) when is_function(fun, 0) do
     server = get_server(opts)
-    GenServer.call(server, {:sweep_orphans, collection_id})
+    server_pid = server_pid!(server)
+    resource = {__MODULE__, server_pid, collection_id}
+    :global.trans({resource, self()}, fun, [node(server_pid)])
   end
 
   @impl Arcana.Graph.GraphStore
@@ -402,13 +417,19 @@ defmodule Arcana.Graph.GraphStore.Memory do
   end
 
   @impl GenServer
-  def handle_call({:delete_by_chunks, chunk_ids, visible_chunks}, _from, state) do
+  def handle_call(
+        {:delete_by_chunks, chunk_ids, visible_chunks, published_chunk_ids},
+        _from,
+        state
+      ) do
     chunk_id_set = MapSet.new(chunk_ids)
+    visible_before_delete = include_published_snapshot(visible_chunks, published_chunk_ids)
 
     unpublished_endpoints =
       state.relationships
       |> Enum.filter(fn relationship ->
-        not MapSet.disjoint?(relationship.evidence, chunk_id_set) and
+        Enum.any?(relationship.evidence, &visible_chunk?(&1, visible_before_delete)) and
+          not MapSet.disjoint?(relationship.evidence, chunk_id_set) and
           relationship.evidence
           |> MapSet.difference(chunk_id_set)
           |> Enum.all?(&(not visible_chunk?(&1, visible_chunks)))
@@ -775,6 +796,13 @@ defmodule Arcana.Graph.GraphStore.Memory do
     end
   end
 
+  defp server_pid!(server) do
+    case GenServer.whereis(server) do
+      pid when is_pid(pid) -> pid
+      nil -> raise ArgumentError, "memory graph store #{inspect(server)} is not running"
+    end
+  end
+
   defp visible_chunk_ids(server, opts) do
     case Keyword.fetch(opts, :repo) do
       {:ok, repo} ->
@@ -799,6 +827,12 @@ defmodule Arcana.Graph.GraphStore.Memory do
 
   defp visible_chunk?(_chunk_id, :all), do: true
   defp visible_chunk?(chunk_id, visible_chunks), do: MapSet.member?(visible_chunks, chunk_id)
+
+  defp include_published_snapshot(:all, _published_chunk_ids), do: :all
+
+  defp include_published_snapshot(visible_chunks, published_chunk_ids) do
+    MapSet.union(visible_chunks, published_chunk_ids)
+  end
 
   defp visible_entity?(entity_id, mentions, visible_chunks) do
     if visible_chunks == :all do

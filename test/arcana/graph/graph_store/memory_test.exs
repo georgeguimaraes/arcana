@@ -457,4 +457,68 @@ defmodule Arcana.Graph.GraphStore.MemoryTest do
       assert comm2.entity_ids == [id_map["kept"]]
     end
   end
+
+  test "with_write_lock serializes the full function per collection", %{pid: pid} do
+    parent = self()
+    collection_id = Ecto.UUID.generate()
+
+    first =
+      Task.async(fn ->
+        Memory.with_write_lock(collection_id, [pid: pid], fn ->
+          send(parent, :first_entered)
+
+          receive do
+            :release_first -> :ok
+          end
+        end)
+      end)
+
+    assert_receive :first_entered
+
+    second =
+      Task.async(fn ->
+        Memory.with_write_lock(collection_id, [pid: pid], fn ->
+          send(parent, :second_entered)
+        end)
+      end)
+
+    refute_receive :second_entered, 50
+    send(first.pid, :release_first)
+    assert :ok = Task.await(first)
+    assert_receive :second_entered, 1_000
+    assert :second_entered = Task.await(second)
+  end
+
+  test "with_write_lock canonicalizes named and pid references" do
+    parent = self()
+    collection_id = Ecto.UUID.generate()
+    name = {:global, {__MODULE__, make_ref()}}
+    pid = start_supervised!({Memory, name: name})
+
+    first =
+      Task.async(fn ->
+        Memory.with_write_lock(collection_id, [name: name], fn ->
+          send(parent, :named_entered)
+
+          receive do
+            :release_named -> :ok
+          end
+        end)
+      end)
+
+    assert_receive :named_entered
+
+    second =
+      Task.async(fn ->
+        Memory.with_write_lock(collection_id, [pid: pid], fn ->
+          send(parent, :pid_entered)
+        end)
+      end)
+
+    refute_receive :pid_entered, 50
+    send(first.pid, :release_named)
+    assert :ok = Task.await(first)
+    assert_receive :pid_entered, 1_000
+    assert :pid_entered = Task.await(second)
+  end
 end

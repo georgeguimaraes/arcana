@@ -6,8 +6,6 @@ defmodule Arcana.Ingest do
   GraphRAG entity/relationship extraction.
   """
 
-  require Logger
-
   alias Arcana.{Chunk, Chunker, Collection, Document, Embedder, Parser}
   alias Arcana.Graph.GraphStore
 
@@ -77,6 +75,13 @@ defmodule Arcana.Ingest do
 
   A replacement that fails to embed leaves the predecessor untouched: the
   swap only runs once the new document's chunks are all in hand.
+
+  A custom graph store cannot join the database transaction. If retiring the
+  predecessor's graph data fails after the swap commits, ingestion returns
+  `{:error, {:post_commit_graph_cleanup_failed, context}}`. The replacement is
+  already the published document in that case. The context contains the
+  failure reason, retired chunk IDs, their publication snapshot, and the
+  collection ID needed to retry graph cleanup without re-ingesting the source.
   """
   def ingest(text, opts) when is_binary(text) do
     repo = require_repo!(opts)
@@ -257,17 +262,95 @@ defmodule Arcana.Ingest do
     build_graph_or_fail_document(document, chunk_records, collection, repo, opts)
 
     if Keyword.get(opts, :replace, false) do
-      with {:ok, {document, replaced_chunk_ids}} <-
-             finalize_replace(document, chunk_records, repo, opts) do
-        cleanup_replaced_graph(replaced_chunk_ids, repo, opts)
-        sweep_graph_orphans(document.collection_id, repo, opts)
-        {:ok, document}
+      case finalize_replace(document, chunk_records, repo, opts) do
+        {:ok, {document, replaced_chunk_ids, published_chunk_ids, graph_cleaned?}} ->
+          finish_replaced_graph_cleanup(
+            document,
+            replaced_chunk_ids,
+            published_chunk_ids,
+            graph_cleaned?,
+            repo,
+            opts
+          )
+
+        {:error, reason} ->
+          {:error, reason}
       end
     else
       document
       |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
       |> repo.update()
     end
+  end
+
+  defp finish_replaced_graph_cleanup(
+         document,
+         replaced_chunk_ids,
+         published_chunk_ids,
+         graph_cleaned?,
+         repo,
+         opts
+       ) do
+    with :ok <-
+           maybe_cleanup_replaced_graph(
+             graph_cleaned?,
+             replaced_chunk_ids,
+             published_chunk_ids,
+             repo,
+             opts
+           ),
+         :ok <- sweep_graph_orphans(document.collection_id, repo, opts) do
+      {:ok, document}
+    else
+      {:error, reason} ->
+        replaced_graph_cleanup_error(
+          reason,
+          document.collection_id,
+          replaced_chunk_ids,
+          published_chunk_ids
+        )
+    end
+  rescue
+    exception ->
+      replaced_graph_cleanup_error(
+        exception,
+        document.collection_id,
+        replaced_chunk_ids,
+        published_chunk_ids
+      )
+  catch
+    :exit, reason ->
+      replaced_graph_cleanup_error(
+        reason,
+        document.collection_id,
+        replaced_chunk_ids,
+        published_chunk_ids
+      )
+
+    kind, reason ->
+      replaced_graph_cleanup_error(
+        {kind, reason},
+        document.collection_id,
+        replaced_chunk_ids,
+        published_chunk_ids
+      )
+  end
+
+  defp maybe_cleanup_replaced_graph(true, _chunk_ids, _published_chunk_ids, _repo, _opts),
+    do: :ok
+
+  defp maybe_cleanup_replaced_graph(false, chunk_ids, published_chunk_ids, repo, opts),
+    do: cleanup_replaced_graph(chunk_ids, published_chunk_ids, repo, opts)
+
+  defp replaced_graph_cleanup_error(reason, collection_id, chunk_ids, published_chunk_ids) do
+    {:error,
+     {:post_commit_graph_cleanup_failed,
+      %{
+        reason: reason,
+        chunk_ids: chunk_ids,
+        published_chunk_ids: published_chunk_ids,
+        collection_id: collection_id
+      }}}
   end
 
   # A graph build blows up on failure (extraction errors that come back as
@@ -298,21 +381,13 @@ defmodule Arcana.Ingest do
 
   # The replaced predecessors' chunks cascade away with them, which can
   # strand zero-mention entities; sweep them like Arcana.delete/2 does.
-  # Unlike delete/2 a failed sweep doesn't fail the call: the new document
-  # is already committed, and returning an error here would push the
-  # caller into redoing the whole (LLM-priced) ingest over a cleanup
-  # problem. Log it and leave the orphans for the next sweep.
   defp sweep_graph_orphans(collection_id, repo, opts) do
-    case GraphStore.maybe_sweep_orphans(collection_id, repo, opts) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning(
-          "Arcana: graph orphan sweep failed for collection #{collection_id}: #{inspect(reason)}"
-        )
-
-        :ok
+    # The Ecto delete_by_chunks/2 call in finalize_replace already swept
+    # inside the swap transaction. External stores still need this pass.
+    if Arcana.Config.graph_enabled?(opts) and ecto_graph_store?(opts) do
+      :ok
+    else
+      GraphStore.maybe_sweep_orphans(collection_id, repo, opts)
     end
   end
 
@@ -324,62 +399,153 @@ defmodule Arcana.Ingest do
   # around chunking/embedding. A run whose document was already deleted by a
   # faster concurrent replace loses cleanly.
   defp finalize_replace(document, chunk_records, repo, opts) do
-    replace = fn -> do_finalize_replace(document, chunk_records, repo, opts) end
+    cond do
+      Arcana.Config.graph_enabled?(opts) and ecto_graph_store?(opts) ->
+        repo.transaction(fn ->
+          replace = fn -> do_finalize_replace(document, chunk_records, repo, opts) end
 
-    if Arcana.Config.graph_enabled?(opts) and ecto_graph_store?(opts) do
-      GraphStore.with_write_lock(document.collection_id, Keyword.put(opts, :repo, repo), replace)
-    else
-      replace.()
+          GraphStore.with_write_lock(
+            document.collection_id,
+            Keyword.put(opts, :repo, repo),
+            replace
+          )
+        end)
+        |> mark_replaced_graph_cleaned(true)
+
+      Arcana.Config.graph_enabled?(opts) ->
+        GraphStore.with_write_lock(
+          document.collection_id,
+          Keyword.put(opts, :repo, repo),
+          fn -> finalize_external_replace(document, chunk_records, repo, opts) end
+        )
+
+      true ->
+        repo.transaction(fn -> do_finalize_replace(document, chunk_records, repo, opts) end)
+        |> mark_replaced_graph_cleaned(false)
     end
   end
 
+  defp finalize_external_replace(document, chunk_records, repo, opts) do
+    case repo.transaction(fn -> do_finalize_replace(document, chunk_records, repo, opts) end) do
+      {:ok, {document, chunk_ids, published_chunk_ids}} ->
+        cleanup_external_replaced_graph(document, chunk_ids, published_chunk_ids, repo, opts)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp cleanup_external_replaced_graph(document, chunk_ids, published_chunk_ids, repo, opts) do
+    case cleanup_replaced_graph(chunk_ids, published_chunk_ids, repo, opts) do
+      :ok ->
+        {:ok, {document, chunk_ids, published_chunk_ids, true}}
+
+      {:error, reason} ->
+        replaced_graph_cleanup_error(
+          reason,
+          document.collection_id,
+          chunk_ids,
+          published_chunk_ids
+        )
+    end
+  rescue
+    exception ->
+      replaced_graph_cleanup_error(
+        exception,
+        document.collection_id,
+        chunk_ids,
+        published_chunk_ids
+      )
+  catch
+    :exit, reason ->
+      replaced_graph_cleanup_error(
+        reason,
+        document.collection_id,
+        chunk_ids,
+        published_chunk_ids
+      )
+
+    kind, reason ->
+      replaced_graph_cleanup_error(
+        {kind, reason},
+        document.collection_id,
+        chunk_ids,
+        published_chunk_ids
+      )
+  end
+
+  defp mark_replaced_graph_cleaned(
+         {:ok, {document, chunk_ids, published_chunk_ids}},
+         cleaned?
+       ) do
+    {:ok, {document, chunk_ids, published_chunk_ids, cleaned?}}
+  end
+
+  defp mark_replaced_graph_cleaned({:error, reason}, _cleaned?), do: {:error, reason}
+
   defp do_finalize_replace(document, chunk_records, repo, opts) do
-    repo.transaction(fn ->
-      repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
-        "arcana:replace:#{document.collection_id}:#{document.source_id}"
-      ])
+    repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      "arcana:replace:#{document.collection_id}:#{document.source_id}"
+    ])
 
-      if repo.get(Document, document.id) do
-        import Ecto.Query, only: [from: 2]
+    if repo.get(Document, document.id) do
+      import Ecto.Query, only: [from: 2]
 
-        replaced_chunk_ids =
-          repo.all(
-            from(c in Chunk,
-              join: d in Document,
-              on: c.document_id == d.id,
-              where:
-                d.collection_id == ^document.collection_id and
-                  d.source_id == ^document.source_id and d.id != ^document.id,
-              select: c.id
-            )
-          )
-
-        {:ok, document} =
-          document
-          |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
-          |> repo.update()
-
-        # Publish the replacement before retiring predecessor evidence. Graph
-        # cleanup can then see identical facts supported by the new document
-        # and won't dirty their communities during the handoff. The whole
-        # sequence is still one transaction, so a later failure rolls the
-        # publication back too.
-        maybe_delete_replaced_graph(replaced_chunk_ids, repo, opts)
-
-        repo.delete_all(
+      predecessor_documents =
+        repo.all(
           from(d in Document,
             where:
               d.collection_id == ^document.collection_id and
-                d.source_id == ^document.source_id and
-                d.id != ^document.id
+                d.source_id == ^document.source_id and d.id != ^document.id,
+            select: {d.id, d.status},
+            lock: "FOR UPDATE"
           )
         )
 
-        {document, replaced_chunk_ids}
-      else
-        repo.rollback(:replaced_by_concurrent_ingest)
-      end
-    end)
+      predecessor_ids = Enum.map(predecessor_documents, &elem(&1, 0))
+
+      replaced_chunks =
+        repo.all(
+          from(c in Chunk,
+            where: c.document_id in ^predecessor_ids,
+            select: {c.id, c.document_id}
+          )
+        )
+
+      replaced_chunk_ids = Enum.map(replaced_chunks, &elem(&1, 0))
+
+      published_document_ids =
+        predecessor_documents
+        |> Enum.filter(&(elem(&1, 1) == :completed))
+        |> MapSet.new(&elem(&1, 0))
+
+      published_chunk_ids =
+        for {chunk_id, document_id} <- replaced_chunks,
+            MapSet.member?(published_document_ids, document_id),
+            do: chunk_id
+
+      {:ok, document} =
+        document
+        |> Document.changeset(%{status: :completed, chunk_count: length(chunk_records)})
+        |> repo.update()
+
+      # Publish the replacement before retiring predecessor evidence. Graph
+      # cleanup can then see identical facts supported by the new document
+      # and won't dirty their communities during the handoff. The whole
+      # sequence is still one transaction, so a later failure rolls the
+      # publication back too.
+      maybe_delete_replaced_graph(replaced_chunk_ids, repo, opts)
+
+      repo.delete_all(
+        from(d in Document,
+          where: d.id in ^predecessor_ids
+        )
+      )
+
+      {document, replaced_chunk_ids, published_chunk_ids}
+    else
+      repo.rollback(:replaced_by_concurrent_ingest)
+    end
   end
 
   defp maybe_delete_replaced_graph(replaced_chunk_ids, repo, opts) do
@@ -391,17 +557,18 @@ defmodule Arcana.Ingest do
     end
   end
 
-  defp cleanup_replaced_graph([], _repo, _opts), do: :ok
+  defp cleanup_replaced_graph([], _published_chunk_ids, _repo, _opts), do: :ok
 
-  defp cleanup_replaced_graph(chunk_ids, repo, opts) do
+  defp cleanup_replaced_graph(chunk_ids, published_chunk_ids, repo, opts) do
     if Arcana.Config.graph_enabled?(opts) and not ecto_graph_store?(opts) do
-      case GraphStore.delete_by_chunks(chunk_ids, Keyword.put(opts, :repo, repo)) do
-        :ok ->
-          :ok
+      graph_opts =
+        opts
+        |> Keyword.put(:repo, repo)
+        |> Keyword.put(:published_chunk_ids, published_chunk_ids)
 
-        {:error, reason} ->
-          Logger.warning("Arcana: replaced graph cleanup failed: #{inspect(reason)}")
-          :ok
+      case GraphStore.delete_by_chunks(chunk_ids, graph_opts) do
+        :ok -> :ok
+        {:error, reason} -> {:error, reason}
       end
     else
       :ok

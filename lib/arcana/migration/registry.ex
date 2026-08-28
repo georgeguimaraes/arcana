@@ -59,8 +59,12 @@ defmodule Arcana.Migration.Registry do
   def owned_tables(stream, target \\ nil) do
     target = target || current_version(stream)
 
-    1..target
-    |> Enum.flat_map(&tables_added_in(stream, &1))
+    if target < 1 do
+      []
+    else
+      1..target
+      |> Enum.flat_map(&tables_added_in(stream, &1))
+    end
   end
 
   def present(repo, stream, prefix) do

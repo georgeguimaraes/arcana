@@ -80,7 +80,7 @@ defmodule Arcana.MigrationTest do
   # through Migrator.up/4: `down` here means "the thing this migration
   # does is call Arcana.Migration.down/1", not a rollback of it.
   defp run(module, direction, opts) do
-    name = :"Elixir.MigTest#{System.unique_integer([:positive])}"
+    name = :"Elixir.MigTest#{migration_version()}"
 
     body =
       quote do
@@ -90,8 +90,25 @@ defmodule Arcana.MigrationTest do
       end
 
     Module.create(name, body, Macro.Env.location(__ENV__))
-    Ecto.Migrator.up(Repo, System.unique_integer([:positive]), name, log: false)
+    Ecto.Migrator.up(Repo, migration_version(), name, log: false)
   end
+
+  defp run_nontransactional(module, direction, opts) do
+    name = :"Elixir.MigTest#{migration_version()}"
+
+    body =
+      quote do
+        use Ecto.Migration
+
+        @disable_ddl_transaction true
+        def up, do: unquote(module).unquote(direction)(unquote(Macro.escape(opts)))
+      end
+
+    Module.create(name, body, Macro.Env.location(__ENV__))
+    Ecto.Migrator.up(Repo, migration_version(), name, log: false)
+  end
+
+  defp migration_version, do: System.unique_integer([:positive, :monotonic])
 
   # 'n' = SET NULL (what :nilify_all produces), 'r' = RESTRICT.
   defp collection_fk_rule do
@@ -380,7 +397,7 @@ defmodule Arcana.MigrationTest do
       assert Arcana.Migration.recorded_version(Repo) == 0
       refute "reference_answer" in columns("arcana_evaluation_test_cases")
 
-      migrate(Arcana.Migration)
+      migrate(Arcana.Migration, prefix: "public")
 
       assert "reference_answer" in columns("arcana_evaluation_test_cases")
       assert Arcana.Migration.recorded_version(Repo) == Arcana.Migration.current_version()
@@ -445,7 +462,7 @@ defmodule Arcana.MigrationTest do
         []
       )
 
-      migrate(Arcana.Migration)
+      migrate(Arcana.Migration, prefix: "public")
 
       assert collection_fk_rule() == "r",
              "adoption must swap the collection FK to RESTRICT"
@@ -516,7 +533,7 @@ defmodule Arcana.MigrationTest do
 
       err =
         assert_raise RuntimeError, ~r/can't tell which version is applied/, fn ->
-          migrate_down(Arcana.Migration, [])
+          migrate_down(Arcana.Migration, prefix: "public")
         end
 
       # It can't offer the COMMENT recovery, because the table to comment on
@@ -660,7 +677,7 @@ defmodule Arcana.MigrationTest do
 
       refute unique_index?("arcana_collections_name_index"), "precondition: not unique"
 
-      migrate(Arcana.Migration)
+      migrate(Arcana.Migration, prefix: "public")
 
       assert unique_index?("arcana_collections_name_index"),
              "converge kept a non-unique index that shares the name"
@@ -724,7 +741,7 @@ defmodule Arcana.MigrationTest do
       assert index_columns("arcana_collections_name_index") == ["description"],
              "precondition: the index covers the wrong column"
 
-      migrate(Arcana.Migration)
+      migrate(Arcana.Migration, prefix: "public")
 
       assert index_columns("arcana_collections_name_index") == ["name"],
              "an index on the wrong column kept its name and was left in place"
@@ -745,7 +762,8 @@ defmodule Arcana.MigrationTest do
       SQL.query!(Repo, "INSERT INTO arcana_collections (name) VALUES ('dup'), ('dup')", [])
       assert Arcana.Migration.recorded_version(Repo) == 0
 
-      err = assert_raise RuntimeError, fn -> migrate(Arcana.Migration) end
+      err =
+        assert_raise RuntimeError, fn -> migrate(Arcana.Migration, prefix: "public") end
 
       assert err.message =~ "can't add the unique index arcana_collections_name_index"
       assert err.message =~ ~s(["dup"])
@@ -795,7 +813,7 @@ defmodule Arcana.MigrationTest do
       )
 
       migrate(Arcana.Migration)
-      assert :ok = migrate(Arcana.Graph.Migration)
+      assert :ok = migrate(Arcana.Graph.Migration, prefix: "public")
 
       assert index_identity("arcana_graph_entities_name_collection_id_index").unique,
              "NULL collection_id rows were treated as duplicates and blocked the rebuild"
@@ -875,7 +893,7 @@ defmodule Arcana.MigrationTest do
         []
       )
 
-      migrate(Arcana.Migration)
+      migrate(Arcana.Migration, prefix: "public")
 
       identity = index_identity("arcana_collections_name_index")
       assert identity.unique
@@ -897,7 +915,7 @@ defmodule Arcana.MigrationTest do
         []
       )
 
-      migrate(Arcana.Migration)
+      migrate(Arcana.Migration, prefix: "public")
 
       identity = index_identity("arcana_collections_name_index")
       refute identity.expression, "an expression index does not constrain the raw column"
@@ -924,7 +942,7 @@ defmodule Arcana.MigrationTest do
 
       err =
         assert_raise RuntimeError, ~r/can't add the unique index/, fn ->
-          migrate(Arcana.Migration)
+          migrate(Arcana.Migration, prefix: "public")
         end
 
       assert err.message =~ ~s(["same"])
@@ -1180,8 +1198,51 @@ defmodule Arcana.MigrationTest do
 
       assert with_tenant_first(fn -> Registry.present(Repo, :graph, "public") end)
              |> Enum.sort() == Enum.sort(Registry.owned_tables(:graph))
+    end
 
-      assert scalar(~s|SELECT count(*) FROM "tenant_first"."arcana_graph_communities"|) == 0
+    test "an unmarked shadow of the marker table does not hide a marked install" do
+      migrate(Arcana.Migration)
+      migrate(Arcana.Graph.Migration)
+
+      SQL.query!(
+        Repo,
+        ~s|CREATE TABLE "tenant_first"."arcana_graph_entities" (sentinel text)|,
+        []
+      )
+
+      assert with_tenant_first(fn -> SchemaScope.resolve(Repo, :graph, nil) end) == "public"
+    end
+
+    test "an unmarked marker-name collision cannot select a fresh install schema" do
+      SQL.query!(
+        Repo,
+        ~s|CREATE TABLE "tenant_first"."arcana_graph_entities" (id uuid, name text, type text)|,
+        []
+      )
+
+      error =
+        assert_raise RuntimeError, fn ->
+          with_tenant_first(fn -> SchemaScope.resolve(Repo, :graph, nil) end)
+        end
+
+      assert error.message =~ "unmarked table named like its graph migration marker"
+      assert error.message =~ "Pass an explicit :prefix"
+    end
+
+    test "an unmarked non-marker collision cannot select a fresh install schema" do
+      SQL.query!(
+        Repo,
+        ~s|CREATE TABLE "tenant_first"."arcana_graph_communities" (sentinel text)|,
+        []
+      )
+
+      error =
+        assert_raise RuntimeError, fn ->
+          with_tenant_first(fn -> SchemaScope.resolve(Repo, :graph, nil) end)
+        end
+
+      assert error.message =~ "unmarked partial graph migration install"
+      assert error.message =~ "Pass an explicit :prefix"
     end
   end
 
@@ -1258,6 +1319,123 @@ defmodule Arcana.MigrationTest do
 
       assert scalar("SELECT count(*) FROM arcana_graph_entities") == 2
       assert Arcana.Graph.Migration.recorded_version(Repo) == 2
+    end
+
+    test "a nontransactional host migration preserves v1 data when v2 fails" do
+      migrate(Arcana.Graph.Migration, version: 1)
+      {source, target} = seed_graph_entities()
+
+      SQL.query!(Repo, "DROP INDEX arcana_graph_entities_name_collection_id_index", [])
+
+      SQL.query!(
+        Repo,
+        "CREATE INDEX arcana_graph_entities_name_collection_id_index " <>
+          "ON arcana_graph_entities (name)",
+        []
+      )
+
+      entity_index = index_identity("arcana_graph_entities_name_collection_id_index")
+
+      SQL.query!(
+        Repo,
+        "INSERT INTO arcana_graph_relationships " <>
+          "(id, type, source_id, target_id, inserted_at, updated_at) " <>
+          "VALUES (gen_random_uuid(), 'knows', $1, $2, now(), now())",
+        [source, target]
+      )
+
+      SQL.query!(Repo, "ALTER TABLE arcana_graph_communities DROP COLUMN dirty", [])
+
+      assert_raise Postgrex.Error, fn ->
+        run_nontransactional(Arcana.Graph.Migration, :up, dimensions: 384)
+      end
+
+      assert scalar("SELECT count(*) FROM arcana_graph_relationships") == 1
+      refute "fingerprint" in columns("arcana_graph_relationships")
+      refute table_exists?("arcana_graph_relationship_evidence")
+      assert index_identity("arcana_graph_entities_name_collection_id_index") == entity_index
+      assert Arcana.Graph.Migration.recorded_version(Repo) == 1
+    end
+
+    test "refuses a v2 evidence table missing runtime-required columns" do
+      migrate(Arcana.Graph.Migration, version: 1)
+
+      SQL.query!(
+        Repo,
+        "ALTER TABLE arcana_graph_relationships " <>
+          "ADD COLUMN fingerprint varchar(64) NOT NULL",
+        []
+      )
+
+      SQL.query!(
+        Repo,
+        "CREATE TABLE arcana_graph_relationship_evidence (" <>
+          "relationship_id uuid NOT NULL REFERENCES arcana_graph_relationships(id) " <>
+          "ON DELETE CASCADE, " <>
+          "chunk_id uuid NOT NULL REFERENCES arcana_chunks(id) ON DELETE CASCADE)",
+        []
+      )
+
+      error = assert_raise RuntimeError, fn -> migrate(Arcana.Graph.Migration) end
+
+      assert error.message =~ "evidence columns have the wrong shape"
+      assert Arcana.Graph.Migration.recorded_version(Repo) == 1
+
+      refute index_identity("arcana_graph_relationship_evidence_rel_chunk_index")
+    end
+
+    test "refuses a v2 evidence table without its id primary key" do
+      migrate(Arcana.Graph.Migration, version: 1)
+
+      SQL.query!(
+        Repo,
+        "ALTER TABLE arcana_graph_relationships " <>
+          "ADD COLUMN fingerprint varchar(64) NOT NULL",
+        []
+      )
+
+      SQL.query!(
+        Repo,
+        "CREATE TABLE arcana_graph_relationship_evidence (" <>
+          "id uuid NOT NULL, " <>
+          "relationship_id uuid NOT NULL REFERENCES arcana_graph_relationships(id) " <>
+          "ON DELETE CASCADE, " <>
+          "chunk_id uuid NOT NULL REFERENCES arcana_chunks(id) ON DELETE CASCADE, " <>
+          "inserted_at timestamp(0) without time zone NOT NULL)",
+        []
+      )
+
+      error = assert_raise RuntimeError, fn -> migrate(Arcana.Graph.Migration) end
+
+      assert error.message =~ "evidence primary key has the wrong shape"
+      assert Arcana.Graph.Migration.recorded_version(Repo) == 1
+    end
+
+    test "refuses evidence foreign keys that do not reference target ids" do
+      migrate(Arcana.Graph.Migration)
+
+      SQL.query!(
+        Repo,
+        "ALTER TABLE arcana_chunks ADD COLUMN alternate_id uuid UNIQUE " <>
+          "DEFAULT gen_random_uuid()",
+        []
+      )
+
+      SQL.query!(
+        Repo,
+        "ALTER TABLE arcana_graph_relationship_evidence " <>
+          "DROP CONSTRAINT arcana_graph_relationship_evidence_chunk_id_fkey, " <>
+          "ADD CONSTRAINT arcana_graph_relationship_evidence_chunk_id_fkey " <>
+          "FOREIGN KEY (chunk_id) REFERENCES arcana_chunks(alternate_id) ON DELETE CASCADE",
+        []
+      )
+
+      SQL.query!(Repo, "COMMENT ON TABLE arcana_graph_entities IS 'arcana_graph:1'", [])
+
+      error = assert_raise RuntimeError, fn -> migrate(Arcana.Graph.Migration) end
+
+      assert error.message =~ "evidence foreign keys have the wrong shape"
+      assert Arcana.Graph.Migration.recorded_version(Repo) == 1
     end
 
     test "a damaged marker preserves a complete v2 graph" do
@@ -1361,6 +1539,27 @@ defmodule Arcana.MigrationTest do
       assert :ok = migrate_down(Arcana.Graph.Migration, [])
       assert Enum.all?(Registry.owned_tables(:graph), &(&1 not in tables()))
       assert Enum.all?(Registry.owned_tables(:core), &(&1 in tables()))
+    end
+
+    test "graph uninstall refuses a host sequence owned by an Arcana column" do
+      migrate(Arcana.Graph.Migration)
+      SQL.query!(Repo, "CREATE SEQUENCE host_entity_sequence", [])
+
+      SQL.query!(
+        Repo,
+        "ALTER SEQUENCE host_entity_sequence OWNED BY arcana_graph_entities.inserted_at",
+        []
+      )
+
+      error =
+        assert_raise RuntimeError, fn ->
+          migrate_down(Arcana.Graph.Migration, [])
+        end
+
+      assert error.message =~ "host_entity_sequence"
+      assert error.message =~ "objects Arcana does not own depend on it"
+      assert Arcana.Graph.Migration.recorded_version(Repo) == 2
+      assert Enum.all?(Registry.owned_tables(:graph), &(&1 in tables()))
     end
 
     test "graph uninstall finds a cross-schema view and leaves every graph table intact" do

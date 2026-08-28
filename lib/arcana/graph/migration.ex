@@ -116,26 +116,26 @@ defmodule Arcana.Graph.Migration do
     # Nothing purges duplicate entity names, so this preflight has to beat
     # change(1, :up, _)'s create_if_not_exists to explain them rather than let
     # Postgres raise a bare unique violation.
-    converge_entities_index!(prefix)
+    if target < 2 or current >= 2, do: converge_entities_index!(prefix)
 
     if current < target do
       maybe_create_schema(prefix, opts)
       for version <- (current + 1)..target//1, do: change(version, :up, opts)
     end
 
-    # Mentions are the one exception, so this sits after the steps: converge_v1
-    # purges the duplicate pairs a unique index cannot coexist with, and
-    # checking first refused the migration over duplicates it was about to
-    # clean. Still outside the version comparison, so an install already at the
-    # target gets repaired too.
-    converge_mentions_index!(prefix)
+    # A v2 upgrade converges and verifies all graph indexes inside its own
+    # transaction before discarding legacy facts. Existing installs still run
+    # these repairs when up/1 is called again.
+    if target < 2 or current >= 2, do: converge_mentions_index!(prefix)
 
-    if target >= 2 do
+    if target >= 2 and current >= 2 do
       converge_v2_indexes!(prefix)
       verify_v2_schema!(prefix)
     end
 
-    if current < target, do: record_version(target, prefix)
+    # change(2, :up, _) records v2 in the same transaction that discards
+    # legacy facts. Version 1 still uses the normal queued marker command.
+    if current < target and target < 2, do: record_version(target, prefix)
 
     :ok
   end
@@ -363,48 +363,60 @@ defmodule Arcana.Graph.Migration do
   # adopted v1 while still carrying a wrong-shaped legacy index would never
   # have been repaired.
   defp converge_entities_index!(prefix) do
-    execute(fn ->
-      UniqueIndex.converge!(
-        repo(),
-        "arcana_graph_entities",
-        ["name", "collection_id"],
-        prefix,
-        &qualify(&1, prefix)
-      )
-    end)
+    execute(fn -> converge_entities_index_now!(prefix) end)
   end
 
   defp converge_mentions_index!(prefix) do
-    execute(fn ->
-      UniqueIndex.converge!(
-        repo(),
-        "arcana_graph_entity_mentions",
-        ["entity_id", "chunk_id"],
-        prefix,
-        &qualify(&1, prefix)
-      )
-    end)
+    execute(fn -> converge_mentions_index_now!(prefix) end)
   end
 
   defp converge_v2_indexes!(prefix) do
-    execute(fn ->
-      UniqueIndex.converge!(
-        repo(),
-        "arcana_graph_relationships",
-        ["fingerprint"],
-        prefix,
-        &qualify(&1, prefix)
-      )
+    execute(fn -> converge_v2_indexes_now!(prefix) end)
+  end
 
-      UniqueIndex.converge!(
-        repo(),
-        "arcana_graph_relationship_evidence",
-        ["relationship_id", "chunk_id"],
-        prefix,
-        &qualify(&1, prefix),
-        name: "arcana_graph_relationship_evidence_rel_chunk_index"
-      )
-    end)
+  defp converge_mentions_index_now!(prefix) do
+    UniqueIndex.converge!(
+      repo(),
+      "arcana_graph_entity_mentions",
+      ["entity_id", "chunk_id"],
+      prefix,
+      &qualify(&1, prefix)
+    )
+  end
+
+  defp converge_entities_index_now!(prefix) do
+    UniqueIndex.converge!(
+      repo(),
+      "arcana_graph_entities",
+      ["name", "collection_id"],
+      prefix,
+      &qualify(&1, prefix)
+    )
+  end
+
+  defp converge_v2_indexes_now!(prefix) do
+    UniqueIndex.converge!(
+      repo(),
+      "arcana_graph_relationships",
+      ["fingerprint"],
+      prefix,
+      &qualify(&1, prefix)
+    )
+
+    UniqueIndex.converge!(
+      repo(),
+      "arcana_graph_relationship_evidence",
+      ["relationship_id", "chunk_id"],
+      prefix,
+      &qualify(&1, prefix),
+      name: "arcana_graph_relationship_evidence_rel_chunk_index"
+    )
+
+    repo().query!(
+      "CREATE INDEX IF NOT EXISTS arcana_graph_relationship_evidence_chunk_id_index " <>
+        "ON #{qualify("arcana_graph_relationship_evidence", prefix)} (chunk_id)",
+      []
+    )
   end
 
   defp require_dimensions!(opts) do
@@ -594,81 +606,7 @@ defmodule Arcana.Graph.Migration do
   defp change(2, :up, opts) do
     prefix = Keyword.get(opts, :prefix)
 
-    # Legacy rows carry no chunk provenance. Guessing would let failed or
-    # replaced documents keep influencing retrieval, so v2 deliberately
-    # discards them and requires a graph rebuild.
-    execute(fn ->
-      case v2_install_state(prefix) do
-        :legacy ->
-          repo().query!("DELETE FROM #{qualify("arcana_graph_relationships", prefix)}", [])
-
-          repo().query!(
-            "UPDATE #{qualify("arcana_graph_communities", prefix)} " <>
-              "SET dirty = true, summary = NULL, summary_fingerprint = NULL",
-            []
-          )
-
-        :v2 ->
-          verify_v2_data!(prefix)
-
-        :partial ->
-          raise """
-          Arcana found a partial graph migration v2 install.
-
-          The fingerprint column and arcana_graph_relationship_evidence table must
-          either both be absent (v1) or both be present with valid provenance (v2).
-          Nothing was changed. Restore the schema to one of those states and rerun.
-          """
-      end
-    end)
-
-    execute(
-      "ALTER TABLE #{qualify("arcana_graph_relationships", prefix)} " <>
-        "ADD COLUMN IF NOT EXISTS fingerprint varchar(64)"
-    )
-
-    execute(
-      "ALTER TABLE #{qualify("arcana_graph_relationships", prefix)} " <>
-        "ALTER COLUMN fingerprint SET NOT NULL"
-    )
-
-    create_if_not_exists(
-      unique_index(:arcana_graph_relationships, [:fingerprint], prefix: prefix)
-    )
-
-    create_if_not_exists table(:arcana_graph_relationship_evidence,
-                           primary_key: false,
-                           prefix: prefix
-                         ) do
-      add(:id, :binary_id, primary_key: true)
-
-      add(
-        :relationship_id,
-        references(:arcana_graph_relationships,
-          type: :binary_id,
-          on_delete: :delete_all,
-          prefix: prefix
-        ),
-        null: false
-      )
-
-      add(
-        :chunk_id,
-        references(:arcana_chunks, type: :binary_id, on_delete: :delete_all, prefix: prefix),
-        null: false
-      )
-
-      timestamps(updated_at: false)
-    end
-
-    create_if_not_exists(
-      unique_index(:arcana_graph_relationship_evidence, [:relationship_id, :chunk_id],
-        prefix: prefix,
-        name: :arcana_graph_relationship_evidence_rel_chunk_index
-      )
-    )
-
-    create_if_not_exists(index(:arcana_graph_relationship_evidence, [:chunk_id], prefix: prefix))
+    execute(fn -> transact_v2_upgrade!(prefix) end)
   end
 
   defp change(2, :down, opts) do
@@ -684,6 +622,94 @@ defmodule Arcana.Graph.Migration do
       "ALTER TABLE #{qualify("arcana_graph_relationships", prefix)} " <>
         "DROP COLUMN IF EXISTS fingerprint"
     )
+  end
+
+  defp transact_v2_upgrade!(prefix) do
+    run = fn -> upgrade_v2!(prefix) end
+
+    if repo().in_transaction?() do
+      run.()
+    else
+      {:ok, :ok} = repo().transaction(run)
+    end
+  end
+
+  defp upgrade_v2!(prefix) do
+    state = v2_install_state(prefix)
+
+    case state do
+      :legacy -> install_v2_schema!(prefix)
+      :v2 -> verify_v2_data!(prefix)
+      :partial -> refuse_partial_v2!()
+    end
+
+    converge_entities_index_now!(prefix)
+    converge_mentions_index_now!(prefix)
+    converge_v2_indexes_now!(prefix)
+    verify_v2_schema_now!(prefix)
+
+    if state == :legacy, do: discard_legacy_relationships!(prefix)
+
+    repo().query!(
+      "COMMENT ON TABLE #{qualify(@version_table, prefix)} " <>
+        "IS '#{Registry.marker(:graph, 2)}'",
+      []
+    )
+
+    :ok
+  end
+
+  defp install_v2_schema!(prefix) do
+    repo().query!(
+      "ALTER TABLE #{qualify("arcana_graph_relationships", prefix)} " <>
+        "ADD COLUMN fingerprint varchar(64)",
+      []
+    )
+
+    repo().query!(
+      "CREATE TABLE #{qualify("arcana_graph_relationship_evidence", prefix)} (" <>
+        "id uuid PRIMARY KEY, " <>
+        "relationship_id uuid NOT NULL REFERENCES " <>
+        "#{qualify("arcana_graph_relationships", prefix)}(id) ON DELETE CASCADE, " <>
+        "chunk_id uuid NOT NULL REFERENCES #{qualify("arcana_chunks", prefix)}(id) " <>
+        "ON DELETE CASCADE, inserted_at timestamp(0) without time zone NOT NULL)",
+      []
+    )
+
+    # The legacy rows are removed only after every schema convergence and
+    # verification succeeds. Their ids are unique placeholders that let the
+    # NOT NULL index shape be validated without losing the rows first.
+    repo().query!(
+      "UPDATE #{qualify("arcana_graph_relationships", prefix)} " <>
+        "SET fingerprint = id::text WHERE fingerprint IS NULL",
+      []
+    )
+
+    repo().query!(
+      "ALTER TABLE #{qualify("arcana_graph_relationships", prefix)} " <>
+        "ALTER COLUMN fingerprint SET NOT NULL",
+      []
+    )
+  end
+
+  defp discard_legacy_relationships!(prefix) do
+    repo().query!("DELETE FROM #{qualify("arcana_graph_relationships", prefix)}", [])
+
+    repo().query!(
+      "UPDATE #{qualify("arcana_graph_communities", prefix)} " <>
+        "SET dirty = true, summary = NULL, summary_fingerprint = NULL",
+      []
+    )
+  end
+
+  defp refuse_partial_v2! do
+    raise """
+    Arcana found a partial graph migration v2 install.
+
+    The fingerprint column and arcana_graph_relationship_evidence table must
+    either both be absent (v1) or both be present with valid provenance (v2).
+    Nothing was changed. Restore the schema to one of those states and rerun.
+    """
   end
 
   defp v2_install_state(prefix) do
@@ -727,11 +753,13 @@ defmodule Arcana.Graph.Migration do
   end
 
   defp verify_v2_schema!(prefix) do
-    execute(fn ->
-      verify_fingerprint_column!(prefix)
-      verify_evidence_columns!(prefix)
-      verify_evidence_foreign_keys!(prefix)
-    end)
+    execute(fn -> verify_v2_schema_now!(prefix) end)
+  end
+
+  defp verify_v2_schema_now!(prefix) do
+    verify_fingerprint_column!(prefix)
+    verify_evidence_columns!(prefix)
+    verify_evidence_foreign_keys!(prefix)
   end
 
   defp verify_fingerprint_column!(prefix) do
@@ -760,31 +788,59 @@ defmodule Arcana.Graph.Migration do
           "JOIN pg_class c ON c.oid = a.attrelid " <>
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
           "WHERE c.relname = 'arcana_graph_relationship_evidence' " <>
-          "AND a.attname IN ('relationship_id', 'chunk_id') AND NOT a.attisdropped " <>
+          "AND a.attname IN ('id', 'relationship_id', 'chunk_id', 'inserted_at') " <>
+          "AND NOT a.attisdropped " <>
           "AND " <> SchemaScope.visible("c", "n", "$1") <> " ORDER BY a.attname",
         [prefix]
       )
 
-    expected = [["chunk_id", "uuid", true], ["relationship_id", "uuid", true]]
+    expected = [
+      ["chunk_id", "uuid", true],
+      ["id", "uuid", true],
+      ["inserted_at", "timestamp(0) without time zone", true],
+      ["relationship_id", "uuid", true]
+    ]
 
     unless rows == expected do
       raise "Arcana graph v2 evidence columns have the wrong shape: #{inspect(rows)}"
+    end
+
+    %{rows: primary_key_rows} =
+      repo().query!(
+        "SELECT a.attname FROM pg_constraint con " <>
+          "JOIN pg_class c ON c.oid = con.conrelid " <>
+          "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
+          "JOIN LATERAL unnest(con.conkey) WITH ORDINALITY key(attnum, ord) ON true " <>
+          "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = key.attnum " <>
+          "WHERE con.contype = 'p' " <>
+          "AND c.relname = 'arcana_graph_relationship_evidence' AND " <>
+          SchemaScope.visible("c", "n", "$1") <>
+          " ORDER BY key.ord",
+        [prefix]
+      )
+
+    unless primary_key_rows == [["id"]] do
+      raise "Arcana graph v2 evidence primary key has the wrong shape: #{inspect(primary_key_rows)}"
     end
   end
 
   defp verify_evidence_foreign_keys!(prefix) do
     %{rows: rows} =
       repo().query!(
-        "SELECT source_attr.attname, target.relname, target_ns.nspname, " <>
-          "source_ns.nspname, con.confdeltype " <>
+        "SELECT source_attr.attname, target.relname, target_attr.attname, " <>
+          "target_ns.nspname, source_ns.nspname, con.confdeltype, con.convalidated " <>
           "FROM pg_constraint con " <>
           "JOIN pg_class source ON source.oid = con.conrelid " <>
           "JOIN pg_namespace source_ns ON source_ns.oid = source.relnamespace " <>
           "JOIN pg_class target ON target.oid = con.confrelid " <>
           "JOIN pg_namespace target_ns ON target_ns.oid = target.relnamespace " <>
           "JOIN LATERAL unnest(con.conkey) WITH ORDINALITY sk(attnum, ord) ON true " <>
+          "JOIN LATERAL unnest(con.confkey) WITH ORDINALITY tk(attnum, ord) " <>
+          "ON tk.ord = sk.ord " <>
           "JOIN pg_attribute source_attr ON source_attr.attrelid = source.oid " <>
           "AND source_attr.attnum = sk.attnum " <>
+          "JOIN pg_attribute target_attr ON target_attr.attrelid = target.oid " <>
+          "AND target_attr.attnum = tk.attnum " <>
           "WHERE con.contype = 'f' AND source.relname = 'arcana_graph_relationship_evidence' " <>
           "AND " <>
           SchemaScope.visible("source", "source_ns", "$1") <>
@@ -796,13 +852,15 @@ defmodule Arcana.Graph.Migration do
     valid? =
       case rows do
         [
-          ["chunk_id", "arcana_chunks", chunk_schema, source_schema, "c"],
+          ["chunk_id", "arcana_chunks", "id", chunk_schema, source_schema, "c", true],
           [
             "relationship_id",
             "arcana_graph_relationships",
+            "id",
             relationship_schema,
             source_schema,
-            "c"
+            "c",
+            true
           ]
         ] ->
           chunk_schema == source_schema and relationship_schema == source_schema

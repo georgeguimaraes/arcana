@@ -1,7 +1,12 @@
 defmodule Arcana.TestRepo.Migrations.AddRelationshipEvidence do
   use Ecto.Migration
 
-  def change do
+  def up do
+    # v1 relationships have no chunk provenance, so they cannot be backfilled
+    # without making failed or replaced documents visible again. Keep the test
+    # repo's upgrade behavior aligned with Arcana.Graph.Migration v2.
+    execute("DELETE FROM arcana_graph_relationships")
+
     alter table(:arcana_graph_relationships) do
       add(:fingerprint, :string, null: false)
     end
@@ -33,5 +38,14 @@ defmodule Arcana.TestRepo.Migrations.AddRelationshipEvidence do
     )
 
     create(index(:arcana_graph_relationship_evidence, [:chunk_id]))
+  end
+
+  def down do
+    drop(table(:arcana_graph_relationship_evidence))
+    drop(index(:arcana_graph_relationships, [:fingerprint]))
+
+    alter table(:arcana_graph_relationships) do
+      remove(:fingerprint)
+    end
   end
 end
