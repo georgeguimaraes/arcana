@@ -35,6 +35,7 @@ defmodule Arcana.MixProject do
       extras: [
         "README.md",
         "guides/getting-started.md",
+        "guides/upgrading-to-4.0.md",
         "guides/llm-integration.md",
         "guides/oban-ingestion.md",
         "guides/pipeline.md",

@@ -148,6 +148,7 @@ For manual installation, supervision setup, embedder configuration, and the rest
 The README is the brochure. The guides are the manual.
 
 - [Getting Started](guides/getting-started.md) — installation, supervision tree, embedder and chunker setup, first ingestion, first query
+- [Upgrading to 4.0](guides/upgrading-to-4.0.md): collection scope changes, custom backend contracts, the GraphRAG v2 migration and rollback plan
 - [LLM Integration](guides/llm-integration.md) — configuring providers (OpenAI, Anthropic, Z.ai, custom), passing per-call LLMs, model strings vs functions
 - [Pipeline (Modular RAG)](guides/pipeline.md) — `Arcana.Pipeline`, every step in detail, custom behaviours, telemetry per step
 - [Loop (Agentic RAG)](guides/loop.md) — `Arcana.Loop`, the default toolset, controller models, the system prompt, fallback synthesis

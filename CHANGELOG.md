@@ -7,11 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.0.0](https://github.com/georgeguimaraes/arcana/compare/v3.0.1...v4.0.0) (2026-08-28)
 
+Arcana 4.0 gives retrieval-facing reads the same fail-closed collection and
+publication rules. Only completed documents contribute chunks and graph facts
+to retrieval, sparse metadata, evaluation generation, graph traversal, or graph
+stats. Relationships now record the chunks that support them, so deleting or
+replacing a document can retire its graph facts correctly.
 
-### ⚠ BREAKING CHANGES
+This is a major version with a GraphRAG migration that discards legacy
+relationships whose provenance cannot be reconstructed. Back up the database
+and read [Upgrading to Arcana 4.0](guides/upgrading-to-4.0.md) before updating.
 
-* Make publication lifecycle explicit ([#184](https://github.com/georgeguimaraes/arcana/issues/184))
-* Make Arcana.delete/2's error contract match its docs ([#182](https://github.com/georgeguimaraes/arcana/issues/182))
+### Upgrade checklist
+
+  * Replace public `collections:` read options with `collection:`. The value can
+    be `:all`, one name, a list of names, or `[]`. `Pipeline.select(collections: ...)`
+    stays plural because it receives the candidates an LLM may choose from
+  * Update custom searchers and vector stores to handle `:all` as one globally
+    ranked and limited search
+  * Update custom graph stores for relationship provenance and per-collection
+    write locking
+  * If GraphRAG is installed, back up the database, migrate its schema to v2,
+    rebuild the graph without `--resume`, then redetect and summarize communities
+  * Deploy the application and migration together. Graph schema v2 cannot be
+    rolled back to v1. Restore the pre-upgrade backup if the release must be
+    rolled back
+
+### Backwards incompatible changes
+
+  * [Arcana] All public reads use `collection: :all | "name" | ["a", "b"] | []`.
+    The old `collections:` option raises instead of falling back to an unscoped
+    read. Unknown names match nothing unless `strict_collections: true` asks for
+    an error
+  * [Arcana] Only documents with `status: :completed` are published. Retrieval,
+    sparse metadata, evaluation generation, graph traversal, and graph stats no
+    longer derive data from pending, processing, or failed documents.
+    Administrative document reads and dashboard document/chunk counts still
+    include those operational states
+  * [Arcana.Searcher] Custom searchers receive `:all` for corpus-wide reads and
+    must apply ranking and limits across the whole result set
+  * [Arcana.VectorStore] Custom `search/3` and `search_text/3` implementations
+    receive either one collection name or `:all`. An unknown name must return no
+    results, never widen to the full corpus. The memory backend now enforces one
+    embedding dimension per server and rejects mismatched writes
+  * [Arcana.Graph.GraphStore] `persist_relationships/3` is now
+    `persist_relationships/4`, with the supporting chunk ID as its first
+    argument. `with_write_lock/3` is required and must exclude concurrent graph
+    writes for the same collection. `delete_by_chunks/2` remains required and
+    must be idempotent because post-commit cleanup can retry it
+  * [Arcana.delete] A standalone Ecto graph sweep failure now rolls the document
+    deletion back, so the complete operation can be retried. Inside a
+    caller-owned transaction the delete remains in that transaction's scope.
+    Non-Ecto graph stores, including the built-in `:memory` store, can return
+    `{:error, {:post_commit_graph_cleanup_failed, context}}` after the database
+    delete commits, with the IDs needed to retry cleanup
+  * [ArcanaWeb.Router] The dashboard scope option is now `collection: spec`,
+    where `spec` is a `{module, function}` tuple. Its callback may return
+    `:all`, one name, a list of names, or `[]`
+  * [Arcana.Graph.Migration] Graph schema v2 adds canonical relationship facts
+    with per-chunk evidence. The migration deletes legacy relationship rows
+    because their supporting chunks cannot be inferred, and v2 cannot be rolled
+    back to v1
+  * [Arcana.Loop.Context] and [Arcana.Pipeline.Context] An unrestricted
+    `:collections` field is now `:all` instead of the legacy `[nil]`. Custom
+    tools and context consumers must handle `:all` as well as lists of names
+
+### Enhancements
+
+  * [Arcana] Add `get_document_metadata/2` for sparse, publication-aware
+    metadata reads
+  * [Arcana.Search] Apply `vector_weight` and `keyword_weight` correctly during
+    reciprocal rank fusion
+  * [Arcana.Reranker] Resolve the configured LLM consistently and document what
+    reranking changes
+  * [ArcanaWeb] Stop the Build Graph action spinning when the GraphRAG schema is
+    absent
+  * [Arcana.Migration] Resolve one concrete Postgres schema for the whole
+    migration and preflight host-owned dependencies before uninstalling. Arcana
+    never uses `DROP ... CASCADE`
+  * [ArcanaWeb] Reject an explicitly requested dashboard scope when any
+    requested collection is unauthorized instead of silently intersecting it
 
 ### Bug Fixes
 
