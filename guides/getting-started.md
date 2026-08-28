@@ -38,7 +38,7 @@ anything.
 ```elixir
 def deps do
   [
-    {:arcana, "~> 2.0"}
+    {:arcana, "~> 4.0"}
   ]
 end
 ```
@@ -59,7 +59,7 @@ using the default local embedder:
 ```elixir
 def deps do
   [
-    {:arcana, "~> 2.0"},
+    {:arcana, "~> 4.0"},
     {:bumblebee, "~> 0.6"},
     {:exla, "~> 0.10"}
   ]
@@ -419,8 +419,6 @@ Three things to know:
 - Strict validation needs the repo-backed collection registry. The
   `:memory` vector store has no registry: it always fails closed for
   unknown collections (empty results) instead of returning the error.
-
-Strict mode will become the default in Arcana 3.0.
 
 ### Question Answering
 

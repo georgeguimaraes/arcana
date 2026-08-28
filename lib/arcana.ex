@@ -143,12 +143,15 @@ defmodule Arcana do
   skips changeset constraint mapping, so a host row referencing an entity the
   sweep wants to remove arrives that way.
 
-  When an external graph store is cleaned after the database delete commits,
-  a returned error or exception is wrapped as
+  When a non-Ecto graph store, including the built-in `:memory` store, is
+  cleaned after the database delete commits, a returned error or exception is
+  wrapped as
   `{:error, {:post_commit_graph_cleanup_failed, context}}`. The context carries
   `:reason`, `:chunk_ids`, `:published_chunk_ids`, and `:collection_id`, so the
   graph deletion and sweep can be retried even though the document row is
-  already gone.
+  already gone. Calling `delete/2` inside an existing Ecto transaction when an
+  a non-Ecto graph cleanup is required returns
+  `{:error, :external_graph_store_requires_post_commit_delete}` before deleting.
 
   A concurrent delete reports `{:error, :not_found}`, the same as losing that
   race by a moment more would have.

@@ -115,7 +115,9 @@ defmodule MyApp.Repo.Migrations.UpgradeArcanaGraph do
 
   def up, do: Arcana.Graph.Migration.up(dimensions: 384)
 
-  def down, do: Arcana.Graph.Migration.down()
+  def down do
+    raise "Arcana graph schema v2 requires restoring the pre-upgrade backup"
+  end
 end
 ```
 
@@ -131,6 +133,12 @@ install stands with:
 Arcana.Graph.Migration.recorded_version(MyApp.Repo)
 Arcana.Graph.Migration.current_version()
 ```
+
+Version 2 adds per-chunk relationship evidence. Upgrading from v1 clears
+legacy relationships because their supporting chunks cannot be inferred, so
+back up first and rebuild the graph without `--resume` after migrating. A v2
+install cannot be rolled back to v1. See [Upgrading to Arcana 4.0](upgrading-to-4.0.md)
+for the complete migration, rebuild, and rollback sequence.
 
 ### Coming from a hand-written install
 
@@ -287,7 +295,7 @@ defmodule MyApp.Neo4jGraphStore do
 
   @impl true
   def persist_relationships(chunk_id, relationships, entity_id_map, opts) do
-    # Store relationships between entities
+    # Store canonical relationships and this chunk's supporting evidence
     :ok
   end
 
@@ -388,6 +396,12 @@ defmodule MyApp.Neo4jGraphStore do
   def delete_by_collection(collection_id, opts) do
     # Delete all graph data for a collection
     :ok
+  end
+
+  @impl true
+  def with_write_lock(collection_id, _opts, fun) do
+    # This helper must exclude every write to the same collection.
+    MyApp.GraphLocks.with_lock(collection_id, fun)
   end
 end
 ```
@@ -754,6 +768,7 @@ Use this when:
 - You've changed the graph extractor configuration
 - You want to regenerate entity/relationship data
 - You've enabled relationship extraction after initial ingest
+- You've upgraded an existing GraphRAG install to schema v2
 
 ### Detect Communities
 

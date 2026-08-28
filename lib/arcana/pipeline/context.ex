@@ -41,9 +41,9 @@ defmodule Arcana.Pipeline.Context do
     back to the default one
   - `:searcher_opts` - The effective backend options passed to that searcher,
     reused by later retrieval steps so tenant, auth, and backend settings survive
-  - `:collections` - The collections actually searched, for the same reason.
-    `search/2` resolves them from its own options first, then this field
-    (which `select/2` may have set), so an explicit option still wins
+  - `:collections` - `:all` or the list of collections actually searched, for
+    the same reason. `search/2` resolves them from its own options first, then
+    this field (which `select/2` may have set), so an explicit option still wins
 
   ### Populated by `reason/2`
   - `:queries_tried` - MapSet of queries already searched (prevents loops)
