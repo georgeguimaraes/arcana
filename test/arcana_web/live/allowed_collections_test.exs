@@ -330,6 +330,21 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
       refute html =~ "Elixir content for others"
     end
 
+    test "rejects the whole search when a selection mixes allowed and disallowed collections",
+         %{conn: conn} do
+      {:ok, _} = Arcana.ingest("Visible mixed-scope content", repo: Repo, collection: "tenant-a")
+
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/search")
+
+      html =
+        render_submit(view, "search", %{
+          "query" => "mixed-scope",
+          "collections" => ["tenant-a", "other"]
+        })
+
+      refute html =~ "Visible mixed-scope content"
+    end
+
     test "a malformed document id is rejected instead of crashing", %{conn: conn} do
       {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/search")
 
@@ -417,6 +432,20 @@ defmodule ArcanaWeb.AllowedCollectionsTest do
           "question" => "What is hidden?",
           "sub_tab" => "advanced",
           "collections" => ["other"]
+        })
+
+      assert html =~ "not allowed"
+    end
+
+    test "rejects the whole ask when a selection mixes allowed and disallowed collections",
+         %{conn: conn} do
+      {:ok, view, _html} = conn |> restrict(["tenant-a"]) |> live("/scoped/ask")
+
+      html =
+        render_submit(view, "ask_submit", %{
+          "question" => "What is hidden?",
+          "sub_tab" => "advanced",
+          "collections" => ["tenant-a", "other"]
         })
 
       assert html =~ "not allowed"

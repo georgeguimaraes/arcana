@@ -29,9 +29,8 @@ defmodule Arcana.Maintenance do
 
   ## Options
 
-    * `:collection` / `:collections` - `:all`, one collection name, or a list
-      of collection names (default: `:all`). The options are mutually exclusive.
-      An empty list does no work.
+    * `:collection` - `:all`, one collection name, or a list of collection
+      names (default: `:all`). An empty list does no work.
     * `:batch_size` - Number of items to process at once (default: 50)
     * `:concurrency` - Number of parallel embedding requests (default: 5)
     * `:skip` - Number of chunks to skip (for resuming interrupted runs)
@@ -63,7 +62,7 @@ defmodule Arcana.Maintenance do
     embedder = Arcana.embedder()
     strict? = Arcana.Config.strict_collections?(opts)
 
-    with {:ok, scope} <- CollectionScope.from_opts(opts, :all),
+    with {:ok, scope} <- normalize_collection_scope(opts),
          {:ok, collection_ids} <- resolve_collection_ids(repo, scope, strict?) do
       do_reembed(repo, embedder, collection_ids, %{
         batch_size: batch_size,
@@ -368,9 +367,8 @@ defmodule Arcana.Maintenance do
 
   ## Options
 
-    * `:collection` / `:collections` - `:all`, one collection name, or a list
-      of collection names (default: `:all`). The options are mutually exclusive.
-      An empty list does no work.
+    * `:collection` - `:all`, one collection name, or a list of collection
+      names (default: `:all`). An empty list does no work.
     * `:batch_size` - Entities per batch (default: 100)
     * `:progress` - Progress callback `fn current, total -> :ok end`
     * `:force` - Re-embed all entities, not just those without embeddings (default: false)
@@ -387,7 +385,7 @@ defmodule Arcana.Maintenance do
     query = from(e in Entity, order_by: e.id, select: [:id, :name, :description, :embedding])
     strict? = Arcana.Config.strict_collections?(opts)
 
-    with {:ok, scope} <- CollectionScope.from_opts(opts, :all),
+    with {:ok, scope} <- normalize_collection_scope(opts),
          {:ok, collection_ids} <- resolve_collection_ids(repo, scope, strict?) do
       query = scope_by_collection_ids(query, collection_ids)
 
@@ -487,7 +485,7 @@ defmodule Arcana.Maintenance do
     strict? = Arcana.Config.strict_collections?(opts)
 
     # Get collections (optionally filtered)
-    with {:ok, scope} <- CollectionScope.from_opts(opts, :all),
+    with {:ok, scope} <- normalize_collection_scope(opts),
          {:ok, collections} <- fetch_collections(repo, scope, strict?) do
       if collections == [] do
         {:ok, %{collections: 0, entities: 0, relationships: 0, skipped: 0}}
@@ -626,6 +624,10 @@ defmodule Arcana.Maintenance do
     |> MapSet.new()
   end
 
+  defp normalize_collection_scope(opts) do
+    CollectionScope.from_opts(opts, :all)
+  end
+
   defp fetch_collections(repo, :all, _strict?) do
     {:ok, repo.all(from(c in Collection, select: c))}
   end
@@ -718,9 +720,8 @@ defmodule Arcana.Maintenance do
 
   ## Options
 
-    * `:collection` / `:collections` - `:all`, one collection name, or a list
-      of collection names (default: `:all`). The options are mutually exclusive.
-      An empty list does no work.
+    * `:collection` - `:all`, one collection name, or a list of collection
+      names (default: `:all`). An empty list does no work.
     * `:resolution` - Community detection resolution (default: 1.0)
     * `:objective` - Quality function (default: `:cpm`)
     * `:iterations` - Optimization iterations (default: 2)
@@ -767,7 +768,7 @@ defmodule Arcana.Maintenance do
 
     strict? = Arcana.Config.strict_collections?(opts)
 
-    with {:ok, scope} <- CollectionScope.from_opts(opts, :all),
+    with {:ok, scope} <- normalize_collection_scope(opts),
          {:ok, collections} <- fetch_collections(repo, scope, strict?) do
       if collections == [] do
         {:ok, %{collections: 0, communities: 0}}
@@ -1045,9 +1046,8 @@ defmodule Arcana.Maintenance do
 
   ## Options
 
-    - `:collection` / `:collections` - `:all`, one collection name, or a list
-      of collection names (default: `:all`). The options are mutually exclusive.
-      An empty list does no work.
+    - `:collection` - `:all`, one collection name, or a list of collection
+      names (default: `:all`). An empty list does no work.
     - `:progress` - Progress callback function
     - `:force` - Regenerate all summaries even if not dirty (default: false)
     - `:concurrency` - Number of parallel summarization tasks (default: 1)
@@ -1085,7 +1085,7 @@ defmodule Arcana.Maintenance do
 
     # Validate the collection filter before requiring an LLM, so strict
     # callers get {:error, {:unknown_collection, name}} consistently.
-    with {:ok, scope} <- CollectionScope.from_opts(opts, :all),
+    with {:ok, scope} <- normalize_collection_scope(opts),
          {:ok, collections} <- fetch_collections(repo, scope, strict?) do
       summarize_fetched_collections(collections, repo, %{
         opts: opts,

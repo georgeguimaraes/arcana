@@ -70,7 +70,7 @@ defmodule Arcana.Loop.Tools do
 
   That way, `Arcana.Loop.new(collection: "docs")` locks the controller
   to a single collection programmatically (the tool can't even express
-  a different one), while `Arcana.Loop.new(collections: ["a", "b"])`
+  a different one), while `Arcana.Loop.new(collection: ["a", "b"])`
   lets the controller pick per call.
   """
   @spec default(Arcana.CollectionScope.input() | [nil]) :: [Tool.t()]
@@ -246,6 +246,7 @@ defmodule Arcana.Loop.Tools do
         search_opts =
           [repo: ctx.repo, limit: limit]
           |> Keyword.merge(Keyword.get(opts, :search_opts, []))
+          |> Keyword.drop([:collection, :collections])
           |> Keyword.merge(collection_opts)
 
         search_fn = Keyword.get(opts, :search_fn, &Arcana.search/2)
@@ -316,7 +317,7 @@ defmodule Arcana.Loop.Tools do
   #   :all               "x"         collection: "x" (no restriction to validate against)
   #   [single]           nil         collection: single
   #   [single]           _           collection: single (arg ignored, lock wins)
-  #   [a, b]             nil         collections: [a, b]
+  #   [a, b]             nil         collection: [a, b]
   #   [a, b]             "a"         collection: "a"
   #   [a, b]             "c"         error: not in allowed list
   defp resolve_search_collection(ctx_collections, tool_arg)
@@ -329,7 +330,7 @@ defmodule Arcana.Loop.Tools do
     do: {:ok, [collection: single]}
 
   defp resolve_search_collection(list, nil) when is_list(list),
-    do: {:ok, [collections: list]}
+    do: {:ok, [collection: list]}
 
   defp resolve_search_collection(list, name) when is_list(list) and is_binary(name) do
     if name in list do

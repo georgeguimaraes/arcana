@@ -107,9 +107,6 @@ defmodule Arcana.MaintenanceTest do
       assert {:ok, %{collections: 1}} =
                Maintenance.rebuild_graph(Repo, collection: "maintenance-a")
 
-      assert {:ok, %{collections: 1}} =
-               Maintenance.rebuild_graph(Repo, collections: "maintenance-a")
-
       assert {:ok, %{collections: 2}} =
                Maintenance.rebuild_graph(Repo,
                  collection: ["maintenance-a", "maintenance-b", "missing"]
@@ -130,7 +127,7 @@ defmodule Arcana.MaintenanceTest do
         |> Repo.insert!()
 
       assert {:ok, %{rechunked_documents: 0, total_chunks: 0}} =
-               Maintenance.reembed(Repo, collections: [])
+               Maintenance.reembed(Repo, collection: [])
 
       assert {:ok, %{rechunked_documents: 0, total_chunks: 0}} =
                Maintenance.reembed(Repo, collection: "missing")
@@ -139,12 +136,12 @@ defmodule Arcana.MaintenanceTest do
       assert Repo.aggregate(Chunk, :count) == 0
     end
 
-    test "conflicting and malformed collection options are rejected" do
-      assert {:error, :conflicting_collection_options} =
-               Maintenance.rebuild_graph(Repo, collection: "a", collections: ["b"])
-
+    test "malformed and removed collection scopes are rejected" do
       assert {:error, {:invalid_collection_scope, ["a", nil]}} =
-               Maintenance.rebuild_graph(Repo, collections: ["a", nil])
+               Maintenance.rebuild_graph(Repo, collection: ["a", nil])
+
+      assert {:error, {:unsupported_collection_option, :collections}} =
+               Maintenance.rebuild_graph(Repo, collections: ["a"])
     end
   end
 end

@@ -17,7 +17,7 @@ defmodule Arcana.CollectionScope do
   @type input :: :all | name() | [name()]
   @type t :: :all | {:only, [name()]}
   @type error_reason ::
-          {:invalid_collection_scope, term()} | :conflicting_collection_options
+          {:invalid_collection_scope, term()} | {:unsupported_collection_option, atom()}
 
   @doc """
   Normalizes a public collection scope.
@@ -60,19 +60,21 @@ defmodule Arcana.CollectionScope do
   @doc """
   Reads a collection scope from keyword options.
 
-  The `:collection` and `:collections` options are mutually exclusive. When
-  neither is present, `default` is normalized instead.
+  The `:collection` option accepts every public scope shape. When it is absent,
+  `default` is normalized instead. The removed `:collections` alias is rejected
+  so an outdated scoped caller cannot silently widen to the default.
   """
   @spec from_opts(keyword(), input()) :: {:ok, t()} | {:error, error_reason()}
   def from_opts(opts, default) when is_list(opts) do
-    collection? = Keyword.has_key?(opts, :collection)
-    collections? = Keyword.has_key?(opts, :collections)
+    cond do
+      Keyword.has_key?(opts, :collections) ->
+        {:error, {:unsupported_collection_option, :collections}}
 
-    case {collection?, collections?} do
-      {true, true} -> {:error, :conflicting_collection_options}
-      {true, false} -> normalize(Keyword.fetch!(opts, :collection))
-      {false, true} -> normalize(Keyword.fetch!(opts, :collections))
-      {false, false} -> normalize(default)
+      Keyword.has_key?(opts, :collection) ->
+        normalize(Keyword.fetch!(opts, :collection))
+
+      true ->
+        normalize(default)
     end
   end
 
@@ -101,12 +103,27 @@ defmodule Arcana.CollectionScope do
     {:only, Enum.filter(first, &MapSet.member?(included, &1))}
   end
 
+  @doc """
+  Returns whether every collection in `scope` is included in `allowed`.
+
+  This is useful at authorization boundaries where silently intersecting an
+  explicit request would accept only part of a forged scope.
+  """
+  @spec subset?(t(), t()) :: boolean()
+  def subset?(_scope, :all), do: true
+  def subset?(:all, {:only, _allowed}), do: false
+
+  def subset?({:only, names}, {:only, allowed}) do
+    allowed = MapSet.new(allowed)
+    Enum.all?(names, &MapSet.member?(allowed, &1))
+  end
+
   defp valid_name?(name), do: is_binary(name) and String.trim(name) != ""
 
   defp invalid_scope(input), do: {:error, {:invalid_collection_scope, input}}
 
-  defp error_message(:conflicting_collection_options) do
-    ":collection and :collections cannot be used together"
+  defp error_message({:unsupported_collection_option, :collections}) do
+    ":collections is not supported, pass the scope through :collection"
   end
 
   defp error_message({:invalid_collection_scope, input}) do

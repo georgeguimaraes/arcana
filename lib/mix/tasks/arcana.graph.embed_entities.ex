@@ -62,13 +62,12 @@ defmodule Mix.Tasks.Arcana.Graph.EmbedEntities do
         end
       end
 
-    embed_result =
-      Arcana.Maintenance.embed_entities(repo,
-        collection: collection,
-        batch_size: batch_size,
-        force: force,
-        progress: progress_fn
-      )
+    embed_opts = [batch_size: batch_size, force: force, progress: progress_fn]
+
+    embed_opts =
+      if collection, do: Keyword.put(embed_opts, :collection, collection), else: embed_opts
+
+    embed_result = Arcana.Maintenance.embed_entities(repo, embed_opts)
 
     total =
       case embed_result do

@@ -97,7 +97,7 @@ defmodule Arcana.Pipeline.SearchTest do
       assert result.collection == "ruby-docs"
     end
 
-    test "uses :collections option to search multiple collections" do
+    test "uses :collection option to search multiple collections" do
       {:ok, _} =
         Arcana.ingest("Go is a systems language.",
           repo: Arcana.TestRepo,
@@ -112,7 +112,7 @@ defmodule Arcana.Pipeline.SearchTest do
 
       ctx =
         Pipeline.new("language", repo: Arcana.TestRepo, llm: &mock_llm/1)
-        |> Pipeline.search(collections: ["go-docs", "rust-docs"])
+        |> Pipeline.search(collection: ["go-docs", "rust-docs"])
 
       # Should search both collections
       collections = Enum.map(ctx.results, & &1.collection)
@@ -132,7 +132,7 @@ defmodule Arcana.Pipeline.SearchTest do
         Pipeline.new("anything", repo: Arcana.TestRepo, llm: &mock_llm/1)
         |> Pipeline.search(
           searcher: searcher,
-          collections: :all,
+          collection: :all,
           strict_collections: true,
           hnsw_ef_search: 123
         )
@@ -147,7 +147,7 @@ defmodule Arcana.Pipeline.SearchTest do
 
       none_ctx =
         Pipeline.new("anything", repo: Arcana.TestRepo, llm: &mock_llm/1)
-        |> Pipeline.search(searcher: searcher, collections: [])
+        |> Pipeline.search(searcher: searcher, collection: [])
 
       assert none_ctx.collections == []
       assert none_ctx.results == []
@@ -177,6 +177,13 @@ defmodule Arcana.Pipeline.SearchTest do
       assert length(ctx.results) == 1
       [result] = ctx.results
       assert result.collection == "haskell-docs"
+    end
+
+    test "rejects the removed collections option" do
+      assert_raise ArgumentError, ~r/:collections is not supported/, fn ->
+        Pipeline.new("anything", repo: Arcana.TestRepo, llm: &mock_llm/1)
+        |> Pipeline.search(collections: ["default"])
+      end
     end
 
     test "skips search when skip_retrieval is true" do

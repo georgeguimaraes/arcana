@@ -67,9 +67,10 @@ defmodule ArcanaWeb.RouterTest do
     assert session_opts[:on_mount] == [ArcanaWeb.Router.Scope, SomeHook]
   end
 
-  describe ":collections option" do
+  describe ":collection option" do
     defmodule Access do
       def restricted(_conn), do: ["tenant-a", "tenant-b"]
+      def one(_conn), do: "tenant-a"
       def open(_conn), do: :all
       def broken(_conn), do: {:ok, ["tenant-a"]}
       def mixed(_conn), do: ["tenant-a", :oops]
@@ -78,7 +79,7 @@ defmodule ArcanaWeb.RouterTest do
     test "appends the MFA to the session args when given" do
       {_name, session_opts, _route_opts} =
         ArcanaWeb.Router.__options__(
-          [repo: Arcana.TestRepo, collections: {Access, :restricted}],
+          [repo: Arcana.TestRepo, collection: {Access, :restricted}],
           "/arcana"
         )
 
@@ -88,10 +89,16 @@ defmodule ArcanaWeb.RouterTest do
     end
 
     test "rejects anything that is not a {module, function} tuple" do
-      for bad <- [&String.length/1, "collections", {Access, :restricted, []}] do
-        assert_raise ArgumentError, ~r/:collections must be a \{module, function\} tuple/, fn ->
-          ArcanaWeb.Router.__options__([collections: bad], "/arcana")
+      for bad <- [&String.length/1, "collection", {Access, :restricted, []}] do
+        assert_raise ArgumentError, ~r/:collection must be a \{module, function\} tuple/, fn ->
+          ArcanaWeb.Router.__options__([collection: bad], "/arcana")
         end
+      end
+    end
+
+    test "rejects the removed plural option" do
+      assert_raise ArgumentError, ~r/:collections is not supported/, fn ->
+        ArcanaWeb.Router.__options__([collections: {Access, :restricted}], "/arcana")
       end
     end
 
@@ -110,12 +117,18 @@ defmodule ArcanaWeb.RouterTest do
       assert session["allowed_collections"] == :all
     end
 
+    test "__session__/4 normalizes one collection into the allowed list" do
+      session = ArcanaWeb.Router.__session__(nil, Arcana.TestRepo, "/arcana", {Access, :one})
+
+      assert session["allowed_collections"] == ["tenant-a"]
+    end
+
     test "__session__/4 fails closed on invalid returns" do
-      assert_raise ArgumentError, ~r/must return :all or a list/, fn ->
+      assert_raise ArgumentError, ~r/must return :all, a collection name/, fn ->
         ArcanaWeb.Router.__session__(nil, Arcana.TestRepo, "/arcana", {Access, :broken})
       end
 
-      assert_raise ArgumentError, ~r/non-string entries/, fn ->
+      assert_raise ArgumentError, ~r/must return :all, a collection name/, fn ->
         ArcanaWeb.Router.__session__(nil, Arcana.TestRepo, "/arcana", {Access, :mixed})
       end
     end

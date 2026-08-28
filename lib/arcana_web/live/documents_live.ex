@@ -110,7 +110,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
       case CollectionScope.intersect(requested_scope, allowed_scope) do
         :all -> [collection: :all]
-        {:only, names} -> [collections: names]
+        {:only, names} -> [collection: names]
       end
     end
 

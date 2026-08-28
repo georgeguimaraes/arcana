@@ -38,10 +38,8 @@ defmodule Arcana.Ask do
     * `:threshold` - Minimum similarity score for context (default: 0.0)
     * `:mode` - Search mode: `:vector` (default), `:keyword`, or `:hybrid`.
       `:semantic` and `:fulltext` are deprecated aliases and log a warning.
-    * `:collection` - Collection scope as `:all`, a collection name, or a list
-      of collection names
-    * `:collections` - Alias for `:collection`. The two options are mutually
-      exclusive.
+    * `:collection` - Collection scope as `:all`, a collection name, a list of
+      collection names, or `[]` to match nothing
     * `:prompt` - Custom prompt function. Supports arity 2 `(question, context)` or
       arity 3 `(question, context, graph_context)`
     * `:reranker` - Reranker module/function (passed through to search)

@@ -266,15 +266,30 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     defp resolve_ask_collections(requested, allowed) do
       requested = Enum.reject(requested, &(&1 == ""))
-      requested = if requested == [], do: :all, else: requested
 
-      case effective_collection_scope(allowed, requested) do
-        [] -> :error
-        scope -> {:ok, scope}
+      case requested do
+        [] ->
+          case public_collection_scope(CollectionScope.normalize!(allowed)) do
+            [] -> :error
+            scope -> {:ok, scope}
+          end
+
+        names ->
+          requested_scope = CollectionScope.normalize!(names)
+          allowed_scope = CollectionScope.normalize!(allowed)
+
+          if CollectionScope.subset?(requested_scope, allowed_scope) do
+            {:ok, public_collection_scope(requested_scope)}
+          else
+            :error
+          end
       end
     rescue
       ArgumentError -> :error
     end
+
+    defp public_collection_scope(:all), do: :all
+    defp public_collection_scope({:only, names}), do: names
 
     defp effective_collection_scope(allowed, requested) do
       requested_scope = CollectionScope.normalize!(requested)
@@ -852,7 +867,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp load_document_titles(_ctx, _repo, _collection_scope), do: %{}
 
     defp collection_scope_opts(:all), do: [collection: :all]
-    defp collection_scope_opts(names) when is_list(names), do: [collections: names]
+    defp collection_scope_opts(names) when is_list(names), do: [collection: names]
 
     defp extract_title(nil), do: nil
 
@@ -951,7 +966,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     # Pass every run's effective scope explicitly. In particular, [] must
     # stay "no collections" and :all must stay unrestricted.
     defp maybe_put_collection_opt(opts, :all), do: Keyword.put(opts, :collection, :all)
-    defp maybe_put_collection_opt(opts, list), do: Keyword.put(opts, :collections, list)
+    defp maybe_put_collection_opt(opts, list), do: Keyword.put(opts, :collection, list)
 
     # Restricted dashboards keep strict resolution so a collection deleted
     # mid-run is reported instead of quietly producing a partial answer.
@@ -1154,7 +1169,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     defp add_collection_opts(opts, :all), do: Keyword.put(opts, :collection, :all)
-    defp add_collection_opts(opts, list), do: Keyword.put(opts, :collections, list)
+    defp add_collection_opts(opts, list), do: Keyword.put(opts, :collection, list)
 
     # Keep an authorization check around LLM-selected collection names. The
     # selector can return a name outside the offered set, so this fence checks

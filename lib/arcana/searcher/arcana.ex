@@ -34,7 +34,6 @@ defmodule Arcana.Searcher.Arcana do
     threshold = Keyword.get(opts, :threshold, 0.5)
 
     opts
-    |> Keyword.drop([:collections])
     |> Keyword.merge(
       repo: repo,
       collection: collection,

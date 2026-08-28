@@ -78,6 +78,8 @@ defmodule Arcana.VectorStore.Memory do
   ## Returns
 
     * `:ok` on success
+    * `{:error, {:dimension_mismatch, details}}` when the embedding dimension
+      differs from vectors already stored by this server
 
   """
   def store(server, collection, id, embedding, metadata) do
@@ -180,37 +182,51 @@ defmodule Arcana.VectorStore.Memory do
   @impl true
   def handle_call({:store, collection, id, embedding, metadata}, _from, state) do
     dims = length(embedding)
-    state = ensure_dimensions(state, dims)
 
-    {collection_data, state} = get_or_create_collection(state, collection, dims)
+    case ensure_dimensions(state, dims) do
+      {:ok, state} ->
+        {collection_data, state} = get_or_create_collection(state, collection, dims)
 
-    # Check if id already exists - if so, mark old one as deleted
-    collection_data =
-      case Enum.find_index(collection_data.ids, &(&1 == id)) do
-        nil ->
+        # Check if id already exists - if so, mark old one as deleted
+        collection_data =
+          case Enum.find_index(collection_data.ids, &(&1 == id)) do
+            nil ->
+              collection_data
+
+            existing_idx ->
+              %{collection_data | deleted: MapSet.put(collection_data.deleted, existing_idx)}
+          end
+
+        # Add to index (use apply to avoid compile-time warning for optional dep)
+        tensor = Nx.tensor([embedding], type: :f32)
+        :ok = apply(HNSWLib.Index, :add_items, [collection_data.index, tensor])
+
+        # Track id and metadata
+        collection_data = %{
           collection_data
+          | ids: collection_data.ids ++ [id],
+            metadata: collection_data.metadata ++ [metadata]
+        }
 
-        existing_idx ->
-          %{collection_data | deleted: MapSet.put(collection_data.deleted, existing_idx)}
-      end
+        state = put_in(state, [:collections, collection], collection_data)
 
-    # Add to index (use apply to avoid compile-time warning for optional dep)
-    tensor = Nx.tensor([embedding], type: :f32)
-    :ok = apply(HNSWLib.Index, :add_items, [collection_data.index, tensor])
+        {:reply, :ok, state}
 
-    # Track id and metadata
-    collection_data = %{
-      collection_data
-      | ids: collection_data.ids ++ [id],
-        metadata: collection_data.metadata ++ [metadata]
-    }
-
-    state = put_in(state, [:collections, collection], collection_data)
-
-    {:reply, :ok, state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
+  def handle_call(
+        {:search, _collection, query_embedding, _opts},
+        _from,
+        %{dimensions: dimensions} = state
+      )
+      when is_integer(dimensions) and length(query_embedding) != dimensions do
+    {:reply, [], state}
+  end
+
   def handle_call({:search, collection, query_embedding, opts}, _from, state) do
     limit = Keyword.get(opts, :limit, 10)
 
@@ -257,9 +273,14 @@ defmodule Arcana.VectorStore.Memory do
   end
 
   @impl true
+  def handle_call({:clear, collection}, _from, %{dimensions: nil} = state) do
+    state = update_in(state.collections, &Map.delete(&1, collection))
+    {:reply, :ok, state}
+  end
+
   def handle_call({:clear, collection}, _from, state) do
-    dims = state.dimensions || 384
-    {:ok, index} = apply(HNSWLib.Index, :new, [:cosine, dims, state.max_elements])
+    {:ok, index} =
+      apply(HNSWLib.Index, :new, [:cosine, state.dimensions, state.max_elements])
 
     collection_data = %{
       index: index,
@@ -285,11 +306,13 @@ defmodule Arcana.VectorStore.Memory do
     end
   end
 
-  defp ensure_dimensions(%{dimensions: nil} = state, dims) do
-    %{state | dimensions: dims}
-  end
+  defp ensure_dimensions(%{dimensions: nil} = state, dims),
+    do: {:ok, %{state | dimensions: dims}}
 
-  defp ensure_dimensions(state, _dims), do: state
+  defp ensure_dimensions(%{dimensions: dims} = state, dims), do: {:ok, state}
+
+  defp ensure_dimensions(%{dimensions: expected}, actual),
+    do: {:error, {:dimension_mismatch, expected: expected, actual: actual}}
 
   defp get_or_create_collection(state, collection, dims) do
     case get_in(state, [:collections, collection]) do

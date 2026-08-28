@@ -47,13 +47,13 @@ defmodule Arcana.DocumentsTest do
       assert first_id == first.id
 
       assert {:ok, many} =
-               Arcana.list_documents(repo: Repo, collections: ["scope-a", "scope-b"])
+               Arcana.list_documents(repo: Repo, collection: ["scope-a", "scope-b"])
 
       assert MapSet.new(Enum.map(many, & &1.id)) == MapSet.new([first.id, second.id])
       refute Enum.any?(many, &(&1.id == outside.id))
 
-      assert {:ok, []} = Arcana.list_documents(repo: Repo, collections: [])
-      assert {:ok, 0} = Arcana.count_documents(repo: Repo, collections: [])
+      assert {:ok, []} = Arcana.list_documents(repo: Repo, collection: [])
+      assert {:ok, 0} = Arcana.count_documents(repo: Repo, collection: [])
 
       assert {:ok, all} = Arcana.list_documents(repo: Repo, collection: :all)
       assert Enum.all?([first, second, outside], fn doc -> Enum.any?(all, &(&1.id == doc.id)) end)
@@ -126,9 +126,9 @@ defmodule Arcana.DocumentsTest do
       assert id == doc.id
 
       assert {:error, :not_found} =
-               Arcana.get_document(doc.id, repo: Repo, collections: ["somewhere-else"])
+               Arcana.get_document(doc.id, repo: Repo, collection: ["somewhere-else"])
 
-      assert {:error, :not_found} = Arcana.get_document(doc.id, repo: Repo, collections: [])
+      assert {:error, :not_found} = Arcana.get_document(doc.id, repo: Repo, collection: [])
     end
   end
 
@@ -190,7 +190,7 @@ defmodule Arcana.DocumentsTest do
       assert {:ok, result} =
                Arcana.get_document_metadata([included.id, outside.id, pending.id, missing],
                  repo: Repo,
-                 collections: ["metadata-in"]
+                 collection: ["metadata-in"]
                )
 
       included_id = included.id
@@ -212,7 +212,7 @@ defmodule Arcana.DocumentsTest do
                Arcana.get_document_metadata([doc.id], repo: Repo, collection: :all)
 
       assert {:ok, %{}} =
-               Arcana.get_document_metadata([doc.id], repo: Repo, collections: [])
+               Arcana.get_document_metadata([doc.id], repo: Repo, collection: [])
     end
 
     test "does not query for an empty ID list" do

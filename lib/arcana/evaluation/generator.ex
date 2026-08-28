@@ -32,9 +32,8 @@ defmodule Arcana.Evaluation.Generator do
     * `:llm` - LLM implementing Arcana.LLM protocol (required)
     * `:sample_size` - Number of chunks to sample (default: 50)
     * `:source_id` - Limit to chunks from specific source
-    * `:collection` / `:collections` - `:all`, one collection name, or a list
-      of collection names. The options are mutually exclusive. An empty list
-      samples no chunks.
+    * `:collection` - `:all`, one collection name, or a list of collection
+      names. An empty list samples no chunks.
     * `:prompt` - Custom prompt template (must include {chunk_text})
 
   """
@@ -43,7 +42,9 @@ defmodule Arcana.Evaluation.Generator do
     llm = Keyword.fetch!(opts, :llm)
     sample_size = Keyword.get(opts, :sample_size, 50)
     source_id = Keyword.get(opts, :source_id)
+
     collection_scope = CollectionScope.from_opts!(opts, :all)
+
     prompt_template = Keyword.get(opts, :prompt, @default_prompt)
 
     chunks = sample_chunks(repo, sample_size, source_id, collection_scope)

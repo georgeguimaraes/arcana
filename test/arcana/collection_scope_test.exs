@@ -25,11 +25,14 @@ defmodule Arcana.CollectionScopeTest do
   end
 
   describe "from_opts/2" do
-    test "normalizes singular and plural collection options" do
+    test "normalizes every shape through the collection option" do
       assert {:ok, {:only, ["a"]}} = CollectionScope.from_opts([collection: "a"], :all)
 
       assert {:ok, {:only, ["a", "b"]}} =
-               CollectionScope.from_opts([collections: ["a", "b"]], :all)
+               CollectionScope.from_opts([collection: ["a", "b"]], :all)
+
+      assert {:ok, :all} = CollectionScope.from_opts([collection: :all], [])
+      assert {:ok, {:only, []}} = CollectionScope.from_opts([collection: []], :all)
     end
 
     test "uses the explicit default when neither option is present" do
@@ -37,8 +40,11 @@ defmodule Arcana.CollectionScopeTest do
       assert {:ok, {:only, []}} = CollectionScope.from_opts([], [])
     end
 
-    test "rejects options containing both collection keys" do
-      assert {:error, :conflicting_collection_options} =
+    test "rejects the removed plural alias instead of widening to the default" do
+      assert {:error, {:unsupported_collection_option, :collections}} =
+               CollectionScope.from_opts([collections: ["a"]], :all)
+
+      assert {:error, {:unsupported_collection_option, :collections}} =
                CollectionScope.from_opts([collection: "a", collections: ["b"]], :all)
     end
 
@@ -47,7 +53,7 @@ defmodule Arcana.CollectionScopeTest do
                CollectionScope.from_opts([collection: nil], :all)
 
       assert {:error, {:invalid_collection_scope, ["a", nil]}} =
-               CollectionScope.from_opts([collections: ["a", nil]], :all)
+               CollectionScope.from_opts([collection: ["a", nil]], :all)
 
       assert {:error, {:invalid_collection_scope, nil}} =
                CollectionScope.from_opts([], nil)
@@ -65,8 +71,8 @@ defmodule Arcana.CollectionScopeTest do
         CollectionScope.from_opts!([collection: nil], :all)
       end
 
-      assert_raise ArgumentError, ~r/cannot be used together/, fn ->
-        CollectionScope.from_opts!([collection: "a", collections: ["b"]], :all)
+      assert_raise ArgumentError, ~r/:collections is not supported/, fn ->
+        CollectionScope.from_opts!([collections: ["b"]], :all)
       end
     end
   end
@@ -91,6 +97,22 @@ defmodule Arcana.CollectionScopeTest do
                CollectionScope.intersect({:only, ["a"]}, {:only, ["outside"]})
 
       assert {:only, []} = CollectionScope.intersect({:only, []}, :all)
+    end
+  end
+
+  describe "subset?/2" do
+    test "requires every explicitly requested collection to be allowed" do
+      allowed = {:only, ["a", "b"]}
+
+      assert CollectionScope.subset?({:only, ["b", "a"]}, allowed)
+      assert CollectionScope.subset?({:only, []}, allowed)
+      refute CollectionScope.subset?({:only, ["a", "outside"]}, allowed)
+      refute CollectionScope.subset?(:all, allowed)
+    end
+
+    test "allows every scope when collections are unrestricted" do
+      assert CollectionScope.subset?(:all, :all)
+      assert CollectionScope.subset?({:only, ["a"]}, :all)
     end
   end
 end

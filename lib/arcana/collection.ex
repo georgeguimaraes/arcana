@@ -140,18 +140,4 @@ defmodule Arcana.Collection do
       collection -> {:ok, collection.id}
     end
   end
-
-  @doc """
-  Extracts collection names from search/ask opts.
-
-  Looks for `:collections` (list) or `:collection` (single name).
-  Returns `[nil]` if neither is set.
-  """
-  def names_from_opts(opts) do
-    cond do
-      Keyword.has_key?(opts, :collections) -> Keyword.get(opts, :collections)
-      Keyword.has_key?(opts, :collection) -> [Keyword.get(opts, :collection)]
-      true -> [nil]
-    end
-  end
 end

@@ -37,7 +37,7 @@ defmodule ArcanaWeb.TestRouter do
     arcana_dashboard("/scoped",
       repo: Arcana.TestRepo,
       live_session_name: :arcana_dashboard_scoped,
-      collections: {ArcanaWeb.TestRouter.Allowed, :for_conn}
+      collection: {ArcanaWeb.TestRouter.Allowed, :for_conn}
     )
   end
 end

@@ -106,7 +106,7 @@ defmodule Arcana.EvaluationTest do
                  repo: Repo,
                  llm: llm,
                  sample_size: 10,
-                 collections: ["generator-a", "generator-b", "missing"]
+                 collection: ["generator-a", "generator-b", "missing"]
                )
 
       assert length(test_cases) == 2
@@ -116,7 +116,7 @@ defmodule Arcana.EvaluationTest do
                  repo: Repo,
                  llm: llm,
                  sample_size: 10,
-                 collections: []
+                 collection: []
                )
     end
 
@@ -217,7 +217,7 @@ defmodule Arcana.EvaluationTest do
       assert {:ok, run} = Evaluation.run(repo: Repo, collection: "default")
       assert run.config.collections == ["default"]
 
-      assert {:error, :no_test_cases} = Evaluation.run(repo: Repo, collections: [])
+      assert {:error, :no_test_cases} = Evaluation.run(repo: Repo, collection: [])
       assert {:error, :no_test_cases} = Evaluation.run(repo: Repo, collection: "missing")
     end
 
@@ -310,6 +310,36 @@ defmodule Arcana.EvaluationTest do
       result = run.results[python_tc.id]
       assert result.hit[1] == false
       assert result.reciprocal_rank == 0.0
+    end
+
+    test "forwards scoped runs through the singular collection option" do
+      test_pid = self()
+
+      retriever = fn _question, opts ->
+        send(test_pid, {:retriever_opts, opts})
+        {:ok, []}
+      end
+
+      assert {:ok, _run} =
+               Evaluation.run(repo: Repo, collection: "default", retriever: retriever)
+
+      assert_received {:retriever_opts, opts}
+      assert opts[:collection] == ["default"]
+      assert opts[:strict_collections] == true
+      refute Keyword.has_key?(opts, :collections)
+    end
+
+    test "forwards all explicitly so search defaults cannot narrow the run" do
+      test_pid = self()
+
+      retriever = fn _question, opts ->
+        send(test_pid, {:retriever_opts, opts})
+        {:ok, []}
+      end
+
+      assert {:ok, _run} = Evaluation.run(repo: Repo, collection: :all, retriever: retriever)
+      assert_received {:retriever_opts, opts}
+      assert opts[:collection] == :all
     end
 
     test "without evaluate_answers does not include answer metrics", %{test_cases: _test_cases} do
@@ -459,26 +489,23 @@ defmodule Arcana.EvaluationTest do
       assert [%{question: "Alpha?"}] =
                Evaluation.list_test_cases(repo: Repo, collection: "evaluation-a")
 
-      assert [%{question: "Alpha?"}] =
-               Evaluation.list_test_cases(repo: Repo, collections: "evaluation-a")
-
       assert 2 ==
                Evaluation.count_test_cases(
                  repo: Repo,
                  collection: ["evaluation-a", "evaluation-b", "missing"]
                )
 
-      assert [] == Evaluation.list_test_cases(repo: Repo, collections: [])
+      assert [] == Evaluation.list_test_cases(repo: Repo, collection: [])
       assert 2 == Evaluation.count_test_cases(repo: Repo, collection: :all)
     end
 
-    test "rejects conflicting and malformed collection scopes" do
-      assert_raise ArgumentError, ~r/cannot be used together/, fn ->
-        Evaluation.list_test_cases(repo: Repo, collection: "a", collections: ["b"])
+    test "rejects malformed and removed collection scopes" do
+      assert_raise ArgumentError, ~r/collection scope must be/, fn ->
+        Evaluation.list_test_cases(repo: Repo, collection: ["a", nil])
       end
 
-      assert_raise ArgumentError, ~r/collection scope must be/, fn ->
-        Evaluation.list_test_cases(repo: Repo, collections: ["a", nil])
+      assert_raise ArgumentError, ~r/:collections is not supported/, fn ->
+        Evaluation.list_test_cases(repo: Repo, collections: ["a"])
       end
     end
   end
@@ -523,6 +550,14 @@ defmodule Arcana.EvaluationTest do
       assert {:error, :not_found} =
                Evaluation.delete_test_case(Ecto.UUID.generate(), repo: Repo)
     end
+
+    test "validates collection scope before rejecting malformed IDs" do
+      for operation <- [&Evaluation.get_test_case/2, &Evaluation.delete_test_case/2] do
+        assert_raise ArgumentError, ~r/collection scope must be/, fn ->
+          operation.("not-a-uuid", repo: Repo, collection: ["a", nil])
+        end
+      end
+    end
   end
 
   describe "list_runs/1" do
@@ -565,6 +600,14 @@ defmodule Arcana.EvaluationTest do
       {:ok, _deleted} = Evaluation.delete_run(run.id, repo: Repo)
 
       assert Evaluation.get_run(run.id, repo: Repo) == nil
+    end
+
+    test "run reads and deletes validate scope before malformed IDs" do
+      for operation <- [&Evaluation.get_run/2, &Evaluation.delete_run/2] do
+        assert_raise ArgumentError, ~r/collection scope must be/, fn ->
+          operation.("not-a-uuid", repo: Repo, collection: ["a", nil])
+        end
+      end
     end
   end
 end

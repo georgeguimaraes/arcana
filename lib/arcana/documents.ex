@@ -21,9 +21,8 @@ defmodule Arcana.Documents do
   ## Options
 
     * `:repo` - The Ecto repo to use (required unless configured globally)
-    * `:collection` - Filter by one collection name, or use `:all`
-    * `:collections` - Filter by several collection names, or use `:all`.
-      An empty list matches nothing and unknown names never widen the query.
+    * `:collection` - Filter by `:all`, one collection name, a list of names,
+      or `[]` to match nothing. Unknown names never widen the query.
     * `:status` - Filter by status (`:pending`, `:processing`,
       `:completed`, `:failed`)
     * `:source_id` - Filter by source id
@@ -77,15 +76,14 @@ defmodule Arcana.Documents do
   ## Options
 
     * `:repo` - The Ecto repo to use (required unless configured globally)
-    * `:collection` - Limit the lookup to one collection name, or use `:all`
-    * `:collections` - Limit the lookup to several collection names, or use
-      `:all`. An empty list matches nothing.
+    * `:collection` - Limit the lookup to `:all`, one collection name, a list
+      of names, or `[]` to match nothing
 
   ## Examples
 
       {:ok, document} = Arcana.get_document(id, repo: MyApp.Repo)
       {:ok, document} =
-        Arcana.get_document(id, repo: MyApp.Repo, collections: ["support", "api"])
+        Arcana.get_document(id, repo: MyApp.Repo, collection: ["support", "api"])
 
   """
   def get_document(id, opts) do
@@ -110,7 +108,7 @@ defmodule Arcana.Documents do
   Fetches sparse metadata for several published documents in one query.
 
   A collection scope is required. Pass `collection: "support"`,
-  `collections: ["support", "api"]`, or an explicit `collection: :all`.
+  `collection: ["support", "api"]`, or an explicit `collection: :all`.
   Missing IDs, documents outside the scope, and documents that have not
   completed ingestion are omitted from the returned ID-keyed map. Duplicate
   IDs are queried once.
@@ -121,8 +119,7 @@ defmodule Arcana.Documents do
   ## Options
 
     * `:repo` - The Ecto repo to use (required unless configured globally)
-    * `:collection` - One collection name, or `:all`
-    * `:collections` - Several collection names, or `:all`
+    * `:collection` - `:all`, one collection name, a list of names, or `[]`
 
   """
   @spec get_document_metadata([Ecto.UUID.t()], keyword()) ::
@@ -130,8 +127,8 @@ defmodule Arcana.Documents do
           | {:error, {:invalid_document_id, term()}}
   def get_document_metadata(ids, opts) when is_list(ids) do
     repo = require_repo!(opts)
-    require_collection_scope!(opts)
     collection_scope = CollectionScope.from_opts!(opts, :all)
+    require_collection_scope!(opts)
 
     with {:ok, ids} <- cast_document_ids(ids) do
       fetch_document_metadata(ids, collection_scope, repo)
@@ -187,9 +184,9 @@ defmodule Arcana.Documents do
   end
 
   defp require_collection_scope!(opts) do
-    unless Keyword.has_key?(opts, :collection) or Keyword.has_key?(opts, :collections) do
+    unless Keyword.has_key?(opts, :collection) do
       raise ArgumentError,
-            "get_document_metadata/2 requires an explicit :collection or :collections scope"
+            "get_document_metadata/2 requires an explicit :collection scope"
     end
   end
 

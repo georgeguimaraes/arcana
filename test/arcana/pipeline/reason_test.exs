@@ -400,7 +400,7 @@ defmodule Arcana.Pipeline.ReasonTest do
       ctx =
         "What is the tenant policy?"
         |> Pipeline.new(repo: Arcana.TestRepo, llm: llm)
-        |> Pipeline.search(searcher: searcher, collections: ["tenant-a"])
+        |> Pipeline.search(searcher: searcher, collection: ["tenant-a"])
         |> Pipeline.reason()
 
       assert ctx.reason_iterations == 2
@@ -423,7 +423,7 @@ defmodule Arcana.Pipeline.ReasonTest do
       ctx =
         "What is the Zorblax blueprint?"
         |> Pipeline.new(repo: Arcana.TestRepo, llm: llm, threshold: 0.1)
-        |> Pipeline.search(collections: ["probe-tenant-a"])
+        |> Pipeline.search(collection: ["probe-tenant-a"])
         |> Pipeline.reason()
 
       assert Enum.all?(ctx.results, &(&1.collection == "probe-tenant-a"))

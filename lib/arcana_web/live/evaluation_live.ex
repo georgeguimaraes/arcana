@@ -74,7 +74,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp eval_opts(socket) do
       case socket.assigns.allowed_collections do
         :all -> [repo: socket.assigns.repo]
-        allowed when is_list(allowed) -> [repo: socket.assigns.repo, collections: allowed]
+        allowed when is_list(allowed) -> [repo: socket.assigns.repo, collection: allowed]
       end
     end
 
@@ -440,7 +440,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp maybe_put_eval_scope(opts, :all), do: opts
 
     defp maybe_put_eval_scope(opts, allowed) when is_list(allowed),
-      do: Keyword.merge(opts, collections: allowed, strict_collections: true)
+      do: Keyword.merge(opts, collection: allowed, strict_collections: true)
 
     defp maybe_put_evaluate_answers(opts, false, _llm), do: opts
 
@@ -481,7 +481,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp loop_new_opts(repo, :all), do: [repo: repo]
 
     defp loop_new_opts(repo, allowed) when is_list(allowed),
-      do: [repo: repo, collections: allowed]
+      do: [repo: repo, collection: allowed]
 
     defp loop_run_opts(llm, :all), do: [controller_llm: llm]
 

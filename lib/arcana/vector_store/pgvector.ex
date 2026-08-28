@@ -56,7 +56,7 @@ defmodule Arcana.VectorStore.Pgvector do
   Raising it finds more of the true nearest neighbours, at the cost of more work
   per query:
 
-      Arcana.search("question", collections: ["docs"], hnsw_ef_search: 200)
+      Arcana.search("question", collection: ["docs"], hnsw_ef_search: 200)
 
   It can also be a global search default:
 

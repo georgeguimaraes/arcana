@@ -549,7 +549,7 @@ defmodule Arcana.Pipeline do
   ## Collection Selection
 
   Collection scope is determined in this priority order:
-  1. `:collection` or `:collections` option passed to this function
+  1. `:collection` option passed to this function
   2. `ctx.collections` (set by `select/2` if LLM selection was used)
   3. Falls back to `"default"` collection
 
@@ -563,13 +563,12 @@ defmodule Arcana.Pipeline do
       ctx |> Pipeline.search(collection: "technical_docs")
 
       # Search multiple specific collections
-      ctx |> Pipeline.search(collections: ["docs", "faq"])
+      ctx |> Pipeline.search(collection: ["docs", "faq"])
 
   ## Options
 
   - `:searcher` - Custom searcher module or function (default: `Arcana.Searcher.Arcana`)
   - `:collection` - `:all`, a collection name, or a list of collection names
-  - `:collections` - Alias for `:collection`. The two options are mutually exclusive.
   - `:self_correct` - Enable self-correcting search (default: false)
   - `:max_iterations` - Max retry attempts for self-correct (default: 3)
   - `:sufficient_prompt` - Custom prompt function `fn question, chunks -> prompt_string end`

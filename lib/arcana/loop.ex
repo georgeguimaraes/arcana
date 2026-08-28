@@ -139,13 +139,12 @@ defmodule Arcana.Loop do
 
     * `:repo` - Ecto repo for retrieval tools. Falls back to `:repo` global config.
     * `:collection` - Collection scope as `:all`, a name, or a list of names.
-    * `:collections` - Alias for `:collection`. The two options are mutually exclusive.
   """
   @spec new(String.t(), keyword()) :: Context.t()
   def new(question, opts \\ []) when is_binary(question) do
     repo = Arcana.Config.get(opts, :repo)
 
-    collections = normalize_collection_scope(opts)
+    collections = opts |> Arcana.CollectionScope.from_opts!(:all) |> collection_scope_input()
 
     %Context{
       question: question,
@@ -154,27 +153,8 @@ defmodule Arcana.Loop do
     }
   end
 
-  # `[nil]` was the old internal marker for unrestricted retrieval. Keep
-  # accepting it at this boundary so existing stored contexts and callers do
-  # not become accidentally narrower while the public contract moves to :all.
-  defp normalize_collection_scope(opts) do
-    opts =
-      opts
-      |> normalize_legacy_scope(:collection)
-      |> normalize_legacy_scope(:collections)
-
-    case Arcana.CollectionScope.from_opts!(opts, :all) do
-      :all -> :all
-      {:only, names} -> names
-    end
-  end
-
-  defp normalize_legacy_scope(opts, key) do
-    case Keyword.fetch(opts, key) do
-      {:ok, [nil]} -> Keyword.put(opts, key, :all)
-      _ -> opts
-    end
-  end
+  defp collection_scope_input(:all), do: :all
+  defp collection_scope_input({:only, names}), do: names
 
   @doc """
   Runs the agent loop until it terminates.

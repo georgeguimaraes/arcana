@@ -71,7 +71,7 @@ defmodule Arcana.AskTest do
                Arcana.ask("What are the Daleks?",
                  repo: Repo,
                  llm: llm,
-                 collections: [],
+                 collection: [],
                  graph: true
                )
     end

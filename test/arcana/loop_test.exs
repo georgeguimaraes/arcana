@@ -209,11 +209,12 @@ defmodule Arcana.LoopTest do
 
       Tools.execute(ctx, "search", %{query: "q"},
         search_fn: search_fn,
-        search_opts: [collection: :all, tenant_id: "tenant-a"]
+        search_opts: [collection: :all, collections: ["outside"], tenant_id: "tenant-a"]
       )
 
       assert_received {:search_opts, opts}
       assert opts[:collection] == "allowed"
+      refute Keyword.has_key?(opts, :collections)
       assert opts[:tenant_id] == "tenant-a"
     end
 
@@ -228,7 +229,7 @@ defmodule Arcana.LoopTest do
       Tools.execute(ctx, "search", %{query: "q"}, search_fn: search_fn)
 
       assert_received {:search_opts, opts}
-      assert opts[:collections] == []
+      assert opts[:collection] == []
     end
 
     test "multi-collection ctx + no collection arg → searches across all" do
@@ -243,8 +244,8 @@ defmodule Arcana.LoopTest do
         Tools.execute(ctx, "search", %{query: "q"}, search_fn: search_fn)
 
       assert_received {:search_opts, opts}
-      assert opts[:collections] == ["a", "b"]
-      refute opts[:collection]
+      assert opts[:collection] == ["a", "b"]
+      refute Keyword.has_key?(opts, :collections)
     end
 
     test "multi-collection ctx + valid collection arg → narrows to that one" do
@@ -353,8 +354,8 @@ defmodule Arcana.LoopTest do
       assert ctx.collections == ["doctor-who"]
     end
 
-    test "stores collections list when given" do
-      ctx = Loop.new("question", collections: ["a", "b"])
+    test "stores a collection list when given" do
+      ctx = Loop.new("question", collection: ["a", "b"])
       assert ctx.collections == ["a", "b"]
     end
 
@@ -363,17 +364,16 @@ defmodule Arcana.LoopTest do
       assert Loop.new("question", collection: :all).collections == :all
       assert Loop.new("question", collection: "a").collections == ["a"]
       assert Loop.new("question", collection: ["a", "b"]).collections == ["a", "b"]
-      assert Loop.new("question", collections: []).collections == []
-      assert Loop.new("question", collections: [nil]).collections == :all
-      assert Loop.new("question", collection: [nil]).collections == :all
+      assert Loop.new("question", collection: []).collections == []
     end
 
-    test "rejects conflicting or invalid collection scopes" do
-      assert_raise ArgumentError, fn ->
-        Loop.new("question", collection: "a", collections: ["b"])
-      end
-
+    test "rejects invalid and removed collection scopes" do
       assert_raise ArgumentError, fn -> Loop.new("question", collection: nil) end
+      assert_raise ArgumentError, fn -> Loop.new("question", collection: [nil]) end
+
+      assert_raise ArgumentError, ~r/:collections is not supported/, fn ->
+        Loop.new("question", collections: ["a"])
+      end
     end
   end
 

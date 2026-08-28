@@ -35,10 +35,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         once (say, a superuser dashboard plus a scoped one) needs a distinct
         name for each extra mount.
 
-      * `:collections` - Optional `{module, function}` pair that scopes the
+      * `:collection` - Optional `{module, function}` pair that scopes the
         dashboard to a subset of collections. The function receives the
-        `%Plug.Conn{}` of the page request and must return either `:all` (no
-        restriction) or a list of collection names. Every dashboard surface
+        `%Plug.Conn{}` of the page request and must return `:all`, one collection
+        name, a list of names, or `[]`. Every dashboard surface
         (listings, search, ask, ingest, evaluation, maintenance, stats) is
         limited to those collections, and events naming any other collection
         are rejected server-side. A plain `{module, function}` tuple is
@@ -55,7 +55,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     ## Scoping collections
 
         arcana_dashboard "/arcana",
-          collections: {MyAppWeb.ArcanaAccess, :allowed_collections}
+          collection: {MyAppWeb.ArcanaAccess, :allowed_collections}
 
         defmodule MyAppWeb.ArcanaAccess do
           def allowed_collections(conn) do
@@ -155,11 +155,16 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     def __options__(options, prefix) do
       live_socket_path = Keyword.get(options, :live_socket_path, "/live")
       repo = Keyword.get(options, :repo)
-      collections = options |> Keyword.get(:collections) |> validate_collections_option!()
+      collection = options |> Keyword.get(:collection) |> validate_collection_option!()
 
-      # The collections spec is only appended when given, so dashboards
+      if Keyword.has_key?(options, :collections) do
+        raise ArgumentError,
+              ":collections is not supported, pass the dashboard scope through :collection"
+      end
+
+      # The collection spec is only appended when given, so dashboards
       # without the option keep the exact session MFA they had before.
-      session_args = if collections, do: [repo, prefix, collections], else: [repo, prefix]
+      session_args = if collection, do: [repo, prefix, collection], else: [repo, prefix]
 
       {
         Keyword.get(options, :live_session_name, :arcana_dashboard),
@@ -175,15 +180,15 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       }
     end
 
-    defp validate_collections_option!(nil), do: nil
+    defp validate_collection_option!(nil), do: nil
 
-    defp validate_collections_option!({mod, fun} = spec) when is_atom(mod) and is_atom(fun),
+    defp validate_collection_option!({mod, fun} = spec) when is_atom(mod) and is_atom(fun),
       do: spec
 
-    defp validate_collections_option!(other) do
+    defp validate_collection_option!(other) do
       raise ArgumentError,
-            ":collections must be a {module, function} tuple where the function " <>
-              "accepts a Plug.Conn and returns :all or a list of collection names, " <>
+            ":collection must be a {module, function} tuple where the function " <>
+              "accepts a Plug.Conn and returns a collection scope, " <>
               "got: #{inspect(other)}"
     end
 
@@ -202,30 +207,20 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       |> Map.put("allowed_collections", resolve_allowed_collections(conn, collections_spec))
     end
 
-    # Fail closed: anything other than :all or a list of collection names
-    # raises instead of silently widening access.
     defp resolve_allowed_collections(conn, {mod, fun}) do
-      case apply(mod, fun, [conn]) do
-        :all ->
+      input = apply(mod, fun, [conn])
+
+      case Arcana.CollectionScope.normalize(input) do
+        {:ok, :all} ->
           :all
 
-        names when is_list(names) ->
-          validate_collection_names!(names, {mod, fun})
+        {:ok, {:only, names}} ->
+          names
 
-        other ->
+        {:error, _reason} ->
           raise ArgumentError,
-                "#{inspect(mod)}.#{fun}/1 must return :all or a list of collection " <>
-                  "names, got: #{inspect(other)}"
-      end
-    end
-
-    defp validate_collection_names!(names, {mod, fun}) do
-      if Enum.all?(names, &is_binary/1) do
-        names
-      else
-        raise ArgumentError,
-              "#{inspect(mod)}.#{fun}/1 returned a list with non-string entries: " <>
-                inspect(names)
+                "#{inspect(mod)}.#{fun}/1 must return :all, a collection name, " <>
+                  "or a list of collection names, got: #{inspect(input)}"
       end
     end
   end
@@ -236,7 +231,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     # Assigns the dashboard's mount prefix (e.g. "/admin/arcana") to every
     # dashboard LiveView so links and asset hrefs are built from the actual
     # mount point instead of assuming "/arcana", plus the allowed collections
-    # resolved by the router's :collections MFA (:all when the option is
+    # resolved by the router's :collection MFA (:all when the option is
     # absent). An empty list is a valid restriction and must not collapse to
     # :all, so only a missing session key falls back.
     #

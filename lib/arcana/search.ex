@@ -60,10 +60,8 @@ defmodule Arcana.Search do
     * `:threshold` - Minimum similarity score (default: 0.0)
     * `:mode` - Search mode: `:vector` (default), `:keyword`, or `:hybrid`.
       `:semantic` and `:fulltext` are deprecated aliases.
-    * `:collection` - Collection scope as `:all`, a collection name, or a list
-      of collection names
-    * `:collections` - Alias for `:collection`. The two options are mutually
-      exclusive.
+    * `:collection` - Collection scope as `:all`, a collection name, a list of
+      collection names, or `[]` to match nothing
     * `:strict_collections` - When `true`, an unknown collection name
       returns `{:error, {:unknown_collection, name}}` instead of matching
       nothing. Defaults to `config :arcana, strict_collections: false`.

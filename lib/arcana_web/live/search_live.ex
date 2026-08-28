@@ -178,27 +178,33 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     defp add_source_id_opt(opts, source_id), do: Keyword.put(opts, :source_id, source_id)
 
     defp requested_collection_scope(nil, allowed),
-      do: {:ok, collection_scope_opts(allowed, :all)}
+      do: {:ok, collection_scope_opts(CollectionScope.normalize!(allowed))}
 
     defp requested_collection_scope(collections, allowed) when is_list(collections) do
       requested = Enum.reject(collections, &(&1 == ""))
-      requested = if requested == [], do: :all, else: requested
-      {:ok, collection_scope_opts(allowed, requested)}
+
+      case requested do
+        [] ->
+          {:ok, collection_scope_opts(CollectionScope.normalize!(allowed))}
+
+        names ->
+          requested_scope = CollectionScope.normalize!(names)
+          allowed_scope = CollectionScope.normalize!(allowed)
+
+          if CollectionScope.subset?(requested_scope, allowed_scope) do
+            {:ok, collection_scope_opts(requested_scope)}
+          else
+            :error
+          end
+      end
     rescue
       ArgumentError -> :error
     end
 
     defp requested_collection_scope(_collections, _allowed), do: :error
 
-    defp collection_scope_opts(allowed, requested) do
-      requested_scope = CollectionScope.normalize!(requested)
-      allowed_scope = CollectionScope.normalize!(allowed)
-
-      case CollectionScope.intersect(requested_scope, allowed_scope) do
-        :all -> [collection: :all]
-        {:only, names} -> [collections: names]
-      end
-    end
+    defp collection_scope_opts(:all), do: [collection: :all]
+    defp collection_scope_opts({:only, names}), do: [collection: names]
 
     @impl true
     def render(assigns) do
