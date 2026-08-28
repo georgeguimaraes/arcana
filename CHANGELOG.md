@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0](https://github.com/georgeguimaraes/arcana/compare/v3.0.1...v4.0.0) (2026-08-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* Make publication lifecycle explicit ([#184](https://github.com/georgeguimaraes/arcana/issues/184))
+* Make Arcana.delete/2's error contract match its docs ([#182](https://github.com/georgeguimaraes/arcana/issues/182))
+
+### Bug Fixes
+
+* Honour :vector_weight and :keyword_weight in reciprocal rank fusion ([#175](https://github.com/georgeguimaraes/arcana/issues/175)) ([7423862](https://github.com/georgeguimaraes/arcana/commit/7423862a4680cc7adb5b57919449c52f6eaa10f3))
+* Make Arcana.delete/2's error contract match its docs ([#182](https://github.com/georgeguimaraes/arcana/issues/182)) ([957eaff](https://github.com/georgeguimaraes/arcana/commit/957eaffc67c665dfadbeb62cb004143b418070fd))
+* Resolve the reranker's LLM from config, and say what reranking actually does ([#173](https://github.com/georgeguimaraes/arcana/issues/173)) ([8661ac1](https://github.com/georgeguimaraes/arcana/commit/8661ac1aa19d5c7e2ac38443c1dec985e990d500))
+* Stop Build Graph spinning forever when the graph schema is absent ([#177](https://github.com/georgeguimaraes/arcana/issues/177)) ([a9cce92](https://github.com/georgeguimaraes/arcana/commit/a9cce923110b44acc0028ec989501748920787e9))
+
+
+### Miscellaneous
+
+* **deps:** bump phoenix_live_view from 1.2.9 to 1.2.10 ([#172](https://github.com/georgeguimaraes/arcana/issues/172)) ([436368d](https://github.com/georgeguimaraes/arcana/commit/436368d27a0bdb12c9953bf2e068f04b1d9fcf25))
+* **deps:** bump req_llm from 1.20.0 to 1.21.0 ([#178](https://github.com/georgeguimaraes/arcana/issues/178)) ([639bd50](https://github.com/georgeguimaraes/arcana/commit/639bd5064e134a9839f02fb1de4be491b389bd70))
+
+
+### Documentation
+
+* Say what the loop's LLM options actually accept, and what they don't ([#174](https://github.com/georgeguimaraes/arcana/issues/174)) ([ecc16dd](https://github.com/georgeguimaraes/arcana/commit/ecc16dd83ac2ac7a48a390b20405b5c3de2f0b42))
+
+
+### Code Refactoring
+
+* Make publication lifecycle explicit ([#184](https://github.com/georgeguimaraes/arcana/issues/184)) ([eafe1af](https://github.com/georgeguimaraes/arcana/commit/eafe1af92b1ccce94371674cb6d854e3416b15e0))
+
 ## [3.0.1](https://github.com/georgeguimaraes/arcana/compare/v3.0.0...v3.0.1) (2026-08-21)
 
 

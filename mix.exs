@@ -1,7 +1,7 @@
 defmodule Arcana.MixProject do
   use Mix.Project
 
-  @version "3.0.1"
+  @version "4.0.0"
   @source_url "https://github.com/georgeguimaraes/arcana"
 
   def project do
