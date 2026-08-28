@@ -1229,6 +1229,24 @@ defmodule Arcana.MigrationTest do
       assert error.message =~ "Pass an explicit :prefix"
     end
 
+    test "an unmarked temporary marker collision cannot select a fresh install schema" do
+      Repo.checkout(fn ->
+        SQL.query!(Repo, "CREATE TEMP TABLE arcana_graph_entities (sentinel text)", [])
+
+        try do
+          error =
+            assert_raise RuntimeError, fn ->
+              SchemaScope.resolve(Repo, :graph, nil)
+            end
+
+          assert error.message =~ "unmarked table named like its graph migration marker"
+          assert error.message =~ "Pass an explicit :prefix"
+        after
+          SQL.query!(Repo, "DROP TABLE pg_temp.arcana_graph_entities", [])
+        end
+      end)
+    end
+
     test "an unmarked non-marker collision cannot select a fresh install schema" do
       SQL.query!(
         Repo,
@@ -1319,6 +1337,48 @@ defmodule Arcana.MigrationTest do
 
       assert scalar("SELECT count(*) FROM arcana_graph_entities") == 2
       assert Arcana.Graph.Migration.recorded_version(Repo) == 2
+    end
+
+    test "the test repo v2 migration invalidates summaries for discarded relationships" do
+      migrate(Arcana.Graph.Migration, version: 1)
+      {source, target} = seed_graph_entities()
+
+      SQL.query!(
+        Repo,
+        "INSERT INTO arcana_graph_relationships " <>
+          "(id, type, source_id, target_id, inserted_at, updated_at) " <>
+          "VALUES (gen_random_uuid(), 'knows', $1, $2, now(), now())",
+        [source, target]
+      )
+
+      SQL.query!(
+        Repo,
+        "INSERT INTO arcana_graph_communities " <>
+          "(id, level, entity_ids, dirty, summary, summary_fingerprint, inserted_at, updated_at) " <>
+          "VALUES (gen_random_uuid(), 0, $1, false, 'legacy summary', 'legacy', now(), now())",
+        [[source, target]]
+      )
+
+      Code.require_file(
+        "20260101000002_add_relationship_evidence.exs",
+        Path.expand("../../priv/test_repo/migrations", __DIR__)
+      )
+
+      Ecto.Migrator.up(
+        Repo,
+        migration_version(),
+        Arcana.TestRepo.Migrations.AddRelationshipEvidence,
+        log: false
+      )
+
+      assert scalar("SELECT count(*) FROM arcana_graph_relationships") == 0
+
+      assert [[true, nil, nil]] =
+               SQL.query!(
+                 Repo,
+                 "SELECT dirty, summary, summary_fingerprint FROM arcana_graph_communities",
+                 []
+               ).rows
     end
 
     test "a nontransactional host migration preserves v1 data when v2 fails" do

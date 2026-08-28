@@ -104,7 +104,9 @@ defmodule Arcana.Graph.GraphStore do
 
   Prefer `Arcana.delete/2`, which removes the document and its chunks and
   sweeps in one step. Reach for this only when you are deleting chunks
-  yourself.
+  yourself. If the collection is already known, pass its ID as
+  `:collection_id` so the Ecto backend can still sweep when none of the
+  chunks have graph mentions.
 
   ## The call is not atomic
 

@@ -215,6 +215,16 @@ defmodule Arcana.Graph.GraphStore.EctoTest do
 
       assert Repo.get(Entity, entity.id)
     end
+
+    test "an empty list still sweeps an explicitly known collection" do
+      collection = create_collection("dbc-known-empty-#{System.unique_integer([:positive])}")
+      orphan = create_entity(collection, "Orphan")
+
+      assert :ok =
+               EctoStore.delete_by_chunks([], repo: Repo, collection_id: collection.id)
+
+      refute Repo.get(Entity, orphan.id)
+    end
   end
 
   describe "persist_entities/3" do

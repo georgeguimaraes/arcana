@@ -15,6 +15,9 @@ defmodule Arcana.ControlledGraphStore do
         after
           send(coordinator, {:graph_lock_released, self(), ref, collection_id})
         end
+    after
+      Keyword.get(opts, :lock_timeout, 1_000) ->
+        raise "timed out waiting for the graph lock coordinator"
     end
   end
 

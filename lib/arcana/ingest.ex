@@ -534,7 +534,12 @@ defmodule Arcana.Ingest do
       # and won't dirty their communities during the handoff. The whole
       # sequence is still one transaction, so a later failure rolls the
       # publication back too.
-      maybe_delete_replaced_graph(replaced_chunk_ids, repo, opts)
+      maybe_delete_replaced_graph(
+        replaced_chunk_ids,
+        document.collection_id,
+        repo,
+        opts
+      )
 
       repo.delete_all(
         from(d in Document,
@@ -548,9 +553,14 @@ defmodule Arcana.Ingest do
     end
   end
 
-  defp maybe_delete_replaced_graph(replaced_chunk_ids, repo, opts) do
+  defp maybe_delete_replaced_graph(replaced_chunk_ids, collection_id, repo, opts) do
     if Arcana.Config.graph_enabled?(opts) and ecto_graph_store?(opts) do
-      case GraphStore.delete_by_chunks(replaced_chunk_ids, Keyword.put(opts, :repo, repo)) do
+      graph_opts =
+        opts
+        |> Keyword.put(:repo, repo)
+        |> Keyword.put(:collection_id, collection_id)
+
+      case GraphStore.delete_by_chunks(replaced_chunk_ids, graph_opts) do
         :ok -> :ok
         {:error, reason} -> repo.rollback({:graph_cleanup_failed, reason})
       end

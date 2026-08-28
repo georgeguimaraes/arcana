@@ -14,7 +14,7 @@ defmodule ArcanaWeb.BackgroundTask do
     callers = [owner | Process.get(:"$callers", [])]
     run_ref = Keyword.get_lazy(opts, :run_ref, &make_ref/0)
     cleanup = Keyword.get(opts, :cleanup, fn -> :ok end)
-    on_worker_registered = Keyword.get(opts, :on_worker_registered, fn _worker -> :ok end)
+    on_worker_registered = Keyword.get(opts, :on_worker_registered)
     task_supervisor = Keyword.get(opts, :task_supervisor, ArcanaWeb.TaskSupervisor)
 
     started =
@@ -74,9 +74,19 @@ defmodule ArcanaWeb.BackgroundTask do
     receive do
       {:background_worker_registered, ^guardian, worker} ->
         worker_ref = Process.monitor(worker)
-        on_worker_registered.(worker)
-        send(worker, {:background_worker_ready, guardian})
-        await(owner, owner_ref, worker, worker_ref, supervisor, tag, run_ref)
+
+        context = %{
+          owner: owner,
+          owner_ref: owner_ref,
+          worker: worker,
+          worker_ref: worker_ref,
+          guardian: guardian,
+          supervisor: supervisor,
+          tag: tag,
+          run_ref: run_ref
+        }
+
+        run_registration_hook(context, on_worker_registered)
 
       {:DOWN, ^owner_ref, :process, ^owner, _reason} ->
         :ok
@@ -84,6 +94,58 @@ defmodule ArcanaWeb.BackgroundTask do
       {:EXIT, ^supervisor, reason} ->
         exit(reason)
     end
+  end
+
+  defp run_registration_hook(context, nil) do
+    %{worker: worker, guardian: guardian} = context
+    send(worker, {:background_worker_ready, guardian})
+    await_registered_worker(context)
+  end
+
+  defp run_registration_hook(context, on_worker_registered)
+       when is_function(on_worker_registered, 1) do
+    %{
+      owner: owner,
+      owner_ref: owner_ref,
+      worker: worker,
+      worker_ref: worker_ref,
+      guardian: guardian,
+      supervisor: supervisor
+    } = context
+
+    {hook, hook_ref} =
+      :erlang.spawn_opt(fn -> on_worker_registered.(worker) end, [:link, :monitor])
+
+    receive do
+      {:DOWN, ^hook_ref, :process, ^hook, :normal} ->
+        send(worker, {:background_worker_ready, guardian})
+        await_registered_worker(context)
+
+      {:DOWN, ^hook_ref, :process, ^hook, reason} ->
+        Process.exit(worker, :kill)
+        await_worker_exit(worker, worker_ref)
+        exit(reason)
+
+      {:DOWN, ^owner_ref, :process, ^owner, _reason} ->
+        stop_registration(hook, hook_ref, worker, worker_ref)
+
+      {:EXIT, ^supervisor, reason} ->
+        stop_registration(hook, hook_ref, worker, worker_ref)
+        exit(reason)
+    end
+  end
+
+  defp await_registered_worker(context) do
+    %{owner: owner, owner_ref: owner_ref, worker: worker, worker_ref: worker_ref} = context
+    %{supervisor: supervisor, tag: tag, run_ref: run_ref} = context
+    await(owner, owner_ref, worker, worker_ref, supervisor, tag, run_ref)
+  end
+
+  defp stop_registration(hook, hook_ref, worker, worker_ref) do
+    Process.exit(hook, :kill)
+    Process.exit(worker, :kill)
+    await_process_exit(hook, hook_ref)
+    await_worker_exit(worker, worker_ref)
   end
 
   defp await(owner, owner_ref, worker, worker_ref, supervisor, tag, run_ref) do
@@ -199,8 +261,12 @@ defmodule ArcanaWeb.BackgroundTask do
   end
 
   defp await_worker_exit(worker, worker_ref) do
+    await_process_exit(worker, worker_ref)
+  end
+
+  defp await_process_exit(process, monitor_ref) do
     receive do
-      {:DOWN, ^worker_ref, :process, ^worker, _reason} -> :ok
+      {:DOWN, ^monitor_ref, :process, ^process, _reason} -> :ok
     end
   end
 

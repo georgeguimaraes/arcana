@@ -86,8 +86,8 @@ defmodule Arcana.Migration.SchemaScope do
         "SELECT n.nspname, obj_description(c.oid) FROM pg_class c " <>
           "JOIN pg_namespace n ON n.oid = c.relnamespace " <>
           "WHERE c.relname = $1 AND c.relkind IN ('r', 'p') " <>
-          "AND n.nspname = ANY(current_schemas(false)) " <>
-          "ORDER BY array_position(current_schemas(false), n.nspname)",
+          "AND n.nspname = ANY(current_schemas(true)) " <>
+          "ORDER BY array_position(current_schemas(true), n.nspname)",
         [marker_table]
       )
 

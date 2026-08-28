@@ -7,6 +7,11 @@ defmodule Arcana.TestRepo.Migrations.AddRelationshipEvidence do
     # repo's upgrade behavior aligned with Arcana.Graph.Migration v2.
     execute("DELETE FROM arcana_graph_relationships")
 
+    execute(
+      "UPDATE arcana_graph_communities " <>
+        "SET dirty = true, summary = NULL, summary_fingerprint = NULL"
+    )
+
     alter table(:arcana_graph_relationships) do
       add(:fingerprint, :string, null: false)
     end

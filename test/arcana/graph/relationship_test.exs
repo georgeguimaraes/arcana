@@ -99,6 +99,12 @@ defmodule Arcana.Graph.RelationshipTest do
       assert Ecto.Changeset.get_field(atom_keys, :fingerprint) ==
                Ecto.Changeset.get_field(string_keys, :fingerprint)
     end
+
+    test "keeps metadata whose JSON encoder returns invalid iodata" do
+      metadata = %Arcana.InvalidJSONMetadata{value: "kept"}
+
+      assert Relationship.normalized_metadata(metadata) == metadata
+    end
   end
 
   describe "database operations" do

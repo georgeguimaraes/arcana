@@ -594,6 +594,17 @@ defmodule Arcana.GraphIntegrationTest do
   end
 
   describe "delete/2 with graph enabled" do
+    test "sweeps the document collection when its chunks have no graph mentions" do
+      collection = create_collection("mentionless-delete-#{System.unique_integer()}")
+      document = create_document(collection)
+      _chunk = create_chunk(document, "no extracted entities")
+      orphan = create_entity(collection, "AlreadyOrphaned")
+
+      assert :ok = Arcana.delete(document.id, repo: Repo, graph: true)
+
+      refute Repo.get(Entity, orphan.id)
+    end
+
     test "removes a fact's last evidence without deleting surviving community members" do
       collection = create_collection("edge-delete-#{System.unique_integer()}")
       edge_document = create_document(collection, %{content: "edge evidence"})

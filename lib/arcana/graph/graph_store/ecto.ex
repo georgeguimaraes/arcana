@@ -270,7 +270,12 @@ defmodule Arcana.Graph.GraphStore.Ecto do
   # === Deletion Callbacks ===
 
   @impl true
-  def delete_by_chunks([], _opts), do: :ok
+  def delete_by_chunks([], opts) do
+    case Keyword.get(opts, :collection_id) do
+      nil -> :ok
+      collection_id -> sweep_orphans(collection_id, opts)
+    end
+  end
 
   def delete_by_chunks(chunk_ids, opts) when is_list(chunk_ids) do
     repo = Keyword.fetch!(opts, :repo)
@@ -326,15 +331,26 @@ defmodule Arcana.Graph.GraphStore.Ecto do
         from(m in EntityMention, where: m.chunk_id in ^chunk_ids, select: m.entity_id)
       )
 
-    # Only the collections these chunks touched: a delete in one tenant must
-    # not sweep another tenant's entities.
-    collection_ids = collections_for_entities(entity_ids, repo)
+    # Sweep collections discovered from the deleted mentions plus the
+    # caller-known document collection. The latter matters when the chunks
+    # never produced a mention, while keeping the sweep tenant-scoped.
+    collection_ids =
+      entity_ids
+      |> collections_for_entities(repo)
+      |> include_known_collection(opts)
 
     Enum.each(collection_ids, &sweep_orphans(&1, opts))
     sweep_uncollected(entity_ids, repo)
     dirty_relationship_communities(unpublished_endpoints, repo)
 
     :ok
+  end
+
+  defp include_known_collection(collection_ids, opts) do
+    case Keyword.get(opts, :collection_id) do
+      nil -> collection_ids
+      collection_id -> Enum.uniq([collection_id | collection_ids])
+    end
   end
 
   defp dirty_relationship_communities([], _repo), do: :ok

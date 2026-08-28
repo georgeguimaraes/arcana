@@ -139,6 +139,40 @@ defmodule ArcanaWeb.BackgroundTaskTest do
     refute_receive :worker_ran
   end
 
+  test "owner exit cancels a worker while the registration hook is blocked" do
+    test_pid = self()
+
+    owner =
+      spawn(fn ->
+        {:ok, task} =
+          ArcanaWeb.BackgroundTask.start(
+            self(),
+            :finished,
+            fn -> send(test_pid, :worker_ran) end,
+            on_worker_registered: fn worker ->
+              send(test_pid, {:worker_registered, worker})
+              Process.sleep(:infinity)
+            end,
+            cleanup: fn -> send(test_pid, :cleaned) end
+          )
+
+        send(test_pid, {:task, task})
+        Process.sleep(:infinity)
+      end)
+
+    assert_receive {:task, task}
+    assert_receive {:worker_registered, worker}
+    worker_ref = Process.monitor(worker)
+    coordinator_ref = Process.monitor(task.pid)
+    Process.exit(owner, :kill)
+
+    assert_receive {:DOWN, ^worker_ref, :process, ^worker, :killed}
+    assert_receive {:DOWN, ^coordinator_ref, :process, pid, :normal}
+    assert pid == task.pid
+    assert_receive :cleaned
+    refute_receive :worker_ran
+  end
+
   test "binds to the actual supervisor behind a registry name and stops with it" do
     test_pid = self()
     registry_name = ArcanaWeb.BackgroundTaskTest.SupervisorRegistry

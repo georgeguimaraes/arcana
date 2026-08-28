@@ -88,6 +88,6 @@ defmodule Arcana.Graph.Relationship do
     |> JSON.encode!()
     |> JSON.decode!()
   rescue
-    Protocol.UndefinedError -> metadata
+    _error in [Protocol.UndefinedError, ArgumentError] -> metadata
   end
 end

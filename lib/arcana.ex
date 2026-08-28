@@ -438,7 +438,12 @@ defmodule Arcana do
 
   defp cleanup_graph_before_delete(chunk_ids, document, repo, opts) do
     if sweeping?(document, opts) and ecto_graph_store?(opts) do
-      GraphStore.delete_by_chunks(chunk_ids, Keyword.put(opts, :repo, repo))
+      graph_opts =
+        opts
+        |> Keyword.put(:repo, repo)
+        |> Keyword.put(:collection_id, document.collection_id)
+
+      GraphStore.delete_by_chunks(chunk_ids, graph_opts)
     else
       :ok
     end
