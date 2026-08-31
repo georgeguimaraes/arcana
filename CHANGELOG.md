@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.1](https://github.com/georgeguimaraes/arcana/compare/v4.0.0...v4.0.1) (2026-08-31)
+
+
+### Miscellaneous
+
+* **deps:** bump phoenix_live_view from 1.2.10 to 1.2.11 ([#188](https://github.com/georgeguimaraes/arcana/issues/188)) ([a7d574a](https://github.com/georgeguimaraes/arcana/commit/a7d574aa5af27d4d643999411c63cdef92f806ab))
+* **deps:** bump req_llm from 1.21.0 to 1.21.1 ([#189](https://github.com/georgeguimaraes/arcana/issues/189)) ([f119bd6](https://github.com/georgeguimaraes/arcana/commit/f119bd63c61696a4f6043497993a96e8ee70e2c6))
+
+
+### Tests
+
+* Restore migration helper search_path ([#190](https://github.com/georgeguimaraes/arcana/issues/190)) ([e862e06](https://github.com/georgeguimaraes/arcana/commit/e862e0695823a1d733c34c2a4458d0b38b6ae265))
+
 ## [4.0.0](https://github.com/georgeguimaraes/arcana/compare/v3.0.1...v4.0.0) (2026-08-28)
 
 Arcana 4.0 gives retrieval-facing reads the same fail-closed collection and
