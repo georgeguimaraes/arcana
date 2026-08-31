@@ -1148,12 +1148,45 @@ defmodule Arcana.MigrationTest do
 
     defp with_tenant_first(fun) do
       Repo.checkout(fn ->
-        SQL.query!(Repo, ~s(SET search_path TO "tenant_first", public), [])
+        original = current_search_path()
 
         try do
+          SQL.query!(Repo, ~s(SET search_path TO "tenant_first", public), [])
           fun.()
         after
-          SQL.query!(Repo, "SET search_path TO public", [])
+          restore_search_path(original)
+        end
+      end)
+    end
+
+    defp current_search_path do
+      %{rows: [[search_path]]} = SQL.query!(Repo, "SHOW search_path", [])
+      search_path
+    end
+
+    defp restore_search_path(search_path) do
+      SQL.query!(Repo, "SELECT set_config('search_path', $1, false)", [search_path])
+    end
+
+    test "the helper restores the connection's previous search_path" do
+      Repo.checkout(fn ->
+        original = current_search_path()
+
+        try do
+          SQL.query!(Repo, "SET search_path TO pg_catalog, public", [])
+          assert current_search_path() == "pg_catalog, public"
+
+          assert with_tenant_first(fn -> current_search_path() end) == "tenant_first, public"
+
+          assert current_search_path() == "pg_catalog, public"
+
+          assert_raise RuntimeError, "boom", fn ->
+            with_tenant_first(fn -> raise "boom" end)
+          end
+
+          assert current_search_path() == "pg_catalog, public"
+        after
+          restore_search_path(original)
         end
       end)
     end
