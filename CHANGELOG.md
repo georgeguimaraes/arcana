@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.2](https://github.com/georgeguimaraes/arcana/compare/v4.0.1...v4.0.2) (2026-09-15)
+
+
+### Miscellaneous
+
+* **deps:** Allow nx 1.0, bump bumblebee, emlx, ecto_sql, req_llm and test on Elixir 1.20 / OTP 29 ([#195](https://github.com/georgeguimaraes/arcana/issues/195)) ([8c4751e](https://github.com/georgeguimaraes/arcana/commit/8c4751ebf1e734c82e9e59a260a07681a8b7c9c2))
+
 ## [4.0.1](https://github.com/georgeguimaraes/arcana/compare/v4.0.0...v4.0.1) (2026-08-31)
 
 
