@@ -18,12 +18,12 @@ jobs:
     runs-on: ubuntu-latest
     name: OTP ${{matrix.otp}} / Elixir ${{matrix.elixir}}
     strategy:
+      fail-fast: false
       matrix:
-        elixir: ["1.18", "1.19"]
-        otp: ["27", "28"]
-        exclude:
-          - elixir: "1.18"
-            otp: "28"
+        include:
+          - { elixir: "1.20", otp: "29" }
+          - { elixir: "1.19", otp: "28" }
+          - { elixir: "1.18", otp: "27" }
 
     services:
       postgres:
@@ -48,11 +48,11 @@ jobs:
       # for 30 minutes while the third passed, so a wedged runner looks exactly
       # like a slow build. Bound each call, retry, and skip apt entirely when
       # the image already has both tools.
-      - name: Install cmake (for hnswlib) and poppler (for PDF tests)
+      - name: Install cmake (for hnswlib), poppler (for PDF tests) and OpenBLAS (for emlx)
         timeout-minutes: 6
         run: |
-          if command -v cmake >/dev/null && command -v pdftotext >/dev/null; then
-            echo "cmake and poppler-utils already present, nothing to install"
+          if command -v cmake >/dev/null && command -v pdftotext >/dev/null && ldconfig -p | grep -q libopenblas.so.0; then
+            echo "cmake, poppler-utils and libopenblas already present, nothing to install"
             exit 0
           fi
 
@@ -69,7 +69,7 @@ jobs:
 
             status=0
             timeout 60 sudo apt-get update &&
-              timeout 90 sudo apt-get install -y --no-install-recommends cmake poppler-utils ||
+              timeout 90 sudo apt-get install -y --no-install-recommends cmake poppler-utils libopenblas0 ||
               status=$?
 
             if [ "$status" -eq 0 ]; then
@@ -85,7 +85,7 @@ jobs:
             fi
           done
 
-          echo "::error::could not install cmake and poppler-utils. A stall is usually the Ubuntu mirror; the apt output above says which."
+          echo "::error::could not install cmake, poppler-utils and libopenblas0. A stall is usually the Ubuntu mirror; the apt output above says which."
           exit 1
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -96,8 +96,8 @@ jobs:
         uses: actions/cache@v6
         with:
           path: deps
-          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
-          restore-keys: ${{ runner.os }}-mix-
+          key: ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-
       - name: Restore build cache
         uses: actions/cache@v6
         with:
