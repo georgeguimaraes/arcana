@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.3](https://github.com/georgeguimaraes/arcana/compare/v4.0.2...v4.0.3) (2026-09-17)
+
+
+### Miscellaneous
+
+* Pin Dependabot commit prefix to chore(deps) ([294ab53](https://github.com/georgeguimaraes/arcana/commit/294ab5366b7f57f987a9850b4a3c3d0cf7791cb5))
+
 ## [4.0.2](https://github.com/georgeguimaraes/arcana/compare/v4.0.1...v4.0.2) (2026-09-15)
 
 
