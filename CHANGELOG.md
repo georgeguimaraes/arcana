@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.3](https://github.com/georgeguimaraes/arcana/compare/v4.0.2...v4.0.3) (2026-09-22)
+
+
+### Miscellaneous
+
+* **deps:** bump hnswlib from 0.1.7 to 0.1.10 ([#199](https://github.com/georgeguimaraes/arcana/issues/199)) ([6c06c66](https://github.com/georgeguimaraes/arcana/commit/6c06c6650580bc76329ac28ae7b6c0c5bd237436))
+* **deps:** bump leidenfold from 0.3.2 to 0.4.3 ([#198](https://github.com/georgeguimaraes/arcana/issues/198)) ([fb9bcd8](https://github.com/georgeguimaraes/arcana/commit/fb9bcd8d62cef1b51ea20ada16c60d497de051d1))
+* **deps:** bump pgvector from 0.4.0 to 0.4.1 ([#200](https://github.com/georgeguimaraes/arcana/issues/200)) ([8c99372](https://github.com/georgeguimaraes/arcana/commit/8c99372668758690fa96a3d1e61c80d947487f71))
+* **deps:** bump phoenix_live_view from 1.2.11 to 1.2.12 ([#203](https://github.com/georgeguimaraes/arcana/issues/203)) ([6f05fe5](https://github.com/georgeguimaraes/arcana/commit/6f05fe5f834ccf043601ce880b2d7d58bdf9406d))
+* **deps:** bump req_llm from 1.23.0 to 1.24.0 ([#202](https://github.com/georgeguimaraes/arcana/issues/202)) ([8ee24ab](https://github.com/georgeguimaraes/arcana/commit/8ee24ab978e8b8f1cbc050fac6758f1416906747))
+* **deps:** bump stephen from 1.0.0 to 1.0.1 ([#201](https://github.com/georgeguimaraes/arcana/issues/201)) ([18a8f62](https://github.com/georgeguimaraes/arcana/commit/18a8f628399d133d4bd977c4339b18bd215e9fb8))
+* Pin Dependabot commit prefix to chore(deps) ([294ab53](https://github.com/georgeguimaraes/arcana/commit/294ab5366b7f57f987a9850b4a3c3d0cf7791cb5))
+
 ## [4.0.2](https://github.com/georgeguimaraes/arcana/compare/v4.0.1...v4.0.2) (2026-09-15)
 
 
