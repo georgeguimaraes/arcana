@@ -118,10 +118,25 @@ defmodule Arcana.VectorStore.PgvectorHybridKeywordTest do
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->
-          assert [_] = search(collection, keyword_score_floor: 1.0)
+          assert [with_floor] = search(collection, keyword_score_floor: 1.0)
+          assert [without_floor] = search(collection, [])
+          assert with_floor.score == without_floor.score
+          assert with_floor.metadata[:keyword_score] == without_floor.metadata[:keyword_score]
         end)
 
       assert log =~ ":keyword_score_floor is deprecated and ignored"
+    end
+
+    test "each deprecated option warns, even when several are passed" do
+      collection = seed("kw-deprecated", ["Duration paint sheens come in satin"])
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          search(collection, semantic_weight: 0.5, keyword_score_floor: 1.0)
+        end)
+
+      assert log =~ ":semantic_weight is deprecated"
+      assert log =~ ":keyword_score_floor is deprecated"
     end
   end
 end
