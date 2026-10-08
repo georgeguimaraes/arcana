@@ -141,9 +141,13 @@ scored AS (
   SELECT
     id, text,
     1 - (embedding <=> query_embedding) AS vector_score,
-    -- the share of the query's distinct lexemes the chunk contains
-    (length(tsv) - length(ts_delete(tsv, q.lexemes)))::float
-      / NULLIF(cardinality(q.lexemes), 0) AS keyword_score
+    -- the share of the query's distinct lexemes the chunk contains;
+    -- 0 for a stopword-only query, so the vector score still ranks
+    COALESCE(
+      (length(tsv) - length(ts_delete(tsv, q.lexemes)))::float
+        / NULLIF(cardinality(q.lexemes), 0),
+      0
+    ) AS keyword_score
   FROM arcana_chunks, q,
     LATERAL (SELECT to_tsvector('english', text) AS tsv OFFSET 0) v
 )
