@@ -134,23 +134,26 @@ Hybrid mode combines vector and keyword search. The implementation differs by ba
 The pgvector backend uses a single SQL query that combines both scores:
 
 ```sql
-WITH base_scores AS (
-  SELECT
-    id, text, embedding,
-    1 - (embedding <=> query_embedding) AS vector_score,
-    ts_rank(to_tsvector('english', text), query) AS keyword_score
-  FROM arcana_chunks
+WITH q AS (
+  SELECT tsvector_to_array(to_tsvector('english', query_text)) AS lexemes
 ),
-normalized AS (
-  SELECT *,
-    (keyword_score - MIN(keyword_score) OVER ()) /
-    NULLIF(MAX(keyword_score) OVER () - MIN(keyword_score) OVER (), 0)
-    AS keyword_normalized
-  FROM base_scores
+scored AS (
+  SELECT
+    id, text,
+    1 - (embedding <=> query_embedding) AS vector_score,
+    -- the share of the query's distinct lexemes the chunk contains;
+    -- 0 for a stopword-only query, so the vector score still ranks
+    COALESCE(
+      (length(tsv) - length(ts_delete(tsv, q.lexemes)))::float
+        / NULLIF(cardinality(q.lexemes), 0),
+      0
+    ) AS keyword_score
+  FROM arcana_chunks, q,
+    LATERAL (SELECT to_tsvector('english', text) AS tsv OFFSET 0) v
 )
 SELECT *,
-  (vector_weight * vector_score + keyword_weight * keyword_normalized) AS hybrid_score
-FROM normalized
+  (vector_weight * vector_score + keyword_weight * keyword_score) AS hybrid_score
+FROM scored
 ORDER BY hybrid_score DESC
 ```
 
@@ -163,10 +166,12 @@ With separate queries, items ranking moderately in both lists might be missed. F
 
 Single-query evaluates **all** chunks, so nothing is missed.
 
-**Score normalization:**
-- Vector scores (cosine similarity) naturally range 0-1
-- Keyword scores (ts_rank) vary widely based on document content
-- The query normalizes keyword scores using min-max scaling within the result set
+**Keyword coverage:**
+- Vector scores (cosine similarity) range 0-1
+- The keyword score is the share of the query's distinct terms (lexemes after stemming and stopword removal) that a chunk contains, also 0-1: three of four terms scores 0.75
+- A chunk with only some of the terms still scores, so long queries keep a keyword signal
+- Repeating a term doesn't raise the score, so a term-dense chunk can't outrank the chunk that carries more of the query
+- Coverage is already comparable across queries, so there is no normalization step
 
 **Configurable weights:**
 
@@ -189,7 +194,7 @@ Results include individual scores for debugging:
   text: "...",
   score: 0.75,           # Combined hybrid score
   vector_score: 0.82,  # Cosine similarity
-  keyword_score: 0.68   # Raw ts_rank score
+  keyword_score: 0.75   # Share of query terms the chunk contains
 }
 ```
 

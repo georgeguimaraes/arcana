@@ -1,23 +1,21 @@
 defmodule Arcana.VectorStore.PgvectorHybridKeywordTest do
   @moduledoc """
-  How hybrid search turns a ts_rank into a keyword contribution.
+  How hybrid search turns the query's terms into a keyword contribution.
 
   Every chunk here is seeded with the *same* embedding, so vector scores tie and
   any difference in ranking or score comes from the keyword side alone. That is
-  the only way to test this without a corpus: the bug in #166 was visible as
-  "hybrid ranks worse than pure vector", which needs real documents, while the
-  mechanism underneath is exactly reproducible.
+  the only way to test this without a corpus: the bugs in #166 and in long
+  queries were visible as "hybrid ranks no better than pure vector", which needs
+  real documents, while the mechanism underneath is exactly reproducible.
 
-  Two things are being pinned:
+  The keyword score is the share of the query's distinct lexemes a chunk
+  contains. `what sheens does Duration come in` has three: `sheen`, `durat` and
+  `come`. Two things are pinned:
 
-    * `ts_rank` scores term overlap, not whether the query matched. For
-      `plainto_tsquery('english', 'what sheens does Duration come in')`, which is
-      `'sheen' & 'durat' & 'come'`, a chunk carrying two of the three scores
-      ~0.097 while satisfying the query not at all. Hybrid used to let that
-      compete; keyword mode never did, because it gates on `@@`.
-    * Normalizing against the best hit in the set maps that best hit to 1.0
-      however weak it is, so "nothing really matched" became a full-weight
-      signal.
+    * A partial match counts in proportion to what it carries. Gating on the AND
+      query made a chunk carry every term, so a long query matched nothing.
+    * Repeating terms does not raise the score, so a term-dense chunk can't
+      outrank the chunk that answers the query (#166), as it could under ts_rank.
   """
   use Arcana.DataCase, async: true
 
@@ -59,76 +57,50 @@ defmodule Arcana.VectorStore.PgvectorHybridKeywordTest do
   end
 
   describe "keyword scoring" do
-    test "a chunk that does not satisfy the query contributes nothing" do
+    test "a chunk scores the share of the query's terms it carries" do
       partial = "This paint comes in several sheens including satin"
       full = "Duration paint sheens come in satin"
 
-      collection = seed("kw-gate", [partial, full])
+      collection = seed("kw-coverage", [partial, full])
       results = search(collection, []) |> by_text()
 
-      assert results[partial].metadata[:keyword_score] == 0.0,
-             "two of three query terms does not satisfy 'sheen & durat & come', " <>
-               "so it must not score at all"
-
-      assert results[full].metadata[:keyword_score] > 0.0,
-             "the chunk that does satisfy the query should still score"
+      assert_in_delta results[partial].metadata[:keyword_score], 2 / 3, 0.0001
+      assert_in_delta results[full].metadata[:keyword_score], 1.0, 0.0001
     end
 
-    test "a term-dense non-match does not outrank the chunk that answers the query" do
+    test "a long query still scores the chunks that carry some of its terms" do
+      # Agents write searches like this one. Under the AND gate no chunk held
+      # all of its terms, so every keyword score was 0 and hybrid ran as vector.
+      query = "Duration paint sheens satin gloss eggshell price warranty coverage stores delivery"
+      some = "Duration comes in satin and eggshell sheens"
+
+      collection = seed("kw-long", [some, "Completely unrelated text about indexing"])
+      results = Pgvector.search_hybrid(collection, @embedding, query, repo: Repo) |> by_text()
+
+      assert results[some].metadata[:keyword_score] > 0.0
+
+      assert hd(Pgvector.search_hybrid(collection, @embedding, query, repo: Repo)).metadata[:text] ==
+               some
+    end
+
+    test "a term-dense chunk does not outrank the chunk that answers the query" do
       # The shape reported in #166. ts_rank rewards term frequency, so a chunk
-      # repeating two of the three query terms scores 0.93 while satisfying the
-      # query not at all, and the genuine sparse match scores 0.20. Normalizing
-      # against the set handed the 0.93 a perfect 1.0 and put it first.
-      dense_non_match =
+      # repeating two of the three query terms scored 0.93 and the genuine sparse
+      # match 0.20. Coverage counts each term once: 2 of 3 against 3 of 3.
+      dense =
         "Sheens sheens sheens. Come come come. Which sheens come next, " <>
           "and which sheens come after? Sheens come often."
 
       genuine = "Duration is available in several finishes; ask which sheens come standard."
 
-      collection = seed("kw-gate-order", [dense_non_match, genuine])
+      collection = seed("kw-dense", [dense, genuine])
       results = search(collection, [])
 
       assert hd(results).metadata[:text] == genuine,
-             "with vector scores tied, the chunk that satisfies the query must rank first"
+             "with vector scores tied, the chunk that carries more of the query must rank first"
 
       by = by_text(results)
-
-      assert by[dense_non_match].metadata[:keyword_score] == 0.0,
-             "it never satisfied 'sheen & durat & come', so its term density is irrelevant"
-    end
-
-    test "a weak best-in-set is damped rather than stretched to a perfect score" do
-      # One genuine match, nothing else. Its own ts_rank is the set maximum, so
-      # normalizing against the set would hand it 1.0 no matter how weak it is.
-      only_match = "Duration paint sheens come in satin"
-      collection = seed("kw-floor", [only_match, "Completely unrelated text about indexing"])
-
-      unfloored = search(collection, keyword_score_floor: 0.0) |> by_text()
-      damped = search(collection, keyword_score_floor: 1.0) |> by_text()
-
-      raw = unfloored[only_match].metadata[:keyword_score]
-      assert raw > 0.0 and raw < 1.0, "precondition: a real but sub-1.0 ts_rank"
-
-      # floor 0 is the old behaviour: normalize against the set's own best, so
-      # the best hit lands on 1.0 whatever its absolute score. With vector tied
-      # at 1.0 and even weights, that is the maximum blended score reachable.
-      assert_in_delta unfloored[only_match].score, 1.0, 0.0001
-
-      assert damped[only_match].score < unfloored[only_match].score,
-             "a floor above the set's best score must reduce its contribution"
-    end
-
-    test "a set with a strong match is unaffected by the default floor" do
-      strong = "Duration paint sheens come in satin gloss flat eggshell finish options"
-      collection = seed("kw-strong", [strong, "Unrelated text about database indexing"])
-
-      with_default = search(collection, []) |> by_text()
-      without_floor = search(collection, keyword_score_floor: 0.0) |> by_text()
-
-      assert_in_delta with_default[strong].score,
-                      without_floor[strong].score,
-                      0.0001,
-                      "a genuine match scores above the floor, so the floor is inert"
+      assert by[dense].metadata[:keyword_score] < by[genuine].metadata[:keyword_score]
     end
 
     test "a query of only stopwords scores nothing rather than dividing by zero" do
@@ -137,35 +109,34 @@ defmodule Arcana.VectorStore.PgvectorHybridKeywordTest do
       results =
         Pgvector.search_hybrid(collection, @embedding, "the and of", repo: Repo)
 
-      assert Enum.all?(results, &(&1.metadata[:keyword_score] == 0.0)),
-             "an empty tsquery matches nothing, so nothing should score"
-    end
-
-    test "opting out of the floor on a set where nothing matched is not a divide by zero" do
-      # floor 0 means "scale against the set's own best", and with no matches at
-      # all that best is 0. The old min = max branch absorbed this; the divisor
-      # form needs its own guard, and Postgres raises 22012 without one.
-      collection = seed("kw-divzero", ["totally unrelated text", "also unrelated"])
-
-      results =
-        Pgvector.search_hybrid(collection, @embedding, "zzzznomatchzzzz",
-          repo: Repo,
-          keyword_score_floor: 0.0
-        )
-
       assert length(results) == 2
       assert Enum.all?(results, &(&1.metadata[:keyword_score] == 0.0))
     end
 
-    for bad <- [-0.1, 1.5, "0.05", nil] do
-      test "rejects a floor of #{inspect(bad)}" do
-        assert_raise ArgumentError, ~r/:keyword_score_floor must be a number/, fn ->
-          Pgvector.search_hybrid("kw-bad", @embedding, @query,
-            repo: Repo,
-            keyword_score_floor: unquote(bad)
-          )
-        end
-      end
+    test "the deprecated :keyword_score_floor is ignored with a warning" do
+      collection = seed("kw-floor", ["Duration paint sheens come in satin"])
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert [with_floor] = search(collection, keyword_score_floor: 1.0)
+          assert [without_floor] = search(collection, [])
+          assert with_floor.score == without_floor.score
+          assert with_floor.metadata[:keyword_score] == without_floor.metadata[:keyword_score]
+        end)
+
+      assert log =~ ":keyword_score_floor is deprecated and ignored"
+    end
+
+    test "each deprecated option warns, even when several are passed" do
+      collection = seed("kw-deprecated", ["Duration paint sheens come in satin"])
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          search(collection, semantic_weight: 0.5, keyword_score_floor: 1.0)
+        end)
+
+      assert log =~ ":semantic_weight is deprecated"
+      assert log =~ ":keyword_score_floor is deprecated"
     end
   end
 end
