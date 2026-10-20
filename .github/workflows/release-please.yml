@@ -16,13 +16,13 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@v5
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
 
   hex-publish:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
-    uses: georgeguimaraes/workflows/.github/workflows/on-release-published.yml@main
+    uses: georgeguimaraes/workflows/.github/workflows/on-release-published.yml@9208861c12989fe1a96df2fe41a2e7dd4bd5fb59 # main
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
     secrets:

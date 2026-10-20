@@ -41,7 +41,7 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # apt-get blocks rather than fails when it loses the dpkg lock race
       # against the runner's unattended-upgrades, and it does not time out on
       # its own. On the 3.0.0 release commit two of three jobs sat on this step
@@ -88,18 +88,18 @@ jobs:
           echo "::error::could not install cmake, poppler-utils and libopenblas0. A stall is usually the Ubuntu mirror; the apt output above says which."
           exit 1
       - name: Set up Elixir
-        uses: erlef/setup-beam@v1
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
           otp-version: ${{matrix.otp}}
           elixir-version: ${{matrix.elixir}}
       - name: Restore dependencies cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: deps
           key: ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-
       - name: Restore build cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: _build
           key: ${{ runner.os }}-build-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
@@ -107,12 +107,12 @@ jobs:
             ${{ runner.os }}-build-${{ matrix.otp }}-${{ matrix.elixir }}-
             ${{ runner.os }}-build-
       - name: Restore Bumblebee model cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/bumblebee
           key: ${{ runner.os }}-bumblebee-all-MiniLM-L6-v2
       - name: Restore EXLA cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/xla
           key: ${{ runner.os }}-exla-${{ matrix.otp }}-${{ matrix.elixir }}
