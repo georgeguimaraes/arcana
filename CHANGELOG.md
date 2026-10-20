@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.4](https://github.com/georgeguimaraes/arcana/compare/v4.0.3...v4.0.4) (2026-10-20)
+
+
+### Miscellaneous
+
+* **ci:** Pin georgeguimaraes/workflows to v1.0.1 ([97fd857](https://github.com/georgeguimaraes/arcana/commit/97fd857031a353e4ddb11354d7aeb1e43889b29c))
+* **ci:** Pin GitHub Actions to commit SHAs ([5126364](https://github.com/georgeguimaraes/arcana/commit/5126364f6b938368c0d33cc100b12483e0b50a48))
+
 ## [4.0.3](https://github.com/georgeguimaraes/arcana/compare/v4.0.2...v4.0.3) (2026-10-08)
 
 
