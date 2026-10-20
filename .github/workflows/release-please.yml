@@ -22,7 +22,7 @@ jobs:
   hex-publish:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
-    uses: georgeguimaraes/workflows/.github/workflows/on-release-published.yml@9208861c12989fe1a96df2fe41a2e7dd4bd5fb59 # main
+    uses: georgeguimaraes/workflows/.github/workflows/on-release-published.yml@0895359397b7e82725d0dce6d5fc2af8068a6ea1 # v1.0.1
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
     secrets:
