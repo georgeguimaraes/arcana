@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.4](https://github.com/georgeguimaraes/arcana/compare/v4.0.3...v4.0.4) (2026-10-26)
+
+
+### Miscellaneous
+
+* **ci:** Pin georgeguimaraes/workflows to v1.0.1 ([97fd857](https://github.com/georgeguimaraes/arcana/commit/97fd857031a353e4ddb11354d7aeb1e43889b29c))
+* **ci:** Pin GitHub Actions to commit SHAs ([5126364](https://github.com/georgeguimaraes/arcana/commit/5126364f6b938368c0d33cc100b12483e0b50a48))
+* **deps:** bump lazy_html from 0.1.12 to 0.1.13 ([#206](https://github.com/georgeguimaraes/arcana/issues/206)) ([93f1e09](https://github.com/georgeguimaraes/arcana/commit/93f1e09652dab9ce030461db550bbc7978025468))
+* **deps:** bump mdex from 0.13.5 to 0.14.3 ([#210](https://github.com/georgeguimaraes/arcana/issues/210)) ([0919c67](https://github.com/georgeguimaraes/arcana/commit/0919c67d88754cd77cb36774c49e282f21a9f11c))
+* **deps:** bump pgvector from 0.4.1 to 0.4.2 ([#209](https://github.com/georgeguimaraes/arcana/issues/209)) ([fde7b2c](https://github.com/georgeguimaraes/arcana/commit/fde7b2caf0f69a5d6c9fbbab98d26c150b3ea7ad))
+* **deps:** bump phoenix_live_view from 1.2.12 to 1.2.13 ([#216](https://github.com/georgeguimaraes/arcana/issues/216)) ([2872d43](https://github.com/georgeguimaraes/arcana/commit/2872d43b12a2d642f4f5c9362833d7a70cc58787))
+* **deps:** bump req_llm from 1.24.0 to 1.29.0 ([#215](https://github.com/georgeguimaraes/arcana/issues/215)) ([816231e](https://github.com/georgeguimaraes/arcana/commit/816231eec63283194180df38511cb690d75fe50b))
+* **deps:** bump the transitives that carry security advisories ([96006e0](https://github.com/georgeguimaraes/arcana/commit/96006e0508439af6a817f685d678bb4e9e40979f))
+
+
+### Continuous Integration
+
+* give the apt step a budget a slow mirror cannot beat ([8bbb1da](https://github.com/georgeguimaraes/arcana/commit/8bbb1da59c23cd4c25d92808e456f56e0004e12b))
+
 ## [4.0.3](https://github.com/georgeguimaraes/arcana/compare/v4.0.2...v4.0.3) (2026-10-08)
 
 
