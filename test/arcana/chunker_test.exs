@@ -287,9 +287,9 @@ defmodule Arcana.ChunkerTest do
 
     test "rejects an overlap larger than the chunk size" do
       # The default overlap is 50, so any chunk_size below it is invalid
-      # unless the caller lowers the overlap as well. text_chunker returns
-      # {:error, _} for this, which used to reach Enum and surface as a
-      # Protocol.UndefinedError about Tuple.
+      # unless the caller lowers the overlap as well. text_chunker refuses
+      # it too, but only arcana's own check can name the options the
+      # caller passed.
       assert_raise ArgumentError, ~r/:chunk_overlap must not be greater than :chunk_size/, fn ->
         Chunker.chunk("some text here", chunk_size: 30, size_unit: :characters)
       end

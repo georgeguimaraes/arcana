@@ -62,35 +62,12 @@ defmodule Arcana.Chunker.Default do
   @default_chars_per_token 4
 
   @impl true
-  def chunk(text, opts \\ [])
-
-  # Both clauses resolve options through the same function, so an invalid
-  # value is reported whatever the input happens to be, and a new option
-  # can't be validated on one path and skipped on the other.
-  def chunk("", opts) do
-    resolved = validated_opts(opts)
-
-    # Run the empty case through the library as well, so its own option
-    # checks apply here too. :format is the one option we don't validate
-    # ourselves: the valid list lives in a compile-time attribute we can't
-    # read, and hardcoding a copy would drift from the library. text_chunker
-    # answers empty input with a placeholder "No chunks created" chunk, so
-    # the result is discarded and only its validation is wanted.
-    _ =
-      ""
-      |> TextChunker.split(chunker_opts(resolved))
-      |> unwrap_split!()
-
-    []
-  end
-
-  def chunk(text, opts) do
+  def chunk(text, opts \\ []) do
     %{chars_per_token: chars_per_token, max_chunk_chars: max_chunk_chars} =
       resolved = validated_opts(opts)
 
     text
-    |> TextChunker.split(chunker_opts(resolved))
-    |> unwrap_split!()
+    |> split!(chunker_opts(resolved))
     |> Enum.flat_map(&enforce_max_chars(&1, max_chunk_chars))
     |> Enum.reject(&blank?(&1.text))
     |> Enum.with_index()
@@ -141,17 +118,18 @@ defmodule Arcana.Chunker.Default do
           ":size_unit must be :tokens or :characters, got: #{inspect(other)}"
   end
 
-  # text_chunker returns {:error, message} for an option combination it
-  # refuses. Piping that into Enum blows up as a Protocol.UndefinedError
-  # naming Enumerable and Tuple, which says nothing about what was wrong.
-  defp unwrap_split!({:error, reason}) do
-    raise ArgumentError, "text_chunker rejected these chunk options: #{reason}"
-  end
-
-  defp unwrap_split!(chunks) when is_list(chunks), do: chunks
-
-  defp unwrap_split!(other) do
-    raise ArgumentError, "text_chunker returned something unexpected: #{inspect(other)}"
+  # text_chunker validates :format itself and raises TextChunker.Error for
+  # a value it refuses. Re-raise it as the ArgumentError this chunker
+  # documents for every invalid option.
+  defp split!(text, opts) do
+    TextChunker.split(text, opts)
+  rescue
+    error in TextChunker.Error ->
+      reraise ArgumentError,
+              [
+                message: "text_chunker rejected these chunk options: " <> Exception.message(error)
+              ],
+              __STACKTRACE__
   end
 
   defp chunker_opts(%{

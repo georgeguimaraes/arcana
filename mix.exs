@@ -79,7 +79,7 @@ defmodule Arcana.MixProject do
       {:nx, "~> 0.9 or ~> 1.0"},
       {:exla, "~> 0.10 or ~> 1.0", optional: true},
       {:emlx, "~> 0.2", optional: true},
-      {:text_chunker, "~> 0.3"},
+      {:text_chunker, "~> 1.0"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
 
