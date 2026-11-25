@@ -10,7 +10,7 @@ defmodule Arcana.Reranker.ColBERT do
 
   Add stephen to your dependencies:
 
-      {:stephen, "~> 0.1"}
+      {:stephen, "~> 2.0"}
 
   ## Usage
 
@@ -67,7 +67,7 @@ defmodule Arcana.Reranker.ColBERT do
 
       Add it to your dependencies:
 
-          {:stephen, "~> 0.1"}
+          {:stephen, "~> 2.0"}
       """
     end
 

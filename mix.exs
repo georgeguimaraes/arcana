@@ -104,7 +104,7 @@ defmodule Arcana.MixProject do
       {:leidenfold, "~> 0.3", optional: true},
 
       # Optional: ColBERT-style neural reranking
-      {:stephen, "~> 1.0", optional: true},
+      {:stephen, "~> 1.0 or ~> 2.0", optional: true},
 
       # Optional: NLI-based hallucination detection (Hallmark)
       {:hallmark, "~> 1.0", optional: true}

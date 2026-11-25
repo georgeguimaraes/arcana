@@ -130,8 +130,10 @@ ColBERT-style neural reranking using per-token embeddings and MaxSim scoring. Sc
 Add the optional dependency:
 
 ```elixir
-{:stephen, "~> 0.1"}
+{:stephen, "~> 2.0"}
 ```
+
+Stephen 2.0 changes how it encodes queries and documents. If you built a ColBERT index with stephen 1.x, rebuild it after you upgrade to stephen 2.0. `Arcana.Reranker.ColBERT` does not store an index, but its scores change, so check any `:threshold` value that you tuned on stephen 1.x.
 
 Use it:
 
